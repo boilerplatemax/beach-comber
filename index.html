@@ -63,6 +63,11 @@
     width: 11px; height: 11px; margin: -6px 0 0 -6px;
     background: rgba(255,240,200,.9); box-shadow: 0 0 6px rgba(255,220,150,.7);
   }
+  #stamina {
+    position: fixed; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px;
+    border-radius: 50%; z-index: 4; pointer-events: none; display: none;
+    -webkit-mask: radial-gradient(transparent 13px, #000 14px); mask: radial-gradient(transparent 13px, #000 14px);
+  }
   #prompt {
     position: fixed; left: 50%; top: calc(50% + 20px); transform: translateX(-50%);
     z-index: 5; pointer-events: none; display: none; font-size: 13px; opacity: .9;
@@ -154,6 +159,7 @@
 
 <div id="hud"></div>
 <div id="dbg"></div>
+<div id="stamina"></div>
 <div id="crosshair"></div>
 <div id="prompt"></div>
 <div id="card"></div>
@@ -358,6 +364,7 @@ const SHELF_POW = 1.7;       // >1 flattens near shore → wide tidal margins, b
 
 const heightmap = new Float32Array(GRID * GRID);
 const dig = new Float32Array(GRID * GRID);    // digging offset layer (Part B); +spoil / -holes
+const fresh = new Float32Array(GRID * GRID);  // "freshness" of dug soil 0..1 (Phase 6; darkens, fades back)
 const hcombined = new Float32Array(GRID * GRID);   // scratch for base+dig texture uploads
 
 function buildHeightmap() {
@@ -761,6 +768,7 @@ in vec3 vWorld;
 out vec4 frag;
 uniform vec3 uSunDir, uCamPos, uZenith, uHorizon, uWarm;
 uniform float uFogDensity, uFogNear, uWaterLevel, uWetLevel;
+uniform sampler2D uFresh;
 ${SKY_GLSL}
 void main() {
   // Flat shading: face normal from screen-space derivatives of world pos.
@@ -788,6 +796,11 @@ void main() {
   // drying back toward dry sand above it (wetLevel lags the tide).
   float wet = (1.0 - smoothstep(uWaterLevel, uWetLevel + 0.6, h)) * (1.0 - smoothstep(0.55, 0.72, slope));
   col = mix(col, col * 0.62, clamp(wet, 0.0, 1.0));
+
+  // Fresh-dug soil is darker and browner, fading back as the ground heals.
+  vec2 fuv = clamp((vWorld.xz + ${HALF.toFixed(1)}) / ${WORLD.toFixed(1)}, 0.0, 1.0);
+  float fresh = texture(uFresh, fuv).r;
+  col = mix(col, col * vec3(0.52, 0.42, 0.33), clamp(fresh, 0.0, 1.0) * 0.6);
 
   // Directional light: warm in the sun, gently cool in shadow.
   float diff = max(dot(n, normalize(uSunDir)), 0.0);
@@ -878,6 +891,19 @@ function buildHeightTexture() {
   const hf = floatLinear ? gl.LINEAR : gl.NEAREST;
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, hf);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, hf);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+
+// "Freshness" texture: how recently each cell was dug (darkens the terrain).
+function buildFreshTexture() {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, GRID, GRID, 0, gl.RED, gl.FLOAT, fresh);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   return tex;
@@ -1313,6 +1339,7 @@ addEventListener("keydown", (e) => {
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE") interact();                  // pick up / inspect
   if (e.code === "KeyQ") stomp();                      // stomp (shows buried things)
+  if (e.code === "KeyR" && mode === "walk") { resting = !resting; if (resting) { cancelPath(); analog.x = analog.y = 0; showCard("Resting", "Catching your breath — stamina returns faster. Move to get up."); } }
   if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
   if (e.code === "KeyI") toggleInventory();           // inventory panel
   if (e.code === "Digit1" || e.code === "Digit2" || e.code === "Digit3" || e.code === "Digit4")
@@ -1365,6 +1392,7 @@ document.addEventListener("pointerlockchange", () => {
 const hud = document.getElementById("hud");
 const crossEl = document.getElementById("crosshair");
 const promptEl = document.getElementById("prompt");
+const staminaEl = document.getElementById("stamina");
 
 /* ===================================================================== *
  * § MOBILE CONTROLS  (TEMPORARY — delete this whole block to remove)
@@ -1415,6 +1443,7 @@ if (IS_TOUCH) (function mobileControls() {
        <div class="mBtn" data-act="run">Run</div>
        <div class="mBtn" data-key="KeyE">Pick up</div>
        <div class="mBtn" data-key="KeyQ">Stomp</div>
+       <div class="mBtn" data-key="KeyR">Rest</div>
        <div class="mBtn" data-key="Tab">Journal</div>
        <div class="mBtn" data-act="pause">Pause</div>
      </div>`;
@@ -1698,7 +1727,7 @@ function makeInstanced(mesh, inst) {
   gl.enableVertexAttribArray(propLoc.iTint); gl.vertexAttribPointer(propLoc.iTint, 3, gl.FLOAT, false, ST, 28); gl.vertexAttribDivisor(propLoc.iTint, 1);
   gl.bindVertexArray(null);
   const vc = pos.length / 3, n = inst.length / 10;
-  return { vao, vertCount: vc, count: n, tris: (vc / 3) * n };
+  return { vao, vertCount: vc, count: n, tris: (vc / 3) * n, ibo: ib, data: idata };
 }
 
 /* --------------------------------------------------------------------- *
@@ -1920,16 +1949,84 @@ function buildProps() {
   });
 
   propTypes = [
-    { inst: makeInstanced(grassMesh(), grass) },
-    { inst: makeInstanced(grassMesh([0.28,0.32,0.22]), seaweed) },
-    { inst: makeInstanced(driftwoodMesh(), drift) },
-    { inst: makeInstanced(palmMesh(), palms) },
-    { inst: makeInstanced(pineMesh(), trees) },
-    { inst: makeInstanced(boulderMesh(), rocks) },
-    { inst: makeInstanced(fenceMesh(), fences) },
-    { inst: makeInstanced(poiMesh, poiMesh.pos.length ? [0,0,0, 1,0,0,0, 1,1,1] : []) },
+    { kind: "grass",   foliage: true,  snap: true, inst: makeInstanced(grassMesh(), grass) },
+    { kind: "seaweed", foliage: true,  snap: true, inst: makeInstanced(grassMesh([0.28,0.32,0.22]), seaweed) },
+    { kind: "drift",   foliage: false, snap: true, inst: makeInstanced(driftwoodMesh(), drift) },
+    { kind: "palm",    foliage: false, snap: true, inst: makeInstanced(palmMesh(), palms) },
+    { kind: "pine",    foliage: false, snap: true, inst: makeInstanced(pineMesh(), trees) },
+    { kind: "rock",    foliage: false, snap: true, inst: makeInstanced(boulderMesh(), rocks) },
+    { kind: "fence",   foliage: false, snap: true, inst: makeInstanced(fenceMesh(), fences) },
+    { kind: "poi",     foliage: false, snap: false, inst: makeInstanced(poiMesh, poiMesh.pos.length ? [0,0,0, 1,0,0,0, 1,1,1] : []) },
   ];
+  initPropDeltas();
   rebuildCollHash();
+}
+
+/* ---- prop instance upkeep: keep foliage/trees snapped to the dug ground,
+   clear small foliage from a fresh hole, and block digging under big props. ---- */
+function initPropDeltas() {
+  for (const t of propTypes) {
+    const inst = t.inst; if (!inst.data || !t.snap) { t.delta = null; continue; }
+    const n = inst.count, d = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const o = i*10; d[i] = inst.data[o+1] - surfaceAt(inst.data[o], inst.data[o+2]).h; }
+    t.delta = d;
+  }
+}
+function snapInst(t, i) {                                   // rewrite one instance's Y to the live ground
+  const o = i*10, inst = t.inst;
+  inst.data[o+1] = surfaceAt(inst.data[o], inst.data[o+2]).h + t.delta[i];
+  gl.bindBuffer(gl.ARRAY_BUFFER, inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, o*4, inst.data, o, 10);
+}
+// Re-snap every prop instance overlapping a world-space box (called after a dig).
+function resnapPropsRegion(minX, minZ, maxX, maxZ) {
+  const m = 2;
+  for (const t of propTypes) {
+    if (!t.snap || !t.inst.data) continue;
+    const n = t.inst.count, data = t.inst.data;
+    for (let i = 0; i < n; i++) { const o = i*10, x = data[o], z = data[o+2];
+      if (x >= minX-m && x <= maxX+m && z >= minZ-m && z <= maxZ+m && data[o+3] > 0.001) snapInst(t, i);
+    }
+  }
+}
+const removedFoliage = [];                                 // { t, i, scale, regrowAt }
+function removeFoliageAround(cx, cz, r) {
+  let removed = 0;
+  for (const t of propTypes) {
+    if (!t.foliage || !t.inst.data) continue;
+    const n = t.inst.count, data = t.inst.data;
+    for (let i = 0; i < n; i++) { const o = i*10, sc = data[o+3];
+      if (sc <= 0.001) continue;
+      if (Math.hypot(data[o]-cx, data[o+2]-cz) < r) {
+        removedFoliage.push({ t, i, scale: sc, regrowAt: clock.t + DAY_PERIOD * (1 + rng()) });
+        data[o+3] = 0;                                     // hide (scale → 0)
+        gl.bindBuffer(gl.ARRAY_BUFFER, t.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, (o+3)*4, data, o+3, 1);
+        removed++;
+      }
+    }
+  }
+  return removed;
+}
+function updateRegrow() {                                   // foliage grows back on healed ground
+  for (let k = removedFoliage.length - 1; k >= 0; k--) {
+    const f = removedFoliage[k]; if (clock.t < f.regrowAt) continue;
+    const o = f.i*10, data = f.t.inst.data, gi = cellIndex(data[o], data[o+2]);
+    if (gi >= 0 && Math.abs(dig[gi]) > 0.25) continue;      // wait until the hole has healed
+    data[o+1] = surfaceAt(data[o], data[o+2]).h + (f.t.delta ? f.t.delta[f.i] : 0);
+    data[o+3] = f.scale;
+    gl.bindBuffer(gl.ARRAY_BUFFER, f.t.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, o*4, data, o, 10);
+    removedFoliage.splice(k, 1);
+  }
+}
+function cellIndex(x, z) {
+  const gx = Math.round((x + HALF) / CELL), gz = Math.round((z + HALF) / CELL);
+  if (gx < 0 || gz < 0 || gx >= GRID || gz >= GRID) return -1;
+  return gz * GRID + gx;
+}
+// A tree / boulder / POI whose roots block digging within r of (x,z)?
+function bigPropBlocking(x, z, r) {
+  for (const c of colliders) if (Math.hypot(c.x - x, c.z - z) < c.r + r) return true;
+  for (const p of POIS) if (Math.hypot(p.x - x, p.z - z) < p.radius + r - 1) return true;
+  return false;
 }
 
 function drawProps(view) {
@@ -2399,12 +2496,14 @@ function syncDebugPanel() {
     <button id="dbgPause">${clock.paused ? "▶ Resume" : "⏸ Pause"}</button>
     <div class="dbgrow">${sp.map((s) => `<button class="dbgspd${clock.speed === s ? " on" : ""}" data-s="${s}">${s}×</button>`).join("")}</div>
     <label>Time of day <input id="dbgTime" type="range" min="0" max="1" step="0.01" value="${timeOfDay.toFixed(2)}"></label>
+    <label>Heal rate ×${healMul.toFixed(1)} <input id="dbgHeal" type="range" min="0.2" max="6" step="0.1" value="${healMul}"></label>
     <div class="dbgrow"><button id="dbgFly">${mode === "free" ? "Walk" : "Fly"}</button><button id="dbgSpawn">Return to spawn</button></div>
     <div class="dbgrow"><button id="dbgCreat">${forceSpawn ? "Hide all" : "Spawn all"}</button><button id="dbgPerf">${debugOn ? "Hide FPS" : "Show FPS"}</button></div>
     <div class="jhint">Ctrl+Shift+D to close</div>`;
   p.querySelector("#dbgPause").onclick = () => { clock.paused = !clock.paused; syncDebugPanel(); };
   p.querySelectorAll(".dbgspd").forEach((b) => b.onclick = () => { clock.speed = +b.dataset.s; clock.paused = false; syncDebugPanel(); });
   p.querySelector("#dbgTime").oninput = (e) => { timeOfDay = +e.target.value; updateSun(); };
+  p.querySelector("#dbgHeal").oninput = (e) => { healMul = +e.target.value; };
   p.querySelector("#dbgFly").onclick = () => { toggleFly(); syncDebugPanel(); };
   p.querySelector("#dbgSpawn").onclick = () => returnToSpawn();
   p.querySelector("#dbgCreat").onclick = () => { forceSpawn = !forceSpawn; syncDebugPanel(); };
@@ -2615,10 +2714,45 @@ function propUniforms(view) {
  * § DIGGING  (the shovel — core feature)
  * ===================================================================== */
 
-let onDig = null;                 // sound hook: onDig(surfaceKind | "clang" | "clink")
+let onDig = null;                 // sound hook: onDig(surfaceKind | "clang" | "clink" | "sift" | "splash")
 const DIG_R = 6.0;                // dig radius (world units; a few terrain cells)
 const dugCells = new Set();       // grid indices with a non-zero offset (for healing)
 const digScratch = new Float32Array(400 * 10);
+const ANKLE = 0.45, KNEE = 1.0;   // water-depth thresholds: dig < ANKLE < sift < KNEE < nothing
+let healMul = 1.0;                // debug-tunable restoration-rate multiplier
+
+/* ---- stamina: heavy actions cost it; it regenerates, faster at rest ---- */
+let stamina = 1, resting = false;
+function spendStamina(a) { stamina = Math.max(0, stamina - a); }
+function updateStamina(dt) {
+  if (mode !== "walk") { stamina = 1; resting = false; return; }
+  const moving = Math.abs(analog.x) + Math.abs(analog.y) > 0.01 || keys["KeyW"] || keys["KeyA"] || keys["KeyS"] || keys["KeyD"];
+  if (moving) resting = false;
+  if (player.sprinting) spendStamina(0.08 * dt);                 // sprinting drains
+  if (player.scramble > 0.3) spendStamina(0.12 * dt * player.scramble);  // steep scrambling drains
+  const regen = resting ? 0.26 : (moving ? 0.05 : 0.11);        // slow while active, fast at rest
+  stamina = Math.min(1, stamina + regen * dt);
+}
+
+/* ---- water flowing into a fresh hole: a quick foam swirl ---- */
+function spawnInflow(x, z) {
+  if (onDig) onDig("splash");
+  const wy = waterSurfaceAt(x, z);
+  for (let i = 0; i < 14 && particles.length < 200; i++) {
+    const a = rng() * 6.283, sp = 1.5 + rng() * 2;              // tangential = swirl
+    particles.push({ x: x + Math.cos(a) * 1.5, y: wy + 0.1, z: z + Math.sin(a) * 1.5,
+      vx: -Math.sin(a) * sp, vy: 0.5 + rng(), vz: Math.cos(a) * sp, t: 0, life: 0.6 + rng() * 0.5, col: [0.9, 0.94, 0.95] });
+  }
+}
+
+// Live water surface at a point (sea level or an isolated pool's rim), and depth above ground.
+function waterSurfaceAt(x, z) {
+  const i = cellIndex(x, z); if (i < 0) return waterLevel;
+  const inBasin = filled[i] > heightmap[i] + 0.1;
+  const rim = (dig[i] < -0.05 && !inBasin) ? -1000 : filled[i];
+  return Math.max(waterLevel, rim);
+}
+function waterDepthAt(x, z) { return waterSurfaceAt(x, z) - surfaceAt(x, z).h; }
 
 // texture updates so water/pathfinding see the new ground
 function updateHeightTex(x0, z0, x1, z1) {
@@ -2628,10 +2762,20 @@ function updateHeightTex(x0, z0, x1, z1) {
   for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) { const i = z * GRID + x; buf[p++] = heightmap[i] + dig[i]; }
   gl.bindTexture(gl.TEXTURE_2D, heightTex); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
   gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, z0, w, h, gl.RED, gl.FLOAT, buf);
+  // Filled DEM: a hole on DRY land fills only to the water table (−1000 → local=waterLevel);
+  // a hole inside a real basin/pool keeps the pool's rim so the pool water stays over it.
   const fb = new Float32Array(w * h); p = 0;
-  for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) { const i = z * GRID + x; fb[p++] = dig[i] < -0.05 ? -1000 : filled[i]; }
+  for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
+    const i = z * GRID + x, inBasin = filled[i] > heightmap[i] + 0.1;
+    fb[p++] = (dig[i] < -0.05 && !inBasin) ? -1000 : filled[i];
+  }
   gl.bindTexture(gl.TEXTURE_2D, filledTex);
   gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, z0, w, h, gl.RED, gl.FLOAT, fb);
+  // Fresh-dug soil darkening.
+  const ff = new Float32Array(w * h); p = 0;
+  for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) ff[p++] = fresh[z * GRID + x];
+  gl.bindTexture(gl.TEXTURE_2D, freshTex);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, z0, w, h, gl.RED, gl.FLOAT, ff);
 }
 function rebuildRegion(x0, z0, x1, z1) {
   // rebuild every chunk overlapping the region, once
@@ -2645,10 +2789,21 @@ function rebuildRegion(x0, z0, x1, z1) {
 }
 
 function surfaceKind(x, z) {
-  const s = surfaceAt(x, z), h = s.h;
-  if (s.slope > 0.62 || h > 34) return "rock";
-  if (h > 20) return "gravel";
-  if (h < wetLevel + 0.3) return "wet";     // recently under the tide
+  // Material follows the ORIGINAL ground (base heightmap), so a deep hole's
+  // own steep walls never re-classify it as un-diggable "rock".
+  const i = cellIndex(x, z);
+  if (i < 0) return "rock";
+  const hb = heightmap[i];
+  const gx = i % GRID, gz = (i / GRID) | 0;
+  let slope = 0;
+  if (gx > 0 && gx < GRID - 1 && gz > 0 && gz < GRID - 1) {
+    const dhx = (heightmap[i+1] - heightmap[i-1]) / (2 * CELL);
+    const dhz = (heightmap[i+GRID] - heightmap[i-GRID]) / (2 * CELL);
+    slope = Math.atan(Math.hypot(dhx, dhz));
+  }
+  if (slope > 0.62 || hb > 34) return "rock";
+  if (hb > 20) return "gravel";
+  if (surfaceAt(x, z).h < wetLevel + 0.3) return "wet";     // wetness tracks the live surface + tide
   return "dry";
 }
 
@@ -2659,26 +2814,42 @@ function applyDig(x, z, amount, holeAng) {
   const minz = Math.max(0, Math.floor(gcz - r * 2.4)), maxz = Math.min(GRID - 1, Math.ceil(gcz + r * 2.4));
   for (let gz = minz; gz <= maxz; gz++) for (let gx = minx; gx <= maxx; gx++) {
     const d = Math.hypot(gx - gcx, gz - gcz), i = gz * GRID + gx;
-    if (d < r) { const f = 1 - d / r; dig[i] -= amount * f * f; dugCells.add(i); }
+    if (d < r) { const f = 1 - d / r; dig[i] -= amount * f * f; dugCells.add(i); fresh[i] = 1; }
     else if (d < r * 2.3) {                                // spoil mound on the player's side
       const ang = Math.atan2(gz - gcz, gx - gcx), side = Math.cos(ang - holeAng);
-      if (side > 0.2) { dig[i] += amount * 0.45 * side * (1 - (d - r) / (r * 1.3)); dugCells.add(i); }
+      if (side > 0.2) { dig[i] += amount * 0.45 * side * (1 - (d - r) / (r * 1.3)); dugCells.add(i); fresh[i] = Math.max(fresh[i], 0.8); }
     }
   }
   rebuildRegion(minx, minz, maxx, maxz);
   updateHeightTex(minx, minz, maxx, maxz);
+  resnapPropsRegion(x - DIG_R*2.4, z - DIG_R*2.4, x + DIG_R*2.4, z + DIG_R*2.4);
+}
+// Push a hole's spoil back into it: both sides relax toward flat.
+function fillHole(x, z) {
+  const gcx = (x + HALF) / CELL, gcz = (z + HALF) / CELL, r = DIG_R / CELL;
+  const minx = Math.max(0, Math.floor(gcx - r*2.4)), maxx = Math.min(GRID-1, Math.ceil(gcx + r*2.4));
+  const minz = Math.max(0, Math.floor(gcz - r*2.4)), maxz = Math.min(GRID-1, Math.ceil(gcz + r*2.4));
+  for (let gz = minz; gz <= maxz; gz++) for (let gx = minx; gx <= maxx; gx++) {
+    const i = gz*GRID+gx; if (Math.hypot(gx-gcx, gz-gcz) > r*2.3 || Math.abs(dig[i]) < 0.01) continue;
+    dig[i] *= 0.45; if (Math.abs(dig[i]) < 0.02) { dig[i] = 0; dugCells.delete(i); } else dugCells.add(i);
+    fresh[i] = Math.max(fresh[i], 0.6);
+  }
+  rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz);
+  resnapPropsRegion(x - DIG_R*2.4, z - DIG_R*2.4, x + DIG_R*2.4, z + DIG_R*2.4);
 }
 
-// heal the beach: tide covers holes (fast), dry sand slumps slowly
+// The island heals itself: holes and spoil relax toward flat (fast under the
+// tide, slower on dry sand, slowest on grass) and fresh soil fades back.
 function healDig(gdt) {
   if (!dugCells.size) return;
   let minx = 1e9, minz = 1e9, maxx = -1e9, maxz = -1e9, any = false;
   for (const i of dugCells) {
     const gx = i % GRID, gz = (i / GRID) | 0;
     const submerged = waterLevel > heightmap[i] + 0.2;
-    const rate = submerged ? 0.6 : 0.015;
+    const rate = (submerged ? 0.6 : heightmap[i] > 12 ? 0.006 : 0.02) * healMul;
     dig[i] *= Math.max(0, 1 - rate * gdt);
-    if (Math.abs(dig[i]) < 0.02) { dig[i] = 0; dugCells.delete(i); }
+    fresh[i] = Math.max(0, fresh[i] - (submerged ? 0.09 : 0.03) * healMul * gdt);
+    if (Math.abs(dig[i]) < 0.02 && fresh[i] < 0.02) { dig[i] = 0; fresh[i] = 0; dugCells.delete(i); }
     any = true; if (gx < minx) minx = gx; if (gx > maxx) maxx = gx; if (gz < minz) minz = gz; if (gz > maxz) maxz = gz;
   }
   if (any) { rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz); }
@@ -2694,8 +2865,9 @@ function seedDigSpots() {
   const n = 50 + (rng() * 40 | 0);
   for (let k = 0; k < n; k++) {
     const a = rng() * 6.283, r = HALF * (0.22 + rng() * 0.6), x = Math.sin(a) * r, z = -Math.cos(a) * r;
-    const h = heightAt(x, z), s = surfaceAt(x, z).slope;
-    if (h < 0.5 || h > 18 || s > 0.4) continue;
+    const h = heightAt(x, z), s = surfaceAt(x, z).slope, ci = cellIndex(x, z);
+    if (h < 0.5 || h > 18 || s > 0.4 || bigPropBlocking(x, z, 1.5)) continue;   // never bury loot where roots block digging
+    if (ci >= 0 && filled[ci] - heightmap[ci] > KNEE) continue;                 // never at the bottom of a permanently-deep pool
     const roll = rng();
     let item, band, tell, needed;
     if (roll < 0.55) { item = pick(["clam", "cockle", "shell", "molt", "seaglass"]); band = 1; needed = 2; tell = rng() < 0.2 ? "gull" : "show"; }
@@ -2709,7 +2881,7 @@ function seedDigSpots() {
     for (let t = 0; t < 24; t++) {
       const a = rng() * 6.283, r = HALF * (0.25 + rng() * 0.5), x = Math.sin(a) * r, z = -Math.cos(a) * r;
       const h = heightAt(x, z);
-      if (h > 1 && h < 16 && surfaceAt(x, z).slope < 0.4) {
+      if (h > 1 && h < 16 && surfaceAt(x, z).slope < 0.4 && !bigPropBlocking(x, z, 1.5)) {
         digSpots.push({ x, z, item: ODDITY_ITEM, band: 3, needed: 6, tell: "dry", strikes: 0, revealed: false, razor: false, lastStrike: -99, special: true });
         break;
       }
@@ -2720,34 +2892,65 @@ function nearestSpot(x, z, maxd) { let best = null, bd = maxd; for (const s of d
 
 // the dig action
 let shovelSwing = 0, camNudge = 0, stompCd = 0;
-function digAt(x, z) {
-  if (mode !== "walk" || selectedTool() !== "shovel") return;
-  if (Math.hypot(x - player.x, z - player.z) > 5.5) { walkTo(x, z); pendingDig = [x, z]; return; } // walk into range first
-  const kind = surfaceKind(x, z);
-  shovelSwing = 1; camNudge = 0.05;
-  if (onDig) onDig(kind === "rock" ? "clang" : kind);
-  const sy = surfaceAt(x, z).h;
-  if (kind === "rock") { spawnSand(x, sy, z, 6, [0.5, 0.5, 0.52]); return; }    // clang, no dig
-  const amt = kind === "wet" ? 1.5 : kind === "dry" ? 1.1 : 0.7;                // gravel slow
-  const holeAng = Math.atan2(player.z - z, player.x - x);
-  applyDig(x, z, amt, holeAng);
-  spawnSand(x, sy + 0.3, z, 14, kind === "wet" ? [0.62, 0.56, 0.46] : kind === "gravel" ? [0.6, 0.58, 0.55] : [0.86, 0.78, 0.6]);
-  // find a buried thing?
+let holeNear = (x, z) => {
+  const gcx = (x + HALF) / CELL, gcz = (z + HALF) / CELL, r = DIG_R / CELL;
+  const minx = Math.max(0, (gcx - r*2.3)|0), maxx = Math.min(GRID-1, Math.ceil(gcx + r*2.3));
+  const minz = Math.max(0, (gcz - r*2.3)|0), maxz = Math.min(GRID-1, Math.ceil(gcz + r*2.3));
+  for (let gz = minz; gz <= maxz; gz++) for (let gx = minx; gx <= maxx; gx++) if (dig[gz*GRID+gx] < -0.4) return true;
+  return false;
+};
+// same loot tables for a dig strike or a sift
+function revealSpot(x, z, sift) {
   const spot = nearestSpot(x, z, DIG_R + 0.5);
   if (spot) {
-    // razor clams escape without quick follow-up strikes
-    if (spot.razor && spot.strikes > 0 && clock.t - spot.lastStrike > 1.3) { spot.needed++; showCard("It wriggled deeper!", "Razor clams burrow — strike again, fast."); }
+    if (!sift && spot.razor && spot.strikes > 0 && clock.t - spot.lastStrike > 1.3) { spot.needed++; showCard("It wriggled deeper!", "Razor clams burrow — strike again, fast."); }
     spot.lastStrike = clock.t; spot.strikes++;
     if (spot.strikes >= spot.needed) {
       if (onDig) onDig("clink");
       spot.revealed = true;
-      spawnFind(spot.item, spot.x, spot.z);                  // sits at the bottom of the hole
+      spawnFind(spot.item, spot.x, spot.z);
       const e = life[life.length - 1]; if (e) { e.dug = true; e.special = !!spot.special; if (spot.special) e.name = ODDITY_NAME; }
-      showCard("Clink!", "Something's in the hole — click it to collect.");
+      showCard(sift ? "Sifted something out!" : "Clink!", "Something's here — click it to collect.");
     }
-  } else if (rng() < 0.12) {                                  // blind dig: occasional scrap
+  } else if (rng() < 0.12) {
     spawnFind(pick(["shell", "seaglass", "molt"]), x + (rng()-0.5), z + (rng()-0.5));
   }
+}
+function digAt(x, z) {
+  if (mode !== "walk" || selectedTool() !== "shovel") return;
+  if (resting) resting = false;
+  if (Math.hypot(x - player.x, z - player.z) > 5.5) { walkTo(x, z); pendingDig = [x, z]; return; } // walk into range first
+  if (stamina <= 0.04) { shovelSwing = 0.4; showCard("Too tired", "Rest to recover before digging again."); return; }
+  const ci0 = cellIndex(x, z);
+  const inBasin = ci0 >= 0 && filled[ci0] > heightmap[ci0] + 0.1;   // a tide pool / basin cell
+  const sy = surfaceAt(x, z).h, depth = waterSurfaceAt(x, z) - sy;
+  shovelSwing = 1; camNudge = 0.05;
+
+  // Past knee depth in open water: no digging or sifting.
+  if (!inBasin && depth > KNEE) { if (onDig) onDig("splash"); spawnSand(x, sy + 0.1, z, 8, [0.82, 0.86, 0.9]); showCard("Too deep", "Wade to shallower water to dig."); return; }
+  // In a pool, or ankle–knee open water: the shovel sifts — no terrain change, a cloudy plume, top-layer finds.
+  if (inBasin || depth > ANKLE) { camNudge = 0.04; spendStamina(0.045); if (onDig) onDig("sift"); spawnSand(x, sy + 0.05, z, 16, [0.72, 0.68, 0.6]); revealSpot(x, z, true); return; }
+  // Too many roots: can't dig under trees / boulders / POIs.
+  if (bigPropBlocking(x, z, 1.0)) { camNudge = 0.03; if (onDig) onDig("clang"); spawnSand(x, sy + 0.2, z, 5, [0.5, 0.42, 0.3]); showCard("Too many roots", "Can't dig here — the ground is bound with roots."); return; }
+
+  const kind = surfaceKind(x, z);
+  if (onDig) onDig(kind === "rock" ? "clang" : kind);
+  if (kind === "rock") { spawnSand(x, sy, z, 6, [0.5, 0.5, 0.52]); return; }    // clang, no dig
+
+  // Clicking the spoil mound beside a hole shoves it back in.
+  const ci = cellIndex(x, z);
+  if (ci >= 0 && dig[ci] > 0.3 && holeNear(x, z)) { spendStamina(0.03); fillHole(x, z); spawnSand(x, sy + 0.2, z, 8, [0.7, 0.62, 0.5]); showCard("Filled in", "You push the spoil back into the hole."); return; }
+
+  spendStamina(0.06);
+  const weak = stamina < 0.22 ? 0.6 : 1;                     // weaker, heavier strokes when tired
+  const amt = (kind === "wet" ? 1.5 : kind === "dry" ? 1.1 : 0.7) * weak;
+  const holeAng = Math.atan2(player.z - z, player.x - x);
+  const wasAbove = waterSurfaceAt(x, z) < surfaceAt(x, z).h - 0.02;
+  applyDig(x, z, amt, holeAng);
+  removeFoliageAround(x, z, DIG_R);                          // clear grass/seaweed with a burst
+  spawnSand(x, sy + 0.3, z, 14, kind === "wet" ? [0.62, 0.56, 0.46] : kind === "gravel" ? [0.6, 0.58, 0.55] : [0.86, 0.78, 0.6]);
+  if (wasAbove && waterSurfaceAt(x, z) >= surfaceAt(x, z).h - 0.02) spawnInflow(x, z);   // just hit the water table
+  revealSpot(x, z, false);
 }
 let pendingDig = null;
 function stomp() {
@@ -2842,10 +3045,13 @@ function drawShovel(view) {
 }
 
 function updateDigging(dt) {
-  if (shovelSwing > 0) shovelSwing = Math.max(0, shovelSwing - dt * 3.5);
+  const swingRate = 3.5 * (stamina < 0.3 ? 0.6 : 1);        // slower, heavier swing when tired
+  if (shovelSwing > 0) shovelSwing = Math.max(0, shovelSwing - dt * swingRate);
   if (camNudge > 0) camNudge = Math.max(0, camNudge - dt * 0.4);
   if (stompCd > 0) stompCd -= dt;
   updateParticles(dt);
+  updateStamina(dt);
+  updateRegrow();
   // arrive-to-dig
   if (pendingDig && !pathActive) { const [dx, dz] = pendingDig; pendingDig = null; if (Math.hypot(dx - player.x, dz - player.z) < 6) digAt(dx, dz); }
 }
@@ -2866,6 +3072,7 @@ const terrain = buildTerrainMesh();
 const water = buildWaterMesh();
 const heightTex = buildHeightTexture();
 const filledTex = buildFilledTexture();
+const freshTex = buildFreshTexture();
 const fsTri = buildFsTri();
 
 // Phase 5 setup: icons, inventory, panels, saved state, starting shovel.
@@ -2956,6 +3163,7 @@ function frame(now) {
     if (keys["KeyD"]) { wx += right[0]; wz += right[2]; manual = true; }
     if (keys["KeyA"]) { wx -= right[0]; wz -= right[2]; manual = true; }
     if (Math.abs(analog.x) + Math.abs(analog.y) > 0.01) { wx += right[0]*analog.x + hf[0]*analog.y; wz += right[2]*analog.x + hf[1]*analog.y; manual = true; }
+    if (resting) { wx = 0; wz = 0; manual = false; }       // sitting: no movement
     if (manual && pathActive) cancelPath();
 
     // auto-walk along an A* path toward a clicked destination
@@ -3028,7 +3236,8 @@ function frame(now) {
     const amp = (0.06 + (player.sprinting ? 0.05 : 0) + player.scramble * 0.07) * moving;
     const freq = player.scramble > 0.3 ? 1.7 : 2.6;             // heavier when scrambling
     const bob = Math.sin(player.bob * freq) * amp;
-    const target = g.h + EYE + bob;
+    const sit = resting ? -0.8 : 0;                          // sit down to rest
+    const target = g.h + EYE + bob + sit;
     player.eyeY += (target - player.eyeY) * Math.min(1, dt * 14);
     cam.pos[0] = player.x; cam.pos[1] = player.eyeY; cam.pos[2] = player.z;
   }
@@ -3037,8 +3246,9 @@ function frame(now) {
 
   // ---- matrices ----
   let f = camForward();
-  if (mode === "walk" && (player.scramble > 0.01 || camNudge > 0.001)) {   // dip + breathe + dig kick
-    const dip = player.scramble * 0.14 + Math.sin(t * 2.2) * player.scramble * 0.025 + camNudge;
+  const breathe = (resting || stamina < 0.35) ? Math.sin(t * 1.6) * (resting ? 0.03 : (0.35 - stamina) * 0.11) : 0;
+  if (mode === "walk" && (player.scramble > 0.01 || camNudge > 0.001 || breathe !== 0)) {   // dip + breathe + dig kick
+    const dip = player.scramble * 0.14 + Math.sin(t * 2.2) * player.scramble * 0.025 + camNudge + breathe;
     const cp = Math.cos(cam.pitch - dip), sp = Math.sin(cam.pitch - dip);
     f = [Math.sin(cam.yaw) * cp, sp, -Math.cos(cam.yaw) * cp];
   }
@@ -3083,6 +3293,9 @@ function frame(now) {
   gl.uniform1f(terrainU.uFogNear, FOG_NEAR);
   gl.uniform1f(terrainU.uWaterLevel, waterLevel);
   gl.uniform1f(terrainU.uWetLevel, wetLevel);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, freshTex);
+  gl.uniform1i(terrainU.uFresh, 0);
   drawTerrainChunks();
 
   // props & points of interest (instanced), before the transparent water
@@ -3142,6 +3355,12 @@ function frame(now) {
 
   // ---- hud ----
   crossEl.style.display = (mode === "walk" && !IS_TOUCH) ? "block" : "none";
+  // stamina ring near the crosshair — only visible while it isn't full
+  if (mode === "walk" && stamina < 0.995) {
+    const deg = Math.max(0, stamina) * 360, col = stamina < 0.25 ? "#d9694e" : resting ? "#8fd0a0" : "#79bcc6";
+    staminaEl.style.display = "block";
+    staminaEl.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.1) ${deg}deg 360deg)`;
+  } else staminaEl.style.display = "none";
   document.getElementById("hotbar").style.display = (mode === "walk") ? "flex" : "none";
   // interaction hint: what's in reach of the crosshair
   if (mode === "walk") {
