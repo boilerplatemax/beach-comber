@@ -228,6 +228,7 @@ const AP = (function (r, ch) {
     lakeDepth:  5.0 + 7.0 * r(),
     poolFreq:   6.0 + 5.0 * r(),
     heightScale:(gentle ? 95 : big ? 250 : 165) + 55 * r(),      // vertical scale
+    tideRange:  (gentle || atoll ? 8.0 : big ? 4.5 : 6.0) + 2.5 * r(),  // tidal range
   };
 })(rng, CHARACTER);
 const archetype = CHARACTER;   // HUD alias
@@ -374,6 +375,97 @@ function findHighPoint() {
 }
 
 /* --------------------------------------------------------------------- *
+ * § BASINS  (Priority-Flood → "filled" DEM: the level at which each cell
+ *   connects to the open sea. filled>terrain ⇒ a depression that holds a
+ *   tide pool up to its rim when the sea drops below it. Also extracts
+ *   discrete pools for seeding contents and the debug view.)
+ * --------------------------------------------------------------------- */
+
+const filled = new Float32Array(GRID * GRID);
+let pools = [];     // { cx, cz, rim, floor, n, x, z }  (world-space centroid)
+
+function computeBasins() {
+  const N = GRID * GRID;
+  for (let i = 0; i < N; i++) filled[i] = Infinity;
+  const done = new Uint8Array(N);
+  const hl = new Float64Array(N + 1), hi = new Int32Array(N + 1);
+  let hn = 0;
+  const push = (l, i) => {
+    hn++; hl[hn] = l; hi[hn] = i; let c = hn;
+    while (c > 1) { const p = c >> 1; if (hl[p] <= hl[c]) break; [hl[p],hl[c]]=[hl[c],hl[p]]; [hi[p],hi[c]]=[hi[c],hi[p]]; c = p; }
+  };
+  const pop = () => {
+    const i = hi[1]; hl[1] = hl[hn]; hi[1] = hi[hn]; hn--; let c = 1;
+    while (true) { let m = c, l = c*2, r = c*2+1;
+      if (l <= hn && hl[l] < hl[m]) m = l; if (r <= hn && hl[r] < hl[m]) m = r;
+      if (m === c) break; [hl[m],hl[c]]=[hl[c],hl[m]]; [hi[m],hi[c]]=[hi[c],hi[m]]; c = m; }
+    return i;
+  };
+  for (let z = 0; z < GRID; z++)            // seed the map border
+    for (let x = 0; x < GRID; x++) {
+      if (x === 0 || z === 0 || x === GRID-1 || z === GRID-1) {
+        const i = z*GRID+x; filled[i] = heightmap[i]; done[i] = 1; push(filled[i], i);
+      }
+    }
+  const nb = [-1, 1, -GRID, GRID];
+  while (hn > 0) {
+    const c = pop(), lvl = filled[c], cx = c % GRID, cz = (c / GRID) | 0;
+    for (let k = 0; k < 4; k++) {
+      const nx = cx + (k===0?-1:k===1?1:0), nz = cz + (k===2?-1:k===3?1:0);
+      if (nx < 0 || nz < 0 || nx >= GRID || nz >= GRID) continue;
+      const ni = c + nb[k];
+      if (done[ni]) continue;
+      filled[ni] = Math.max(heightmap[ni], lvl);
+      done[ni] = 1; push(filled[ni], ni);
+    }
+  }
+  extractPools();
+}
+
+// Group depression cells into discrete pools (small, coastal-ish ones).
+function extractPools() {
+  pools = [];
+  const N = GRID * GRID, seen = new Uint8Array(N), EPS = 0.25;
+  const stack = [];
+  for (let s = 0; s < N; s++) {
+    if (seen[s] || filled[s] <= heightmap[s] + EPS) continue;
+    // BFS this connected depression
+    stack.length = 0; stack.push(s); seen[s] = 1;
+    let n = 0, sx = 0, sz = 0, rim = -Infinity, floor = Infinity;
+    while (stack.length) {
+      const c = stack.pop(), cx = c % GRID, cz = (c / GRID) | 0;
+      n++; sx += cx; sz += cz;
+      rim = Math.max(rim, filled[c]); floor = Math.min(floor, heightmap[c]);
+      const ns = [c-1, c+1, c-GRID, c+GRID];
+      for (let k = 0; k < 4; k++) {
+        const ni = ns[k];
+        if (ni < 0 || ni >= N || seen[ni]) continue;
+        const nx = ni % GRID;
+        if (k === 0 && nx === GRID-1) continue;      // wrap guard
+        if (k === 1 && nx === 0) continue;
+        if (filled[ni] > heightmap[ni] + EPS) { seen[ni] = 1; stack.push(ni); }
+      }
+    }
+    if (n < 4 || n > 2500) continue;                 // skip specks & big lakes
+    if (rim - floor < 0.5) continue;
+    const mx = (sx / n) * CELL - HALF, mz = (sz / n) * CELL - HALF;
+    pools.push({ x: mx, z: mz, rim, floor, n });
+  }
+}
+
+function buildFilledTexture() {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, GRID, GRID, 0, gl.RED, gl.FLOAT, filled);
+  const hf = floatLinear ? gl.LINEAR : gl.NEAREST;
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, hf);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, hf);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+
+/* --------------------------------------------------------------------- *
  * § ATMOSPHERE  (sun + sky/fog palette driven by one timeOfDay value;
  *                Phase 5 will animate timeOfDay, nothing else changes.)
  * --------------------------------------------------------------------- */
@@ -397,6 +489,36 @@ function updateSun() {
   SKY.sun = [ce * Math.sin(az), se, -ce * Math.cos(az)];
 }
 updateSun();
+
+/* --------------------------------------------------------------------- *
+ * § TIDES  (waterLevel oscillates on a slow cycle with slack at the
+ *   extremes; wetLevel is a lagging high-water mark that dries back.)
+ * --------------------------------------------------------------------- */
+
+let TIDE_PERIOD = 480;          // seconds for a full cycle (~8 min)
+const TIDE_RANGE = AP.tideRange;
+const TIDE_MID = 0.0;
+let tideT = 0.60;               // phase 0..1 (start part-way down)
+let tideSpeed = 1;              // debug scrub multiplier
+let waterLevel = 0.0;           // THE variable everything reads
+let wetLevel = 0.0;             // lagging high-water mark (wet sand)
+
+// Shaped so the tide lingers (slack) near high and low.
+function tideShape(ph) { const s = Math.sin(ph * 6.2831853); return Math.sign(s) * Math.pow(Math.abs(s), 0.7); }
+function tideLevelAt(ph) { return TIDE_MID + tideShape(ph) * TIDE_RANGE * 0.5; }
+function updateTide(dt) {
+  tideT = (tideT + dt * tideSpeed / TIDE_PERIOD) % 1;
+  if (tideT < 0) tideT += 1;
+  waterLevel = tideLevelAt(tideT);
+  if (waterLevel >= wetLevel) wetLevel = waterLevel;          // instantly wet
+  else wetLevel += (waterLevel - wetLevel) * Math.min(1, dt * 0.05);  // slow dry-back
+}
+function tideInfo() {
+  const rising = tideLevelAt((tideT + 0.002) % 1) > waterLevel;
+  const lowPhase = 0.75;                                      // sin() minimum
+  let d = (lowPhase - tideT + 1) % 1;
+  return { rising, tToLow: d * TIDE_PERIOD / Math.max(0.01, tideSpeed) };
+}
 
 /* --------------------------------------------------------------------- *
  * § MATH  (column-major mat4)
@@ -536,7 +658,7 @@ precision highp float;
 in vec3 vWorld;
 out vec4 frag;
 uniform vec3 uSunDir, uCamPos, uZenith, uHorizon, uWarm;
-uniform float uFogDensity, uFogNear;
+uniform float uFogDensity, uFogNear, uWaterLevel, uWetLevel;
 ${SKY_GLSL}
 void main() {
   // Flat shading: face normal from screen-space derivatives of world pos.
@@ -559,6 +681,11 @@ void main() {
   col = mix(col, cGrass,   smoothstep(10.0, 20.0, h));
   col = mix(col, cForest,  smoothstep(30.0, 58.0, h));
   col = mix(col, cRock,    smoothstep(0.45, 0.70, slope));
+
+  // Wet sand: darker from the waterline up to the recent high-water mark,
+  // drying back toward dry sand above it (wetLevel lags the tide).
+  float wet = (1.0 - smoothstep(uWaterLevel, uWetLevel + 0.6, h)) * (1.0 - smoothstep(0.55, 0.72, slope));
+  col = mix(col, col * 0.62, clamp(wet, 0.0, 1.0));
 
   // Directional light: warm in the sun, gently cool in shadow.
   float diff = max(dot(n, normalize(uSunDir)), 0.0);
@@ -640,11 +767,13 @@ const WORLD_F = WORLD.toFixed(1);
 const waterVS = `#version 300 es
 precision highp float;
 uniform mat4 uProj, uView;
-uniform float uTime;
+uniform float uTime, uWaterLevel;
 uniform vec2 uCenter;          // grid follows the camera across the big map
-uniform sampler2D uHeight;
+uniform sampler2D uHeight, uFilled;
 in vec2 aXZ;
 out vec3 vWorld;
+out float vDepth;
+out float vPool;
 
 float waveH(vec2 p, float t) {
   float h = 0.0;
@@ -658,63 +787,69 @@ void main() {
   vec2 xz = aXZ + uCenter;
   vec2 uv = clamp((xz + ${HALF_F}) / ${WORLD_F}, 0.0, 1.0);
   float terr = texture(uHeight, uv).r;
-  float depth = max(0.0, -terr);
-  float damp = smoothstep(0.0, 2.0, depth);      // calm the waves in shallows
+  float rim = texture(uFilled, uv).r;            // level this cell connects to the sea
+  float local = max(uWaterLevel, rim);           // isolated pools hold water to the rim
+  float pool = (rim > uWaterLevel + 0.05 && rim > terr + 0.02) ? 1.0 : 0.0;
+  float depth = local - terr;
+  float damp = pool > 0.5 ? 0.05 : smoothstep(0.0, 2.0, max(0.0, depth)); // pools are still
   float wy = waveH(xz, uTime) * damp;
-  vWorld = vec3(xz.x, wy, xz.y);
+  vDepth = depth; vPool = pool;
+  vWorld = vec3(xz.x, local + wy, xz.y);
   gl_Position = uProj * uView * vec4(vWorld, 1.0);
 }`;
 
 const waterFS = `#version 300 es
 precision highp float;
 in vec3 vWorld;
+in float vDepth;
+in float vPool;
 out vec4 frag;
 uniform vec3 uCamPos, uSunDir, uZenith, uHorizon, uWarm;
-uniform float uTime, uFogDensity, uFogNear;
-uniform sampler2D uHeight;
+uniform float uTime, uFogDensity, uFogNear, uWaterLevel;
+uniform sampler2D uHeight, uFilled;
 ${SKY_GLSL}
 void main() {
   vec2 uv = clamp((vWorld.xz + ${HALF_F}) / ${WORLD_F}, 0.0, 1.0);
   float terr = texture(uHeight, uv).r;
-  if (terr > 0.08) discard;                       // don't draw water on land
-  float depth = -terr;                            // >0 = underwater depth
+  float rim = texture(uFilled, uv).r;
+  float local = max(uWaterLevel, rim);
+  if (terr > local - 0.02) discard;               // ground above the local surface
+  float depth = local - terr;
 
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));  // faceted wave normals
   if (n.y < 0.0) n = -n;
   vec3 v = normalize(uCamPos - vWorld);
+  vec3 col; float alpha;
 
-  vec3 deep    = vec3(0.05, 0.20, 0.26);
-  vec3 shallow = vec3(0.30, 0.52, 0.52);
-  float dmix = smoothstep(0.0, 6.0, depth);
-  vec3 col = mix(shallow, deep, dmix);
-
-  // Light sky reflection (fresnel) + a warm sun glint.
-  vec3 refl = reflect(-v, n);
-  vec3 skyR = skyColor(refl, uSunDir, uZenith, uHorizon, uWarm);
-  float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
-  col = mix(col, skyR, fres * 0.5);
-  vec3 r = reflect(-normalize(uSunDir), n);
-  col += uWarm * pow(max(dot(v, r), 0.0), 48.0) * 0.6;
-
-  // Foam band hugging the shoreline, animated so it laps.
-  float lap = sin(vWorld.x * 0.6 + uTime * 2.0) * sin(vWorld.z * 0.55 - uTime * 1.6);
-  float band = 1.0 - smoothstep(0.0, 1.3, depth);
-  float foam = clamp(band * (0.5 + 0.5 * lap), 0.0, 1.0);
-  col = mix(col, vec3(0.92, 0.95, 0.95), foam * 0.85);
-
-  // Transparent over shallows (sand shows through), opaque in deep water.
-  float alpha = mix(0.4, 0.9, dmix);
-  alpha = max(alpha, foam * 0.9);
+  if (vPool > 0.5) {
+    // still, clear tide pool: see the bottom, slight green tint
+    vec3 pdeep = vec3(0.12, 0.28, 0.28), pshallow = vec3(0.34, 0.47, 0.42);
+    float dm = smoothstep(0.0, 1.6, depth);
+    col = mix(pshallow, pdeep, dm);
+    vec3 refl = reflect(-v, n);
+    col = mix(col, skyColor(refl, uSunDir, uZenith, uHorizon, uWarm), pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.3);
+    alpha = clamp(0.3 + depth * 0.25, 0.25, 0.72);
+  } else {
+    vec3 deep = vec3(0.05, 0.20, 0.26), shallow = vec3(0.30, 0.52, 0.52);
+    float dmix = smoothstep(0.0, 6.0, depth);
+    col = mix(shallow, deep, dmix);
+    vec3 refl = reflect(-v, n);
+    col = mix(col, skyColor(refl, uSunDir, uZenith, uHorizon, uWarm), pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.5);
+    col += uWarm * pow(max(dot(v, reflect(-normalize(uSunDir), n)), 0.0), 48.0) * 0.6;
+    // foam band that follows the shoreline as the tide moves
+    float lap = sin(vWorld.x * 0.6 + uTime * 2.0) * sin(vWorld.z * 0.55 - uTime * 1.6);
+    float foam = clamp((1.0 - smoothstep(0.0, 1.3, depth)) * (0.5 + 0.5 * lap), 0.0, 1.0);
+    col = mix(col, vec3(0.92, 0.95, 0.95), foam * 0.85);
+    alpha = max(mix(0.4, 0.9, dmix), foam * 0.9);
+  }
 
   // Fog → sky; fully-fogged water becomes opaque sky so no far edge shows.
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
   float fd = max(dist - uFogNear, 0.0) * uFogDensity;
   float fog = 1.0 - exp(-fd * fd);
-  vec3 fogCol = skyColor(viewVec, uSunDir, uZenith, uHorizon, uWarm);
-  col = mix(col, fogCol, fog);
+  col = mix(col, skyColor(viewVec, uSunDir, uZenith, uHorizon, uWarm), fog);
   alpha = mix(alpha, 1.0, fog);
-
   frag = vec4(col, alpha);
 }`;
 
@@ -890,7 +1025,6 @@ const WALK_SPEED = 9.5;      // units / second (vast map, so not too slow)
 const SPRINT = 1.8;          // sprint multiplier
 const SLOPE_LIMIT = 40 * Math.PI / 180;   // can't climb steeper than this
 const WADE_DEPTH = 1.0;      // can wade up to this depth, then it blocks
-let waterLevel = 0.0;        // a variable (not a constant) — tides move it later
 const player = { x: 0, z: 0, bob: 0, eyeY: EYE, sprinting: false };
 
 // Spawn on dry sand at the shore, facing the island's highest point.
@@ -985,6 +1119,9 @@ addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (e.code === "KeyG") ditherOn = !ditherOn;
   if (e.code === "Backquote") debugOn = !debugOn;          // perf overlay
+  if (e.code === "KeyT") tideSpeed = tideSpeed === 1 ? 60 : 1;   // fast-forward tide
+  if (e.code === "BracketLeft")  tideT = (tideT - 0.03 + 1) % 1; // scrub tide
+  if (e.code === "BracketRight") tideT = (tideT + 0.03) % 1;
   if (e.code === "KeyF" && (mode === "walk" || mode === "free")) {
     // toggle debug fly <-> walk, keeping position/look
     if (mode === "walk") { cam.pos = [player.x, player.eyeY, player.z]; mode = "free"; }
@@ -1616,10 +1753,12 @@ function drawProps(view) {
 
 buildHeightmap();
 findHighPoint();
+computeBasins();
 buildProps();
 const terrain = buildTerrainMesh();
 const water = buildWaterMesh();
 const heightTex = buildHeightTexture();
+const filledTex = buildFilledTexture();
 const fsTri = buildFsTri();
 
 let proj = new Float32Array(16);
@@ -1645,6 +1784,8 @@ function frame(now) {
   const t = now * 0.001;
   if (raw > 0) fpsSmooth += (1 / raw - fpsSmooth) * 0.1;
   frameDraws = 0; frameTris = 0;
+
+  updateTide(dt);
 
   // ---- movement ----
   const fwd = camForward();
@@ -1764,6 +1905,8 @@ function frame(now) {
   gl.uniform3fv(terrainU.uWarm, SKY.warm);
   gl.uniform1f(terrainU.uFogDensity, FOG_DENSITY);
   gl.uniform1f(terrainU.uFogNear, FOG_NEAR);
+  gl.uniform1f(terrainU.uWaterLevel, waterLevel);
+  gl.uniform1f(terrainU.uWetLevel, wetLevel);
   gl.bindVertexArray(terrain.vao);
   gl.drawElements(gl.TRIANGLES, terrain.count, gl.UNSIGNED_INT, 0);
   countDraw(terrain.count / 3);
@@ -1785,6 +1928,7 @@ function frame(now) {
   gl.uniform1f(waterU.uTime, t);
   gl.uniform1f(waterU.uFogDensity, FOG_DENSITY);
   gl.uniform1f(waterU.uFogNear, FOG_NEAR);
+  gl.uniform1f(waterU.uWaterLevel, waterLevel);
   // snap the water sheet to the camera so wave detail stays nearby
   const wsnap = (WATER_HALF * 2) / 256;
   gl.uniform2f(waterU.uCenter, Math.round(cam.pos[0] / wsnap) * wsnap,
@@ -1792,6 +1936,9 @@ function frame(now) {
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, heightTex);
   gl.uniform1i(waterU.uHeight, 0);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, filledTex);
+  gl.uniform1i(waterU.uFilled, 1);
   gl.bindVertexArray(water.vao);
   gl.drawElements(gl.TRIANGLES, water.count, gl.UNSIGNED_INT, 0);
   countDraw(water.count / 3);
@@ -1815,8 +1962,12 @@ function frame(now) {
   gl.bindVertexArray(null);
 
   // ---- hud ----
+  const ti = tideInfo();
+  const mins = Math.floor(ti.tToLow / 60), secs = Math.floor(ti.tToLow % 60);
   hud.textContent =
     `seed ${SEED_STR}  ·  ${archetype}\n` +
+    `tide ${ti.rising ? "▲ rising" : "▼ falling"}  ·  low in ${mins}:${String(secs).padStart(2, "0")}` +
+    `${tideSpeed > 1 ? "  (fast)" : ""}\n` +
     `mode ${mode}  ·  POIs ${POIS.map((p) => p.type).join(", ")}`;
 
   if (debugOn) {
