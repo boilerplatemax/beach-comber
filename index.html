@@ -9,7 +9,7 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #eaf2f5; }
-  #gl { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+  #gl { display: block; width: 100vw; height: 100vh; cursor: crosshair; image-rendering: pixelated; }
 
   /* Overlay / title */
   #overlay {
@@ -51,7 +51,7 @@
 
 <div id="overlay">
   <h1>Beachcomber</h1>
-  <p>A procedurally generated island, grown entirely from a seed. Milestone 1: terrain, flat shading & a free-fly camera.</p>
+  <p>A procedurally generated island, grown entirely from a seed. Milestone 2: low-res dithered rendering, sky, fog & an animated ocean.</p>
   <div class="btns">
     <button id="startBtn" class="primary">Explore</button>
     <button id="newBtn">New island</button>
@@ -62,14 +62,15 @@
 <div id="hud"></div>
 <div id="help">
   WASD — move · Space/Shift — up/down<br>
-  Mouse — look · Esc — release · Scroll — speed
+  Mouse — look · Esc — release · Scroll — speed · G — dither
 </div>
 
 <script>
 "use strict";
 /* ===================================================================== *
- *  BEACHCOMBER  —  Milestone 1
- *  PRNG · seeded value-noise terrain · flat shading · fly camera
+ *  BEACHCOMBER  —  Milestone 2  (the "vibe engine")
+ *  Low-res FBO + nearest upscale · Bayer dither + palette quantization
+ *  View-ray sky gradient · distance fog · animated ocean w/ foam.
  *  Raw WebGL2, no libraries, no asset files.
  * ===================================================================== */
 
@@ -202,7 +203,7 @@ function buildHeightmap() {
       const d = Math.sqrt(dx * dx + dz * dz) * 2.0;        // 0 center → ~1 edge
       const fall = 1.0 - smoothstep(0.55, 1.0, d);
       const island = h * fall;
-      heightmap[z * GRID + x] = (island - 0.30) * AMP;     // < -? underwater
+      heightmap[z * GRID + x] = (island - 0.30) * AMP;     // < 0 underwater
     }
   }
 }
@@ -227,6 +228,31 @@ function heightAt(wx, wz) {
   const b = h01 + (h11 - h01) * fx;
   return a + (b - a) * fz;
 }
+
+/* --------------------------------------------------------------------- *
+ * § ATMOSPHERE  (sun + sky/fog palette driven by one timeOfDay value;
+ *                Phase 5 will animate timeOfDay, nothing else changes.)
+ * --------------------------------------------------------------------- */
+
+let timeOfDay = 0.34;                 // 0..1 (fixed overcast mood for now)
+const FOG_DENSITY = 0.0058;
+const FOG_NEAR = 25.0;                // clear band before fog ramps in
+
+// Cohesive eerie-cozy, overcast, early-2000s palette.
+const SKY = {
+  zenith:  [0.42, 0.54, 0.63],        // cool blue-grey overhead
+  horizon: [0.78, 0.77, 0.72],        // pale warm haze at the horizon
+  warm:    [1.00, 0.92, 0.78],        // soft sun tint
+  sun:     [0, 0, 0],                 // filled by updateSun()
+};
+
+function updateSun() {
+  // Low sun for long, soft light. (Later: derive elevation/azimuth from time.)
+  const el = 0.46, az = 0.85;         // radians
+  const ce = Math.cos(el), se = Math.sin(el);
+  SKY.sun = [ce * Math.sin(az), se, -ce * Math.cos(az)];
+}
+updateSun();
 
 /* --------------------------------------------------------------------- *
  * § MATH  (column-major mat4)
@@ -263,6 +289,37 @@ const M4 = {
       1,
     ]);
   },
+  // result = a * b  (both column-major)
+  multiply(a, b) {
+    const o = new Float32Array(16);
+    for (let c = 0; c < 4; c++)
+      for (let r = 0; r < 4; r++)
+        o[c*4+r] = a[r]*b[c*4] + a[4+r]*b[c*4+1] + a[8+r]*b[c*4+2] + a[12+r]*b[c*4+3];
+    return o;
+  },
+  invert(m) {
+    const a00=m[0],a01=m[1],a02=m[2],a03=m[3];
+    const a10=m[4],a11=m[5],a12=m[6],a13=m[7];
+    const a20=m[8],a21=m[9],a22=m[10],a23=m[11];
+    const a30=m[12],a31=m[13],a32=m[14],a33=m[15];
+    const b00=a00*a11-a01*a10, b01=a00*a12-a02*a10, b02=a00*a13-a03*a10;
+    const b03=a01*a12-a02*a11, b04=a01*a13-a03*a11, b05=a02*a13-a03*a12;
+    const b06=a20*a31-a21*a30, b07=a20*a32-a22*a30, b08=a20*a33-a23*a30;
+    const b09=a21*a32-a22*a31, b10=a21*a33-a23*a31, b11=a22*a33-a23*a32;
+    let det = b00*b11-b01*b10+b02*b09+b03*b08-b04*b07+b05*b06;
+    const o = new Float32Array(16);
+    if (!det) return o;
+    det = 1.0/det;
+    o[0]=(a11*b11-a12*b10+a13*b09)*det;  o[1]=(a02*b10-a01*b11-a03*b09)*det;
+    o[2]=(a31*b05-a32*b04+a33*b03)*det;  o[3]=(a22*b04-a21*b05-a23*b03)*det;
+    o[4]=(a12*b08-a10*b11-a13*b07)*det;  o[5]=(a00*b11-a02*b08+a03*b07)*det;
+    o[6]=(a32*b02-a30*b05-a33*b01)*det;  o[7]=(a20*b05-a22*b02+a23*b01)*det;
+    o[8]=(a10*b10-a11*b08+a13*b06)*det;  o[9]=(a01*b08-a00*b10-a03*b06)*det;
+    o[10]=(a30*b04-a31*b02+a33*b00)*det; o[11]=(a21*b02-a20*b04-a23*b00)*det;
+    o[12]=(a11*b07-a10*b09-a12*b06)*det; o[13]=(a00*b09-a01*b07+a02*b06)*det;
+    o[14]=(a31*b01-a30*b03-a32*b00)*det; o[15]=(a20*b03-a21*b01+a22*b00)*det;
+    return o;
+  },
 };
 
 /* --------------------------------------------------------------------- *
@@ -270,8 +327,9 @@ const M4 = {
  * --------------------------------------------------------------------- */
 
 const canvas = document.getElementById("gl");
-const gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
+const gl = canvas.getContext("webgl2", { antialias: false, alpha: false });
 if (!gl) alert("WebGL2 is required for this game.");
+const floatLinear = gl.getExtension("OES_texture_float_linear");
 
 function compile(type, src) {
   const s = gl.createShader(type);
@@ -290,9 +348,33 @@ function program(vsSrc, fsSrc) {
     throw new Error(gl.getProgramInfoLog(p));
   return p;
 }
+// Collect every active uniform's location into a lookup object.
+function uniforms(p) {
+  const u = {};
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) {
+    const name = gl.getActiveUniform(p, i).name;
+    u[name] = gl.getUniformLocation(p, name);
+  }
+  return u;
+}
+
+// Shared GLSL: the ONE sky function, injected into sky/terrain/water so fog
+// melts seamlessly into the sky. Pure function — no uniform-name coupling.
+const SKY_GLSL = `
+vec3 skyColor(vec3 dir, vec3 sunDir, vec3 zen, vec3 hor, vec3 warm) {
+  dir = normalize(dir);
+  float t = clamp(dir.y * 1.4 + 0.15, 0.0, 1.0);
+  vec3 col = mix(hor, zen, pow(t, 0.65));
+  col = mix(col, hor * 0.92, clamp(-dir.y * 3.0, 0.0, 1.0));   // soft below-horizon
+  float s = max(dot(dir, normalize(sunDir)), 0.0);
+  col += warm * pow(s, 48.0) * 0.9;    // tight sun disc
+  col += warm * pow(s, 7.0)  * 0.12;   // broad glow
+  return col;
+}`;
 
 /* --------------------------------------------------------------------- *
- * § TERRAIN  (indexed mesh; flat shading + banded color in the shader)
+ * § TERRAIN  (indexed mesh; flat shading, banded color, fog → sky)
  * --------------------------------------------------------------------- */
 
 const terrainVS = `#version 300 es
@@ -309,17 +391,16 @@ const terrainFS = `#version 300 es
 precision highp float;
 in vec3 vWorld;
 out vec4 frag;
-uniform vec3 uSunDir;
-uniform vec3 uCamPos;
-
+uniform vec3 uSunDir, uCamPos, uZenith, uHorizon, uWarm;
+uniform float uFogDensity, uFogNear;
+${SKY_GLSL}
 void main() {
   // Flat shading: face normal from screen-space derivatives of world pos.
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
-  if (n.y < 0.0) n = -n;                       // keep normals facing up-ish
+  if (n.y < 0.0) n = -n;
   float h = vWorld.y;
-  float slope = 1.0 - clamp(n.y, 0.0, 1.0);    // 0 flat .. 1 vertical
+  float slope = 1.0 - clamp(n.y, 0.0, 1.0);
 
-  // Cohesive palette, selected by height then overridden by slope (rock).
   vec3 cSeafloor = vec3(0.42, 0.46, 0.40);
   vec3 cSandWet  = vec3(0.74, 0.67, 0.51);
   vec3 cSandDry  = vec3(0.87, 0.79, 0.60);
@@ -334,14 +415,24 @@ void main() {
   col = mix(col, cForest,  smoothstep(8.0, 13.0, h));
   col = mix(col, cRock,    smoothstep(0.35, 0.62, slope));
 
+  // Directional light: warm in the sun, gently cool in shadow.
   float diff = max(dot(n, normalize(uSunDir)), 0.0);
-  float ambient = 0.35;
-  col *= ambient + (1.0 - ambient) * diff;
+  col *= (0.55 + 0.55 * diff);
+  col *= mix(vec3(0.88, 0.91, 0.99), uWarm, diff);
+
+  // Distance fog → the sky color for this fragment's own view direction.
+  vec3 viewVec = vWorld - uCamPos;
+  float dist = length(viewVec);
+  float fd = max(dist - uFogNear, 0.0) * uFogDensity;
+  float fog = 1.0 - exp(-fd * fd);
+  vec3 fogCol = skyColor(viewVec, uSunDir, uZenith, uHorizon, uWarm);
+  col = mix(col, fogCol, fog);
 
   frag = vec4(col, 1.0);
 }`;
 
 const terrainProg = program(terrainVS, terrainFS);
+const terrainU = uniforms(terrainProg);
 
 function buildTerrainMesh() {
   const positions = new Float32Array(GRID * GRID * 3);
@@ -353,20 +444,15 @@ function buildTerrainMesh() {
       positions[p++] = z * CELL - HALF;
     }
   }
-  // Indexed triangles (32-bit indices; GRID*GRID > 65535).
   const indices = new Uint32Array((GRID - 1) * (GRID - 1) * 6);
   let i = 0;
   for (let z = 0; z < GRID - 1; z++) {
     for (let x = 0; x < GRID - 1; x++) {
-      const a = z * GRID + x;
-      const b = a + 1;
-      const c = a + GRID;
-      const d = c + 1;
+      const a = z * GRID + x, b = a + 1, c = a + GRID, d = c + 1;
       indices[i++] = a; indices[i++] = c; indices[i++] = b;
       indices[i++] = b; indices[i++] = c; indices[i++] = d;
     }
   }
-
   const vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
   const vbo = gl.createBuffer();
@@ -379,22 +465,56 @@ function buildTerrainMesh() {
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
   gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
   gl.bindVertexArray(null);
-
   return { vao, count: indices.length };
 }
 
 /* --------------------------------------------------------------------- *
- * § WATER  (Milestone 1: a simple translucent plane at sea level.
- *            Waves + foam arrive in Milestone 2.)
+ * § HEIGHT TEXTURE  (heightmap sampled by the ocean shaders)
  * --------------------------------------------------------------------- */
+
+function buildHeightTexture() {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, GRID, GRID, 0, gl.RED, gl.FLOAT, heightmap);
+  const hf = floatLinear ? gl.LINEAR : gl.NEAREST;
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, hf);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, hf);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+
+/* --------------------------------------------------------------------- *
+ * § WATER  (dense grid, summed-sine waves, shoreline foam, transparency)
+ * --------------------------------------------------------------------- */
+
+const HALF_F = HALF.toFixed(1);
+const WORLD_F = WORLD.toFixed(1);
 
 const waterVS = `#version 300 es
 precision highp float;
 uniform mat4 uProj, uView;
+uniform float uTime;
+uniform sampler2D uHeight;
 in vec2 aXZ;
 out vec3 vWorld;
+
+float waveH(vec2 p, float t) {
+  float h = 0.0;
+  h += sin(p.x * 0.18 + t * 0.9) * 0.35;
+  h += sin(p.y * 0.15 - t * 0.7) * 0.30;
+  h += sin((p.x + p.y) * 0.09 + t * 1.3) * 0.18;
+  h += sin((p.x - p.y) * 0.22 - t * 1.7) * 0.10;
+  return h;
+}
 void main() {
-  vWorld = vec3(aXZ.x, 0.0, aXZ.y);
+  vec2 uv = clamp((aXZ + ${HALF_F}) / ${WORLD_F}, 0.0, 1.0);
+  float terr = texture(uHeight, uv).r;
+  float depth = max(0.0, -terr);
+  float damp = smoothstep(0.0, 2.0, depth);      // calm the waves in shallows
+  float wy = waveH(aXZ, uTime) * damp;
+  vWorld = vec3(aXZ.x, wy, aXZ.y);
   gl_Position = uProj * uView * vec4(vWorld, 1.0);
 }`;
 
@@ -402,57 +522,210 @@ const waterFS = `#version 300 es
 precision highp float;
 in vec3 vWorld;
 out vec4 frag;
-uniform vec3 uCamPos;
+uniform vec3 uCamPos, uSunDir, uZenith, uHorizon, uWarm;
+uniform float uTime, uFogDensity, uFogNear;
+uniform sampler2D uHeight;
+${SKY_GLSL}
 void main() {
-  vec3 deep    = vec3(0.07, 0.26, 0.33);
-  vec3 shallow = vec3(0.26, 0.55, 0.57);
-  float dist = length(vWorld.xz - uCamPos.xz);
-  float f = clamp(dist / 160.0, 0.0, 1.0);
-  vec3 col = mix(shallow, deep, f);
-  frag = vec4(col, 0.72);
+  vec2 uv = clamp((vWorld.xz + ${HALF_F}) / ${WORLD_F}, 0.0, 1.0);
+  float terr = texture(uHeight, uv).r;
+  if (terr > 0.08) discard;                       // don't draw water on land
+  float depth = -terr;                            // >0 = underwater depth
+
+  vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));  // faceted wave normals
+  if (n.y < 0.0) n = -n;
+  vec3 v = normalize(uCamPos - vWorld);
+
+  vec3 deep    = vec3(0.05, 0.20, 0.26);
+  vec3 shallow = vec3(0.30, 0.52, 0.52);
+  float dmix = smoothstep(0.0, 6.0, depth);
+  vec3 col = mix(shallow, deep, dmix);
+
+  // Light sky reflection (fresnel) + a warm sun glint.
+  vec3 refl = reflect(-v, n);
+  vec3 skyR = skyColor(refl, uSunDir, uZenith, uHorizon, uWarm);
+  float fres = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+  col = mix(col, skyR, fres * 0.5);
+  vec3 r = reflect(-normalize(uSunDir), n);
+  col += uWarm * pow(max(dot(v, r), 0.0), 48.0) * 0.6;
+
+  // Foam band hugging the shoreline, animated so it laps.
+  float lap = sin(vWorld.x * 0.6 + uTime * 2.0) * sin(vWorld.z * 0.55 - uTime * 1.6);
+  float band = 1.0 - smoothstep(0.0, 1.3, depth);
+  float foam = clamp(band * (0.5 + 0.5 * lap), 0.0, 1.0);
+  col = mix(col, vec3(0.92, 0.95, 0.95), foam * 0.85);
+
+  // Transparent over shallows (sand shows through), opaque in deep water.
+  float alpha = mix(0.4, 0.9, dmix);
+  alpha = max(alpha, foam * 0.9);
+
+  // Fog → sky; fully-fogged water becomes opaque sky so no far edge shows.
+  vec3 viewVec = vWorld - uCamPos;
+  float dist = length(viewVec);
+  float fd = max(dist - uFogNear, 0.0) * uFogDensity;
+  float fog = 1.0 - exp(-fd * fd);
+  vec3 fogCol = skyColor(viewVec, uSunDir, uZenith, uHorizon, uWarm);
+  col = mix(col, fogCol, fog);
+  alpha = mix(alpha, 1.0, fog);
+
+  frag = vec4(col, alpha);
 }`;
 
 const waterProg = program(waterVS, waterFS);
+const waterU = uniforms(waterProg);
 
 function buildWaterMesh() {
-  const S = WORLD * 1.6;   // extends past the island to the horizon
-  const verts = new Float32Array([
-    -S, -S,  S, -S,  S, S,
-    -S, -S,  S,  S, -S, S,
-  ]);
+  const WHALF = 320.0, SEG = 200;     // extends past the island; fog hides edges
+  const n = SEG + 1;
+  const pos = new Float32Array(n * n * 2);
+  let k = 0;
+  for (let j = 0; j < n; j++)
+    for (let i = 0; i < n; i++) {
+      pos[k++] = -WHALF + (i / SEG) * WHALF * 2;
+      pos[k++] = -WHALF + (j / SEG) * WHALF * 2;
+    }
+  const idx = new Uint32Array(SEG * SEG * 6);
+  let m = 0;
+  for (let j = 0; j < SEG; j++)
+    for (let i = 0; i < SEG; i++) {
+      const a = j * n + i, b = a + 1, c = a + n, d = c + 1;
+      idx[m++] = a; idx[m++] = c; idx[m++] = b;
+      idx[m++] = b; idx[m++] = c; idx[m++] = d;
+    }
   const vao = gl.createVertexArray();
   gl.bindVertexArray(vao);
   const vbo = gl.createBuffer();
   gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-  gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+  gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
   const loc = gl.getAttribLocation(waterProg, "aXZ");
   gl.enableVertexAttribArray(loc);
   gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  const ibo = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx, gl.STATIC_DRAW);
   gl.bindVertexArray(null);
-  return { vao, count: 6 };
+  return { vao, count: idx.length };
 }
 
 /* --------------------------------------------------------------------- *
- * § CAMERA  (free-fly; walker + head-bob come in Milestone 3)
+ * § SKY  (fullscreen view-ray gradient, drawn as scene background)
  * --------------------------------------------------------------------- */
 
-const cam = {
-  pos: [0, 40, 90],
-  yaw: 0,           // radians, around Y
-  pitch: -0.35,     // radians, around X
-  speed: 40,        // units / second
-};
+const fsTriVS = `#version 300 es
+precision highp float;
+in vec2 aClip;
+out vec2 vNdc;
+out vec2 vUv;
+void main() {
+  vNdc = aClip;
+  vUv = aClip * 0.5 + 0.5;
+  gl_Position = vec4(aClip, 1.0, 1.0);
+}`;
 
-// Point the camera roughly at the island center on spawn.
+const skyFS = `#version 300 es
+precision highp float;
+in vec2 vNdc;
+out vec4 frag;
+uniform mat4 uInvVP;
+uniform vec3 uCamPos, uSunDir, uZenith, uHorizon, uWarm;
+${SKY_GLSL}
+void main() {
+  vec4 world = uInvVP * vec4(vNdc, 1.0, 1.0);   // unproject far plane
+  vec3 dir = normalize(world.xyz / world.w - uCamPos);
+  frag = vec4(skyColor(dir, uSunDir, uZenith, uHorizon, uWarm), 1.0);
+}`;
+
+const skyProg = program(fsTriVS, skyFS);
+const skyU = uniforms(skyProg);
+
+function buildFsTri() {
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(skyProg, "aClip");
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  gl.bindVertexArray(null);
+  return vao;
+}
+
+/* --------------------------------------------------------------------- *
+ * § POST  (nearest upscale + Bayer dither + palette quantization)
+ * --------------------------------------------------------------------- */
+
+const postFS = `#version 300 es
+precision highp float;
+in vec2 vUv;
+out vec4 frag;
+uniform sampler2D uScene;
+uniform vec2 uSceneSize;
+uniform int uDither;
+const float bayer[16] = float[16](
+  0.0, 8.0, 2.0, 10.0,  12.0, 4.0, 14.0, 6.0,
+  3.0, 11.0, 1.0, 9.0,  15.0, 7.0, 13.0, 5.0);
+void main() {
+  vec3 c = clamp(texture(uScene, vUv).rgb, 0.0, 1.0);
+  float levels = 8.0;
+  ivec2 p = ivec2(vUv * uSceneSize);            // low-res texel → chunky pattern
+  int idx = (p.x & 3) * 4 + (p.y & 3);
+  vec3 q;
+  if (uDither == 1) q = floor(c * levels + bayer[idx] / 16.0) / levels;
+  else              q = floor(c * levels + 0.5) / levels;
+  frag = vec4(q, 1.0);
+}`;
+
+const postProg = program(fsTriVS, postFS);
+const postU = uniforms(postProg);
+
+// Low-res scene framebuffer (reallocated only when its size changes).
+const fbo = { w: 0, h: 0, fb: null, color: null, depth: null };
+function ensureFBO() {
+  const aspect = canvas.width / canvas.height;
+  const w = Math.max(320, Math.min(480, 400));
+  const h = Math.max(1, Math.round(w / aspect));
+  if (w === fbo.w && h === fbo.h) return;
+  fbo.w = w; fbo.h = h;
+  if (!fbo.fb) {
+    fbo.fb = gl.createFramebuffer();
+    fbo.color = gl.createTexture();
+    fbo.depth = gl.createRenderbuffer();
+  }
+  gl.bindTexture(gl.TEXTURE_2D, fbo.color);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.bindRenderbuffer(gl.RENDERBUFFER, fbo.depth);
+  gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, w, h);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, fbo.color, 0);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, fbo.depth);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+/* --------------------------------------------------------------------- *
+ * § CAMERA  (free-fly; walker + head-bob come in Phase 3)
+ * --------------------------------------------------------------------- */
+
+const cam = { pos: [0, 24, 66], yaw: 0, pitch: -0.20, speed: 42 };
 (function aimAtIsland() {
-  const dx = 0 - cam.pos[0], dz = 0 - cam.pos[2];
-  cam.yaw = Math.atan2(dx, -dz);
+  cam.yaw = Math.atan2(0 - cam.pos[0], -(0 - cam.pos[2]));
 })();
-
+// Optional ?cam=x,y,z[,yaw,pitch] — share a seed together with a viewpoint.
+(function camFromURL() {
+  const p = new URLSearchParams(location.search).get("cam");
+  if (!p) return;
+  const a = p.split(",").map(Number);
+  if (a.length >= 3 && a.every((n) => isFinite(n))) cam.pos = [a[0], a[1], a[2]];
+  if (a.length >= 4) cam.yaw = a[3];
+  if (a.length >= 5) cam.pitch = a[4];
+})();
 function camForward() {
   const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
-  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
-  return [sy * cp, sp, -cy * cp];
+  return [Math.sin(cam.yaw) * cp, sp, -Math.cos(cam.yaw) * cp];
 }
 
 /* --------------------------------------------------------------------- *
@@ -460,8 +733,12 @@ function camForward() {
  * --------------------------------------------------------------------- */
 
 const keys = Object.create(null);
-addEventListener("keydown", (e) => { keys[e.code] = true; });
-addEventListener("keyup",   (e) => { keys[e.code] = false; });
+let ditherOn = true;
+addEventListener("keydown", (e) => {
+  keys[e.code] = true;
+  if (e.code === "KeyG") ditherOn = !ditherOn;
+});
+addEventListener("keyup", (e) => { keys[e.code] = false; });
 
 canvas.addEventListener("click", () => {
   if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
@@ -497,7 +774,6 @@ document.getElementById("newBtn").addEventListener("click", () => {
 document.addEventListener("pointerlockchange", () => {
   if (document.pointerLockElement !== canvas) overlay.classList.remove("hidden");
 });
-
 const hud = document.getElementById("hud");
 
 /* --------------------------------------------------------------------- *
@@ -507,46 +783,31 @@ const hud = document.getElementById("hud");
 buildHeightmap();
 const terrain = buildTerrainMesh();
 const water = buildWaterMesh();
-
-// Cache uniform locations.
-const U = {
-  tProj: gl.getUniformLocation(terrainProg, "uProj"),
-  tView: gl.getUniformLocation(terrainProg, "uView"),
-  tSun:  gl.getUniformLocation(terrainProg, "uSunDir"),
-  tCam:  gl.getUniformLocation(terrainProg, "uCamPos"),
-  wProj: gl.getUniformLocation(waterProg, "uProj"),
-  wView: gl.getUniformLocation(waterProg, "uView"),
-  wCam:  gl.getUniformLocation(waterProg, "uCamPos"),
-};
+const heightTex = buildHeightTexture();
+const fsTri = buildFsTri();
 
 let proj = new Float32Array(16);
 function resize() {
   const dpr = Math.min(devicePixelRatio || 1, 2);
   const w = Math.floor(innerWidth * dpr);
   const h = Math.floor(innerHeight * dpr);
-  if (canvas.width !== w || canvas.height !== h) {
-    canvas.width = w; canvas.height = h;
-  }
-  gl.viewport(0, 0, canvas.width, canvas.height);
+  if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   proj = M4.perspective(Math.PI / 3, canvas.width / canvas.height, 0.1, 900);
+  ensureFBO();
 }
 addEventListener("resize", resize);
 resize();
-
-gl.enable(gl.DEPTH_TEST);
-gl.clearColor(0.55, 0.72, 0.80, 1.0);   // simple sky (gradient comes in M2)
-
-const SUN = [0.5, 0.75, 0.35];
 
 let last = performance.now();
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
+  const t = now * 0.001;
 
-  // ---- movement ----
+  // ---- movement (fly) ----
   const fwd = camForward();
   const flen = Math.hypot(fwd[0], fwd[2]) || 1;
-  const right = [fwd[2] / flen, 0, -fwd[0] / flen];   // horizontal right
+  const right = [fwd[2] / flen, 0, -fwd[0] / flen];
   let mx = 0, my = 0, mz = 0;
   if (keys["KeyW"]) { mx += fwd[0]; my += fwd[1]; mz += fwd[2]; }
   if (keys["KeyS"]) { mx -= fwd[0]; my -= fwd[1]; mz -= fwd[2]; }
@@ -560,40 +821,89 @@ function frame(now) {
     cam.pos[0] += mx * step; cam.pos[1] += my * step; cam.pos[2] += mz * step;
   }
 
-  // ---- view matrix ----
+  // ---- matrices ----
   const f = camForward();
   const view = M4.lookAt(cam.pos, [cam.pos[0]+f[0], cam.pos[1]+f[1], cam.pos[2]+f[2]], [0, 1, 0]);
+  const invVP = M4.invert(M4.multiply(proj, view));
 
-  // ---- draw ----
+  // ============ PASS 1: scene → low-res FBO ============
+  ensureFBO();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.fb);
+  gl.viewport(0, 0, fbo.w, fbo.h);
+  gl.clearColor(SKY.horizon[0], SKY.horizon[1], SKY.horizon[2], 1.0);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
+  // sky (background, no depth)
+  gl.disable(gl.DEPTH_TEST);
+  gl.depthMask(false);
+  gl.useProgram(skyProg);
+  gl.uniformMatrix4fv(skyU.uInvVP, false, invVP);
+  gl.uniform3fv(skyU.uCamPos, cam.pos);
+  gl.uniform3fv(skyU.uSunDir, SKY.sun);
+  gl.uniform3fv(skyU.uZenith, SKY.zenith);
+  gl.uniform3fv(skyU.uHorizon, SKY.horizon);
+  gl.uniform3fv(skyU.uWarm, SKY.warm);
+  gl.bindVertexArray(fsTri);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+  // terrain
+  gl.enable(gl.DEPTH_TEST);
+  gl.depthMask(true);
   gl.useProgram(terrainProg);
-  gl.uniformMatrix4fv(U.tProj, false, proj);
-  gl.uniformMatrix4fv(U.tView, false, view);
-  gl.uniform3fv(U.tSun, SUN);
-  gl.uniform3fv(U.tCam, cam.pos);
+  gl.uniformMatrix4fv(terrainU.uProj, false, proj);
+  gl.uniformMatrix4fv(terrainU.uView, false, view);
+  gl.uniform3fv(terrainU.uSunDir, SKY.sun);
+  gl.uniform3fv(terrainU.uCamPos, cam.pos);
+  gl.uniform3fv(terrainU.uZenith, SKY.zenith);
+  gl.uniform3fv(terrainU.uHorizon, SKY.horizon);
+  gl.uniform3fv(terrainU.uWarm, SKY.warm);
+  gl.uniform1f(terrainU.uFogDensity, FOG_DENSITY);
+  gl.uniform1f(terrainU.uFogNear, FOG_NEAR);
   gl.bindVertexArray(terrain.vao);
   gl.drawElements(gl.TRIANGLES, terrain.count, gl.UNSIGNED_INT, 0);
 
-  gl.useProgram(waterProg);
-  gl.uniformMatrix4fv(U.wProj, false, proj);
-  gl.uniformMatrix4fv(U.wView, false, view);
-  gl.uniform3fv(U.wCam, cam.pos);
+  // water
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  gl.depthMask(false);
+  gl.useProgram(waterProg);
+  gl.uniformMatrix4fv(waterU.uProj, false, proj);
+  gl.uniformMatrix4fv(waterU.uView, false, view);
+  gl.uniform3fv(waterU.uCamPos, cam.pos);
+  gl.uniform3fv(waterU.uSunDir, SKY.sun);
+  gl.uniform3fv(waterU.uZenith, SKY.zenith);
+  gl.uniform3fv(waterU.uHorizon, SKY.horizon);
+  gl.uniform3fv(waterU.uWarm, SKY.warm);
+  gl.uniform1f(waterU.uTime, t);
+  gl.uniform1f(waterU.uFogDensity, FOG_DENSITY);
+  gl.uniform1f(waterU.uFogNear, FOG_NEAR);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, heightTex);
+  gl.uniform1i(waterU.uHeight, 0);
   gl.bindVertexArray(water.vao);
-  gl.drawArrays(gl.TRIANGLES, 0, water.count);
-  gl.depthMask(true);
+  gl.drawElements(gl.TRIANGLES, water.count, gl.UNSIGNED_INT, 0);
   gl.disable(gl.BLEND);
+
+  // ============ PASS 2: post → screen ============
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  gl.disable(gl.DEPTH_TEST);
+  gl.depthMask(false);
+  gl.useProgram(postProg);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_2D, fbo.color);
+  gl.uniform1i(postU.uScene, 0);
+  gl.uniform2f(postU.uSceneSize, fbo.w, fbo.h);
+  gl.uniform1i(postU.uDither, ditherOn ? 1 : 0);
+  gl.bindVertexArray(fsTri);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
 
   gl.bindVertexArray(null);
 
   // ---- hud ----
   hud.textContent =
     `seed ${SEED_STR}\n` +
-    `pos  ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}\n` +
-    `speed ${cam.speed.toFixed(0)}`;
+    `res  ${fbo.w}x${fbo.h}  dither ${ditherOn ? "on" : "off"}\n` +
+    `pos  ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}  spd ${cam.speed.toFixed(0)}`;
 
   requestAnimationFrame(frame);
 }
