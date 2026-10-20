@@ -85,6 +85,53 @@
   }
   .jitem.unk { color: #5a6b72; background: rgba(255,255,255,.02); letter-spacing: .3em; }
   .jhint { margin-top: 26px; opacity: .5; font-size: 13px; }
+  /* toasts (bottom-left, above hud) */
+  #toasts { position: fixed; left: 12px; bottom: 60px; z-index: 8; pointer-events: none;
+    display: flex; flex-direction: column; gap: 6px; }
+  .toast { display: flex; align-items: center; gap: 8px; font-size: 14px;
+    background: rgba(10,18,22,.8); border: 1px solid rgba(255,255,255,.15);
+    border-radius: 8px; padding: 6px 12px 6px 6px; transition: opacity .2s; }
+  .toast img { width: 30px; height: 30px; image-rendering: pixelated; }
+  .toast.new { border-color: #c9a24a; box-shadow: 0 0 10px rgba(201,162,74,.4); }
+  .toast.new span { color: #ffe6b0; }
+  .toast i { opacity: .6; font-size: 12px; }
+  /* hotbar (bottom-center) */
+  #hotbar { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
+    z-index: 6; display: flex; gap: 8px; }
+  .hslot { position: relative; width: 50px; height: 50px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,.2); background: rgba(10,18,22,.55); cursor: pointer; }
+  .hslot.sel { border-color: #ffe6b0; box-shadow: 0 0 8px rgba(255,220,150,.5); }
+  .hslot img { width: 100%; height: 100%; image-rendering: pixelated; }
+  .hslot b { position: absolute; left: 3px; top: 1px; font-size: 10px; opacity: .55; }
+  /* inventory & debug panels */
+  #invpanel, #debugpanel {
+    position: fixed; z-index: 13; display: none; background: rgba(10,16,20,.95);
+    border: 1px solid rgba(255,255,255,.15); border-radius: 12px; padding: 18px 20px;
+  }
+  #invpanel { left: 50%; top: 50%; transform: translate(-50%,-50%); width: 380px; text-align: center; }
+  #invpanel h2 { font-size: 22px; margin-bottom: 12px; }
+  .igrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; margin-bottom: 14px; }
+  .islot { aspect-ratio: 1; border-radius: 6px; border: 1px solid rgba(255,255,255,.1);
+    background: rgba(255,255,255,.03); position: relative; cursor: pointer; }
+  .islot.full { background: rgba(255,255,255,.08); }
+  .islot.sel { border-color: #ffe6b0; }
+  .islot img { width: 100%; height: 100%; image-rendering: pixelated; }
+  .islot span { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 2px #000; }
+  .idetail, .idetail-empty { font-size: 14px; min-height: 60px; }
+  .idetail b { font-size: 16px; }
+  .idetail p { opacity: .8; margin: 6px 0 10px; font-size: 13px; }
+  .irar { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; opacity: .8; }
+  .irar.uncommon { color: #6fc; } .irar.rare { color: #fc6; } .irar.tool { color: #9bd; }
+  #invpanel button, #debugpanel button {
+    font: inherit; font-size: 13px; padding: 6px 14px; border-radius: 7px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.08); color: #eaf2f5; }
+  #invpanel button:hover, #debugpanel button:hover { background: rgba(255,255,255,.16); }
+  #debugpanel { right: 12px; top: 12px; width: 220px; font-size: 13px; }
+  #debugpanel h3 { margin-bottom: 8px; opacity: .8; }
+  #debugpanel .dbgrow { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
+  #debugpanel label { display: block; margin: 10px 0; font-size: 12px; opacity: .8; }
+  #debugpanel input[type=range] { width: 100%; }
+  .dbgspd.on { background: #2b6f78; border-color: #3f9aa5; }
   #help {
     position: fixed; right: 12px; bottom: 12px; z-index: 5; pointer-events: none;
     font-size: 12px; opacity: .55; text-align: right; line-height: 1.5;
@@ -110,7 +157,11 @@
 <div id="crosshair"></div>
 <div id="prompt"></div>
 <div id="card"></div>
+<div id="toasts"></div>
+<div id="hotbar"></div>
 <div id="journal"></div>
+<div id="invpanel"></div>
+<div id="debugpanel"></div>
 <div id="help">
   WASD / click — move · Shift — run · E — pick up<br>
   Tab — journal · Mouse — look · Esc — pause
@@ -514,23 +565,27 @@ function buildFilledTexture() {
  *                Phase 5 will animate timeOfDay, nothing else changes.)
  * --------------------------------------------------------------------- */
 
-let timeOfDay = 0.34;                 // 0..1 (fixed overcast mood for now)
+// ONE shared game clock drives tides, day/night, creatures and spawns.
+const clock = { t: 0, speed: 1, paused: false };
+let timeOfDay = 0.28;                 // 0..1 across a day (0.3 ≈ afternoon)
+const DAY_PERIOD = 600;              // seconds per full day (~10 min)
 const FOG_DENSITY = 0.0016;           // see far across the big landscape, still hazy
 const FOG_NEAR = 50.0;                // clear band before fog ramps in
 
-// Cohesive eerie-cozy, overcast, early-2000s palette.
-const SKY = {
-  zenith:  [0.42, 0.54, 0.63],        // cool blue-grey overhead
-  horizon: [0.78, 0.77, 0.72],        // pale warm haze at the horizon
-  warm:    [1.00, 0.92, 0.78],        // soft sun tint
-  sun:     [0, 0, 0],                 // filled by updateSun()
-};
+// Day & night palettes; SKY is the blended current state (uploaded each frame).
+const SKY_DAY = { zenith: [0.42, 0.54, 0.63], horizon: [0.78, 0.77, 0.72], warm: [1.00, 0.92, 0.78] };
+const SKY_NIGHT = { zenith: [0.05, 0.07, 0.13], horizon: [0.10, 0.12, 0.18], warm: [0.35, 0.40, 0.55] };
+const SKY = { zenith: [0,0,0], horizon: [0,0,0], warm: [0,0,0], sun: [0,0,0] };
 
+function dayFactor() { return smoothstep(-0.32, 0.5, Math.cos((timeOfDay - 0.3) * 6.2831853)); }
 function updateSun() {
-  // Low sun for long, soft light. (Later: derive elevation/azimuth from time.)
-  const el = 0.46, az = 0.85;         // radians
-  const ce = Math.cos(el), se = Math.sin(el);
-  SKY.sun = [ce * Math.sin(az), se, -ce * Math.cos(az)];
+  const ang = (timeOfDay - 0.3) * 6.2831853;           // 0 at the day's peak
+  const el = Math.cos(ang) * 0.9, az = 0.5 + timeOfDay * 3.0;
+  const ce = Math.cos(el);
+  SKY.sun = [ce * Math.sin(az), Math.max(0.06, el), -ce * Math.cos(az)];
+  const f = dayFactor();
+  for (const k of ["zenith", "horizon", "warm"])
+    SKY[k] = SKY_DAY[k].map((v, i) => v * f + SKY_NIGHT[k][i] * (1 - f));
 }
 updateSun();
 
@@ -543,25 +598,26 @@ let TIDE_PERIOD = 480;          // seconds for a full cycle (~8 min)
 const TIDE_RANGE = AP.tideRange;
 const TIDE_MID = 0.0;
 let tideT = 0.60;               // phase 0..1 (start part-way down)
-let tideSpeed = 1;              // debug scrub multiplier
 let waterLevel = 0.0;           // THE variable everything reads
 let wetLevel = 0.0;             // lagging high-water mark (wet sand)
 
 // Shaped so the tide lingers (slack) near high and low.
 function tideShape(ph) { const s = Math.sin(ph * 6.2831853); return Math.sign(s) * Math.pow(Math.abs(s), 0.7); }
 function tideLevelAt(ph) { return TIDE_MID + tideShape(ph) * TIDE_RANGE * 0.5; }
-function updateTide(dt) {
-  tideT = (tideT + dt * tideSpeed / TIDE_PERIOD) % 1;
+function updateTide(gdt) {       // gdt = game-time seconds (already clock-scaled)
+  tideT = (tideT + gdt / TIDE_PERIOD) % 1;
   if (tideT < 0) tideT += 1;
+  timeOfDay = (timeOfDay + gdt / DAY_PERIOD) % 1;
+  updateSun();
   waterLevel = tideLevelAt(tideT);
   if (waterLevel >= wetLevel) wetLevel = waterLevel;          // instantly wet
-  else wetLevel += (waterLevel - wetLevel) * Math.min(1, dt * 0.05);  // slow dry-back
+  else wetLevel += (waterLevel - wetLevel) * Math.min(1, gdt * 0.05);  // slow dry-back
 }
 function tideInfo() {
   const rising = tideLevelAt((tideT + 0.002) % 1) > waterLevel;
   const lowPhase = 0.75;                                      // sin() minimum
   let d = (lowPhase - tideT + 1) % 1;
-  return { rising, tToLow: d * TIDE_PERIOD / Math.max(0.01, tideSpeed) };
+  return { rising, tToLow: d * TIDE_PERIOD / Math.max(0.01, clock.speed) };
 }
 
 /* --------------------------------------------------------------------- *
@@ -1088,12 +1144,74 @@ function findSpawn() {
   return { x: 0, z: 0, yaw: 0 };
 }
 
+let spawnPoint = null;
 function enterWalk() {
   const s = findSpawn();
+  spawnPoint = spawnPoint || { x: s.x, z: s.z, yaw: s.yaw };
   player.x = s.x; player.z = s.z; player.bob = 0;
   player.eyeY = surfaceAt(s.x, s.z).h + EYE;
+  lastSafe.x = s.x; lastSafe.z = s.z;
   cam.yaw = s.yaw; cam.pitch = -0.04;
   mode = "walk";
+}
+
+/* --------------------------------------------------------------------- *
+ * § SAFETY  (never fall out of the world)
+ * --------------------------------------------------------------------- */
+
+const lastSafe = { x: 0, z: 0 };
+let safeTimer = 0;
+const WB = HALF - 4;             // world bound for XZ clamp
+function isWalkable(x, z) {
+  if (Math.abs(x) > WB || Math.abs(z) > WB) return false;
+  const s = surfaceAt(x, z);
+  if (waterLevel - s.h > WADE_DEPTH) return false;          // deep water
+  if (typeof blockedByCollider === "function" && blockedByCollider(x, z, 0.3)) return false;
+  return true;
+}
+function nearestWalkable(x, z) {                            // spiral search
+  if (isWalkable(x, z)) return [x, z];
+  for (let r = 3; r < 160; r += 3)
+    for (let a = 0; a < 16; a++) {
+      const an = a / 16 * 6.2832, nx = x + Math.cos(an) * r, nz = z + Math.sin(an) * r;
+      if (isWalkable(nx, nz)) return [nx, nz];
+    }
+  return [lastSafe.x, lastSafe.z];
+}
+function toggleFly() {
+  if (mode === "walk") { cam.pos = [player.x, player.eyeY, player.z]; mode = "free"; }
+  else if (mode === "free") {
+    const [nx, nz] = nearestWalkable(cam.pos[0], cam.pos[2]);
+    player.x = nx; player.z = nz; player.eyeY = surfaceAt(nx, nz).h + EYE; mode = "walk";
+  }
+}
+function returnToSpawn() {
+  if (!spawnPoint) { enterWalk(); return; }
+  player.x = spawnPoint.x; player.z = spawnPoint.z;
+  player.eyeY = surfaceAt(spawnPoint.x, spawnPoint.z).h + EYE;
+  if (mode === "free") cam.pos = [spawnPoint.x, player.eyeY, spawnPoint.z];
+  cam.yaw = spawnPoint.yaw; mode = "walk"; cancelPath();
+}
+// Called each frame: clamp bounds + rescue from NaN / below the seabed.
+function safetyCheck(dt) {
+  if (mode === "walk") {
+    player.x = Math.max(-WB, Math.min(WB, player.x));
+    player.z = Math.max(-WB, Math.min(WB, player.z));
+    safeTimer += dt;
+    if (safeTimer > 1) { safeTimer = 0; if (isWalkable(player.x, player.z)) { lastSafe.x = player.x; lastSafe.z = player.z; } }
+  } else if (mode === "free") {
+    cam.pos[0] = Math.max(-WB, Math.min(WB, cam.pos[0]));
+    cam.pos[2] = Math.max(-WB, Math.min(WB, cam.pos[2]));
+    const floor = surfaceAt(cam.pos[0], cam.pos[2]).h + 2.0;   // can't dip below terrain
+    if (cam.pos[1] < floor) cam.pos[1] = floor;
+  }
+  const bad = !isFinite(cam.pos[0]) || !isFinite(cam.pos[1]) || !isFinite(cam.pos[2]) || cam.pos[1] < -40;
+  if (bad) {                                                   // teleport to safety
+    player.x = lastSafe.x; player.z = lastSafe.z;
+    player.eyeY = surfaceAt(lastSafe.x, lastSafe.z).h + EYE;
+    cam.pos = [lastSafe.x, player.eyeY, lastSafe.z];
+    if (mode === "free") cam.pos[1] += 20;
+  }
 }
 
 // Surface type under the player, for the footstep audio hook (Phase 6).
@@ -1155,7 +1273,8 @@ function slideCircles(x, z) {
 
 const keys = Object.create(null);
 let ditherOn = true;
-let debugOn = false;             // ` toggles the perf overlay
+let debugOn = false;             // ` toggles the perf overlay (within debug mode)
+let debugMode = new URLSearchParams(location.search).get("debug") === "1";  // hidden in normal play
 
 // Single flag for the (temporary) mobile build; drives lower res too.
 const IS_TOUCH = matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0;
@@ -1165,19 +1284,17 @@ let mobileSprint = false;        // mobile "Run" toggle writes here
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (e.code === "KeyG") ditherOn = !ditherOn;
-  if (e.code === "Backquote") debugOn = !debugOn;          // perf overlay
-  if (e.code === "KeyT") tideSpeed = tideSpeed === 1 ? 60 : 1;   // fast-forward tide
-  if (e.code === "BracketLeft")  tideT = (tideT - 0.03 + 1) % 1; // scrub tide
-  if (e.code === "BracketRight") tideT = (tideT + 0.03) % 1;
-  if (e.code === "KeyF" && (mode === "walk" || mode === "free")) {
-    // toggle debug fly <-> walk, keeping position/look
-    if (mode === "walk") { cam.pos = [player.x, player.eyeY, player.z]; mode = "free"; }
-    else { player.x = cam.pos[0]; player.z = cam.pos[2];
-           player.eyeY = surfaceAt(player.x, player.z).h + EYE; mode = "walk"; }
-  }
+  if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE") interact();                  // pick up / inspect
   if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
-  if (e.code === "KeyB") forceSpawn = !forceSpawn;    // debug: show all creatures
+  if (e.code === "KeyI") toggleInventory();           // inventory panel
+  if (e.code === "Digit1" || e.code === "Digit2" || e.code === "Digit3" || e.code === "Digit4")
+    selectHotbar(+e.code.slice(5) - 1);
+  if (debugMode) {                                    // debug-only shortcuts
+    if (e.code === "Backquote") debugOn = !debugOn;
+    if (e.code === "KeyF" && (mode === "walk" || mode === "free")) toggleFly();
+    if (e.code === "KeyB") forceSpawn = !forceSpawn;
+  }
 });
 addEventListener("keyup", (e) => { keys[e.code] = false; });
 
@@ -1867,6 +1984,14 @@ function cuttleMesh() { return discMesh(0.05,0.4,6,0.05,[0.92,0.9,0.85]); }
 function eggMesh() { const m = Mesh(); mBox(m,0,0.1,0,0.35,0.1,0.22,[0.12,0.1,0.09]); for(const s of [-1,1]) mTri(m,[s*0.35,0.1,0.22],[s*0.6,0.3,0.3],[s*0.35,0.1,-0.22],[0.1,0.09,0.08]); return m; }
 function bottleMesh() { const m = Mesh(); mCyl(m,0,0.7,0.2,0.2,7,[0.35,0.5,0.4]); mCyl(m,0.7,1.0,0.2,0.09,7,[0.35,0.5,0.4]); mCyl(m,1.0,1.15,0.09,0.09,6,[0.3,0.25,0.2]); return m; }
 function boneMesh() { const m = Mesh(); mCyl(m,-0.6,0.6,0.16,0.16,6,[0.88,0.85,0.78]); mRock(m,mulberry32(3),[0.88,0.85,0.78]); return m; }
+// tools & dug finds
+function shovelMesh() { const m = Mesh(); mBox(m,0,0,0,0.04,0.7,0.04,[0.4,0.3,0.2]); mBox(m,0,0.78,0,0.16,0.08,0.03,[0.35,0.26,0.18]); // handle
+  const blade=[0.55,0.56,0.6]; mCyl(m,-0.7,-0.5,0.045,0.045,5,[0.3,0.3,0.32]); mTri(m,[-0.22,-0.7,0],[0.22,-0.7,0],[0,-1.05,0],blade); mBox(m,0,-0.72,0,0.22,0.03,0.02,blade); return m; }
+function clamMesh() { const m = discMesh(0.1,0.4,7,0.18,[0.85,0.8,0.72]); const m2=discMesh(-0.1,0.4,7,-0.18,[0.8,0.75,0.68]); for(let i=0;i<m2.pos.length;i++){m.pos.push(m2.pos[i]);m.col.push(m2.col[i]);} return m; }
+function coinMesh() { return discMesh(0.04,0.4,10,0.03,[0.7,0.6,0.32]); }
+function mergeMesh(m, n) { for (let i = 0; i < n.pos.length; i++) { m.pos.push(n.pos[i]); m.col.push(n.col[i]); } }
+function bellMesh() { const m = Mesh(); mCyl(m,0,0.8,0.5,0.25,8,[0.42,0.55,0.4]); mergeMesh(m, discMesh(0.8,0.25,8,0.05,[0.42,0.55,0.4])); mBox(m,0,0.95,0,0.1,0.15,0.1,[0.42,0.55,0.4]); mCyl(m,-0.2,0.1,0.08,0.08,5,[0.3,0.4,0.3]); return m; }
+function tinMesh() { const m = Mesh(); mCyl(m,0,0.5,0.5,0.5,10,[0.6,0.55,0.48]); mergeMesh(m, discMesh(0.5,0.5,10,0.03,[0.65,0.6,0.52])); return m; }
 
 // --- registries: mesh, palette, scale, how many may draw, behaviour ---
 const CREATURES = {
@@ -2079,9 +2204,182 @@ function drawLife(view) {
  * § INVENTORY / JOURNAL / INTERACTION
  * --------------------------------------------------------------------- */
 
-const inventory = {};                 // find type -> count
-const discovered = new Set();         // discovered creature/find type keys
+const discovered = new Set();         // discovered creature/find/item keys
 let forceSpawn = false;               // debug: draw every entity regardless of tide
+
+/* ---- item registry (plain data) ---- */
+const RARITY = ["common", "common", "uncommon", "rare"];
+const ITEMS = {};
+for (const k in FINDS)
+  ITEMS[k] = { id: k, name: FINDS[k].label, category: "find", rarity: RARITY[FINDS[k].rare] || "common",
+               stackable: true, maxStack: 99, desc: FINDS[k].desc, model: FINDS[k].mesh, tint: [1,1,1] };
+// tool
+ITEMS.shovel = { id: "shovel", name: "Shovel", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
+                 desc: "A sturdy beach shovel. Dig wet sand to unearth buried finds.", model: () => shovelMesh(), tint: [1,1,1] };
+// dug finds (collected from holes)
+function digItem(id, name, cat, rar, desc, meshFn, tint) { ITEMS[id] = { id, name, category: cat, rarity: rar, stackable: cat !== "relic", maxStack: cat === "relic" ? 1 : 99, desc, model: meshFn, tint: tint || [1,1,1] }; }
+digItem("clam", "Clam", "find", "common", "A plump clam, still closed.", () => clamMesh(), [0.85,0.8,0.72]);
+digItem("cockle", "Cockle", "find", "common", "A little ribbed cockle shell.", () => shellMesh(), [0.9,0.85,0.78]);
+digItem("coin", "Old Coin", "find", "uncommon", "A corroded coin, its face long gone.", () => coinMesh(), [0.7,0.6,0.3]);
+digItem("ceramic", "Ceramic Shard", "find", "uncommon", "A piece of painted pottery.", () => glassMesh([0.7,0.6,0.5]), [0.8,0.7,0.6]);
+digItem("fossil", "Fossil", "find", "rare", "An ammonite turned to stone.", () => coinMesh(), [0.55,0.52,0.48]);
+digItem("bell", "Ship's Bell", "relic", "rare", "A green bronze bell from a lost vessel.", () => bellMesh(), [0.5,0.6,0.45]);
+digItem("tin", "Sealed Tin", "relic", "rare", "A rusted tin, something rattles inside.", () => tinMesh(), [0.6,0.55,0.5]);
+
+/* ---- inventory (slot model + hotbar) ---- */
+const INV_SLOTS = 20, HOTBAR_SLOTS = 4;
+const Inv = {
+  slots: new Array(INV_SLOTS).fill(null),      // { id, qty }
+  hotbar: new Array(HOTBAR_SLOTS).fill(null),   // tool item ids
+  selected: 0,
+  listeners: [],
+  onChange(fn) { this.listeners.push(fn); },
+  emit() { for (const fn of this.listeners) fn(); saveState(); },
+  count(id) { let c = 0; for (const s of this.slots) if (s && s.id === id) c += s.qty; return c; },
+  has(id) { return this.count(id) > 0; },
+  add(id, qty = 1) {
+    const it = ITEMS[id]; if (!it) return 0; let rem = qty;
+    if (it.stackable) for (const s of this.slots) { if (rem <= 0) break; if (s && s.id === id && s.qty < it.maxStack) { const c = Math.min(it.maxStack - s.qty, rem); s.qty += c; rem -= c; } }
+    while (rem > 0) { const i = this.slots.indexOf(null); if (i < 0) break; const c = it.stackable ? Math.min(it.maxStack, rem) : 1; this.slots[i] = { id, qty: c }; rem -= c; }
+    const added = qty - rem; if (added > 0) this.emit(); return added;
+  },
+  remove(id, qty = 1) { let r = qty; for (let i = 0; i < this.slots.length; i++) { const s = this.slots[i]; if (s && s.id === id) { const t = Math.min(s.qty, r); s.qty -= t; r -= t; if (s.qty <= 0) this.slots[i] = null; if (r <= 0) break; } } if (r < qty) this.emit(); return qty - r; },
+  equipTool(id) { const i = this.hotbar.indexOf(null); if (this.hotbar.includes(id)) return; if (i >= 0) this.hotbar[i] = id; else this.hotbar[0] = id; this.emit(); },
+  dropSlot(i) { const s = this.slots[i]; if (!s) return; this.slots[i] = null; this.emit(); dropItemOnGround(s.id, s.qty); },
+};
+function selectedTool() { return Inv.hotbar[Inv.selected]; }
+function selectHotbar(i) { if (i >= 0 && i < HOTBAR_SLOTS) { Inv.selected = i; renderHotbar(); } }
+
+/* ---- localStorage (keyed by seed; game still works without it) ---- */
+function saveState() {
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ slots: Inv.slots, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered] })); } catch (e) {}
+}
+function loadState() {
+  try {
+    const s = JSON.parse(localStorage.getItem("bc_" + SEED_STR) || "null");
+    if (s) { Inv.slots = s.slots || Inv.slots; Inv.hotbar = s.hotbar || Inv.hotbar; Inv.selected = s.sel || 0; (s.disc || []).forEach((d) => discovered.add(d)); }
+  } catch (e) {}
+}
+
+/* ---- notifications (bottom-left toasts) ---- */
+const toasts = [];
+function notify(itemId, qty, special) {
+  const it = ITEMS[itemId], name = it ? it.name : itemId;
+  const ex = toasts.find((x) => x.id === itemId && x.t > 0.3 && x.special === !!special);
+  if (ex) { ex.qty += qty; ex.t = 3.2; }
+  else { toasts.push({ id: itemId, name, qty, t: 3.2, special: !!special }); while (toasts.length > 3) toasts.shift(); }
+  renderToasts();
+}
+function updateToasts(dt) {
+  let changed = false;
+  for (const x of toasts) { x.t -= dt; }
+  for (let i = toasts.length - 1; i >= 0; i--) if (toasts[i].t <= 0) { toasts.splice(i, 1); changed = true; }
+  renderToasts();
+}
+function renderToasts() {
+  const el = document.getElementById("toasts");
+  el.innerHTML = toasts.map((x) => {
+    const ic = ITEMS[x.id] && ITEMS[x.id].icon ? `<img src="${ITEMS[x.id].icon}">` : "";
+    const q = x.qty > 1 ? ` ×${x.qty}` : "";
+    return `<div class="toast${x.special ? " new" : ""}" style="opacity:${Math.min(1, x.t / 0.6)}">${ic}<span>${x.special ? "New: " : ""}${x.name}${q}${x.special ? "<i> — see journal</i>" : ""}</span></div>`;
+  }).join("");
+}
+
+/* ---- offscreen icon render (each item's model → a small canvas) ---- */
+let iconFBO, iconTex, iconRB, iconCanvas, iconCtx;
+function buildIcons() {
+  iconCanvas = document.createElement("canvas"); iconCanvas.width = 64; iconCanvas.height = 64; iconCtx = iconCanvas.getContext("2d");
+  iconFBO = gl.createFramebuffer(); iconTex = gl.createTexture(); iconRB = gl.createRenderbuffer();
+  gl.bindTexture(gl.TEXTURE_2D, iconTex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 64, 64, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.bindRenderbuffer(gl.RENDERBUFFER, iconRB); gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, 64, 64);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, iconFBO);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, iconTex, 0);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, iconRB);
+  const px = new Uint8Array(64 * 64 * 4);
+  const proj = M4.perspective(0.6, 1, 0.1, 50), view = M4.lookAt([2.2, 1.9, 2.4], [0, 0.05, 0], [0, 1, 0]);
+  for (const k in ITEMS) {
+    const it = ITEMS[k], mesh = it.model();
+    let maxr = 0.001; for (let i = 0; i < mesh.pos.length; i += 3) { const r = Math.hypot(mesh.pos[i], mesh.pos[i+1], mesh.pos[i+2]); if (r > maxr) maxr = r; }
+    const dyn = makeDynamic(mesh, 1), sc = 1.4 / maxr;
+    gl.viewport(0, 0, 64, 64); gl.clearColor(0, 0, 0, 0); gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.useProgram(propProg);
+    gl.uniformMatrix4fv(propU.uProj, false, proj); gl.uniformMatrix4fv(propU.uView, false, view);
+    gl.uniform3fv(propU.uSunDir, [0.5, 0.8, 0.4]); gl.uniform3fv(propU.uCamPos, [2.2, 1.9, 2.4]);
+    gl.uniform3fv(propU.uZenith, [1,1,1]); gl.uniform3fv(propU.uHorizon, [1,1,1]); gl.uniform3fv(propU.uWarm, [1,1,0.95]);
+    gl.uniform1f(propU.uFogDensity, 0); gl.uniform1f(propU.uFogNear, 1e6);
+    dyn.draw(new Float32Array([0, -0.1, 0, sc, 0.7, 0, 0, it.tint[0], it.tint[1], it.tint[2]]), 1);
+    gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    const img = iconCtx.createImageData(64, 64);
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) { const s = ((63 - y) * 64 + x) * 4, d = (y * 64 + x) * 4; img.data[d]=px[s]; img.data[d+1]=px[s+1]; img.data[d+2]=px[s+2]; img.data[d+3]=px[s+3]; }
+    iconCtx.putImageData(img, 0, 0); it.icon = iconCanvas.toDataURL();
+  }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+
+/* ---- panels: build DOM once, render from state ---- */
+function buildPanels() {
+  Inv.onChange(() => { renderInventory(); renderHotbar(); });
+  renderHotbar();
+}
+function renderHotbar() {
+  const el = document.getElementById("hotbar");
+  el.innerHTML = Inv.hotbar.map((id, i) => {
+    const it = id ? ITEMS[id] : null;
+    const ic = it && it.icon ? `<img src="${it.icon}">` : "";
+    return `<div class="hslot${i === Inv.selected ? " sel" : ""}" data-h="${i}">${ic}<b>${i + 1}</b></div>`;
+  }).join("");
+  el.querySelectorAll(".hslot").forEach((s) => s.onclick = () => selectHotbar(+s.dataset.h));
+}
+let invOpen = false, invDetail = -1;
+function toggleInventory() { invOpen = !invOpen; invDetail = -1; renderInventory(); document.getElementById("invpanel").style.display = invOpen ? "block" : "none"; }
+function renderInventory() {
+  if (!invOpen) return;
+  const grid = Inv.slots.map((s, i) => {
+    if (!s) return `<div class="islot" data-i="${i}"></div>`;
+    const it = ITEMS[s.id], ic = it && it.icon ? `<img src="${it.icon}">` : "";
+    return `<div class="islot full${invDetail === i ? " sel" : ""}" data-i="${i}">${ic}${s.qty > 1 ? `<span>${s.qty}</span>` : ""}</div>`;
+  }).join("");
+  let detail = `<div class="idetail-empty">Select an item</div>`;
+  if (invDetail >= 0 && Inv.slots[invDetail]) {
+    const it = ITEMS[Inv.slots[invDetail].id];
+    detail = `<div class="idetail"><b>${it.name}</b><div class="irar ${it.rarity}">${it.rarity}</div><p>${it.desc}</p><button id="dropBtn">Drop</button></div>`;
+  }
+  const p = document.getElementById("invpanel");
+  p.innerHTML = `<h2>Pack</h2><div class="igrid">${grid}</div>${detail}<div class="jhint">I to close</div>`;
+  p.querySelectorAll(".islot").forEach((s) => s.onclick = () => { invDetail = +s.dataset.i; renderInventory(); });
+  const db = document.getElementById("dropBtn"); if (db) db.onclick = () => { Inv.dropSlot(invDetail); invDetail = -1; renderInventory(); };
+}
+
+/* ---- debug panel ---- */
+function syncDebugPanel() {
+  const p = document.getElementById("debugpanel");
+  p.style.display = debugMode ? "block" : "none";
+  if (!debugMode) return;
+  const sp = [1, 4, 16, 60];
+  p.innerHTML = `<h3>Debug</h3>
+    <button id="dbgPause">${clock.paused ? "▶ Resume" : "⏸ Pause"}</button>
+    <div class="dbgrow">${sp.map((s) => `<button class="dbgspd${clock.speed === s ? " on" : ""}" data-s="${s}">${s}×</button>`).join("")}</div>
+    <label>Time of day <input id="dbgTime" type="range" min="0" max="1" step="0.01" value="${timeOfDay.toFixed(2)}"></label>
+    <div class="dbgrow"><button id="dbgFly">${mode === "free" ? "Walk" : "Fly"}</button><button id="dbgSpawn">Return to spawn</button></div>
+    <div class="dbgrow"><button id="dbgCreat">${forceSpawn ? "Hide all" : "Spawn all"}</button><button id="dbgPerf">${debugOn ? "Hide FPS" : "Show FPS"}</button></div>
+    <div class="jhint">Ctrl+Shift+D to close</div>`;
+  p.querySelector("#dbgPause").onclick = () => { clock.paused = !clock.paused; syncDebugPanel(); };
+  p.querySelectorAll(".dbgspd").forEach((b) => b.onclick = () => { clock.speed = +b.dataset.s; clock.paused = false; syncDebugPanel(); });
+  p.querySelector("#dbgTime").oninput = (e) => { timeOfDay = +e.target.value; updateSun(); };
+  p.querySelector("#dbgFly").onclick = () => { toggleFly(); syncDebugPanel(); };
+  p.querySelector("#dbgSpawn").onclick = () => returnToSpawn();
+  p.querySelector("#dbgCreat").onclick = () => { forceSpawn = !forceSpawn; syncDebugPanel(); };
+  p.querySelector("#dbgPerf").onclick = () => { debugOn = !debugOn; syncDebugPanel(); };
+}
+
+/* ---- drop an item back onto the ground near the player ---- */
+function dropItemOnGround(id, qty) {
+  if (FINDS[id]) { const a = rng() * 6.283; spawnFind(id, player.x + Math.sin(a) * 2, player.z + Math.cos(a) * 2); }
+  notify(id, qty);
+}
 
 function nearestInteractable() {
   const px = cam.pos[0], pz = cam.pos[2];
@@ -2096,19 +2394,7 @@ function nearestInteractable() {
   }
   return best;
 }
-function interact() {
-  const e = nearestInteractable();
-  if (!e) return;
-  if (e.kind === "find") {
-    inventory[e.t] = (inventory[e.t] || 0) + 1;
-    discovered.add("f_" + e.t);
-    showCard(e.special ? e.name : FINDS[e.t].label, FINDS[e.t].desc + (e.special ? "  (an oddity!)" : ""));
-    life.splice(life.indexOf(e), 1);
-  } else {
-    discovered.add(e.t);
-    showCard(e.special ? e.name : CREATURES[e.t].label, CREATURES[e.t].desc + (e.special ? "  —  found only on this island." : ""));
-  }
-}
+function interact() { const e = nearestInteractable(); if (e) interactWith(e); }
 let cardTimer = 0;
 function showCard(name, desc) {
   const el = document.getElementById("card");
@@ -2120,13 +2406,19 @@ function toggleJournal() {
   const j = document.getElementById("journal");
   if (j.style.display === "block") { j.style.display = "none"; return; }
   const row = (reg, prefix) => Object.keys(reg).map((k) => {
-    const key = prefix + k, got = discovered.has(key);
-    const cnt = prefix === "f_" ? (inventory[k] ? " ×" + inventory[k] : "") : "";
-    return `<div class="jitem ${got ? "" : "unk"}">${got ? reg[k].label + cnt : "??? "}</div>`;
+    const got = discovered.has(prefix + k);
+    const cnt = prefix === "f_" ? (Inv.count(k) ? " ×" + Inv.count(k) : "") : "";
+    const label = reg[k].label || reg[k].name;
+    return `<div class="jitem ${got ? "" : "unk"}">${got ? label + cnt : "??? "}</div>`;
+  }).join("");
+  const digRow = ["clam","cockle","coin","ceramic","fossil","bell","tin"].map((k) => {
+    const got = discovered.has("f_" + k), cnt = Inv.count(k) ? " ×" + Inv.count(k) : "";
+    return `<div class="jitem ${got ? "" : "unk"}">${got ? ITEMS[k].name + cnt : "??? "}</div>`;
   }).join("");
   j.innerHTML = `<h2>Field Journal</h2>
     <h3>Creatures</h3><div class="jgrid">${row(CREATURES, "")}</div>
     <h3>Finds</h3><div class="jgrid">${row(FINDS, "f_")}</div>
+    <h3>Unearthed</h3><div class="jgrid">${digRow}</div>
     <div class="jhint">Tab to close</div>`;
   j.style.display = "block";
 }
@@ -2199,14 +2491,19 @@ function aStar(sxw, szw, gxw, gzw) {
   out.reverse();
   return out;
 }
+let lookEaseT = 0, lookEaseYaw = 0, lookEasePitch = 0;
+function easeLookAt(x, z) {          // ease the view toward a world point (~0.4s)
+  const dx = x - player.x, dz = z - player.z, d = Math.hypot(dx, dz) || 1;
+  lookEaseYaw = Math.atan2(dx, -dz);
+  lookEasePitch = Math.max(-0.5, Math.min(0.1, Math.atan2((surfaceAt(x, z).h - player.eyeY), d)));
+  lookEaseT = 0.4;
+}
 function cancelPath() { pathActive = false; pathPts = []; pendingEntity = null; }
 function arrivePath() {
   pathActive = false;
   if (pendingEntity && life.includes(pendingEntity)) {
-    const e = pendingEntity; player.x; // ensure close
-    pendingEntity = null;
-    const dx = e.x - player.x, dz = e.z - player.z;
-    if (Math.hypot(dx, dz) < 5) { cam.yaw = Math.atan2(dx, -dz); interactWith(e); }
+    const e = pendingEntity; pendingEntity = null;
+    if (Math.hypot(e.x - player.x, e.z - player.z) < 5) { easeLookAt(e.x, e.z); interactWith(e); }
   }
   pendingEntity = null;
 }
@@ -2214,6 +2511,7 @@ function walkTo(x, z, entity) {
   const p = aStar(player.x, player.z, x, z);
   if (!p || p.length < 1) return;
   pathPts = p; pathI = 0; pathActive = true; pathGoal = [x, z]; pendingEntity = entity || null;
+  easeLookAt(x, z);                 // brief view ease toward the destination
 }
 // A ground point under a screen ray (NDC); marches until below the surface.
 function rayGround(ndcx, ndcy) {
@@ -2239,13 +2537,19 @@ function clickAt(ndcx, ndcy) {
 }
 function interactWith(e) {
   if (e.kind === "find") {
-    inventory[e.t] = (inventory[e.t] || 0) + 1; discovered.add("f_" + e.t);
-    showCard(e.special ? e.name : FINDS[e.t].label, FINDS[e.t].desc + (e.special ? "  (an oddity!)" : ""));
+    const added = Inv.add(e.t, 1);
+    if (added <= 0) { notify(e.t, 1); showCard("Pack full", "Drop something to make room."); return; }
+    const first = !discovered.has("f_" + e.t);
+    discovered.add("f_" + e.t);
+    notify(e.t, 1, first);
     const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
   } else {
+    const first = !discovered.has(e.t);
     discovered.add(e.t);
-    showCard(e.special ? e.name : CREATURES[e.t].label, CREATURES[e.t].desc + (e.special ? "  —  found only on this island." : ""));
+    showCard(e.special ? e.name : CREATURES[e.t].label,
+             CREATURES[e.t].desc + (e.special ? "  —  found only on this island." : (first ? "  (new — added to journal)" : "")));
   }
+  saveState();
 }
 const markerDyn = makeDynamic((function(){ const m = Mesh(); mCyl(m,0,3,0.25,0,5,[1,0.85,0.4]); mCyl(m,0,0.4,0.9,0.9,10,[1,0.85,0.4]); return m; })(), 1);
 function drawMarker(view) {
@@ -2265,6 +2569,9 @@ function drawMarker(view) {
  * § BUILD + LOOP
  * --------------------------------------------------------------------- */
 
+let frameDraws = 0, frameTris = 0;
+function countDraw(tris) { frameDraws++; frameTris += tris; }
+
 buildHeightmap();
 findHighPoint();
 computeBasins();
@@ -2275,6 +2582,14 @@ const water = buildWaterMesh();
 const heightTex = buildHeightTexture();
 const filledTex = buildFilledTexture();
 const fsTri = buildFsTri();
+
+// Phase 5 setup: icons, inventory, panels, saved state, starting shovel.
+buildIcons();
+buildPanels();
+loadState();
+if (!Inv.hotbar.includes("shovel")) Inv.equipTool("shovel");   // start with a shovel
+renderHotbar();
+syncDebugPanel();
 
 let proj = new Float32Array(16);
 function resize() {
@@ -2289,8 +2604,7 @@ addEventListener("resize", resize);
 resize();
 
 let last = performance.now();
-let frameDraws = 0, frameTris = 0, fpsSmooth = 60, washedThisLow = false;
-function countDraw(tris) { frameDraws++; frameTris += tris; }
+let fpsSmooth = 60, washedThisLow = false;
 const dbgEl = document.getElementById("dbg");
 function frame(now) {
   const raw = (now - last) / 1000;
@@ -2300,10 +2614,19 @@ function frame(now) {
   if (raw > 0) fpsSmooth += (1 / raw - fpsSmooth) * 0.1;
   frameDraws = 0; frameTris = 0;
 
-  updateTide(dt);
-  if (tideT > 0.73 && tideT < 0.78) { if (!washedThisLow) { washUp(false); washedThisLow = true; } }
-  else if (tideT < 0.55) washedThisLow = false;
+  // ---- shared clock: advance world in capped fixed substeps (stable at 60x) ----
+  clock.t += clock.paused ? 0 : dt;
+  let gdt = clock.paused ? 0 : dt * clock.speed;
+  while (gdt > 1e-4) {
+    const s = Math.min(0.05, gdt);
+    updateTide(s);
+    updateLife(s, clock.t);
+    if (tideT > 0.73 && tideT < 0.78) { if (!washedThisLow) { washUp(false); washedThisLow = true; } }
+    else if (tideT < 0.55) washedThisLow = false;
+    gdt -= s;
+  }
   if (cardTimer > 0) { cardTimer -= dt; if (cardTimer <= 0) document.getElementById("card").style.display = "none"; }
+  if (toasts.length) updateToasts(dt);
 
   // ---- movement ----
   const fwd = camForward();
@@ -2352,13 +2675,16 @@ function frame(now) {
       if (tgt) {
         const dxp = tgt[0] - player.x, dzp = tgt[1] - player.z, dd = Math.hypot(dxp, dzp);
         if (dd < 2.4) { pathI++; if (pathI >= pathPts.length) arrivePath(); }
-        else {
-          wx = dxp / dd; wz = dzp / dd;
-          const want = Math.atan2(wx, -wz);
-          let dy = ((want - cam.yaw + Math.PI*3) % (Math.PI*2)) - Math.PI;
-          cam.yaw += dy * Math.min(1, dt * 3);   // turn toward travel
-        }
+        else { wx = dxp / dd; wz = dzp / dd; }   // move only; view stays free
       }
+    }
+    // brief view ease toward the click target, then hand look back to player
+    if (lookEaseT > 0) {
+      let dy = ((lookEaseYaw - cam.yaw + Math.PI*3) % (Math.PI*2)) - Math.PI;
+      cam.yaw += dy * Math.min(1, dt * 6);
+      let dp = lookEasePitch - cam.pitch;
+      cam.pitch += dp * Math.min(1, dt * 6);
+      lookEaseT -= dt;
     }
 
     const wl = Math.hypot(wx, wz);
@@ -2418,7 +2744,7 @@ function frame(now) {
     cam.pos[0] = player.x; cam.pos[1] = player.eyeY; cam.pos[2] = player.z;
   }
 
-  updateLife(dt, t);
+  safetyCheck(dt);
 
   // ---- matrices ----
   let f = camForward();
@@ -2526,6 +2852,7 @@ function frame(now) {
 
   // ---- hud ----
   crossEl.style.display = (mode === "walk" && !IS_TOUCH) ? "block" : "none";
+  document.getElementById("hotbar").style.display = (mode === "walk") ? "flex" : "none";
   // interaction hint: what's in reach of the crosshair
   if (mode === "walk") {
     const e = nearestInteractable();
@@ -2542,7 +2869,7 @@ function frame(now) {
   hud.textContent =
     `seed ${SEED_STR}  ·  ${archetype}\n` +
     `tide ${ti.rising ? "▲ rising" : "▼ falling"}  ·  low in ${mins}:${String(secs).padStart(2, "0")}` +
-    `${tideSpeed > 1 ? "  (fast)" : ""}\n` +
+    `${clock.speed > 1 ? `  (${clock.speed}×)` : ""}${clock.paused ? "  (paused)" : ""}\n` +
     `mode ${mode}  ·  POIs ${POIS.map((p) => p.type).join(", ")}`;
 
   if (debugOn) {
