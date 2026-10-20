@@ -181,29 +181,102 @@ const GRID = 256;             // heightmap resolution (GRID x GRID)
 const WORLD = 220.0;          // island spans WORLD world-units
 const HALF = WORLD * 0.5;
 const CELL = WORLD / (GRID - 1);
-const AMP = 34.0;             // vertical scale
 const SEA_LEVEL = 0.0;        // water sits at y = 0
 
-const noise = makeNoise(subStream());
+/* --------------------------------------------------------------------- *
+ * § ARCHETYPE  (the seed first picks the island's identity, then that
+ *   identity drives the noise, so every seed has a clear character:
+ *     flats — a wide low tidal plain with a gentle central rise
+ *     peak  — a dramatic central mountain over narrow flats
+ *     atoll — a broken ring of islets around a lagoon, joined at low tide
+ *   A shared "tidal shelf" profile flattens everything near sea level, so
+ *   every archetype has broad gently-sloping intertidal margins for the
+ *   tides and beachcombing, rising through dunes into hillier interior.)
+ * --------------------------------------------------------------------- */
 
-// Baked heightmap so both the mesh and later gameplay queries agree.
+function pickArchetype(r) {
+  const x = r();                         // FIRST draw from the stream
+  if (x < 0.45) return "flats";
+  if (x < 0.82) return "peak";
+  return "atoll";
+}
+const archetype = pickArchetype(rng);
+
+// Seed-jittered shaping parameters give each island its own proportions.
+// Every archetype shares a broad gentle island BODY (the tidal plain); the
+// archetype adds a concentrated feature on top of it.
+const AP = (function (name, r) {
+  if (name === "peak")
+    return { mass: "peak",  coastR: 0.96, baseAmp: 0.38,
+             peakR: 0.44 + 0.12 * r(), peakPow: 1.55 + 0.45 * r(), peakAmp: 0.72,
+             hillAmp: 0.32, heightScale: 60, warp: 0.15 };
+  if (name === "atoll")
+    return { mass: "atoll", coastR: 0.99, baseAmp: 0.44,
+             lagR: 0.27 + 0.06 * r(), lagAmp: 0.48,
+             ringR: 0.52 + 0.06 * r(), ringW: 0.16 + 0.03 * r(), ringAmp: 0.50,
+             hillAmp: 0.28, heightScale: 48, warp: 0.20 };
+  return   { mass: "flats", coastR: 0.96, baseAmp: 0.50,
+             hillAmp: 0.32, heightScale: 50, warp: 0.18 };
+})(archetype, rng);
+
+const noise = makeNoise(subStream());      // elevation detail / hills
+const warpNoise = makeNoise(subStream());  // irregular coastline warp
+
+// Landmass shape vs warped radius (0 center → ~1 coast): a broad body plus
+// the archetype's signature feature (central peak, or ring around a lagoon).
+function radialMass(r) {
+  let m = (1 - smoothstep(0.15, AP.coastR, r)) * AP.baseAmp;        // island body
+  if (AP.mass === "peak") {
+    const p = Math.max(0, 1 - smoothstep(0.0, AP.peakR, r));
+    m += Math.pow(p, AP.peakPow) * AP.peakAmp;                     // central mountain
+  } else if (AP.mass === "atoll") {
+    m -= Math.exp(-Math.pow(r / AP.lagR, 2)) * AP.lagAmp;          // carve lagoon
+    m += Math.exp(-Math.pow((r - AP.ringR) / AP.ringW, 2)) * AP.ringAmp;  // raise ring
+  }
+  return Math.max(0, m);
+}
+
+/* --------------------------------------------------------------------- *
+ * § WORLD CONFIG (continued): bake the heightmap
+ * --------------------------------------------------------------------- */
+
+const SEA_THRESH = 0.20;     // elevation field value that maps to the waterline
+const SHELF_POW = 1.45;      // >1 flattens near shore → wide tidal margins, but
+                             // gentle enough that dunes & interior still rise
+
 const heightmap = new Float32Array(GRID * GRID);
 
 function buildHeightmap() {
-  const freq = 2.6;           // # of large features across the island
   for (let z = 0; z < GRID; z++) {
     for (let x = 0; x < GRID; x++) {
       const u = x / (GRID - 1);
       const v = z / (GRID - 1);
-      // fbm elevation
-      let h = noise.fbm(u * freq, v * freq, 6, 2.0, 0.5);
-      h = Math.pow(h, 1.25);                  // sharpen peaks a touch
-      // radial falloff → ocean around the edges
       const dx = u - 0.5, dz = v - 0.5;
-      const d = Math.sqrt(dx * dx + dz * dz) * 2.0;        // 0 center → ~1 edge
-      const fall = 1.0 - smoothstep(0.55, 1.0, d);
-      const island = h * fall;
-      heightmap[z * GRID + x] = (island - 0.30) * AMP;     // < 0 underwater
+      const d = Math.sqrt(dx * dx + dz * dz) * 2.0;           // 0 center → ~1.4 edge
+
+      // Irregular coastline: warp the radius with low-frequency noise.
+      const warp = (warpNoise.fbm(u * 1.4, v * 1.4, 4, 2.0, 0.5) - 0.5) * AP.warp;
+      const r = d + warp;
+
+      const mass = radialMass(r);
+      const landMask = smoothstep(0.02, 0.35, mass);           // keep hills on land
+      const hills = noise.fbm(u * 3.2, v * 3.2, 6, 2.0, 0.5);  // broad relief
+      const rough = noise.fbm(u * 8.0, v * 8.0, 3, 2.0, 0.5);  // rocky roughness
+
+      // Hills add relief; their digging is suppressed on high ground so the
+      // interior stays solid, but allowed near the coast to cut tide pools.
+      let hv = (hills - 0.5) * AP.hillAmp;
+      if (hv < 0) hv *= smoothstep(0.55, 0.18, mass);
+
+      // Elevation field, then the tidal-shelf profile (flatten near the shore).
+      let E = mass + hv * landMask + (rough - 0.5) * 0.045 * landMask;
+      const h0 = E - SEA_THRESH;
+      let height = Math.sign(h0) * Math.pow(Math.abs(h0), SHELF_POW) * AP.heightScale;
+
+      // Deepen the open ocean so the island reads as surrounded (and bounds you).
+      height -= smoothstep(0.22, 0.0, mass) * 7.0;
+
+      heightmap[z * GRID + x] = height;
     }
   }
 }
@@ -710,7 +783,7 @@ function ensureFBO() {
  * § CAMERA  (free-fly; walker + head-bob come in Phase 3)
  * --------------------------------------------------------------------- */
 
-const cam = { pos: [0, 24, 66], yaw: 0, pitch: -0.20, speed: 42 };
+const cam = { pos: [0, 30, 132], yaw: 0, pitch: -0.05, speed: 42 };
 (function aimAtIsland() {
   cam.yaw = Math.atan2(0 - cam.pos[0], -(0 - cam.pos[2]));
 })();
@@ -831,6 +904,7 @@ function frame(now) {
   gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.fb);
   gl.viewport(0, 0, fbo.w, fbo.h);
   gl.clearColor(SKY.horizon[0], SKY.horizon[1], SKY.horizon[2], 1.0);
+  gl.depthMask(true);   // MUST be writable or clear(DEPTH) is a no-op
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
 
   // sky (background, no depth)
@@ -901,7 +975,7 @@ function frame(now) {
 
   // ---- hud ----
   hud.textContent =
-    `seed ${SEED_STR}\n` +
+    `seed ${SEED_STR}  ·  ${archetype}\n` +
     `res  ${fbo.w}x${fbo.h}  dither ${ditherOn ? "on" : "off"}\n` +
     `pos  ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}  spd ${cam.speed.toFixed(0)}`;
 
