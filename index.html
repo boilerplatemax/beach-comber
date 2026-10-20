@@ -177,70 +177,79 @@ function makeNoise(rand) {
  * § WORLD CONFIG
  * --------------------------------------------------------------------- */
 
-const GRID = 256;             // heightmap resolution (GRID x GRID)
-const WORLD = 220.0;          // island spans WORLD world-units
+const GRID = 384;             // heightmap resolution (GRID x GRID)
+const WORLD = 1200.0;         // island spans WORLD world-units (big, so you feel small)
 const HALF = WORLD * 0.5;
 const CELL = WORLD / (GRID - 1);
 const SEA_LEVEL = 0.0;        // water sits at y = 0
 
 /* --------------------------------------------------------------------- *
- * § ARCHETYPE  (the seed first picks the island's identity, then that
- *   identity drives the noise, so every seed has a clear character:
- *     flats — a wide low tidal plain with a gentle central rise
- *     peak  — a dramatic central mountain over narrow flats
- *     atoll — a broken ring of islets around a lagoon, joined at low tide
- *   A shared "tidal shelf" profile flattens everything near sea level, so
- *   every archetype has broad gently-sloping intertidal margins for the
- *   tides and beachcombing, rising through dunes into hillier interior.)
+ * § TERRAIN CHARACTER  (every seed is unique: it sets continuous shaping
+ *   parameters, then a stack of noise fields — domain warp for organic
+ *   shapes, a macro field that patchworks plains vs. mountains, ridged
+ *   multifractal for sharp peaks & rock formations, rolling fbm hills, and
+ *   basin/pool noise for inland lakes, lagoons & tide pools. A tidal-shelf
+ *   profile keeps wide gentle intertidal margins near the waterline.)
  * --------------------------------------------------------------------- */
 
-function pickArchetype(r) {
+// A light flavour label (kept for the HUD / future content hooks).
+const CHARACTER = (function (r) {
   const x = r();                         // FIRST draw from the stream
-  if (x < 0.45) return "flats";
-  if (x < 0.82) return "peak";
+  if (x < 0.30) return "lowlands";
+  if (x < 0.68) return "highlands";
+  if (x < 0.88) return "peaks";
   return "atoll";
-}
-const archetype = pickArchetype(rng);
+})(rng);
 
-// Seed-jittered shaping parameters give each island its own proportions.
-// Every archetype shares a broad gentle island BODY (the tidal plain); the
-// archetype adds a concentrated feature on top of it.
-const AP = (function (name, r) {
-  if (name === "peak")
-    return { mass: "peak",  coastR: 0.96, baseAmp: 0.38,
-             peakR: 0.44 + 0.12 * r(), peakPow: 1.55 + 0.45 * r(), peakAmp: 0.72,
-             hillAmp: 0.32, heightScale: 60, warp: 0.15 };
-  if (name === "atoll")
-    return { mass: "atoll", coastR: 0.99, baseAmp: 0.44,
-             lagR: 0.27 + 0.06 * r(), lagAmp: 0.48,
-             ringR: 0.52 + 0.06 * r(), ringW: 0.16 + 0.03 * r(), ringAmp: 0.50,
-             hillAmp: 0.28, heightScale: 48, warp: 0.20 };
-  return   { mass: "flats", coastR: 0.96, baseAmp: 0.50,
-             hillAmp: 0.32, heightScale: 50, warp: 0.18 };
-})(archetype, rng);
+// Continuous, seed-jittered parameters — no two islands are shaped alike.
+const AP = (function (r, ch) {
+  const gentle = ch === "lowlands", big = ch === "peaks", atoll = ch === "atoll";
+  return {
+    character:  ch,
+    warp:       0.05 + 0.10 * r(),        // domain-warp strength (organic shapes)
+    coastWarp:  0.22 + 0.34 * r(),        // coastline irregularity (bays/capes)
+    coastInner: 0.28 + 0.14 * r(),        // full-land radius
+    coastOuter: 0.60 + 0.16 * r(),        // where land fades into sea
+    baseAmp:    0.10 + 0.12 * r(),        // gentle land body above the shelf
+    hillFreq:   2.4 + 2.2 * r(),          // rolling-hill scale
+    ridgeFreq:  1.4 + 1.8 * r(),          // mountain-ridge scale
+    macroFreq:  0.8 + 0.7 * r(),          // scale of the plains/mountains patchwork
+    mtn:        (gentle ? 0.25 : big ? 1.05 : 0.6) + 0.35 * r(),  // mountain intensity
+    ridgeLo:    0.40 + 0.10 * r(),        // macro threshold where mountains begin
+    lakeFreq:   1.1 + 1.0 * r(),
+    lakeAmt:    (atoll ? 1.1 : 0.5) + 0.4 * r(),  // inland-water prevalence
+    lakeDepth:  5.0 + 7.0 * r(),
+    poolFreq:   6.0 + 5.0 * r(),
+    heightScale:(gentle ? 95 : big ? 250 : 165) + 55 * r(),      // vertical scale
+  };
+})(rng, CHARACTER);
+const archetype = CHARACTER;   // HUD alias
 
-const noise = makeNoise(subStream());      // elevation detail / hills
-const warpNoise = makeNoise(subStream());  // irregular coastline warp
+// Independent noise fields (fixed draw order → deterministic per seed).
+const nWarpX = makeNoise(subStream());
+const nWarpY = makeNoise(subStream());
+const nCoast = makeNoise(subStream());
+const nHills = makeNoise(subStream());
+const nRidge = makeNoise(subStream());
+const nMacro = makeNoise(subStream());
+const nBasin = makeNoise(subStream());
+const nPool  = makeNoise(subStream());
 
-// Landmass shape vs warped radius (0 center → ~1 coast): a broad body plus
-// the archetype's signature feature (central peak, or ring around a lagoon).
-function radialMass(r) {
-  let m = (1 - smoothstep(0.15, AP.coastR, r)) * AP.baseAmp;        // island body
-  if (AP.mass === "peak") {
-    const p = Math.max(0, 1 - smoothstep(0.0, AP.peakR, r));
-    m += Math.pow(p, AP.peakPow) * AP.peakAmp;                     // central mountain
-  } else if (AP.mass === "atoll") {
-    m -= Math.exp(-Math.pow(r / AP.lagR, 2)) * AP.lagAmp;          // carve lagoon
-    m += Math.exp(-Math.pow((r - AP.ringR) / AP.ringW, 2)) * AP.ringAmp;  // raise ring
+// Ridged multifractal → sharp mountain ridgelines & rock formations.
+function ridgedMF(n, x, y, oct) {
+  let sum = 0, amp = 0.5, freq = 1.0, norm = 0, prev = 1.0;
+  for (let o = 0; o < oct; o++) {
+    let r = 1.0 - Math.abs(2.0 * n.noise2(x * freq, y * freq) - 1.0); // 0..1
+    r *= r;
+    sum += r * amp * prev;        // prev-weighting sharpens the ridges
+    prev = r;
+    norm += amp;
+    amp *= 0.5; freq *= 2.0;
   }
-  return Math.max(0, m);
+  return sum / norm;
 }
 
-/* --------------------------------------------------------------------- *
- * § WORLD CONFIG (continued): bake the heightmap
- * --------------------------------------------------------------------- */
-
-const SEA_THRESH = 0.20;     // elevation field value that maps to the waterline
+const SEA_THRESH = 0.16;     // elevation field value that maps to the waterline
 const SHELF_POW = 1.45;      // >1 flattens near shore → wide tidal margins, but
                              // gentle enough that dunes & interior still rise
 
@@ -251,30 +260,45 @@ function buildHeightmap() {
     for (let x = 0; x < GRID; x++) {
       const u = x / (GRID - 1);
       const v = z / (GRID - 1);
+
+      // Domain warp → organic, non-radial shapes (peninsulas, inlets).
+      const wu = u + (nWarpX.fbm(u * 1.6, v * 1.6, 4, 2, 0.5) - 0.5) * AP.warp;
+      const wv = v + (nWarpY.fbm(u * 1.6 + 3.1, v * 1.6 + 1.7, 4, 2, 0.5) - 0.5) * AP.warp;
+
+      // Irregular coastline → island mask (1 inland … 0 open sea).
       const dx = u - 0.5, dz = v - 0.5;
-      const d = Math.sqrt(dx * dx + dz * dz) * 2.0;           // 0 center → ~1.4 edge
+      let d = Math.sqrt(dx * dx + dz * dz) * 2.0;
+      d += (nCoast.fbm(u * 2.2, v * 2.2, 4, 2, 0.5) - 0.5) * AP.coastWarp;
+      const land = smoothstep(AP.coastOuter, AP.coastInner, d);   // reversed → 1 inside
 
-      // Irregular coastline: warp the radius with low-frequency noise.
-      const warp = (warpNoise.fbm(u * 1.4, v * 1.4, 4, 2.0, 0.5) - 0.5) * AP.warp;
-      const r = d + warp;
+      // Relief: rolling hills + ridged mountains, patch-worked by a macro field
+      // so each island has its own layout of plains, ranges and rock formations.
+      const macro = nMacro.fbm(wu * AP.macroFreq, wv * AP.macroFreq, 3, 2, 0.5);
+      const mtnMask = smoothstep(AP.ridgeLo, AP.ridgeLo + 0.26, macro);
+      const rolling = nHills.fbm(wu * AP.hillFreq, wv * AP.hillFreq, 6, 2, 0.5);
+      const ridges = ridgedMF(nRidge, wu * AP.ridgeFreq, wv * AP.ridgeFreq, 5);
+      const relief = rolling * 0.45 + mtnMask * ridges * AP.mtn;
 
-      const mass = radialMass(r);
-      const landMask = smoothstep(0.02, 0.35, mass);           // keep hills on land
-      const hills = noise.fbm(u * 3.2, v * 3.2, 6, 2.0, 0.5);  // broad relief
-      const rough = noise.fbm(u * 8.0, v * 8.0, 3, 2.0, 0.5);  // rocky roughness
+      // Elevation field: highest inland, tapering to the coast.
+      const elev = land * (AP.baseAmp + relief);
 
-      // Hills add relief; their digging is suppressed on high ground so the
-      // interior stays solid, but allowed near the coast to cut tide pools.
-      let hv = (hills - 0.5) * AP.hillAmp;
-      if (hv < 0) hv *= smoothstep(0.55, 0.18, mass);
+      // Tidal-shelf profile → wide gentle intertidal margins, real relief inland.
+      const e0 = elev - SEA_THRESH;
+      let height = Math.sign(e0) * Math.pow(Math.abs(e0), SHELF_POW) * AP.heightScale;
 
-      // Elevation field, then the tidal-shelf profile (flatten near the shore).
-      let E = mass + hv * landMask + (rough - 0.5) * 0.045 * landMask;
-      const h0 = E - SEA_THRESH;
-      let height = Math.sign(h0) * Math.pow(Math.abs(h0), SHELF_POW) * AP.heightScale;
+      // Inland bodies of water: carve basins (lakes / lagoons) where basin noise
+      // is low — the global water plane fills anything below sea level.
+      const basin = nBasin.fbm(wu * AP.lakeFreq, wv * AP.lakeFreq, 4, 2, 0.5);
+      const lake = smoothstep(0.46, 0.30, basin) * land * AP.lakeAmt;
+      height -= lake * AP.lakeDepth;
 
-      // Deepen the open ocean so the island reads as surrounded (and bounds you).
-      height -= smoothstep(0.22, 0.0, mass) * 7.0;
+      // Tide pools: fine dimples in the intertidal band (height near the shore).
+      const band = 1.0 - smoothstep(0.0, 4.0, Math.abs(height - 0.5));
+      const pool = nPool.fbm(u * AP.poolFreq, v * AP.poolFreq, 3, 2, 0.5);
+      height -= band * smoothstep(0.58, 0.72, pool) * 2.4;
+
+      // Deepen toward open sea so the island reads as surrounded (and bounds you).
+      height -= smoothstep(AP.coastInner, 1.5, d) * 14.0;
 
       heightmap[z * GRID + x] = height;
     }
@@ -308,8 +332,8 @@ function heightAt(wx, wz) {
  * --------------------------------------------------------------------- */
 
 let timeOfDay = 0.34;                 // 0..1 (fixed overcast mood for now)
-const FOG_DENSITY = 0.0058;
-const FOG_NEAR = 25.0;                // clear band before fog ramps in
+const FOG_DENSITY = 0.0016;           // see far across the big landscape, still hazy
+const FOG_NEAR = 50.0;                // clear band before fog ramps in
 
 // Cohesive eerie-cozy, overcast, early-2000s palette.
 const SKY = {
@@ -569,6 +593,7 @@ const waterVS = `#version 300 es
 precision highp float;
 uniform mat4 uProj, uView;
 uniform float uTime;
+uniform vec2 uCenter;          // grid follows the camera across the big map
 uniform sampler2D uHeight;
 in vec2 aXZ;
 out vec3 vWorld;
@@ -582,12 +607,13 @@ float waveH(vec2 p, float t) {
   return h;
 }
 void main() {
-  vec2 uv = clamp((aXZ + ${HALF_F}) / ${WORLD_F}, 0.0, 1.0);
+  vec2 xz = aXZ + uCenter;
+  vec2 uv = clamp((xz + ${HALF_F}) / ${WORLD_F}, 0.0, 1.0);
   float terr = texture(uHeight, uv).r;
   float depth = max(0.0, -terr);
   float damp = smoothstep(0.0, 2.0, depth);      // calm the waves in shallows
-  float wy = waveH(aXZ, uTime) * damp;
-  vWorld = vec3(aXZ.x, wy, aXZ.y);
+  float wy = waveH(xz, uTime) * damp;
+  vWorld = vec3(xz.x, wy, xz.y);
   gl_Position = uProj * uView * vec4(vWorld, 1.0);
 }`;
 
@@ -647,8 +673,9 @@ void main() {
 const waterProg = program(waterVS, waterFS);
 const waterU = uniforms(waterProg);
 
+const WATER_HALF = 820.0;             // half-extent of the camera-following sheet
 function buildWaterMesh() {
-  const WHALF = 320.0, SEG = 200;     // extends past the island; fog hides edges
+  const WHALF = WATER_HALF, SEG = 256; // covers out to the fog; follows the camera
   const n = SEG + 1;
   const pos = new Float32Array(n * n * 2);
   let k = 0;
@@ -783,7 +810,7 @@ function ensureFBO() {
  * § CAMERA  (free-fly; walker + head-bob come in Phase 3)
  * --------------------------------------------------------------------- */
 
-const cam = { pos: [0, 30, 132], yaw: 0, pitch: -0.05, speed: 42 };
+const cam = { pos: [0, 150, 700], yaw: 0, pitch: -0.14, speed: 120 };
 (function aimAtIsland() {
   cam.yaw = Math.atan2(0 - cam.pos[0], -(0 - cam.pos[2]));
 })();
@@ -1025,7 +1052,7 @@ function resize() {
   const w = Math.floor(innerWidth * dpr);
   const h = Math.floor(innerHeight * dpr);
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
-  proj = M4.perspective(Math.PI / 3, canvas.width / canvas.height, 0.1, 900);
+  proj = M4.perspective(Math.PI / 3, canvas.width / canvas.height, 0.1, 3200);
   ensureFBO();
 }
 addEventListener("resize", resize);
@@ -1113,6 +1140,10 @@ function frame(now) {
   gl.uniform1f(waterU.uTime, t);
   gl.uniform1f(waterU.uFogDensity, FOG_DENSITY);
   gl.uniform1f(waterU.uFogNear, FOG_NEAR);
+  // snap the water sheet to the camera so wave detail stays nearby
+  const wsnap = (WATER_HALF * 2) / 256;
+  gl.uniform2f(waterU.uCenter, Math.round(cam.pos[0] / wsnap) * wsnap,
+                               Math.round(cam.pos[2] / wsnap) * wsnap);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, heightTex);
   gl.uniform1i(waterU.uHeight, 0);
