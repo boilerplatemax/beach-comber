@@ -163,8 +163,8 @@
 <div id="invpanel"></div>
 <div id="debugpanel"></div>
 <div id="help">
-  WASD / click — move · Shift — run · E — pick up<br>
-  Tab — journal · Mouse — look · Esc — pause
+  WASD / click — move · Shift — run · click — dig · E — pick up<br>
+  Q — stomp · 1–4 — tools · Tab — journal · I — pack · Mouse — look · Esc — pause
 </div>
 
 <script>
@@ -357,6 +357,8 @@ const SHELF_POW = 1.7;       // >1 flattens near shore → wide tidal margins, b
                              // gentle enough that dunes & interior still rise
 
 const heightmap = new Float32Array(GRID * GRID);
+const dig = new Float32Array(GRID * GRID);    // digging offset layer (Part B); +spoil / -holes
+const hcombined = new Float32Array(GRID * GRID);   // scratch for base+dig texture uploads
 
 function buildHeightmap() {
   for (let z = 0; z < GRID; z++) {
@@ -420,10 +422,9 @@ function heightAt(wx, wz) {
   const x0 = Math.floor(gx), z0 = Math.floor(gz);
   if (x0 < 0 || z0 < 0 || x0 >= GRID - 1 || z0 >= GRID - 1) return -8.0;
   const fx = gx - x0, fz = gz - z0;
-  const h00 = heightmap[z0 * GRID + x0];
-  const h10 = heightmap[z0 * GRID + x0 + 1];
-  const h01 = heightmap[(z0 + 1) * GRID + x0];
-  const h11 = heightmap[(z0 + 1) * GRID + x0 + 1];
+  const i00 = z0 * GRID + x0, i10 = i00 + 1, i01 = i00 + GRID, i11 = i01 + 1;
+  const h00 = heightmap[i00] + dig[i00], h10 = heightmap[i10] + dig[i10];
+  const h01 = heightmap[i01] + dig[i01], h11 = heightmap[i11] + dig[i11];
   const a = h00 + (h10 - h00) * fx;
   const b = h01 + (h11 - h01) * fx;
   return a + (b - a) * fz;
@@ -440,8 +441,9 @@ function surfaceAt(wx, wz) {
     return _surf;
   }
   const fx = gx - x0, fz = gz - z0;
-  const h00 = heightmap[z0 * GRID + x0],       h10 = heightmap[z0 * GRID + x0 + 1];
-  const h01 = heightmap[(z0 + 1) * GRID + x0], h11 = heightmap[(z0 + 1) * GRID + x0 + 1];
+  const i00 = z0 * GRID + x0, i10 = i00 + 1, i01 = i00 + GRID, i11 = i01 + 1;
+  const h00 = heightmap[i00] + dig[i00], h10 = heightmap[i10] + dig[i10];
+  const h01 = heightmap[i01] + dig[i01], h11 = heightmap[i11] + dig[i11];
   let h, e1x, e1y, e1z, e2x, e2y, e2z;
   if (fx + fz < 1.0) {                       // lower triangle (a, b, c)
     h = h00 + (h10 - h00) * fx + (h01 - h00) * fz;
@@ -806,38 +808,62 @@ void main() {
 const terrainProg = program(terrainVS, terrainFS);
 const terrainU = uniforms(terrainProg);
 
-function buildTerrainMesh() {
-  const positions = new Float32Array(GRID * GRID * 3);
+// Chunked terrain so digging only rebuilds the touched chunk's vertices.
+const CHUNKS = 4;                                  // CHUNKS × CHUNKS tiles
+const chunkCells = Math.ceil((GRID - 1) / CHUNKS);
+const terrainChunks = [];
+function chunkRange(c) { return [c * chunkCells, Math.min(GRID - 1, (c + 1) * chunkCells)]; }
+function fillChunkPositions(ch, out) {
   let p = 0;
-  for (let z = 0; z < GRID; z++) {
-    for (let x = 0; x < GRID; x++) {
-      positions[p++] = x * CELL - HALF;
-      positions[p++] = heightmap[z * GRID + x];
-      positions[p++] = z * CELL - HALF;
+  for (let z = ch.z0; z <= ch.z1; z++)
+    for (let x = ch.x0; x <= ch.x1; x++) {
+      const i = z * GRID + x;
+      out[p++] = x * CELL - HALF; out[p++] = heightmap[i] + dig[i]; out[p++] = z * CELL - HALF;
     }
-  }
-  const indices = new Uint32Array((GRID - 1) * (GRID - 1) * 6);
-  let i = 0;
-  for (let z = 0; z < GRID - 1; z++) {
-    for (let x = 0; x < GRID - 1; x++) {
-      const a = z * GRID + x, b = a + 1, c = a + GRID, d = c + 1;
-      indices[i++] = a; indices[i++] = c; indices[i++] = b;
-      indices[i++] = b; indices[i++] = c; indices[i++] = d;
-    }
-  }
-  const vao = gl.createVertexArray();
-  gl.bindVertexArray(vao);
-  const vbo = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+}
+function buildTerrainMesh() {
   const loc = gl.getAttribLocation(terrainProg, "aPos");
-  gl.enableVertexAttribArray(loc);
-  gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
-  const ibo = gl.createBuffer();
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
-  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+  for (let cz = 0; cz < CHUNKS; cz++)
+    for (let cx = 0; cx < CHUNKS; cx++) {
+      const [x0, x1] = chunkRange(cx), [z0, z1] = chunkRange(cz);
+      const nx = x1 - x0 + 1, nz = z1 - z0 + 1;
+      const ch = { cx, cz, x0, x1, z0, z1, nx, nz };
+      const positions = new Float32Array(nx * nz * 3);
+      fillChunkPositions(ch, positions);
+      const indices = new Uint32Array((nx - 1) * (nz - 1) * 6);
+      let i = 0;
+      for (let z = 0; z < nz - 1; z++) for (let x = 0; x < nx - 1; x++) {
+        const a = z * nx + x, b = a + 1, c = a + nx, d = c + 1;
+        indices[i++] = a; indices[i++] = c; indices[i++] = b;
+        indices[i++] = b; indices[i++] = c; indices[i++] = d;
+      }
+      ch.vao = gl.createVertexArray(); gl.bindVertexArray(ch.vao);
+      ch.vbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, ch.vbo);
+      gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+      const ibo = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+      ch.count = indices.length; ch.scratch = positions;
+      terrainChunks[cz * CHUNKS + cx] = ch;
+    }
   gl.bindVertexArray(null);
-  return { vao, count: indices.length };
+  return { count: terrainChunks.reduce((a, c) => a + c.count, 0) };
+}
+function rebuildChunkAt(gx, gz) {                   // rebuild chunk(s) covering a grid cell
+  const cx = Math.min(CHUNKS - 1, (gx / chunkCells) | 0), cz = Math.min(CHUNKS - 1, (gz / chunkCells) | 0);
+  const done = new Set();
+  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
+    const c = (cz + dz) * CHUNKS + (cx + dx);
+    const ch = terrainChunks[c];
+    if (!ch || done.has(c)) continue;
+    // only rebuild neighbours whose shared edge the cell touches
+    if (gx < ch.x0 - 1 || gx > ch.x1 + 1 || gz < ch.z0 - 1 || gz > ch.z1 + 1) continue;
+    done.add(c); fillChunkPositions(ch, ch.scratch);
+    gl.bindBuffer(gl.ARRAY_BUFFER, ch.vbo); gl.bufferSubData(gl.ARRAY_BUFFER, 0, ch.scratch);
+  }
+}
+function drawTerrainChunks() {
+  for (const ch of terrainChunks) { gl.bindVertexArray(ch.vao); gl.drawElements(gl.TRIANGLES, ch.count, gl.UNSIGNED_INT, 0); countDraw(ch.count / 3); }
 }
 
 /* --------------------------------------------------------------------- *
@@ -1286,6 +1312,7 @@ addEventListener("keydown", (e) => {
   if (e.code === "KeyG") ditherOn = !ditherOn;
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE") interact();                  // pick up / inspect
+  if (e.code === "KeyQ") stomp();                      // stomp (shows buried things)
   if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
   if (e.code === "KeyI") toggleInventory();           // inventory panel
   if (e.code === "Digit1" || e.code === "Digit2" || e.code === "Digit3" || e.code === "Digit4")
@@ -1387,6 +1414,7 @@ if (IS_TOUCH) (function mobileControls() {
      <div id="mBtns">
        <div class="mBtn" data-act="run">Run</div>
        <div class="mBtn" data-key="KeyE">Pick up</div>
+       <div class="mBtn" data-key="KeyQ">Stomp</div>
        <div class="mBtn" data-key="Tab">Journal</div>
        <div class="mBtn" data-act="pause">Pause</div>
      </div>`;
@@ -2014,6 +2042,14 @@ const FINDS = {
   egg:      { mesh: () => eggMesh(),                 base: 0.5, max: 110, label: "Mermaid's Purse", desc: "The egg case of a skate.", rare: 1 },
   bottle:   { mesh: () => bottleMesh(),              base: 0.7, max: 50,  label: "Old Bottle", desc: "Sea-green glass, stoppered tight.", rare: 1 },
   bone:     { mesh: () => boneMesh(),                base: 1.0, max: 40,  label: "Whale Bone", desc: "A great pale vertebra from the deep.", rare: 2 },
+  // --- buried finds (dug up with the shovel) ---
+  clam:     { mesh: () => clamMesh(),                base: 0.5, max: 80,  label: "Clam", desc: "A fat bivalve, hinged shut.", rare: 0 },
+  cockle:   { mesh: () => shellMesh(),               base: 0.42,max: 80,  label: "Cockle", desc: "A ribbed little shell from the shallows.", rare: 0 },
+  ceramic:  { mesh: () => glassMesh([0.7,0.6,0.5]),  base: 0.5, max: 60,  label: "Pottery Shard", desc: "Glazed clay, worn at the edges. Who drank from this?", rare: 1 },
+  coin:     { mesh: () => coinMesh(),                base: 0.4, max: 60,  label: "Old Coin", desc: "Green with age, the face long gone.", rare: 1 },
+  fossil:   { mesh: () => coinMesh(),                base: 0.55,max: 40,  label: "Ammonite", desc: "A coiled creature turned to stone.", rare: 2 },
+  bell:     { mesh: () => bellMesh(),                base: 0.6, max: 20,  label: "Ship's Bell", desc: "Verdigris-green bronze. It still rings, faintly.", rare: 2 },
+  tin:      { mesh: () => tinMesh(),                 base: 0.55,max: 30,  label: "Sealed Tin", desc: "Rust-flecked and heavy. Something shifts inside.", rare: 2 },
 };
 
 // build dynamic draw objects
@@ -2433,7 +2469,7 @@ let pathActive = false, pathPts = [], pathI = 0, pathGoal = null, pendingEntity 
 let lastInvVP = null;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-function navH(ix, iz) { const gx = Math.min(GRID-1, ix*NAV), gz = Math.min(GRID-1, iz*NAV); return heightmap[gz*GRID+gx]; }
+function navH(ix, iz) { const gx = Math.min(GRID-1, ix*NAV), gz = Math.min(GRID-1, iz*NAV); const i = gz*GRID+gx; return heightmap[i] + dig[i]; }
 function navXZ(ix, iz) { return [ Math.min(GRID-1, ix*NAV)*CELL - HALF, Math.min(GRID-1, iz*NAV)*CELL - HALF ]; }
 function blockedByCollider(x, z, margin) {
   const cx = Math.floor(x/COLL_CELL), cz = Math.floor(z/COLL_CELL);
@@ -2533,7 +2569,9 @@ function clickAt(ndcx, ndcy) {
   // did we click near an item/creature? walk to it and pick up / inspect
   let ent = null, bd = 6;
   for (const e of life) { const d = Math.hypot(e.x - pt[0], e.z - pt[1]); if (d < bd && lifeVisible(e)) { bd = d; ent = e; } }
-  walkTo(pt[0], pt[1], ent);
+  if (ent) { walkTo(pt[0], pt[1], ent); return; }
+  if (selectedTool() === "shovel") { digAt(pt[0], pt[1]); return; }   // dig the clicked sand
+  walkTo(pt[0], pt[1]);
 }
 function interactWith(e) {
   if (e.kind === "find") {
@@ -2565,6 +2603,253 @@ function drawMarker(view) {
   markerDyn.draw(o, 1);
 }
 
+function propUniforms(view) {
+  gl.useProgram(propProg);
+  gl.uniformMatrix4fv(propU.uProj, false, proj); gl.uniformMatrix4fv(propU.uView, false, view);
+  gl.uniform3fv(propU.uSunDir, SKY.sun); gl.uniform3fv(propU.uCamPos, cam.pos);
+  gl.uniform3fv(propU.uZenith, SKY.zenith); gl.uniform3fv(propU.uHorizon, SKY.horizon); gl.uniform3fv(propU.uWarm, SKY.warm);
+  gl.uniform1f(propU.uFogDensity, FOG_DENSITY); gl.uniform1f(propU.uFogNear, FOG_NEAR);
+}
+
+/* ===================================================================== *
+ * § DIGGING  (the shovel — core feature)
+ * ===================================================================== */
+
+let onDig = null;                 // sound hook: onDig(surfaceKind | "clang" | "clink")
+const DIG_R = 6.0;                // dig radius (world units; a few terrain cells)
+const dugCells = new Set();       // grid indices with a non-zero offset (for healing)
+const digScratch = new Float32Array(400 * 10);
+
+// texture updates so water/pathfinding see the new ground
+function updateHeightTex(x0, z0, x1, z1) {
+  x0 = Math.max(0, x0 | 0); z0 = Math.max(0, z0 | 0); x1 = Math.min(GRID - 1, x1 | 0); z1 = Math.min(GRID - 1, z1 | 0);
+  const w = x1 - x0 + 1, h = z1 - z0 + 1; if (w <= 0 || h <= 0) return;
+  const buf = new Float32Array(w * h); let p = 0;
+  for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) { const i = z * GRID + x; buf[p++] = heightmap[i] + dig[i]; }
+  gl.bindTexture(gl.TEXTURE_2D, heightTex); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, z0, w, h, gl.RED, gl.FLOAT, buf);
+  const fb = new Float32Array(w * h); p = 0;
+  for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) { const i = z * GRID + x; fb[p++] = dig[i] < -0.05 ? -1000 : filled[i]; }
+  gl.bindTexture(gl.TEXTURE_2D, filledTex);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, z0, w, h, gl.RED, gl.FLOAT, fb);
+}
+function rebuildRegion(x0, z0, x1, z1) {
+  // rebuild every chunk overlapping the region, once
+  const done = new Set();
+  for (let cz = 0; cz < CHUNKS; cz++) for (let cx = 0; cx < CHUNKS; cx++) {
+    const ch = terrainChunks[cz * CHUNKS + cx];
+    if (x1 < ch.x0 || x0 > ch.x1 || z1 < ch.z0 || z0 > ch.z1) continue;
+    const c = cz * CHUNKS + cx; if (done.has(c)) continue; done.add(c);
+    fillChunkPositions(ch, ch.scratch); gl.bindBuffer(gl.ARRAY_BUFFER, ch.vbo); gl.bufferSubData(gl.ARRAY_BUFFER, 0, ch.scratch);
+  }
+}
+
+function surfaceKind(x, z) {
+  const s = surfaceAt(x, z), h = s.h;
+  if (s.slope > 0.62 || h > 34) return "rock";
+  if (h > 20) return "gravel";
+  if (h < wetLevel + 0.3) return "wet";     // recently under the tide
+  return "dry";
+}
+
+// apply a strike's displacement to the offset layer, then push updates
+function applyDig(x, z, amount, holeAng) {
+  const gcx = (x + HALF) / CELL, gcz = (z + HALF) / CELL, r = DIG_R / CELL;
+  const minx = Math.max(0, Math.floor(gcx - r * 2.4)), maxx = Math.min(GRID - 1, Math.ceil(gcx + r * 2.4));
+  const minz = Math.max(0, Math.floor(gcz - r * 2.4)), maxz = Math.min(GRID - 1, Math.ceil(gcz + r * 2.4));
+  for (let gz = minz; gz <= maxz; gz++) for (let gx = minx; gx <= maxx; gx++) {
+    const d = Math.hypot(gx - gcx, gz - gcz), i = gz * GRID + gx;
+    if (d < r) { const f = 1 - d / r; dig[i] -= amount * f * f; dugCells.add(i); }
+    else if (d < r * 2.3) {                                // spoil mound on the player's side
+      const ang = Math.atan2(gz - gcz, gx - gcx), side = Math.cos(ang - holeAng);
+      if (side > 0.2) { dig[i] += amount * 0.45 * side * (1 - (d - r) / (r * 1.3)); dugCells.add(i); }
+    }
+  }
+  rebuildRegion(minx, minz, maxx, maxz);
+  updateHeightTex(minx, minz, maxx, maxz);
+}
+
+// heal the beach: tide covers holes (fast), dry sand slumps slowly
+function healDig(gdt) {
+  if (!dugCells.size) return;
+  let minx = 1e9, minz = 1e9, maxx = -1e9, maxz = -1e9, any = false;
+  for (const i of dugCells) {
+    const gx = i % GRID, gz = (i / GRID) | 0;
+    const submerged = waterLevel > heightmap[i] + 0.2;
+    const rate = submerged ? 0.6 : 0.015;
+    dig[i] *= Math.max(0, 1 - rate * gdt);
+    if (Math.abs(dig[i]) < 0.02) { dig[i] = 0; dugCells.delete(i); }
+    any = true; if (gx < minx) minx = gx; if (gx > maxx) maxx = gx; if (gz < minz) minz = gz; if (gz > maxz) maxz = gz;
+  }
+  if (any) { rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz); }
+}
+
+/* ---- dig spots & tells (seeded loot table) ---- */
+let digSpots = [];
+let ODDITY_ITEM = null, ODDITY_NAME = "";
+function pick(a) { return a[(rng() * a.length) | 0]; }
+function seedDigSpots() {
+  digSpots = [];
+  if (!ODDITY_ITEM) { ODDITY_ITEM = pick(["bell", "tin", "fossil"]); ODDITY_NAME = latinName(); }
+  const n = 50 + (rng() * 40 | 0);
+  for (let k = 0; k < n; k++) {
+    const a = rng() * 6.283, r = HALF * (0.22 + rng() * 0.6), x = Math.sin(a) * r, z = -Math.cos(a) * r;
+    const h = heightAt(x, z), s = surfaceAt(x, z).slope;
+    if (h < 0.5 || h > 18 || s > 0.4) continue;
+    const roll = rng();
+    let item, band, tell, needed;
+    if (roll < 0.55) { item = pick(["clam", "cockle", "shell", "molt", "seaglass"]); band = 1; needed = 2; tell = rng() < 0.2 ? "gull" : "show"; }
+    else if (roll < 0.85) { item = pick(["bottle", "ceramic", "coin"]); band = 2; needed = 3; tell = rng() < 0.3 ? "bubble" : "show"; }
+    else { item = pick(["fossil", "bell", "tin"]); band = 3; needed = 5; tell = "dry"; }
+    digSpots.push({ x, z, item, band, needed, tell, strikes: 0, revealed: false,
+                    razor: item === "clam" && rng() < 0.4, lastStrike: -99, pecked: 0 });
+  }
+  // 1 island oddity, buried deep under a dry patch (retry until a valid spot is found)
+  if (ODDITY_ITEM) {
+    for (let t = 0; t < 24; t++) {
+      const a = rng() * 6.283, r = HALF * (0.25 + rng() * 0.5), x = Math.sin(a) * r, z = -Math.cos(a) * r;
+      const h = heightAt(x, z);
+      if (h > 1 && h < 16 && surfaceAt(x, z).slope < 0.4) {
+        digSpots.push({ x, z, item: ODDITY_ITEM, band: 3, needed: 6, tell: "dry", strikes: 0, revealed: false, razor: false, lastStrike: -99, special: true });
+        break;
+      }
+    }
+  }
+}
+function nearestSpot(x, z, maxd) { let best = null, bd = maxd; for (const s of digSpots) { if (s.revealed) continue; const d = Math.hypot(s.x - x, s.z - z); if (d < bd) { bd = d; best = s; } } return best; }
+
+// the dig action
+let shovelSwing = 0, camNudge = 0, stompCd = 0;
+function digAt(x, z) {
+  if (mode !== "walk" || selectedTool() !== "shovel") return;
+  if (Math.hypot(x - player.x, z - player.z) > 5.5) { walkTo(x, z); pendingDig = [x, z]; return; } // walk into range first
+  const kind = surfaceKind(x, z);
+  shovelSwing = 1; camNudge = 0.05;
+  if (onDig) onDig(kind === "rock" ? "clang" : kind);
+  const sy = surfaceAt(x, z).h;
+  if (kind === "rock") { spawnSand(x, sy, z, 6, [0.5, 0.5, 0.52]); return; }    // clang, no dig
+  const amt = kind === "wet" ? 1.5 : kind === "dry" ? 1.1 : 0.7;                // gravel slow
+  const holeAng = Math.atan2(player.z - z, player.x - x);
+  applyDig(x, z, amt, holeAng);
+  spawnSand(x, sy + 0.3, z, 14, kind === "wet" ? [0.62, 0.56, 0.46] : kind === "gravel" ? [0.6, 0.58, 0.55] : [0.86, 0.78, 0.6]);
+  // find a buried thing?
+  const spot = nearestSpot(x, z, DIG_R + 0.5);
+  if (spot) {
+    // razor clams escape without quick follow-up strikes
+    if (spot.razor && spot.strikes > 0 && clock.t - spot.lastStrike > 1.3) { spot.needed++; showCard("It wriggled deeper!", "Razor clams burrow — strike again, fast."); }
+    spot.lastStrike = clock.t; spot.strikes++;
+    if (spot.strikes >= spot.needed) {
+      if (onDig) onDig("clink");
+      spot.revealed = true;
+      spawnFind(spot.item, spot.x, spot.z);                  // sits at the bottom of the hole
+      const e = life[life.length - 1]; if (e) { e.dug = true; e.special = !!spot.special; if (spot.special) e.name = ODDITY_NAME; }
+      showCard("Clink!", "Something's in the hole — click it to collect.");
+    }
+  } else if (rng() < 0.12) {                                  // blind dig: occasional scrap
+    spawnFind(pick(["shell", "seaglass", "molt"]), x + (rng()-0.5), z + (rng()-0.5));
+  }
+}
+let pendingDig = null;
+function stomp() {
+  if (stompCd > 0 || mode !== "walk") return;
+  stompCd = 2.5; camNudge = 0.04;
+  if (onDig) onDig("stomp");
+  for (const s of digSpots) { if (s.revealed) continue; const d = Math.hypot(s.x - player.x, s.z - player.z); if (d < 13 && surfaceKind(s.x, s.z) === "wet") { s.react = 1.2; spawnSand(s.x, surfaceAt(s.x, s.z).h, s.z, 3, [0.5, 0.6, 0.65]); } }
+}
+
+/* ---- sand particles ---- */
+const particles = [];
+const partDyn = makeDynamic((function () { const m = Mesh(); mBox(m, 0, 0, 0, 0.5, 0.5, 0.5, [1, 1, 1]); return m; })(), 220);
+function spawnSand(x, y, z, n, col) { for (let i = 0; i < n && particles.length < 200; i++) { const a = rng() * 6.283, s = 1 + rng() * 3; particles.push({ x, y, z, vx: Math.cos(a) * s, vy: 3 + rng() * 4, vz: Math.sin(a) * s, t: 0, life: 0.5 + rng() * 0.4, col }); } }
+function updateParticles(dt) { for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.t += dt; p.vy -= 20 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; if (p.t > p.life) particles.splice(i, 1); } }
+function drawParticles(view) {
+  if (!particles.length) return; let n = 0;
+  for (const p of particles) { if (n >= 200) break; const o = n * 10, sc = 0.14 * (1 - p.t / p.life); digScratch[o]=p.x;digScratch[o+1]=p.y;digScratch[o+2]=p.z;digScratch[o+3]=sc;digScratch[o+4]=p.t*8;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=p.col[0];digScratch[o+8]=p.col[1];digScratch[o+9]=p.col[2]; n++; }
+  propUniforms(view); partDyn.draw(digScratch, n);
+}
+
+/* ---- tell markers (dimples / dry patches) drawn as flat discs ---- */
+const dimpleDyn = makeDynamic((function () { const m = discMesh(0, 0.5, 8, 0.0, [1, 1, 1]); return m; })(), 60);
+function drawTells(view, dt) {
+  let n = 0;
+  for (const s of digSpots) {
+    if (s.revealed) continue;
+    const d = Math.hypot(s.x - player.x, s.z - player.z);
+    if (d > 26) continue;
+    let show = 0, col = [0.3, 0.33, 0.3];
+    if (s.tell === "dry") { show = 1; col = [0.92, 0.86, 0.68]; }                 // eerie dry patch
+    else if (s.tell === "gull") { show = s.pecked > 0 ? 0.8 : 0; col = [0.4, 0.4, 0.42]; }
+    else { // "show" / "bubble": react to footsteps / stomp when on wet sand nearby
+      s.react = Math.max(0, (s.react || 0) - dt * 1.5);
+      if (d < 6 && surfaceKind(s.x, s.z) === "wet") s.react = Math.max(s.react, 0.5 + 0.3 * Math.sin(clock.t * 6));
+      show = s.react;
+      if (s.tell === "bubble" && tideInfo().rising === false) show = Math.max(show, 0.4);
+    }
+    if (show <= 0.02 || n >= 60) continue;
+    const g = surfaceAt(s.x, s.z).h + 0.06, o = n * 10, sc = (0.6 + 0.3 * show) * (s.tell === "dry" ? 2.0 : 1.0);
+    digScratch[o]=s.x;digScratch[o+1]=g;digScratch[o+2]=s.z;digScratch[o+3]=sc;digScratch[o+4]=0;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=col[0];digScratch[o+8]=col[1];digScratch[o+9]=col[2]; n++;
+  }
+  if (n) { propUniforms(view); dimpleDyn.draw(digScratch, n); }
+}
+
+/* ---- first-person shovel (built in world space each frame) ---- */
+const shovelFP = shovelMesh();
+const shovelDyn = makeDynamic((function () { const m = Mesh(); mBox(m, 0, 0, 0, 0.001, 0.001, 0.001, [0,0,0]); return m; })(), 1);
+let shovelPosBuf = null, shovelColBuf = null, shovelVAO = null, shovelVC = 0;
+function initShovelFP() {
+  shovelVC = shovelFP.pos.length / 3;
+  shovelVAO = gl.createVertexArray(); gl.bindVertexArray(shovelVAO);
+  shovelPosBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, shovelPosBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, shovelFP.pos.length * 4, gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(propLoc.aPos); gl.vertexAttribPointer(propLoc.aPos, 3, gl.FLOAT, false, 0, 0);
+  shovelColBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, shovelColBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(shovelFP.col), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(propLoc.aCol); gl.vertexAttribPointer(propLoc.aCol, 3, gl.FLOAT, false, 0, 0);
+  const ib = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, ib);  // identity instance
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,0,0, 1,0,0,0, 1,1,1]), gl.STATIC_DRAW);
+  const ST = 40;
+  gl.enableVertexAttribArray(propLoc.iOff); gl.vertexAttribPointer(propLoc.iOff, 3, gl.FLOAT, false, ST, 0); gl.vertexAttribDivisor(propLoc.iOff, 1);
+  gl.enableVertexAttribArray(propLoc.iSRL); gl.vertexAttribPointer(propLoc.iSRL, 4, gl.FLOAT, false, ST, 12); gl.vertexAttribDivisor(propLoc.iSRL, 1);
+  gl.enableVertexAttribArray(propLoc.iTint); gl.vertexAttribPointer(propLoc.iTint, 3, gl.FLOAT, false, ST, 28); gl.vertexAttribDivisor(propLoc.iTint, 1);
+  gl.bindVertexArray(null);
+}
+const shovelWorld = new Float32Array(3000);
+function drawShovel(view) {
+  if (mode !== "walk" || selectedTool() !== "shovel") return;
+  const f = camForward();
+  let rx = -f[2], rz = f[0]; const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl;      // camera right (horizontal)
+  const upx = -rz*f[1], upy = rz*f[0] - rx*f[2], upz = rx*f[1];                           // camera up = right × forward
+  const sw = Math.sin(Math.min(1, shovelSwing) * Math.PI);                               // 0→1→0 swing
+  const ox = 0.42, oy = -0.42 - sw * 0.25, oz = 0.78 + sw * 0.32;
+  const scale = 0.5, tilt = -0.5 - sw * 0.9;                                              // blade points down-forward on swing
+  const ct = Math.cos(tilt), st = Math.sin(tilt);
+  let p = 0;
+  for (let i = 0; i < shovelFP.pos.length; i += 3) {
+    let vx = shovelFP.pos[i] * scale, vy = shovelFP.pos[i+1] * scale, vz = shovelFP.pos[i+2] * scale;
+    const ny = vy * ct - vz * st, nz = vy * st + vz * ct; vy = ny; vz = nz;               // pitch (tilt)
+    const wx = cam.pos[0] + rx*(ox+vx) + upx*(oy+vy) + f[0]*(oz+vz);
+    const wy = cam.pos[1] + 0 *(ox+vx) + upy*(oy+vy) + f[1]*(oz+vz);
+    const wz = cam.pos[2] + rz*(ox+vx) + upz*(oy+vy) + f[2]*(oz+vz);
+    shovelWorld[p++] = wx; shovelWorld[p++] = wy; shovelWorld[p++] = wz;
+  }
+  propUniforms(view);
+  gl.bindVertexArray(shovelVAO);
+  gl.bindBuffer(gl.ARRAY_BUFFER, shovelPosBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, shovelWorld, 0, shovelVC * 3);
+  gl.disable(gl.DEPTH_TEST);                                   // always on top
+  gl.drawArraysInstanced(gl.TRIANGLES, 0, shovelVC, 1);
+  gl.enable(gl.DEPTH_TEST);
+  countDraw(shovelVC / 3);
+}
+
+function updateDigging(dt) {
+  if (shovelSwing > 0) shovelSwing = Math.max(0, shovelSwing - dt * 3.5);
+  if (camNudge > 0) camNudge = Math.max(0, camNudge - dt * 0.4);
+  if (stompCd > 0) stompCd -= dt;
+  updateParticles(dt);
+  // arrive-to-dig
+  if (pendingDig && !pathActive) { const [dx, dz] = pendingDig; pendingDig = null; if (Math.hypot(dx - player.x, dz - player.z) < 6) digAt(dx, dz); }
+}
+
 /* --------------------------------------------------------------------- *
  * § BUILD + LOOP
  * --------------------------------------------------------------------- */
@@ -2590,6 +2875,8 @@ loadState();
 if (!Inv.hotbar.includes("shovel")) Inv.equipTool("shovel");   // start with a shovel
 renderHotbar();
 syncDebugPanel();
+seedDigSpots();
+initShovelFP();
 
 let proj = new Float32Array(16);
 function resize() {
@@ -2621,10 +2908,12 @@ function frame(now) {
     const s = Math.min(0.05, gdt);
     updateTide(s);
     updateLife(s, clock.t);
-    if (tideT > 0.73 && tideT < 0.78) { if (!washedThisLow) { washUp(false); washedThisLow = true; } }
+    healDig(s);
+    if (tideT > 0.73 && tideT < 0.78) { if (!washedThisLow) { washUp(false); seedDigSpots(); washedThisLow = true; } }
     else if (tideT < 0.55) washedThisLow = false;
     gdt -= s;
   }
+  updateDigging(dt);
   if (cardTimer > 0) { cardTimer -= dt; if (cardTimer <= 0) document.getElementById("card").style.display = "none"; }
   if (toasts.length) updateToasts(dt);
 
@@ -2748,8 +3037,8 @@ function frame(now) {
 
   // ---- matrices ----
   let f = camForward();
-  if (mode === "walk" && player.scramble > 0.01) {            // dip forward + breathe
-    const dip = player.scramble * 0.14 + Math.sin(t * 2.2) * player.scramble * 0.025;
+  if (mode === "walk" && (player.scramble > 0.01 || camNudge > 0.001)) {   // dip + breathe + dig kick
+    const dip = player.scramble * 0.14 + Math.sin(t * 2.2) * player.scramble * 0.025 + camNudge;
     const cp = Math.cos(cam.pitch - dip), sp = Math.sin(cam.pitch - dip);
     f = [Math.sin(cam.yaw) * cp, sp, -Math.cos(cam.yaw) * cp];
   }
@@ -2794,14 +3083,15 @@ function frame(now) {
   gl.uniform1f(terrainU.uFogNear, FOG_NEAR);
   gl.uniform1f(terrainU.uWaterLevel, waterLevel);
   gl.uniform1f(terrainU.uWetLevel, wetLevel);
-  gl.bindVertexArray(terrain.vao);
-  gl.drawElements(gl.TRIANGLES, terrain.count, gl.UNSIGNED_INT, 0);
-  countDraw(terrain.count / 3);
+  drawTerrainChunks();
 
   // props & points of interest (instanced), before the transparent water
   drawProps(view);
   drawLife(view);
+  drawTells(view, dt);
+  drawParticles(view);
   drawMarker(view);
+  drawShovel(view);
 
   // water
   gl.enable(gl.BLEND);
