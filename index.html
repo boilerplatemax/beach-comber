@@ -102,7 +102,7 @@
   .toast i { opacity: .6; font-size: 12px; }
   /* hotbar (bottom-center) */
   #hotbar { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
-    z-index: 6; display: flex; gap: 8px; }
+    z-index: 8; display: flex; gap: 8px; pointer-events: auto; }
   .hslot { position: relative; width: 50px; height: 50px; border-radius: 8px;
     border: 1px solid rgba(255,255,255,.2); background: rgba(10,18,22,.55); cursor: pointer; }
   .hslot.sel { border-color: #ffe6b0; box-shadow: 0 0 8px rgba(255,220,150,.5); }
@@ -169,8 +169,8 @@
 <div id="invpanel"></div>
 <div id="debugpanel"></div>
 <div id="help">
-  WASD / click — move · Shift — run · click — dig · E — pick up<br>
-  Q — stomp · 1–4 — tools · Tab — journal · I — pack · Mouse — look · Esc — pause
+  WASD / click — move · Shift — run · click — use tool · E — pick up<br>
+  1 dig · 2 chop · 3 mine · 4 plant · Q stomp · R rest · Tab journal · I pack · Esc pause
 </div>
 
 <script>
@@ -1919,7 +1919,7 @@ function buildProps() {
     if (rng() > 0.5 || nearPOI(x, z, 3) || !reserveBig(x, z)) return;
     const sc = 7 + rng()*6;
     pushInst(inst, x, s.h, z, sc, rng()*6.28, 0.05 + rng()*0.18, rng()*6.28, vary([0.9,0.95,0.8], 0.15));
-    colliders.push({ x, z, r: 0.5 });
+    colliders.push({ x, z, r: 0.5, kind: "tree", species: "palm", ii: inst.length/10 - 1 });
   });
   // interior pines, thinning on slopes & toward the summit (keep sightlines)
   const trees = scatter(11, 0.9, 3500, (x, z, inst) => {
@@ -1928,7 +1928,7 @@ function buildProps() {
     if (rng() > 0.55 * thin || nearPOI(x, z, 3) || !reserveBig(x, z)) return;
     const sc = 6 + rng()*10;
     pushInst(inst, x, s.h, z, sc, rng()*6.28, rng()*0.1, rng()*6.28, vary([1,1,1], 0.2));
-    colliders.push({ x, z, r: 0.6 });
+    colliders.push({ x, z, r: 0.6, kind: "tree", species: "pine", ii: inst.length/10 - 1 });
   });
   // boulders: rocky high ground and scattered on the flats (collide)
   const rocks = scatter(20, 0.9, 1500, (x, z, inst) => {
@@ -1938,14 +1938,14 @@ function buildProps() {
     if (rng() > (high ? 0.5 : 0.12) || nearPOI(x, z, 3) || !reserveBig(x, z)) return;
     const sc = 1.2 + rng()*3.5;
     pushInst(inst, x, s.h + sc*0.1, z, sc, rng()*6.28, 0, 0, vary([1,1,1], 0.15));
-    colliders.push({ x, z, r: sc*0.5 });
+    colliders.push({ x, z, r: sc*0.5, kind: "rock", ii: inst.length/10 - 1, sc });
   });
   // occasional old fence posts (collide)
   const fences = scatter(28, 1.0, 600, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 6 || s.h > 26 || s.slope > 0.4) return;
     if (rng() > 0.1 || nearPOI(x, z, 2) || !reserveBig(x, z)) return;
     pushInst(inst, x, s.h, z, 1 + rng()*0.8, rng()*6.28, 0.08 + rng()*0.2, rng()*6.28, vary([1,1,1], 0.15));
-    colliders.push({ x, z, r: 0.3 });
+    colliders.push({ x, z, r: 0.3, kind: "fence", ii: inst.length/10 - 1 });
   });
 
   propTypes = [
@@ -2022,9 +2022,9 @@ function cellIndex(x, z) {
   if (gx < 0 || gz < 0 || gx >= GRID || gz >= GRID) return -1;
   return gz * GRID + gx;
 }
-// A tree / boulder / POI whose roots block digging within r of (x,z)?
+// Only boulders and POIs hard-block digging; trees can be undermined (they topple).
 function bigPropBlocking(x, z, r) {
-  for (const c of colliders) if (Math.hypot(c.x - x, c.z - z) < c.r + r) return true;
+  for (const c of colliders) if (c.kind === "rock" && Math.hypot(c.x - x, c.z - z) < c.r + r) return true;
   for (const p of POIS) if (Math.hypot(p.x - x, p.z - z) < p.radius + r - 1) return true;
   return false;
 }
@@ -2117,6 +2117,19 @@ function coinMesh() { return discMesh(0.04,0.4,10,0.03,[0.7,0.6,0.32]); }
 function mergeMesh(m, n) { for (let i = 0; i < n.pos.length; i++) { m.pos.push(n.pos[i]); m.col.push(n.col[i]); } }
 function bellMesh() { const m = Mesh(); mCyl(m,0,0.8,0.5,0.25,8,[0.42,0.55,0.4]); mergeMesh(m, discMesh(0.8,0.25,8,0.05,[0.42,0.55,0.4])); mBox(m,0,0.95,0,0.1,0.15,0.1,[0.42,0.55,0.4]); mCyl(m,-0.2,0.1,0.08,0.08,5,[0.3,0.4,0.3]); return m; }
 function tinMesh() { const m = Mesh(); mCyl(m,0,0.5,0.5,0.5,10,[0.6,0.55,0.48]); mergeMesh(m, discMesh(0.5,0.5,10,0.03,[0.65,0.6,0.52])); return m; }
+// Phase 6 tools (first-person; same orientation as the shovel: head at the bottom).
+function axeMesh() { const m = Mesh(); mBox(m,0,0,0,0.035,0.62,0.035,[0.45,0.33,0.22]);   // shaft
+  const steel=[0.62,0.64,0.68]; mBox(m,0,-0.6,0,0.05,0.12,0.05,[0.4,0.4,0.43]);            // socket
+  mTri(m,[0.05,-0.46,0],[0.05,-0.74,0],[0.36,-0.62,0.0],steel); mTri(m,[0.05,-0.46,0],[0.36,-0.62,0.0],[0.05,-0.74,0],steel); return m; }
+function pickaxeMesh() { const m = Mesh(); mBox(m,0,0,0,0.035,0.62,0.035,[0.45,0.33,0.22]);
+  const steel=[0.55,0.57,0.62]; mBox(m,0,-0.6,0,0.05,0.05,0.05,[0.4,0.4,0.43]);
+  mBox(m,0,-0.62,0,0.34,0.03,0.03,steel);                                                   // horizontal pick bar
+  mTri(m,[0.34,-0.59,0],[0.34,-0.65,0],[0.46,-0.62,0],steel); mTri(m,[-0.34,-0.59,0],[-0.34,-0.65,0],[-0.46,-0.62,0],steel); return m; }
+function stumpMesh() { const m = Mesh(); mCyl(m,0,0.4,0.32,0.28,7,BARK); mergeMesh(m, discMesh(0.4,0.28,7,0.03,[0.72,0.6,0.42])); return m; }
+function logMesh() { const m = Mesh(); mCyl(m,-0.45,0.45,0.15,0.15,7,BROWN); mergeMesh(m, discMesh(0.45,0.15,7,0.02,[0.66,0.56,0.42])); mergeMesh(m, discMesh(-0.45,0.15,7,-0.02,[0.66,0.56,0.42])); return m; }
+function coconutMesh() { const m = Mesh(); mCyl(m,-0.17,0.17,0.2,0.2,7,[0.5,0.38,0.26]); mergeMesh(m, discMesh(0.17,0.2,7,0.07,[0.52,0.4,0.28])); mergeMesh(m, discMesh(-0.17,0.2,7,-0.07,[0.46,0.35,0.23])); return m; }
+function coneMesh2() { const m = Mesh(); mCyl(m,0,0.34,0.13,0,6,[0.44,0.32,0.2]); mCyl(m,0,0.12,0.15,0.1,6,[0.5,0.37,0.24]); return m; }
+function stoneMesh() { const m = Mesh(); mRock(m, mulberry32(0x51a3 ^ SEED_INT), [0.52, 0.5, 0.47]); return m; }
 
 // --- registries: mesh, palette, scale, how many may draw, behaviour ---
 const CREATURES = {
@@ -2147,6 +2160,11 @@ const FINDS = {
   fossil:   { mesh: () => coinMesh(),                base: 0.55,max: 40,  label: "Ammonite", desc: "A coiled creature turned to stone.", rare: 2 },
   bell:     { mesh: () => bellMesh(),                base: 0.6, max: 20,  label: "Ship's Bell", desc: "Verdigris-green bronze. It still rings, faintly.", rare: 2 },
   tin:      { mesh: () => tinMesh(),                 base: 0.55,max: 30,  label: "Sealed Tin", desc: "Rust-flecked and heavy. Something shifts inside.", rare: 2 },
+  // --- materials & seeds (chopping / mining / planting) ---
+  log:      { mesh: () => logMesh(),                 base: 0.8, max: 60,  label: "Log", desc: "A length of trunk, fresh-cut.", rare: 0 },
+  stone:    { mesh: () => stoneMesh(),               base: 0.7, max: 60,  label: "Stone", desc: "A heavy chunk of rock.", rare: 0 },
+  coconut:  { mesh: () => coconutMesh(),             base: 0.5, max: 30,  label: "Coconut", desc: "A palm seed — plant it on sand.", rare: 1 },
+  pinecone: { mesh: () => coneMesh2(),               base: 0.4, max: 30,  label: "Pine Cone", desc: "A conifer seed — plant it on soil or grass.", rare: 1 },
 };
 
 // build dynamic draw objects
@@ -2346,9 +2364,18 @@ const ITEMS = {};
 for (const k in FINDS)
   ITEMS[k] = { id: k, name: FINDS[k].label, category: "find", rarity: RARITY[FINDS[k].rare] || "common",
                stackable: true, maxStack: 99, desc: FINDS[k].desc, model: FINDS[k].mesh, tint: [1,1,1] };
-// tool
+// tools
 ITEMS.shovel = { id: "shovel", name: "Shovel", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
                  desc: "A sturdy beach shovel. Dig wet sand to unearth buried finds.", model: () => shovelMesh(), tint: [1,1,1] };
+ITEMS.axe = { id: "axe", name: "Axe", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
+              desc: "A felling axe. Chop trees for logs — and sometimes seeds.", model: () => axeMesh(), tint: [1,1,1] };
+ITEMS.pickaxe = { id: "pickaxe", name: "Pickaxe", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
+                  desc: "A miner's pick. Break boulders into stone.", model: () => pickaxeMesh(), tint: [1,1,1] };
+// materials & seeds (Phase 6; building comes later)
+digItem("log", "Log", "material", "common", "A length of trunk, fresh-cut.", () => logMesh(), [0.5,0.4,0.28]);
+digItem("stone", "Stone", "material", "common", "A heavy chunk of rock.", () => stoneMesh(), [0.52,0.5,0.47]);
+digItem("coconut", "Coconut", "seed", "common", "A palm seed — plant it on sand.", () => coconutMesh(), [0.5,0.38,0.26]);
+digItem("pinecone", "Pine Cone", "seed", "common", "A conifer seed — plant it on soil or grass.", () => coneMesh2(), [0.44,0.32,0.2]);
 // dug finds (collected from holes)
 function digItem(id, name, cat, rar, desc, meshFn, tint) { ITEMS[id] = { id, name, category: cat, rarity: rar, stackable: cat !== "relic", maxStack: cat === "relic" ? 1 : 99, desc, model: meshFn, tint: tint || [1,1,1] }; }
 digItem("clam", "Clam", "find", "common", "A plump clam, still closed.", () => clamMesh(), [0.85,0.8,0.72]);
@@ -2464,7 +2491,11 @@ function renderHotbar() {
     const ic = it && it.icon ? `<img src="${it.icon}">` : "";
     return `<div class="hslot${i === Inv.selected ? " sel" : ""}" data-h="${i}">${ic}<b>${i + 1}</b></div>`;
   }).join("");
-  el.querySelectorAll(".hslot").forEach((s) => s.onclick = () => selectHotbar(+s.dataset.h));
+  el.querySelectorAll(".hslot").forEach((s) => {
+    const pick = (e) => { e.preventDefault(); e.stopPropagation(); selectHotbar(+s.dataset.h); };
+    s.onclick = pick;
+    s.addEventListener("touchstart", pick, { passive: false });   // mobile: tap a slot to switch tool
+  });
 }
 let invOpen = false, invDetail = -1;
 function toggleInventory() { invOpen = !invOpen; invDetail = -1; renderInventory(); document.getElementById("invpanel").style.display = invOpen ? "block" : "none"; }
@@ -2669,7 +2700,11 @@ function clickAt(ndcx, ndcy) {
   let ent = null, bd = 6;
   for (const e of life) { const d = Math.hypot(e.x - pt[0], e.z - pt[1]); if (d < bd && lifeVisible(e)) { bd = d; ent = e; } }
   if (ent) { walkTo(pt[0], pt[1], ent); return; }
-  if (selectedTool() === "shovel") { digAt(pt[0], pt[1]); return; }   // dig the clicked sand
+  const tool = selectedTool();
+  if (tool === "shovel") { digAt(pt[0], pt[1]); return; }
+  if (tool === "axe") { chopAt(pt[0], pt[1]); return; }
+  if (tool === "pickaxe") { mineAt(pt[0], pt[1]); return; }
+  if (SEED_TREE[tool]) { plantAt(pt[0], pt[1]); return; }
   walkTo(pt[0], pt[1]);
 }
 function interactWith(e) {
@@ -2679,6 +2714,7 @@ function interactWith(e) {
     const first = !discovered.has("f_" + e.t);
     discovered.add("f_" + e.t);
     notify(e.t, 1, first);
+    if (SEED_TREE[e.t] && (!Inv.hotbar[3] || SEED_TREE[Inv.hotbar[3]])) { Inv.hotbar[3] = e.t; renderHotbar(); }  // seeds go to slot 4
     const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
   } else {
     const first = !discovered.has(e.t);
@@ -2823,6 +2859,8 @@ function applyDig(x, z, amount, holeAng) {
   rebuildRegion(minx, minz, maxx, maxz);
   updateHeightTex(minx, minz, maxx, maxz);
   resnapPropsRegion(x - DIG_R*2.4, z - DIG_R*2.4, x + DIG_R*2.4, z + DIG_R*2.4);
+  if (typeof checkUndermine === "function") checkUndermine(x, z);          // dig out a trunk → it topples
+  for (let k = stumps.length - 1; k >= 0; k--) if (Math.hypot(stumps[k].x - x, stumps[k].z - z) < DIG_R) { stumps.splice(k, 1); saveWorld(); }  // dug-out stump won't sprout
 }
 // Push a hole's spoil back into it: both sides relax toward flat.
 function fillHole(x, z) {
@@ -2995,18 +3033,15 @@ function drawTells(view, dt) {
   if (n) { propUniforms(view); dimpleDyn.draw(digScratch, n); }
 }
 
-/* ---- first-person shovel (built in world space each frame) ---- */
-const shovelFP = shovelMesh();
-const shovelDyn = makeDynamic((function () { const m = Mesh(); mBox(m, 0, 0, 0, 0.001, 0.001, 0.001, [0,0,0]); return m; })(), 1);
-let shovelPosBuf = null, shovelColBuf = null, shovelVAO = null, shovelVC = 0;
-function initShovelFP() {
-  shovelVC = shovelFP.pos.length / 3;
-  shovelVAO = gl.createVertexArray(); gl.bindVertexArray(shovelVAO);
-  shovelPosBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, shovelPosBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, shovelFP.pos.length * 4, gl.DYNAMIC_DRAW);
+/* ---- first-person tool (shovel / axe / pickaxe, built in world space each frame) ---- */
+const TOOL_FP = {};
+function makeToolFP(id, mesh) {
+  const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+  const posBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, mesh.pos.length * 4, gl.DYNAMIC_DRAW);
   gl.enableVertexAttribArray(propLoc.aPos); gl.vertexAttribPointer(propLoc.aPos, 3, gl.FLOAT, false, 0, 0);
-  shovelColBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, shovelColBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(shovelFP.col), gl.STATIC_DRAW);
+  const colBuf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, colBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(mesh.col), gl.STATIC_DRAW);
   gl.enableVertexAttribArray(propLoc.aCol); gl.vertexAttribPointer(propLoc.aCol, 3, gl.FLOAT, false, 0, 0);
   const ib = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, ib);  // identity instance
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0,0,0, 1,0,0,0, 1,1,1]), gl.STATIC_DRAW);
@@ -3015,33 +3050,34 @@ function initShovelFP() {
   gl.enableVertexAttribArray(propLoc.iSRL); gl.vertexAttribPointer(propLoc.iSRL, 4, gl.FLOAT, false, ST, 12); gl.vertexAttribDivisor(propLoc.iSRL, 1);
   gl.enableVertexAttribArray(propLoc.iTint); gl.vertexAttribPointer(propLoc.iTint, 3, gl.FLOAT, false, ST, 28); gl.vertexAttribDivisor(propLoc.iTint, 1);
   gl.bindVertexArray(null);
+  TOOL_FP[id] = { mesh, vao, posBuf, vc: mesh.pos.length / 3, world: new Float32Array(mesh.pos.length) };
 }
-const shovelWorld = new Float32Array(3000);
+function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); }
 function drawShovel(view) {
-  if (mode !== "walk" || selectedTool() !== "shovel") return;
+  if (mode !== "walk") return;
+  const fp = TOOL_FP[selectedTool()]; if (!fp) return;        // only the three tools show in-hand
   const f = camForward();
   let rx = -f[2], rz = f[0]; const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl;      // camera right (horizontal)
   const upx = -rz*f[1], upy = rz*f[0] - rx*f[2], upz = rx*f[1];                           // camera up = right × forward
   const sw = Math.sin(Math.min(1, shovelSwing) * Math.PI);                               // 0→1→0 swing
   const ox = 0.42, oy = -0.42 - sw * 0.25, oz = 0.78 + sw * 0.32;
-  const scale = 0.5, tilt = -0.5 - sw * 0.9;                                              // blade points down-forward on swing
+  const scale = 0.5, tilt = -0.5 - sw * 0.9;                                              // head swings down-forward
   const ct = Math.cos(tilt), st = Math.sin(tilt);
-  let p = 0;
-  for (let i = 0; i < shovelFP.pos.length; i += 3) {
-    let vx = shovelFP.pos[i] * scale, vy = shovelFP.pos[i+1] * scale, vz = shovelFP.pos[i+2] * scale;
+  const src = fp.mesh.pos, world = fp.world; let p = 0;
+  for (let i = 0; i < src.length; i += 3) {
+    let vx = src[i] * scale, vy = src[i+1] * scale, vz = src[i+2] * scale;
     const ny = vy * ct - vz * st, nz = vy * st + vz * ct; vy = ny; vz = nz;               // pitch (tilt)
-    const wx = cam.pos[0] + rx*(ox+vx) + upx*(oy+vy) + f[0]*(oz+vz);
-    const wy = cam.pos[1] + 0 *(ox+vx) + upy*(oy+vy) + f[1]*(oz+vz);
-    const wz = cam.pos[2] + rz*(ox+vx) + upz*(oy+vy) + f[2]*(oz+vz);
-    shovelWorld[p++] = wx; shovelWorld[p++] = wy; shovelWorld[p++] = wz;
+    world[p++] = cam.pos[0] + rx*(ox+vx) + upx*(oy+vy) + f[0]*(oz+vz);
+    world[p++] = cam.pos[1] + upy*(oy+vy) + f[1]*(oz+vz);
+    world[p++] = cam.pos[2] + rz*(ox+vx) + upz*(oy+vy) + f[2]*(oz+vz);
   }
   propUniforms(view);
-  gl.bindVertexArray(shovelVAO);
-  gl.bindBuffer(gl.ARRAY_BUFFER, shovelPosBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, shovelWorld, 0, shovelVC * 3);
+  gl.bindVertexArray(fp.vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, fp.posBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, world, 0, fp.vc * 3);
   gl.disable(gl.DEPTH_TEST);                                   // always on top
-  gl.drawArraysInstanced(gl.TRIANGLES, 0, shovelVC, 1);
+  gl.drawArraysInstanced(gl.TRIANGLES, 0, fp.vc, 1);
   gl.enable(gl.DEPTH_TEST);
-  countDraw(shovelVC / 3);
+  countDraw(fp.vc / 3);
 }
 
 function updateDigging(dt) {
@@ -3054,6 +3090,230 @@ function updateDigging(dt) {
   updateRegrow();
   // arrive-to-dig
   if (pendingDig && !pathActive) { const [dx, dz] = pendingDig; pendingDig = null; if (Math.hypot(dx - player.x, dz - player.z) < 6) digAt(dx, dz); }
+}
+
+/* ===================================================================== *
+ * § TOOLS  (Phase 6 Part B: chop trees, plant seeds, mine boulders)
+ * ===================================================================== */
+
+const SEED_TREE = { coconut: "palm", pinecone: "pine" };
+const GROW_DAYS = 3, SPROUT_DAYS = 2;             // seed→mature, stump→sapling (in in-game days)
+const MATURE = { palm: 9, pine: 10 };
+
+let treeObjs = [], rockObjs = [], stumps = [], planted = [], looseRocks = [];
+let palmType, pineType, rockType, pendingTool = null;
+let palmDyn, pineDyn, stumpDyn, rockDyn;
+
+function initWorldObjs() {
+  palmType = propTypes.find(t => t.kind === "palm");
+  pineType = propTypes.find(t => t.kind === "pine");
+  rockType = propTypes.find(t => t.kind === "rock");
+  treeObjs = []; rockObjs = [];
+  for (const c of colliders) {
+    if (c.kind === "tree") {
+      const t = c.species === "palm" ? palmType : pineType, o = c.ii*10, d = t.inst.data;
+      const hp = c.species === "palm" ? 4 : 5;
+      treeObjs.push({ species: c.species, t, i: c.ii, x: c.x, z: c.z, hp, maxhp: hp,
+        baseLean: d[o+5], scale: d[o+3], origY: surfaceAt(c.x, c.z).h,
+        shake: 0, leanAdd: 0, leanDir: d[o+6], falling: false, fall: 0, gone: false, coll: c });
+    } else if (c.kind === "rock") {
+      const o = c.ii*10, d = rockType.inst.data, hp = Math.max(3, Math.round(c.sc * 1.4));
+      rockObjs.push({ i: c.ii, x: c.x, z: c.z, sc: c.sc, hp, maxhp: hp, scale: d[o+3],
+        baseTint: [d[o+7], d[o+8], d[o+9]], split: false, gone: false, coll: c });
+    }
+  }
+  palmDyn = palmDyn || makeDynamic(palmMesh(), 48);
+  pineDyn = pineDyn || makeDynamic(pineMesh(), 48);
+  stumpDyn = stumpDyn || makeDynamic(stumpMesh(), 80);
+  rockDyn = rockDyn || makeDynamic(boulderMesh(), 200);
+}
+function nearestObj(arr, x, z, maxd) { let best = null, bd = maxd; for (const o of arr) { if (o.gone) continue; const d = Math.hypot(o.x - x, o.z - z); if (d < bd) { bd = d; best = o; } } return best; }
+
+// push a tree instance's live lean / scale / ground height into the static buffer
+function setTreeInstance(o) {
+  const d = o.t.inst.data, off = o.i*10;
+  d[off+1] = surfaceAt(o.x, o.z).h;
+  d[off+3] = o.gone ? 0 : o.scale;
+  d[off+5] = o.baseLean + o.leanAdd;
+  d[off+6] = o.leanDir;
+  gl.bindBuffer(gl.ARRAY_BUFFER, o.t.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, off*4, d, off, 10);
+}
+function setRockInstance(o) {
+  const d = rockType.inst.data, off = o.i*10;
+  d[off+3] = o.gone ? 0 : o.scale;
+  const dk = 1 - 0.5 * (1 - o.hp / o.maxhp);                   // darken as it cracks
+  d[off+7] = o.baseTint[0]*dk; d[off+8] = o.baseTint[1]*dk; d[off+9] = o.baseTint[2]*dk;
+  gl.bindBuffer(gl.ARRAY_BUFFER, rockType.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, off*4, d, off, 10);
+}
+
+/* ---- chopping ---- */
+function chopAt(x, z) {
+  if (mode !== "walk" || selectedTool() !== "axe") return;
+  const o = nearestObj(treeObjs, x, z, 4.5); if (!o) { walkTo(x, z); return; }
+  if (Math.hypot(o.x - player.x, o.z - player.z) > 4.2) { walkTo(o.x, o.z); pendingTool = ["axe", o.x, o.z]; return; }
+  if (stamina <= 0.04) { shovelSwing = 0.4; showCard("Too tired", "Rest before swinging the axe again."); return; }
+  if (o.falling) return;
+  shovelSwing = 1; camNudge = 0.04; spendStamina(0.07);
+  if (onDig) onDig("chop");
+  o.shake = 1;
+  spawnLeaves(o);
+  o.hp--;
+  if (o.hp <= 0) startFall(o);
+}
+function spawnLeaves(o) {
+  const top = surfaceAt(o.x, o.z).h + o.scale * 0.9, col = o.species === "palm" ? [0.3,0.42,0.25] : [0.2,0.33,0.2];
+  for (let i = 0; i < 6 && particles.length < 200; i++) { const a = rng()*6.283, s = 0.5 + rng()*1.5;
+    particles.push({ x: o.x + Math.cos(a)*1.5, y: top - rng()*o.scale*0.4, z: o.z + Math.sin(a)*1.5, vx: Math.cos(a)*s, vy: -0.5 - rng(), vz: Math.sin(a)*s, t: 0, life: 1 + rng(), col }); }
+}
+function startFall(o) {
+  o.falling = true; o.fall = 0;
+  o.leanDir = Math.atan2(o.z - player.z, o.x - player.x);      // topple away from the player
+  if (onDig) onDig("timber");
+  showCard("Timber!", "The tree comes down.");
+}
+function finishFall(o) {
+  o.gone = true; o.scale = 0; setTreeInstance(o);
+  if (o.coll) { o.coll.r = 0; rebuildCollHash(); }             // trunk no longer blocks
+  const n = 2 + (rng()*3|0);
+  for (let i = 0; i < n; i++) spawnFind("log", o.x + (rng()-0.5)*2.5, o.z + (rng()-0.5)*2.5);
+  if (rng() < 0.6) spawnFind(o.species === "palm" ? "coconut" : "pinecone", o.x + (rng()-0.5)*2, o.z + (rng()-0.5)*2);
+  stumps.push({ x: o.x, z: o.z, species: o.species, sproutAt: clock.t + SPROUT_DAYS*DAY_PERIOD });
+  saveWorld();
+}
+// digging the ground out from under a tree makes it topple
+function checkUndermine(x, z) {
+  for (const o of treeObjs) {
+    if (o.gone || o.falling) continue;
+    if (Math.hypot(o.x - x, o.z - z) < DIG_R*1.6 && surfaceAt(o.x, o.z).h < o.origY - 0.7) { o.hp = 0; startFall(o); }
+  }
+}
+
+/* ---- planting ---- */
+function canPlant(species, x, z) {
+  const k = surfaceKind(x, z), h = surfaceAt(x, z).h, s = surfaceAt(x, z).slope;
+  if (s > 0.45 || waterDepthAt(x, z) > 0.05) return false;
+  if (k === "rock") return false;
+  if (species === "palm") { if (h < 1.2 || h > 18) return false; }     // sand & low dune
+  else { if (h < 5 || h > 32) return false; }                          // soil / grass
+  // spacing from trees, POIs, stumps, other planted
+  for (const c of colliders) if (c.r > 0 && Math.hypot(c.x - x, c.z - z) < 5) return false;
+  for (const p of POIS) if (Math.hypot(p.x - x, p.z - z) < p.radius + 3) return false;
+  for (const st of stumps) if (Math.hypot(st.x - x, st.z - z) < 4) return false;
+  for (const pl of planted) if (Math.hypot(pl.x - x, pl.z - z) < 5) return false;
+  return true;
+}
+function plantAt(x, z) {
+  const seed = selectedTool(), species = SEED_TREE[seed]; if (!species) return;
+  if (Math.hypot(x - player.x, z - player.z) > 5) { walkTo(x, z); pendingTool = ["plant", x, z]; return; }
+  if (!Inv.has(seed)) { showCard("No seeds", "You have none of those to plant."); return; }
+  if (!canPlant(species, x, z)) { showCard("Can't plant here", species === "palm" ? "Palms need open sand or low ground." : "Needs open soil or grass, away from trees."); return; }
+  Inv.remove(seed, 1);
+  if (!Inv.has(seed)) { const hi = Inv.hotbar.indexOf(seed); if (hi >= 0) Inv.hotbar[hi] = null; }
+  planted.push({ species, x, z, plantedAt: clock.t });
+  colliders.push({ x, z, r: 0.4, kind: "planted" }); rebuildCollHash();
+  if (onDig) onDig("plant");
+  showCard("Planted", "A seedling. Give it a few days to grow.");
+  saveWorld();
+}
+function plantStage(pl) { return Math.max(0, Math.min(1, (clock.t - pl.plantedAt) / (GROW_DAYS*DAY_PERIOD))); }
+
+/* ---- mining ---- */
+function mineAt(x, z) {
+  if (mode !== "walk" || selectedTool() !== "pickaxe") return;
+  const o = nearestObj(rockObjs, x, z, 4.5); if (!o) { walkTo(x, z); return; }
+  if (Math.hypot(o.x - player.x, o.z - player.z) > 4.2) { walkTo(o.x, o.z); pendingTool = ["pickaxe", o.x, o.z]; return; }
+  if (stamina <= 0.04) { shovelSwing = 0.4; showCard("Too tired", "Rest before mining again."); return; }
+  shovelSwing = 1; camNudge = 0.04; spendStamina(0.08);
+  if (onDig) onDig("mine");
+  o.hp--;
+  const sy = surfaceAt(o.x, o.z).h + o.sc*0.3;
+  spawnSand(o.x, sy, o.z, 7, [0.5, 0.48, 0.46]);               // rock chips
+  if (!o.split && o.hp <= Math.ceil(o.maxhp/2)) {              // breaks into smaller rocks
+    o.split = true; o.scale *= 0.62;
+    for (let i = 0; i < 2 + (rng()*2|0); i++) looseRocks.push({ x: o.x+(rng()-0.5)*2.5, z: o.z+(rng()-0.5)*2.5, sc: 0.5+rng()*0.5, bornT: clock.t });
+  }
+  if (o.hp <= 0) {
+    o.gone = true; o.scale = 0; setRockInstance(o);
+    if (o.coll) { o.coll.r = 0; rebuildCollHash(); }
+    const n = 2 + (rng()*2|0); for (let i = 0; i < n; i++) spawnFind("stone", o.x+(rng()-0.5)*2, o.z+(rng()-0.5)*2);
+    for (let i = 0; i < 2; i++) looseRocks.push({ x: o.x+(rng()-0.5)*2, z: o.z+(rng()-0.5)*2, sc: 0.4+rng()*0.4, bornT: clock.t });
+  } else setRockInstance(o);
+}
+
+/* ---- update + draw all Part-B objects ---- */
+let rockfallT = 0;
+function updateTools(dt, gdt) {
+  for (const o of treeObjs) {
+    if (o.gone) continue;
+    if (o.falling) { o.fall = Math.min(1, o.fall + dt/1.1); o.leanAdd = (o.fall*o.fall)*1.5; setTreeInstance(o); if (o.fall >= 1) finishFall(o); }
+    else if (o.shake > 0) { o.shake = Math.max(0, o.shake - dt*3); o.leanAdd = Math.sin(clock.t*40)*0.05*o.shake; setTreeInstance(o); }
+  }
+  // stumps sprout saplings after a while, unless dug out
+  for (let k = stumps.length-1; k >= 0; k--) { const s = stumps[k];
+    if (clock.t >= s.sproutAt) { planted.push({ species: s.species, x: s.x, z: s.z, plantedAt: clock.t }); colliders.push({ x: s.x, z: s.z, r: 0.4, kind: "planted" }); rebuildCollHash(); stumps.splice(k,1); saveWorld(); }
+  }
+  // planted trees mature → gain a full collider
+  for (const pl of planted) { if (!pl.grown && plantStage(pl) >= 1) { pl.grown = true; const c = colliders.find(c => c.kind === "planted" && Math.hypot(c.x-pl.x,c.z-pl.z) < 0.5); if (c) { c.r = pl.species === "palm" ? 0.5 : 0.6; rebuildCollHash(); } } }
+  // rubble weathers away
+  for (let k = looseRocks.length-1; k >= 0; k--) { if (clock.t - looseRocks[k].bornT > SPROUT_DAYS*DAY_PERIOD) looseRocks.splice(k,1); }
+  // occasional new rock node appears on a rocky outcrop (small rockfall)
+  rockfallT += gdt;
+  if (rockfallT > 90 && rockObjs.length < 220) { rockfallT = 0; spawnRockNode(); }
+  // walk-into-range for a queued tool action
+  if (pendingTool && !pathActive) { const [tool, tx, tz] = pendingTool; pendingTool = null;
+    if (Math.hypot(tx - player.x, tz - player.z) < 5) { if (tool === "axe") chopAt(tx, tz); else if (tool === "pickaxe") mineAt(tx, tz); else if (tool === "plant") plantAt(tx, tz); } }
+}
+function spawnRockNode() {
+  for (let tries = 0; tries < 20; tries++) {
+    const a = rng()*6.283, r = HALF*(0.2+rng()*0.6), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const su = surfaceAt(x, z); if (su.h < 30 && su.slope < 0.5) continue;      // only rocky high ground
+    if (su.slope > 0.9 || nearPOI(x, z, 3)) continue;
+    const sc = 0.9 + rng()*1.4, hp = Math.max(3, Math.round(sc*1.4));
+    rockObjs.push({ dyn: true, x, z, sc, hp, maxhp: hp, scale: sc, baseTint: [1,1,1], split: false, gone: false, coll: null });
+    return;
+  }
+}
+function drawTools(view) {
+  propUniforms(view);
+  // stumps
+  let n = 0; for (const s of stumps) { if (n >= 80) break; const o = n*10, y = surfaceAt(s.x,s.z).h; const sc = s.species === "palm" ? 0.9 : 1.1;
+    digScratch[o]=s.x;digScratch[o+1]=y;digScratch[o+2]=s.z;digScratch[o+3]=sc;digScratch[o+4]=0;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=1;digScratch[o+8]=1;digScratch[o+9]=1; n++; }
+  if (n) stumpDyn.draw(digScratch, n);
+  // planted palms & pines (grown by stage)
+  let np = 0, ni = 0;
+  for (const pl of planted) { const st = plantStage(pl), sc = 1.2 + st*(MATURE[pl.species]-1.2), y = surfaceAt(pl.x,pl.z).h;
+    const arr = pl.species === "palm" ? palmScratch : pineScratch, idx = pl.species === "palm" ? np++ : ni++, o = idx*10;
+    if (o+9 >= arr.length) continue;
+    arr[o]=pl.x;arr[o+1]=y;arr[o+2]=pl.z;arr[o+3]=sc;arr[o+4]=0;arr[o+5]=0;arr[o+6]=0;arr[o+7]=1;arr[o+8]=1;arr[o+9]=1; }
+  if (np) palmDyn.draw(palmScratch, np);
+  if (ni) pineDyn.draw(pineScratch, ni);
+  // loose rubble + dynamic rock nodes
+  let nr = 0;
+  for (const lr of looseRocks) { if (nr >= 200) break; const o = nr*10, y = surfaceAt(lr.x,lr.z).h + lr.sc*0.1;
+    rockScratch[o]=lr.x;rockScratch[o+1]=y;rockScratch[o+2]=lr.z;rockScratch[o+3]=lr.sc;rockScratch[o+4]=0;rockScratch[o+5]=0;rockScratch[o+6]=0;rockScratch[o+7]=0.95;rockScratch[o+8]=0.93;rockScratch[o+9]=0.9; nr++; }
+  for (const o2 of rockObjs) { if (!o2.dyn || o2.gone || nr >= 200) continue; const o = nr*10, y = surfaceAt(o2.x,o2.z).h + o2.sc*0.1, dk = 1-0.5*(1-o2.hp/o2.maxhp);
+    rockScratch[o]=o2.x;rockScratch[o+1]=y;rockScratch[o+2]=o2.z;rockScratch[o+3]=o2.scale;rockScratch[o+4]=0;rockScratch[o+5]=0;rockScratch[o+6]=0;rockScratch[o+7]=0.95*dk;rockScratch[o+8]=0.92*dk;rockScratch[o+9]=0.88*dk; nr++; }
+  if (nr) rockDyn.draw(rockScratch, nr);
+}
+const palmScratch = new Float32Array(48*10), pineScratch = new Float32Array(48*10), rockScratch = new Float32Array(200*10);
+
+/* ---- save / load planted trees & stumps (per seed) ---- */
+function saveWorld() {
+  try { localStorage.setItem("bcw_" + SEED_STR, JSON.stringify({
+    planted: planted.map(p => [p.species, +p.x.toFixed(1), +p.z.toFixed(1), p.plantedAt]),
+    stumps: stumps.map(s => [s.species, +s.x.toFixed(1), +s.z.toFixed(1), s.sproutAt]),
+    chopped: treeObjs.filter(o => o.gone).map(o => o.i + ":" + o.species),
+  })); } catch (e) {}
+}
+function loadWorld() {
+  try {
+    const w = JSON.parse(localStorage.getItem("bcw_" + SEED_STR) || "null"); if (!w) return;
+    const chop = new Set(w.chopped || []);
+    for (const o of treeObjs) if (chop.has(o.i + ":" + o.species)) { o.gone = true; o.scale = 0; setTreeInstance(o); if (o.coll) o.coll.r = 0; }
+    for (const p of (w.planted||[])) { planted.push({ species: p[0], x: p[1], z: p[2], plantedAt: p[3] }); colliders.push({ x: p[1], z: p[2], r: 0.4, kind: "planted" }); }
+    for (const s of (w.stumps||[])) stumps.push({ species: s[0], x: s[1], z: s[2], sproutAt: s[3] });
+    rebuildCollHash();
+  } catch (e) {}
 }
 
 /* --------------------------------------------------------------------- *
@@ -3079,11 +3339,15 @@ const fsTri = buildFsTri();
 buildIcons();
 buildPanels();
 loadState();
-if (!Inv.hotbar.includes("shovel")) Inv.equipTool("shovel");   // start with a shovel
+if (!Inv.hotbar.includes("shovel")) Inv.hotbar[0] = "shovel";   // slots 1-3: shovel, axe, pickaxe
+if (!Inv.hotbar.includes("axe")) Inv.hotbar[1] = "axe";
+if (!Inv.hotbar.includes("pickaxe")) Inv.hotbar[2] = "pickaxe";
 renderHotbar();
 syncDebugPanel();
 seedDigSpots();
 initShovelFP();
+initWorldObjs();
+loadWorld();
 
 let proj = new Float32Array(16);
 function resize() {
@@ -3110,7 +3374,7 @@ function frame(now) {
 
   // ---- shared clock: advance world in capped fixed substeps (stable at 60x) ----
   clock.t += clock.paused ? 0 : dt;
-  let gdt = clock.paused ? 0 : dt * clock.speed;
+  let gdt = clock.paused ? 0 : dt * clock.speed, gdtTotal = gdt;
   while (gdt > 1e-4) {
     const s = Math.min(0.05, gdt);
     updateTide(s);
@@ -3121,6 +3385,7 @@ function frame(now) {
     gdt -= s;
   }
   updateDigging(dt);
+  updateTools(dt, gdtTotal);
   if (cardTimer > 0) { cardTimer -= dt; if (cardTimer <= 0) document.getElementById("card").style.display = "none"; }
   if (toasts.length) updateToasts(dt);
 
@@ -3300,6 +3565,7 @@ function frame(now) {
 
   // props & points of interest (instanced), before the transparent water
   drawProps(view);
+  drawTools(view);
   drawLife(view);
   drawTells(view, dt);
   drawParticles(view);
