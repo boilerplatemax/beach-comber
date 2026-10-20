@@ -53,6 +53,11 @@
     border-radius: 10px; padding: 12px 20px; max-width: 320px;
     backdrop-filter: blur(3px);
   }
+  #crosshair {
+    position: fixed; left: 50%; top: 50%; width: 5px; height: 5px; margin: -3px 0 0 -3px;
+    border-radius: 50%; background: rgba(255,255,255,.55); z-index: 5; pointer-events: none;
+    box-shadow: 0 0 2px rgba(0,0,0,.6); display: none;
+  }
   #card b { font-size: 17px; letter-spacing: .02em; }
   #card span { opacity: .8; font-size: 13px; }
   /* field journal */
@@ -91,11 +96,12 @@
 
 <div id="hud"></div>
 <div id="dbg"></div>
+<div id="crosshair"></div>
 <div id="card"></div>
 <div id="journal"></div>
 <div id="help">
-  WASD — move · Shift — run<br>
-  Mouse — look · Esc — pause · G — dither
+  WASD / click — move · Shift — run · E — pick up<br>
+  Tab — journal · Mouse — look · Esc — pause
 </div>
 
 <script>
@@ -1051,7 +1057,7 @@ const WALK_SPEED = 9.5;      // units / second (vast map, so not too slow)
 const SPRINT = 1.8;          // sprint multiplier
 const SLOPE_LIMIT = 40 * Math.PI / 180;   // can't climb steeper than this
 const WADE_DEPTH = 1.0;      // can wade up to this depth, then it blocks
-const player = { x: 0, z: 0, bob: 0, eyeY: EYE, sprinting: false };
+const player = { x: 0, z: 0, bob: 0, eyeY: EYE, sprinting: false, scramble: 0 };
 
 // Spawn on dry sand at the shore, facing the island's highest point.
 function findSpawn() {
@@ -1163,6 +1169,7 @@ addEventListener("keyup", (e) => { keys[e.code] = false; });
 canvas.addEventListener("click", () => {
   if (IS_TOUCH) return;   // no pointer lock on touch devices
   if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
+  else clickAt(0, 0);     // crosshair → walk to the point under it
 });
 document.addEventListener("mousemove", (e) => {
   if (document.pointerLockElement !== canvas) return;
@@ -1197,6 +1204,7 @@ document.addEventListener("pointerlockchange", () => {
   if (document.pointerLockElement !== canvas) overlay.classList.remove("hidden");
 });
 const hud = document.getElementById("hud");
+const crossEl = document.getElementById("crosshair");
 
 /* ===================================================================== *
  * § MOBILE CONTROLS  (TEMPORARY — delete this whole block to remove)
@@ -1288,6 +1296,7 @@ if (IS_TOUCH) (function mobileControls() {
   // ---- joystick (left half) + look (right half), multi-touch ----
   let moveId = null, lookId = null;
   const origin = { x: 0, y: 0 }, lookLast = { x: 0, y: 0 };
+  const lookStart = { t: 0, x: 0, y: 0, moved: false };     // for tap-to-walk
 
   layer.addEventListener("touchstart", (e) => {
     unlockAudio();
@@ -1302,6 +1311,7 @@ if (IS_TOUCH) (function mobileControls() {
       } else if (lookId === null) {
         lookId = t.identifier;
         lookLast.x = t.clientX; lookLast.y = t.clientY;
+        lookStart.t = performance.now(); lookStart.x = t.clientX; lookStart.y = t.clientY; lookStart.moved = false;
       }
     }
     e.preventDefault();
@@ -1323,6 +1333,7 @@ if (IS_TOUCH) (function mobileControls() {
         const lim = Math.PI / 2 - 0.02;
         cam.pitch = Math.max(-lim, Math.min(lim, cam.pitch));
         lookLast.x = t.clientX; lookLast.y = t.clientY;
+        if (Math.hypot(t.clientX - lookStart.x, t.clientY - lookStart.y) > 12) lookStart.moved = true;
       }
     }
     e.preventDefault();
@@ -1333,6 +1344,9 @@ if (IS_TOUCH) (function mobileControls() {
       if (t.identifier === moveId) {
         moveId = null; analog.x = 0; analog.y = 0; joy.style.display = "none";
       } else if (t.identifier === lookId) {
+        if (!lookStart.moved && performance.now() - lookStart.t < 220) {   // tap → walk there
+          clickAt(t.clientX / innerWidth * 2 - 1, -(t.clientY / innerHeight * 2 - 1));
+        }
         lookId = null;
       }
     }
@@ -2101,6 +2115,136 @@ function toggleJournal() {
 }
 
 /* --------------------------------------------------------------------- *
+ * § CLICK-TO-WALK  (A* on a coarse nav grid; avoids deep water, prop
+ *   colliders, and prefers gentle slopes via a slope cost)
+ * --------------------------------------------------------------------- */
+
+const NAV = 4, navN = Math.ceil(GRID / NAV);
+let pathActive = false, pathPts = [], pathI = 0, pathGoal = null, pendingEntity = null;
+let lastInvVP = null;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+function navH(ix, iz) { const gx = Math.min(GRID-1, ix*NAV), gz = Math.min(GRID-1, iz*NAV); return heightmap[gz*GRID+gx]; }
+function navXZ(ix, iz) { return [ Math.min(GRID-1, ix*NAV)*CELL - HALF, Math.min(GRID-1, iz*NAV)*CELL - HALF ]; }
+function blockedByCollider(x, z, margin) {
+  const cx = Math.floor(x/COLL_CELL), cz = Math.floor(z/COLL_CELL);
+  for (let i=-1;i<=1;i++) for (let j=-1;j<=1;j++) {
+    const bk = collHash.get((cx+i)+","+(cz+j)); if (!bk) continue;
+    for (const c of bk) if (Math.hypot(x-c.x, z-c.z) < c.r + margin) return true;
+  }
+  return false;
+}
+function navOK(ix, iz) {
+  if (ix<0||iz<0||ix>=navN||iz>=navN) return false;
+  if (waterLevel - navH(ix, iz) > WADE_DEPTH*0.9) return false;   // too-deep water
+  const [x, z] = navXZ(ix, iz);
+  return !blockedByCollider(x, z, 0.7);
+}
+function aStar(sxw, szw, gxw, gzw) {
+  const si = clamp(Math.round((sxw+HALF)/CELL/NAV), 0, navN-1), sj = clamp(Math.round((szw+HALF)/CELL/NAV), 0, navN-1);
+  let gi = clamp(Math.round((gxw+HALF)/CELL/NAV), 0, navN-1), gj = clamp(Math.round((gzw+HALF)/CELL/NAV), 0, navN-1);
+  if (!navOK(gi, gj)) {                              // snap goal to nearest walkable
+    let best = null, bd = 1e9;
+    for (let r = 1; r <= 6 && !best; r++)
+      for (let dj=-r;dj<=r;dj++) for (let di=-r;di<=r;di++) {
+        if (navOK(gi+di, gj+dj)) { const d = di*di+dj*dj; if (d<bd){bd=d; best=[gi+di, gj+dj];} }
+      }
+    if (best) { gi = best[0]; gj = best[1]; } else return null;
+  }
+  const T = navN*navN, g = new Float32Array(T).fill(1e18), came = new Int32Array(T).fill(-1), closed = new Uint8Array(T);
+  const hl = new Float64Array(T+1), hi = new Int32Array(T+1); let hn = 0;
+  const push = (ff, i) => { hn++; hl[hn]=ff; hi[hn]=i; let c=hn; while(c>1){const p=c>>1; if(hl[p]<=hl[c])break;[hl[p],hl[c]]=[hl[c],hl[p]];[hi[p],hi[c]]=[hi[c],hi[p]];c=p;} };
+  const pop = () => { const i=hi[1]; hl[1]=hl[hn];hi[1]=hi[hn];hn--; let c=1; while(true){let m=c,l=c*2,r=c*2+1; if(l<=hn&&hl[l]<hl[m])m=l; if(r<=hn&&hl[r]<hl[m])m=r; if(m===c)break;[hl[m],hl[c]]=[hl[c],hl[m]];[hi[m],hi[c]]=[hi[c],hi[m]];c=m;} return i; };
+  const Hh = (i,j) => Math.hypot(i-gi, j-gj);
+  const s = sj*navN+si; g[s] = 0; push(Hh(si,sj), s);
+  const goal = gj*navN+gi; let found = false;
+  const DIRS = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+  let guard = 0;
+  while (hn > 0 && guard++ < T*4) {
+    const cur = pop(); if (closed[cur]) continue; closed[cur] = 1;
+    if (cur === goal) { found = true; break; }
+    const ci = cur % navN, cj = (cur/navN)|0, ch = navH(ci, cj);
+    for (const d of DIRS) {
+      const ni = ci+d[0], nj = cj+d[1];
+      if (!navOK(ni, nj)) continue;
+      const nIdx = nj*navN+ni; if (closed[nIdx]) continue;
+      const dh = navH(ni, nj) - ch, horiz = Math.hypot(d[0], d[1]) * NAV * CELL;
+      const grade = Math.atan2(dh, horiz);
+      if (grade > SLOPE_LIMIT) continue;             // can't path up a cliff
+      const cost = horiz * (1 + (dh > 0 ? grade * 3.0 : 0) + (dh < 0 ? -grade * 0.4 : 0));
+      const t = g[cur] + cost;
+      if (t < g[nIdx]) { g[nIdx] = t; came[nIdx] = cur; push(t + Hh(ni, nj) * NAV * CELL, nIdx); }
+    }
+  }
+  if (!found) return null;
+  const out = []; let c = goal;
+  while (c !== -1) { const ci = c%navN, cj = (c/navN)|0; out.push(navXZ(ci, cj)); c = came[c]; }
+  out.reverse();
+  return out;
+}
+function cancelPath() { pathActive = false; pathPts = []; pendingEntity = null; }
+function arrivePath() {
+  pathActive = false;
+  if (pendingEntity && life.includes(pendingEntity)) {
+    const e = pendingEntity; player.x; // ensure close
+    pendingEntity = null;
+    const dx = e.x - player.x, dz = e.z - player.z;
+    if (Math.hypot(dx, dz) < 5) { cam.yaw = Math.atan2(dx, -dz); interactWith(e); }
+  }
+  pendingEntity = null;
+}
+function walkTo(x, z, entity) {
+  const p = aStar(player.x, player.z, x, z);
+  if (!p || p.length < 1) return;
+  pathPts = p; pathI = 0; pathActive = true; pathGoal = [x, z]; pendingEntity = entity || null;
+}
+// A ground point under a screen ray (NDC); marches until below the surface.
+function rayGround(ndcx, ndcy) {
+  if (!lastInvVP) return null;
+  const un = (zc) => { const c = [ndcx, ndcy, zc, 1], o = [0,0,0,0];
+    for (let r=0;r<4;r++) o[r] = lastInvVP[r]*c[0]+lastInvVP[4+r]*c[1]+lastInvVP[8+r]*c[2]+lastInvVP[12+r]*c[3];
+    return [o[0]/o[3], o[1]/o[3], o[2]/o[3]]; };
+  const a = un(-1), b = un(1);
+  const dir = [b[0]-a[0], b[1]-a[1], b[2]-a[2]]; const dl = Math.hypot(...dir); dir[0]/=dl; dir[1]/=dl; dir[2]/=dl;
+  for (let tt = 2; tt < 500; tt += 1.5) {
+    const x = cam.pos[0]+dir[0]*tt, y = cam.pos[1]+dir[1]*tt, z = cam.pos[2]+dir[2]*tt;
+    if (y <= surfaceAt(x, z).h) return [x, z];
+  }
+  return null;
+}
+function clickAt(ndcx, ndcy) {
+  if (mode !== "walk") return;
+  const pt = rayGround(ndcx, ndcy); if (!pt) return;
+  // did we click near an item/creature? walk to it and pick up / inspect
+  let ent = null, bd = 6;
+  for (const e of life) { const d = Math.hypot(e.x - pt[0], e.z - pt[1]); if (d < bd && lifeVisible(e)) { bd = d; ent = e; } }
+  walkTo(pt[0], pt[1], ent);
+}
+function interactWith(e) {
+  if (e.kind === "find") {
+    inventory[e.t] = (inventory[e.t] || 0) + 1; discovered.add("f_" + e.t);
+    showCard(e.special ? e.name : FINDS[e.t].label, FINDS[e.t].desc + (e.special ? "  (an oddity!)" : ""));
+    const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
+  } else {
+    discovered.add(e.t);
+    showCard(e.special ? e.name : CREATURES[e.t].label, CREATURES[e.t].desc + (e.special ? "  —  found only on this island." : ""));
+  }
+}
+const markerDyn = makeDynamic((function(){ const m = Mesh(); mCyl(m,0,3,0.25,0,5,[1,0.85,0.4]); mCyl(m,0,0.4,0.9,0.9,10,[1,0.85,0.4]); return m; })(), 1);
+function drawMarker(view) {
+  if (!pathActive || !pathGoal) return;
+  const g = heightAt(pathGoal[0], pathGoal[1]);
+  const o = lifeScratch;
+  o[0]=pathGoal[0]; o[1]=g; o[2]=pathGoal[1]; o[3]=1; o[4]=performance.now()*0.002; o[5]=0; o[6]=0; o[7]=1;o[8]=0.85;o[9]=0.4;
+  gl.useProgram(propProg);
+  gl.uniformMatrix4fv(propU.uProj, false, proj); gl.uniformMatrix4fv(propU.uView, false, view);
+  gl.uniform3fv(propU.uSunDir, SKY.sun); gl.uniform3fv(propU.uCamPos, cam.pos);
+  gl.uniform3fv(propU.uZenith, SKY.zenith); gl.uniform3fv(propU.uHorizon, SKY.horizon); gl.uniform3fv(propU.uWarm, SKY.warm);
+  gl.uniform1f(propU.uFogDensity, FOG_DENSITY); gl.uniform1f(propU.uFogNear, FOG_NEAR);
+  markerDyn.draw(o, 1);
+}
+
+/* --------------------------------------------------------------------- *
  * § BUILD + LOOP
  * --------------------------------------------------------------------- */
 
@@ -2175,48 +2319,83 @@ function frame(now) {
       cam.pos[0] += mx * step; cam.pos[1] += my * step; cam.pos[2] += mz * step;
     }
   } else {
-    // ---- walk: wish-dir, then collide against water depth, slope & props ----
+    // ---- walk: wish-dir (manual or path), slope struggle, collide ----
     const hf = [fwd[0] / flen, fwd[2] / flen];   // forward on the ground plane
-    let wx = 0, wz = 0;
-    if (keys["KeyW"]) { wx += hf[0]; wz += hf[1]; }
-    if (keys["KeyS"]) { wx -= hf[0]; wz -= hf[1]; }
-    if (keys["KeyD"]) { wx += right[0]; wz += right[2]; }
-    if (keys["KeyA"]) { wx -= right[0]; wz -= right[2]; }
-    wx += right[0] * analog.x + hf[0] * analog.y;
-    wz += right[2] * analog.x + hf[1] * analog.y;
+    let wx = 0, wz = 0, manual = false;
+    if (keys["KeyW"]) { wx += hf[0]; wz += hf[1]; manual = true; }
+    if (keys["KeyS"]) { wx -= hf[0]; wz -= hf[1]; manual = true; }
+    if (keys["KeyD"]) { wx += right[0]; wz += right[2]; manual = true; }
+    if (keys["KeyA"]) { wx -= right[0]; wz -= right[2]; manual = true; }
+    if (Math.abs(analog.x) + Math.abs(analog.y) > 0.01) { wx += right[0]*analog.x + hf[0]*analog.y; wz += right[2]*analog.x + hf[1]*analog.y; manual = true; }
+    if (manual && pathActive) cancelPath();
+
+    // auto-walk along an A* path toward a clicked destination
+    if (pathActive && !manual) {
+      const tgt = pathPts[pathI];
+      if (tgt) {
+        const dxp = tgt[0] - player.x, dzp = tgt[1] - player.z, dd = Math.hypot(dxp, dzp);
+        if (dd < 2.4) { pathI++; if (pathI >= pathPts.length) arrivePath(); }
+        else {
+          wx = dxp / dd; wz = dzp / dd;
+          const want = Math.atan2(wx, -wz);
+          let dy = ((want - cam.yaw + Math.PI*3) % (Math.PI*2)) - Math.PI;
+          cam.yaw += dy * Math.min(1, dt * 3);   // turn toward travel
+        }
+      }
+    }
+
     const wl = Math.hypot(wx, wz);
     player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01;
-
     const here = surfaceAt(player.x, player.z);
+    let scrambleTarget = 0;
+
     if (wl > 0.01) {
       wx /= wl; wz /= wl;
-      const wading = (waterLevel - here.h) > 0.05;
-      const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * (wading ? 0.5 : 1);
+      // slope in the direction of travel → speed curve
+      const ahead = surfaceAt(player.x + wx*1.6, player.z + wz*1.6);
+      const grade = Math.atan2(ahead.h - here.h, 1.6);
+      let sm;
+      if (grade <= 0) sm = 1 - Math.min(0.25, -grade * 0.35);       // careful downhill
+      else if (grade < 0.26) sm = 1 - grade * 0.5;                  // <15°: easy
+      else if (grade < 0.61) sm = 0.87 - (grade - 0.26) * 1.4;      // 15–35°: harder
+      else if (grade < 0.785) sm = 0.38 - (grade - 0.61) * 1.7;     // 35–45°: scramble
+      else sm = 0;                                                  // >45°: impassable
+      sm = Math.max(0, sm);
+      if (grade > 0.5) scrambleTarget = Math.min(1, (grade - 0.5) / 0.28);
+      const depth = waterLevel - here.h;
+      let surfMul = 1;
+      if (depth > 0.05) surfMul = Math.max(0.25, 1 - depth * 0.45); // deeper wading, slower
+      else if (here.h < 12) surfMul = 0.9;                          // soft sand
+      const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * sm * surfMul;
       const dist = speed * dt;
-      const maxClimb = Math.tan(SLOPE_LIMIT) * dist;
+      const maxClimb = Math.tan(SLOPE_LIMIT) * Math.max(dist, 0.05);
       const canStep = (nx, nz) => {
         const s = surfaceAt(nx, nz);
-        if (waterLevel - s.h > WADE_DEPTH) return false;              // too deep
-        if (s.h - here.h > maxClimb && s.slope > SLOPE_LIMIT) return false; // cliff
+        if (waterLevel - s.h > WADE_DEPTH) return false;
+        if (s.h - here.h > maxClimb && s.slope > SLOPE_LIMIT) return false;
         return true;
       };
       let px = player.x, pz = player.z;
       const nx = player.x + wx * dist, nz = player.z + wz * dist;
-      if (canStep(nx, player.z)) px = nx;      // slide along each axis
+      if (canStep(nx, player.z)) px = nx;
       if (canStep(px, nz)) pz = nz;
-      [px, pz] = slideCircles(px, pz);         // slide around trunks & boulders
+      [px, pz] = slideCircles(px, pz);
       player.x = px; player.z = pz;
       player.bob += dist;
-      if (player.bob - _stepPhase >= 1.15) {   // footstep hook (audio in Phase 6)
+      if (grade < -0.55 && rng() < dt * 2.5) { player.x += wx * 0.25; player.z += wz * 0.25; } // small slips
+      const stepLen = scrambleTarget > 0.5 ? 1.5 : 1.15;
+      if (player.bob - _stepPhase >= stepLen) {
         _stepPhase = player.bob;
-        if (onFootstep) onFootstep(surfaceType(here.h, here.slope), player.sprinting ? 1 : 0.7);
+        if (onFootstep) onFootstep(surfaceType(here.h, here.slope), scrambleTarget > 0.5 ? 1 : (player.sprinting ? 0.85 : 0.55));
       }
     }
 
-    // follow terrain with a speed-scaled head bob, smoothed vertically
+    player.scramble += (scrambleTarget - player.scramble) * Math.min(1, dt * 4);
     const g = surfaceAt(player.x, player.z);
-    const amp = (0.06 + (player.sprinting ? 0.06 : 0)) * (wl > 0.01 ? 1 : 0);
-    const bob = Math.sin(player.bob * 2.6) * amp;
+    const moving = wl > 0.01 ? 1 : 0;
+    const amp = (0.06 + (player.sprinting ? 0.05 : 0) + player.scramble * 0.07) * moving;
+    const freq = player.scramble > 0.3 ? 1.7 : 2.6;             // heavier when scrambling
+    const bob = Math.sin(player.bob * freq) * amp;
     const target = g.h + EYE + bob;
     player.eyeY += (target - player.eyeY) * Math.min(1, dt * 14);
     cam.pos[0] = player.x; cam.pos[1] = player.eyeY; cam.pos[2] = player.z;
@@ -2225,9 +2404,15 @@ function frame(now) {
   updateLife(dt, t);
 
   // ---- matrices ----
-  const f = camForward();
+  let f = camForward();
+  if (mode === "walk" && player.scramble > 0.01) {            // dip forward + breathe
+    const dip = player.scramble * 0.14 + Math.sin(t * 2.2) * player.scramble * 0.025;
+    const cp = Math.cos(cam.pitch - dip), sp = Math.sin(cam.pitch - dip);
+    f = [Math.sin(cam.yaw) * cp, sp, -Math.cos(cam.yaw) * cp];
+  }
   const view = M4.lookAt(cam.pos, [cam.pos[0]+f[0], cam.pos[1]+f[1], cam.pos[2]+f[2]], [0, 1, 0]);
   const invVP = M4.invert(M4.multiply(proj, view));
+  lastInvVP = invVP;
 
   // ============ PASS 1: scene → low-res FBO ============
   ensureFBO();
@@ -2273,6 +2458,7 @@ function frame(now) {
   // props & points of interest (instanced), before the transparent water
   drawProps(view);
   drawLife(view);
+  drawMarker(view);
 
   // water
   gl.enable(gl.BLEND);
@@ -2322,6 +2508,7 @@ function frame(now) {
   gl.bindVertexArray(null);
 
   // ---- hud ----
+  crossEl.style.display = (mode === "walk" && !IS_TOUCH) ? "block" : "none";
   const ti = tideInfo();
   const mins = Math.floor(ti.tToLow / 60), secs = Math.floor(ti.tToLow % 60);
   hud.textContent =
