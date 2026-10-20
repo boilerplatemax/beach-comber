@@ -756,7 +756,7 @@ const postU = uniforms(postProg);
 const fbo = { w: 0, h: 0, fb: null, color: null, depth: null };
 function ensureFBO() {
   const aspect = canvas.width / canvas.height;
-  const w = Math.max(320, Math.min(480, 400));
+  const w = IS_TOUCH ? 300 : 400;
   const h = Math.max(1, Math.round(w / aspect));
   if (w === fbo.w && h === fbo.h) return;
   fbo.w = w; fbo.h = h;
@@ -807,6 +807,11 @@ function camForward() {
 
 const keys = Object.create(null);
 let ditherOn = true;
+
+// Single flag for the (temporary) mobile build; drives lower res too.
+const IS_TOUCH = matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0;
+// Analog movement axis (mobile joystick writes here; stays 0 on desktop).
+const analog = { x: 0, y: 0 };   // x = strafe, y = forward, each -1..1
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (e.code === "KeyG") ditherOn = !ditherOn;
@@ -814,6 +819,7 @@ addEventListener("keydown", (e) => {
 addEventListener("keyup", (e) => { keys[e.code] = false; });
 
 canvas.addEventListener("click", () => {
+  if (IS_TOUCH) return;   // no pointer lock on touch devices
   if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
 });
 document.addEventListener("mousemove", (e) => {
@@ -836,7 +842,7 @@ const overlay = document.getElementById("overlay");
 document.getElementById("seedText").textContent = SEED_STR;
 document.getElementById("startBtn").addEventListener("click", () => {
   overlay.classList.add("hidden");
-  canvas.requestPointerLock();
+  if (!IS_TOUCH) canvas.requestPointerLock();
 });
 document.getElementById("newBtn").addEventListener("click", () => {
   const buf = new Uint32Array(2);
@@ -848,6 +854,160 @@ document.addEventListener("pointerlockchange", () => {
   if (document.pointerLockElement !== canvas) overlay.classList.remove("hidden");
 });
 const hud = document.getElementById("hud");
+
+/* ===================================================================== *
+ * § MOBILE CONTROLS  (TEMPORARY — delete this whole block to remove)
+ *   Activates only on touch devices via the IS_TOUCH flag; desktop is
+ *   untouched. Self-contained: injects its own CSS + DOM + handlers, and
+ *   only writes to `analog` (movement) and `cam` (look). Left half of the
+ *   screen = floating joystick; right half = drag to look; on-screen
+ *   Pick up / Journal / Pause buttons. Blocks page scroll / zoom / menus.
+ * ===================================================================== */
+if (IS_TOUCH) (function mobileControls() {
+  let lookSensMobile = 0.0045;   // becomes a Settings slider in Phase 6
+
+  // ---- injected styles ----
+  const css = document.createElement("style");
+  css.textContent = `
+    html, body { touch-action: none; overscroll-behavior: none;
+      -webkit-user-select: none; user-select: none;
+      -webkit-touch-callout: none; }
+    #mUI { position: fixed; inset: 0; z-index: 6; pointer-events: none; }
+    #mLayer { position: absolute; inset: 0; pointer-events: auto; }
+    #mJoy { position: absolute; width: 120px; height: 120px; margin:-60px 0 0 -60px;
+      border-radius: 50%; border: 2px solid rgba(255,255,255,.35);
+      background: rgba(255,255,255,.08); display: none; }
+    #mKnob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
+      margin: -26px 0 0 -26px; border-radius: 50%;
+      background: rgba(255,255,255,.35); }
+    #mBtns { position: absolute; right: 16px; bottom: 22px; display: flex;
+      flex-direction: column; gap: 12px; pointer-events: auto; }
+    .mBtn { width: 76px; height: 48px; border-radius: 12px;
+      border: 1px solid rgba(255,255,255,.3); background: rgba(10,20,24,.5);
+      color: #eaf2f5; font: 600 13px system-ui, sans-serif;
+      display: flex; align-items: center; justify-content: center;
+      -webkit-user-select: none; user-select: none; }
+    .mBtn:active { background: rgba(60,120,130,.6); }
+    #mRotate { position: fixed; inset: 0; z-index: 20; display: none;
+      align-items: center; justify-content: center; text-align: center;
+      background: #0e1418; color: #eaf2f5; font: 500 18px system-ui, sans-serif;
+      padding: 0 32px; line-height: 1.6; }`;
+  document.head.appendChild(css);
+
+  // ---- injected DOM ----
+  const ui = document.createElement("div");
+  ui.id = "mUI";
+  ui.innerHTML =
+    `<div id="mLayer"></div>
+     <div id="mJoy"><div id="mKnob"></div></div>
+     <div id="mBtns">
+       <div class="mBtn" data-key="KeyE">Pick up</div>
+       <div class="mBtn" data-key="Tab">Journal</div>
+       <div class="mBtn" data-act="pause">Pause</div>
+     </div>`;
+  document.body.appendChild(ui);
+  const rotate = document.createElement("div");
+  rotate.id = "mRotate";
+  rotate.textContent = "Rotate your device to landscape to play.";
+  document.body.appendChild(rotate);
+
+  const layer = ui.querySelector("#mLayer");
+  const joy = ui.querySelector("#mJoy");
+  const knob = ui.querySelector("#mKnob");
+  const JOY_R = 48;
+
+  // ---- unlock synthesized audio on first touch (Phase 6 fills startAudio) ----
+  let audioUnlocked = false;
+  function unlockAudio() {
+    if (audioUnlocked) return;
+    audioUnlocked = true;
+    if (typeof window.startAudio === "function") window.startAudio();
+  }
+
+  // ---- forward a button press as a key event (Phase 4 adds E / Journal) ----
+  function tapKey(code) {
+    dispatchEvent(new KeyboardEvent("keydown", { code }));
+    setTimeout(() => dispatchEvent(new KeyboardEvent("keyup", { code })), 60);
+  }
+
+  // ---- buttons ----
+  ui.querySelectorAll(".mBtn").forEach((btn) => {
+    btn.addEventListener("touchstart", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      unlockAudio();
+      if (btn.dataset.act === "pause") overlay.classList.remove("hidden");
+      else tapKey(btn.dataset.key);
+    }, { passive: false });
+  });
+
+  // ---- joystick (left half) + look (right half), multi-touch ----
+  let moveId = null, lookId = null;
+  const origin = { x: 0, y: 0 }, lookLast = { x: 0, y: 0 };
+
+  layer.addEventListener("touchstart", (e) => {
+    unlockAudio();
+    for (const t of e.changedTouches) {
+      if (t.clientX < innerWidth * 0.5 && moveId === null) {
+        moveId = t.identifier;
+        origin.x = t.clientX; origin.y = t.clientY;
+        joy.style.left = t.clientX + "px";
+        joy.style.top = t.clientY + "px";
+        joy.style.display = "block";
+        knob.style.left = "50%"; knob.style.top = "50%";
+      } else if (lookId === null) {
+        lookId = t.identifier;
+        lookLast.x = t.clientX; lookLast.y = t.clientY;
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  layer.addEventListener("touchmove", (e) => {
+    for (const t of e.changedTouches) {
+      if (t.identifier === moveId) {
+        let dx = t.clientX - origin.x, dy = t.clientY - origin.y;
+        const len = Math.hypot(dx, dy);
+        if (len > JOY_R) { dx *= JOY_R / len; dy *= JOY_R / len; }
+        analog.x = dx / JOY_R;
+        analog.y = -dy / JOY_R;                 // push up = forward
+        knob.style.left = 60 + dx + "px";
+        knob.style.top = 60 + dy + "px";
+      } else if (t.identifier === lookId) {
+        cam.yaw += (t.clientX - lookLast.x) * lookSensMobile;
+        cam.pitch -= (t.clientY - lookLast.y) * lookSensMobile;
+        const lim = Math.PI / 2 - 0.02;
+        cam.pitch = Math.max(-lim, Math.min(lim, cam.pitch));
+        lookLast.x = t.clientX; lookLast.y = t.clientY;
+      }
+    }
+    e.preventDefault();
+  }, { passive: false });
+
+  function endTouch(e) {
+    for (const t of e.changedTouches) {
+      if (t.identifier === moveId) {
+        moveId = null; analog.x = 0; analog.y = 0; joy.style.display = "none";
+      } else if (t.identifier === lookId) {
+        lookId = null;
+      }
+    }
+  }
+  layer.addEventListener("touchend", endTouch);
+  layer.addEventListener("touchcancel", endTouch);
+
+  // ---- block page scroll / pull-to-refresh / pinch-zoom / long-press menu ----
+  document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+  document.addEventListener("gesturestart", (e) => e.preventDefault());
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  // ---- rotate-to-landscape hint in portrait ----
+  function orient() {
+    rotate.style.display = innerHeight > innerWidth ? "flex" : "none";
+  }
+  addEventListener("resize", orient);
+  addEventListener("orientationchange", orient);
+  orient();
+})();
 
 /* --------------------------------------------------------------------- *
  * § BUILD + LOOP
@@ -861,7 +1021,7 @@ const fsTri = buildFsTri();
 
 let proj = new Float32Array(16);
 function resize() {
-  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const dpr = Math.min(devicePixelRatio || 1, IS_TOUCH ? 1 : 2);
   const w = Math.floor(innerWidth * dpr);
   const h = Math.floor(innerHeight * dpr);
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
@@ -888,6 +1048,9 @@ function frame(now) {
   if (keys["KeyA"]) { mx -= right[0]; mz -= right[2]; }
   if (keys["Space"]) my += 1;
   if (keys["ShiftLeft"] || keys["ControlLeft"]) my -= 1;
+  // analog joystick (mobile): horizontal strafe + forward
+  mx += right[0] * analog.x + fwd[0] * analog.y;
+  mz += right[2] * analog.x + fwd[2] * analog.y;
   const ml = Math.hypot(mx, my, mz);
   if (ml > 0) {
     const step = cam.speed * dt / ml;
