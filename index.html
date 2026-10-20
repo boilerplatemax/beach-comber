@@ -170,7 +170,7 @@
 <div id="debugpanel"></div>
 <div id="help">
   WASD / click — move · Shift — run · click — use tool · E — pick up<br>
-  1 dig · 2 chop · 3 mine · 4 plant · Q stomp · R rest · Tab journal · I pack · Esc pause
+  1 dig · 2 chop · 3 mine · 4 seed/salt · Q stomp · R rest · Tab journal · I pack · Esc pause
 </div>
 
 <script>
@@ -2130,6 +2130,21 @@ function logMesh() { const m = Mesh(); mCyl(m,-0.45,0.45,0.15,0.15,7,BROWN); mer
 function coconutMesh() { const m = Mesh(); mCyl(m,-0.17,0.17,0.2,0.2,7,[0.5,0.38,0.26]); mergeMesh(m, discMesh(0.17,0.2,7,0.07,[0.52,0.4,0.28])); mergeMesh(m, discMesh(-0.17,0.2,7,-0.07,[0.46,0.35,0.23])); return m; }
 function coneMesh2() { const m = Mesh(); mCyl(m,0,0.34,0.13,0,6,[0.44,0.32,0.2]); mCyl(m,0,0.12,0.15,0.1,6,[0.5,0.37,0.24]); return m; }
 function stoneMesh() { const m = Mesh(); mRock(m, mulberry32(0x51a3 ^ SEED_INT), [0.52, 0.5, 0.47]); return m; }
+// A derpy goat, facing +Z, origin at the feet. Oversized eyes with horizontal pupils.
+function goatMesh() {
+  const m = Mesh(); const coat=[0.74,0.70,0.62], dark=[0.1,0.1,0.12], white=[0.96,0.96,0.94], horn=[0.42,0.38,0.3], snout=[0.8,0.77,0.7];
+  mBox(m, 0, 0.52, 0, 0.21, 0.19, 0.4, coat);                 // body
+  for (const sx of [-0.15, 0.15]) for (const sz of [-0.28, 0.28]) mBox(m, sx, 0.2, sz, 0.045, 0.2, 0.045, coat); // legs
+  mBox(m, 0, 0.74, 0.46, 0.16, 0.16, 0.17, coat);             // head
+  mBox(m, 0, 0.67, 0.62, 0.1, 0.09, 0.09, snout);             // snout
+  for (const sx of [-0.13, 0.13]) { mBox(m, sx, 0.83, 0.56, 0.075, 0.09, 0.05, white);  // big eyes
+    mBox(m, sx, 0.83, 0.605, 0.06, 0.02, 0.015, dark); }       // horizontal pupil
+  for (const sx of [-0.17, 0.17]) mBox(m, sx, 0.84, 0.44, 0.05, 0.03, 0.08, coat);      // ears
+  for (const sx of [-0.08, 0.08]) { mBox(m, sx, 0.9, 0.4, 0.028, 0.08, 0.028, horn); mBox(m, sx, 0.98, 0.34, 0.025, 0.05, 0.05, horn); }  // horns, curving back
+  mBox(m, 0, 0.6, -0.44, 0.03, 0.05, 0.08, coat);             // tail
+  return m;
+}
+function saltMesh() { const m = Mesh(); for (let i = 0; i < 6; i++) { const a = i/6*6.283; mBox(m, Math.cos(a)*0.13, 0.05+(i%2)*0.07, Math.sin(a)*0.13, 0.07, 0.07, 0.07, [0.93,0.95,0.97]); } mBox(m,0,0.1,0,0.09,0.09,0.09,[0.96,0.97,0.99]); return m; }
 
 // --- registries: mesh, palette, scale, how many may draw, behaviour ---
 const CREATURES = {
@@ -2165,6 +2180,7 @@ const FINDS = {
   stone:    { mesh: () => stoneMesh(),               base: 0.7, max: 60,  label: "Stone", desc: "A heavy chunk of rock.", rare: 0 },
   coconut:  { mesh: () => coconutMesh(),             base: 0.5, max: 30,  label: "Coconut", desc: "A palm seed — plant it on sand.", rare: 1 },
   pinecone: { mesh: () => coneMesh2(),               base: 0.4, max: 30,  label: "Pine Cone", desc: "A conifer seed — plant it on soil or grass.", rare: 1 },
+  salt:     { mesh: () => saltMesh(),                base: 0.45,max: 40,  label: "Sea Salt", desc: "Coarse crystals scraped from a dried pool rim. Goats love it.", rare: 1 },
 };
 
 // build dynamic draw objects
@@ -2376,6 +2392,7 @@ digItem("log", "Log", "material", "common", "A length of trunk, fresh-cut.", () 
 digItem("stone", "Stone", "material", "common", "A heavy chunk of rock.", () => stoneMesh(), [0.52,0.5,0.47]);
 digItem("coconut", "Coconut", "seed", "common", "A palm seed — plant it on sand.", () => coconutMesh(), [0.5,0.38,0.26]);
 digItem("pinecone", "Pine Cone", "seed", "common", "A conifer seed — plant it on soil or grass.", () => coneMesh2(), [0.44,0.32,0.2]);
+digItem("salt", "Sea Salt", "consumable", "uncommon", "Coarse crystals. Hold it to coax wild goats.", () => saltMesh(), [0.93,0.95,0.97]);
 // dug finds (collected from holes)
 function digItem(id, name, cat, rar, desc, meshFn, tint) { ITEMS[id] = { id, name, category: cat, rarity: rar, stackable: cat !== "relic", maxStack: cat === "relic" ? 1 : 99, desc, model: meshFn, tint: tint || [1,1,1] }; }
 digItem("clam", "Clam", "find", "common", "A plump clam, still closed.", () => clamMesh(), [0.85,0.8,0.72]);
@@ -2408,7 +2425,11 @@ const Inv = {
   dropSlot(i) { const s = this.slots[i]; if (!s) return; this.slots[i] = null; this.emit(); dropItemOnGround(s.id, s.qty); },
 };
 function selectedTool() { return Inv.hotbar[Inv.selected]; }
-function selectHotbar(i) { if (i >= 0 && i < HOTBAR_SLOTS) { Inv.selected = i; renderHotbar(); } }
+function selectHotbar(i) {
+  if (i < 0 || i >= HOTBAR_SLOTS) return;
+  if (i === 3 && Inv.selected === 3 && typeof cycleConsumable === "function") { cycleConsumable(); return; }  // tap slot 4 again to swap seed/salt
+  Inv.selected = i; renderHotbar();
+}
 
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
@@ -2560,7 +2581,11 @@ function nearestInteractable() {
   }
   return best;
 }
-function interact() { const e = nearestInteractable(); if (e) interactWith(e); }
+function interact() {
+  const g = nearestGoat(player.x, player.z, 3.2); if (g) { offerSaltTo(g); return; }   // pet / offer salt
+  if (nearestSalt(player.x, player.z, 2.8)) { harvestSaltAt(player.x, player.z); return; }  // scrape salt by hand
+  const e = nearestInteractable(); if (e) interactWith(e);
+}
 let cardTimer = 0;
 function showCard(name, desc) {
   const el = document.getElementById("card");
@@ -2700,6 +2725,11 @@ function clickAt(ndcx, ndcy) {
   let ent = null, bd = 6;
   for (const e of life) { const d = Math.hypot(e.x - pt[0], e.z - pt[1]); if (d < bd && lifeVisible(e)) { bd = d; ent = e; } }
   if (ent) { walkTo(pt[0], pt[1], ent); return; }
+  // a goat? approach it, and offer salt / toggle follow when close
+  const g = nearestGoat(pt[0], pt[1], 3.5);
+  if (g) { if (Math.hypot(g.x - player.x, g.z - player.z) < 6) offerSaltTo(g); else walkTo(g.x, g.z); return; }
+  // a salt crust? scrape it
+  if (nearestSalt(pt[0], pt[1], 3.0)) { harvestSaltAt(pt[0], pt[1]); return; }
   const tool = selectedTool();
   if (tool === "shovel") { digAt(pt[0], pt[1]); return; }
   if (tool === "axe") { chopAt(pt[0], pt[1]); return; }
@@ -3026,6 +3056,7 @@ function drawTells(view, dt) {
       show = s.react;
       if (s.tell === "bubble" && tideInfo().rising === false) show = Math.max(show, 0.4);
     }
+    if (s.goatTell && s.goatTell > clock.t) { show = Math.max(show, 0.9); col = [0.85, 0.82, 0.55]; }   // a tamed goat pawed here
     if (show <= 0.02 || n >= 60) continue;
     const g = surfaceAt(s.x, s.z).h + 0.06, o = n * 10, sc = (0.6 + 0.3 * show) * (s.tell === "dry" ? 2.0 : 1.0);
     digScratch[o]=s.x;digScratch[o+1]=g;digScratch[o+2]=s.z;digScratch[o+3]=sc;digScratch[o+4]=0;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=col[0];digScratch[o+8]=col[1];digScratch[o+9]=col[2]; n++;
@@ -3316,6 +3347,173 @@ function loadWorld() {
   } catch (e) {}
 }
 
+/* ===================================================================== *
+ * § GOATS & SALT  (Phase 6 Part C)
+ * ===================================================================== */
+
+const CONSUMABLE = { coconut: 1, pinecone: 1, salt: 1 };     // share hotbar slot 4
+function cycleConsumable() {
+  const held = Object.keys(CONSUMABLE).filter(id => Inv.has(id));
+  if (!held.length) return;
+  const cur = Inv.hotbar[3], i = held.indexOf(cur);
+  Inv.hotbar[3] = held[(i + 1) % held.length]; renderHotbar();
+}
+
+/* ---- salt crust on high pool rims & spray rocks ---- */
+let saltSpots = [];
+let saltDyn;
+function seedSalt() {
+  saltSpots = [];
+  const bigReach = TIDE_MID + TIDE_RANGE * 0.18;              // level only the biggest tides top
+  for (const p of pools) {
+    if (p.rim < 0.6 || p.rim < bigReach) continue;            // only high pools that dry out
+    const r = Math.min(9, Math.sqrt(p.n) * CELL * 0.32);
+    for (let k = 0; k < 3; k++) { const a = rng()*6.283, x = p.x + Math.cos(a)*r, z = p.z + Math.sin(a)*r;
+      if (heightAt(x, z) > 0.4 && surfaceAt(x, z).slope < 0.5) saltSpots.push({ x, z, amt: 1, reformAt: 0 }); }
+  }
+  for (const c of colliders) if (c.kind === "rock") { const h = heightAt(c.x, c.z);
+    if (h > 0.8 && h < 6 && rng() < 0.35) saltSpots.push({ x: c.x + (rng()-0.5)*c.r*1.5, z: c.z + (rng()-0.5)*c.r*1.5, amt: 1, reformAt: 0 }); }
+  // guarantee a few near the shore so salt is always findable
+  let tries = 0; while (saltSpots.filter(s => s.amt > 0).length < 6 && tries++ < 400) {
+    const a = rng()*6.283, r = HALF*(0.3 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z);
+    if (h > 0.6 && h < 4 && surfaceAt(x, z).slope < 0.4) saltSpots.push({ x, z, amt: 1, reformAt: 0 });
+  }
+}
+function nearestSalt(x, z, maxd) { let best = null, bd = maxd; for (const s of saltSpots) { if (s.amt <= 0) continue; const d = Math.hypot(s.x - x, s.z - z); if (d < bd) { bd = d; best = s; } } return best; }
+function harvestSaltAt(x, z) {
+  const s = nearestSalt(x, z, 3.2); if (!s) return false;
+  if (Math.hypot(x - player.x, z - player.z) > 5.5) { walkTo(s.x, s.z); return true; }
+  if (stamina <= 0.03) { showCard("Too tired", "Rest before scraping salt."); return true; }
+  spendStamina(0.03); s.amt = 0; s.reformAt = clock.t + TIDE_PERIOD * 0.7;
+  const n = 1 + (rng()*2|0); Inv.add("salt", n);
+  const first = !discovered.has("f_salt"); discovered.add("f_salt"); notify("salt", n, first);
+  if (!Inv.hotbar[3] || CONSUMABLE[Inv.hotbar[3]]) { Inv.hotbar[3] = "salt"; renderHotbar(); }
+  if (onDig) onDig("scrape");
+  sparkle(s.x, surfaceAt(s.x, s.z).h + 0.2, s.z, [1, 1, 1], 6);
+  return true;
+}
+function updateSalt() { for (const s of saltSpots) if (s.amt <= 0 && clock.t >= s.reformAt) s.amt = 1; }
+function drawSalt(view) {
+  let n = 0; for (const s of saltSpots) { if (s.amt <= 0 || n >= 60) continue;
+    const d = Math.hypot(s.x - player.x, s.z - player.z); if (d > 60) continue;
+    const o = n*10, y = surfaceAt(s.x, s.z).h + 0.05;
+    digScratch[o]=s.x;digScratch[o+1]=y;digScratch[o+2]=s.z;digScratch[o+3]=0.8+0.3*Math.sin(s.x);digScratch[o+4]=0;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=0.95;digScratch[o+8]=0.96;digScratch[o+9]=0.98; n++; }
+  if (n) { propUniforms(view); saltDyn.draw(digScratch, n); }
+}
+
+/* ---- sparkle feedback (tiny rising motes) ---- */
+function sparkle(x, y, z, col, count) { for (let i = 0; i < (count||5) && particles.length < 200; i++) { const a = rng()*6.283, s = 0.3 + rng()*0.6;
+  particles.push({ x: x+(rng()-0.5), y: y+rng()*0.5, z: z+(rng()-0.5), vx: Math.cos(a)*s, vy: 1.2+rng(), vz: Math.sin(a)*s, t: 0, life: 0.6+rng()*0.4, col }); } }
+
+/* ---- wild goats ---- */
+let goats = [], goatDyn, onGoat = null;
+const GOAT_NAMES = ["Biscuit","Pebble","Clover","Juniper","Nutmeg","Thistle","Captain","Waffles","Marbles","Dandelion","Pippin","Gus"];
+function seedGoats() {
+  goats = [];
+  if (HIGH.h < 38) return;                                    // flats-only islands have no goats
+  const n = 3 + (rng()*4|0);                                  // 3–6
+  for (let i = 0; i < n; i++) {
+    let x = 0, z = 0, h = -1, tries = 0;
+    do { const a = rng()*6.283, r = HALF*(0.08 + rng()*0.42); x = Math.sin(a)*r; z = -Math.cos(a)*r; h = heightAt(x, z); tries++; } while ((h < 26 || surfaceAt(x,z).slope < 0.1) && tries < 80);
+    goats.push({ x, z, vx: 0, vz: 0, yaw: rng()*6.283, state: "idle", timer: 1+rng()*3, chew: rng()*6.283,
+      bob: 0, faint: 0, lean: 0, trust: 0, needTame: 3+(rng()*3|0), tamed: false, follow: true, name: null,
+      lastOffer: -999, lastBleat: 0, homeX: x, homeZ: z, tx: x, tz: z, pawT: 0 });
+  }
+}
+function goatAltTarget(g) {    // pick a new improbable high perch near home (or a boulder top)
+  let best = null, bh = -1;
+  for (let k = 0; k < 6; k++) { const a = rng()*6.283, r = 6 + rng()*22, x = g.homeX + Math.cos(a)*r, z = g.homeZ + Math.sin(a)*r;
+    if (Math.abs(x) > HALF-6 || Math.abs(z) > HALF-6) continue; const h = heightAt(x, z);
+    if (h > bh) { bh = h; best = [x, z]; } }
+  // sometimes aim for a boulder top
+  if (rng() < 0.4) { const rocks = colliders.filter(c => c.kind === "rock" && Math.hypot(c.x-g.homeX, c.z-g.homeZ) < 30); if (rocks.length) { const c = rocks[(rng()*rocks.length)|0]; best = [c.x, c.z]; } }
+  if (best) { g.tx = best[0]; g.tz = best[1]; }
+}
+function updateGoats(dt) {
+  const px = player.x, pz = player.z, holdingSalt = selectedTool() === "salt";
+  const playerFast = player.sprinting;
+  for (const g of goats) {
+    g.chew += dt * (6 + Math.sin(clock.t + g.homeX));
+    const dToP = Math.hypot(g.x - px, g.z - pz);
+
+    // fainting: stiffen and topple, then get back up
+    if (g.faint > 0) { g.faint -= dt; g.lean = Math.min(1.4, g.lean + dt*5); if (g.faint <= 0) g.lean = 0; g.vx = g.vz = 0; continue; }
+    if (g.lean > 0) g.lean = Math.max(0, g.lean - dt*3);
+
+    // startle → occasional fainting-goat topple
+    if (!g.tamed && ((playerFast && dToP < 10) || (g.state !== "faint" && rng() < dt*0.015))) { if (rng() < 0.5) { g.faint = 1.4 + rng(); if (onGoat) onGoat("faint"); } }
+
+    let speed = 3.2, tx = g.tx, tz = g.tz;
+    if (g.tamed) {
+      if (g.follow && dToP > 7) { tx = px; tz = pz; speed = 6.5; }         // follow at a distance
+      else if (g.follow && dToP < 5) { tx = g.x - (px-g.x); tz = g.z - (pz-g.z); speed = 2; }
+      else { // idle near player; paw at a buried thing sometimes
+        if (g.pawT <= 0 && rng() < dt*0.4) { const s = nearestSpot(g.x, g.z, 7); if (s) { g.pawT = 2.5; s.goatTell = clock.t + 8; if (onGoat) onGoat("paw"); } }
+      }
+    } else {
+      // skittish: flee unless the player comes slowly holding salt
+      const spooked = dToP < 9 && !(holdingSalt && !playerFast);
+      if (spooked) { const a = Math.atan2(g.z - pz, g.x - px); tx = g.x + Math.cos(a)*14; tz = g.z + Math.sin(a)*14; speed = 7.5; g.state = "flee"; g.timer = 0.6; }
+      else {
+        g.timer -= dt;
+        if (g.timer <= 0) {
+          const roll = rng();
+          if (roll < 0.45) { g.state = "idle"; g.timer = 1.5+rng()*3; g.tx = g.x; g.tz = g.z; }
+          else if (roll < 0.72) { g.state = "wander"; g.timer = 2+rng()*3; goatAltTarget(g); }
+          else if (roll < 0.88) { g.state = "zoomies"; g.timer = 1+rng()*1.2; const a = rng()*6.283; g.tx = g.x+Math.cos(a)*18; g.tz = g.z+Math.sin(a)*18; }
+          else { g.state = "headbutt"; g.timer = 0.8; const other = goats.find(o => o !== g && !o.tamed && Math.hypot(o.x-g.x,o.z-g.z) < 5); if (other) { g.tx = other.x; g.tz = other.z; } }
+          if (rng() < 0.3 && clock.t - g.lastBleat > 2) { g.lastBleat = clock.t; if (onGoat) onGoat("bleat"); }
+        }
+        if (g.state === "zoomies") speed = 11;
+        else if (g.state === "idle") speed = 0;
+      }
+    }
+    // move (goats ignore the slope limit — they go anywhere on land)
+    const dx = tx - g.x, dz = tz - g.z, dd = Math.hypot(dx, dz);
+    if (dd > 0.4 && speed > 0) {
+      const st = Math.min(dd, speed*dt); g.x += dx/dd*st; g.z += dz/dd*st; g.yaw = Math.atan2(dx, dz); g.bob += st;
+      g.x = Math.max(-HALF+3, Math.min(HALF-3, g.x)); g.z = Math.max(-HALF+3, Math.min(HALF-3, g.z));
+      // keep goats out of water — bounce back uphill if they wander below the waterline
+      if (waterLevel - surfaceAt(g.x, g.z).h > 0.4) { g.x -= dx/dd*st*2; g.z -= dz/dd*st*2; g.tx = g.homeX; g.tz = g.homeZ; }
+    }
+    if (g.pawT > 0) g.pawT -= dt;
+  }
+}
+function drawGoats(view) {
+  if (!goats.length) return; let n = 0; const arr = lifeScratch;
+  for (const g of goats) { if (n >= 10) break;
+    const y = surfaceAt(g.x, g.z).h, chew = Math.sin(g.chew)*0.04, o = n*10;
+    const tint = g.tamed ? [1.0, 0.98, 0.9] : [1, 1, 1];
+    arr[o]=g.x; arr[o+1]=y+chew; arr[o+2]=g.z; arr[o+3]=1.4; arr[o+4]=g.yaw; arr[o+5]=g.lean; arr[o+6]=g.yaw+1.57; arr[o+7]=tint[0]; arr[o+8]=tint[1]; arr[o+9]=tint[2]; n++; }
+  if (n) { propUniforms(view); goatDyn.draw(arr, n); }
+}
+function nearestGoat(x, z, maxd) { let best = null, bd = maxd; for (const g of goats) { const d = Math.hypot(g.x - x, g.z - z); if (d < bd) { bd = d; best = g; } } return best; }
+function offerSaltTo(g) {
+  if (g.tamed) { g.follow = !g.follow; showCard(g.name, g.follow ? "trots along behind you." : "settles in to wait here."); saveTamed(); return; }
+  if (selectedTool() !== "salt" || !Inv.has("salt")) { showCard("Hold out salt", "Select salt (slot 4) and approach a goat slowly."); return; }
+  if (clock.t - g.lastOffer < 120) { showCard("Still wary", "Give it a few minutes between offerings."); return; }
+  Inv.remove("salt", 1); if (!Inv.has("salt") && Inv.hotbar[3] === "salt") { Inv.hotbar[3] = null; renderHotbar(); }
+  g.lastOffer = clock.t; g.trust++;
+  if (onGoat) onGoat("bleat");
+  sparkle(g.x, surfaceAt(g.x, g.z).h + 1, g.z, [1, 1, 0.6], 7);
+  if (g.trust >= g.needTame) tameGoat(g);
+  else showCard("The goat edges closer", `It takes the salt. Trust ${g.trust}/${g.needTame}.`);
+}
+function tameGoat(g) {
+  if (goats.filter(x => x.tamed).length >= 3) { showCard("Herd's full", "You can keep three goats at a time."); return; }
+  g.tamed = true; g.follow = true; g.name = GOAT_NAMES[(rng()*GOAT_NAMES.length)|0];
+  if (onGoat) onGoat("jingle");
+  showCard("Tamed " + g.name + "!", "It wears a little bell now, and follows you.");
+  saveTamed();
+}
+function saveTamed() {
+  try { localStorage.setItem("bcg_" + SEED_STR, JSON.stringify(goats.map((g, i) => g.tamed ? { i, name: g.name, follow: g.follow } : null).filter(Boolean))); } catch (e) {}
+}
+function loadTamed() {
+  try { const t = JSON.parse(localStorage.getItem("bcg_" + SEED_STR) || "null"); if (!t) return;
+    for (const r of t) if (goats[r.i]) { goats[r.i].tamed = true; goats[r.i].name = r.name; goats[r.i].follow = r.follow; goats[r.i].trust = goats[r.i].needTame; } } catch (e) {}
+}
+
 /* --------------------------------------------------------------------- *
  * § BUILD + LOOP
  * --------------------------------------------------------------------- */
@@ -3348,6 +3546,11 @@ seedDigSpots();
 initShovelFP();
 initWorldObjs();
 loadWorld();
+saltDyn = makeDynamic(discMesh(0, 0.5, 8, 0.03, [0.94,0.95,0.97]), 60);
+goatDyn = makeDynamic(goatMesh(), 10);
+seedSalt();
+seedGoats();
+loadTamed();
 
 let proj = new Float32Array(16);
 function resize() {
@@ -3386,6 +3589,8 @@ function frame(now) {
   }
   updateDigging(dt);
   updateTools(dt, gdtTotal);
+  updateGoats(dt);
+  updateSalt();
   if (cardTimer > 0) { cardTimer -= dt; if (cardTimer <= 0) document.getElementById("card").style.display = "none"; }
   if (toasts.length) updateToasts(dt);
 
@@ -3566,6 +3771,8 @@ function frame(now) {
   // props & points of interest (instanced), before the transparent water
   drawProps(view);
   drawTools(view);
+  drawGoats(view);
+  drawSalt(view);
   drawLife(view);
   drawTells(view, dt);
   drawParticles(view);
