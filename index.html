@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Beachcomber</title>
+<style>
+  :root { --bg: #0e1418; }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #eaf2f5; }
+  #gl { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+
+  /* Overlay / title */
+  #overlay {
+    position: fixed; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 18px; text-align: center;
+    background: radial-gradient(130% 120% at 50% 35%, rgba(18,34,42,0.55), rgba(8,12,16,0.9));
+    backdrop-filter: blur(2px); z-index: 10; transition: opacity .4s ease;
+  }
+  #overlay.hidden { opacity: 0; pointer-events: none; }
+  #overlay h1 { font-size: clamp(32px, 6vw, 56px); font-weight: 650; letter-spacing: .04em; }
+  #overlay p { opacity: .8; max-width: 440px; line-height: 1.5; padding: 0 16px; }
+  .seedline { font-family: ui-monospace, Menlo, Consolas, monospace; opacity: .7; font-size: 13px; }
+  .btns { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  button {
+    font: inherit; font-size: 15px; padding: 10px 22px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.08);
+    color: #eaf2f5; cursor: pointer; transition: background .15s, transform .1s;
+  }
+  button:hover { background: rgba(255,255,255,.16); }
+  button:active { transform: translateY(1px); }
+  button.primary { background: #2b6f78; border-color: #3f9aa5; }
+  button.primary:hover { background: #357f8a; }
+
+  /* HUD */
+  #hud {
+    position: fixed; left: 12px; bottom: 12px; z-index: 5; pointer-events: none;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+    opacity: .75; line-height: 1.5; text-shadow: 0 1px 2px rgba(0,0,0,.6);
+  }
+  #help {
+    position: fixed; right: 12px; bottom: 12px; z-index: 5; pointer-events: none;
+    font-size: 12px; opacity: .55; text-align: right; line-height: 1.5;
+    text-shadow: 0 1px 2px rgba(0,0,0,.6);
+  }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="overlay">
+  <h1>Beachcomber</h1>
+  <p>A procedurally generated island, grown entirely from a seed. Milestone 1: terrain, flat shading & a free-fly camera.</p>
+  <div class="btns">
+    <button id="startBtn" class="primary">Explore</button>
+    <button id="newBtn">New island</button>
+  </div>
+  <div class="seedline">seed: <span id="seedText">…</span></div>
+</div>
+
+<div id="hud"></div>
+<div id="help">
+  WASD — move · Space/Shift — up/down<br>
+  Mouse — look · Esc — release · Scroll — speed
+</div>
+
+<script>
+"use strict";
+/* ===================================================================== *
+ *  BEACHCOMBER  —  Milestone 1
+ *  PRNG · seeded value-noise terrain · flat shading · fly camera
+ *  Raw WebGL2, no libraries, no asset files.
+ * ===================================================================== */
+
+/* --------------------------------------------------------------------- *
+ * § PRNG  (one seeded stream for ALL procedural generation)
+ * --------------------------------------------------------------------- */
+
+// xmur3: hash an arbitrary string into a well-mixed 32-bit integer seed.
+function xmur3(str) {
+  let h = 1779033703 ^ str.length;
+  for (let i = 0; i < str.length; i++) {
+    h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  return function () {
+    h = Math.imul(h ^ (h >>> 16), 2246822507);
+    h = Math.imul(h ^ (h >>> 13), 3266489909);
+    h ^= h >>> 16;
+    return h >>> 0;
+  };
+}
+
+// mulberry32: tiny, fast, deterministic PRNG. Returns floats in [0,1).
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Resolve the seed: read ?seed=, or mint one (crypto entropy, not the stream)
+// and write it back to the URL so the island can be shared.
+function resolveSeed() {
+  const params = new URLSearchParams(location.search);
+  let seedStr = params.get("seed");
+  if (!seedStr) {
+    const buf = new Uint32Array(2);
+    crypto.getRandomValues(buf);
+    seedStr = (buf[0] >>> 0).toString(36) + (buf[1] >>> 0).toString(36);
+    params.set("seed", seedStr);
+    history.replaceState(null, "", location.pathname + "?" + params.toString());
+  }
+  return seedStr;
+}
+
+const SEED_STR = resolveSeed();
+const SEED_INT = xmur3(SEED_STR)();
+const rng = mulberry32(SEED_INT);   // <-- the single shared stream
+
+// Convenience: a fresh independent sub-stream seeded from the main stream,
+// so each generator can be reordered later without disturbing the others.
+function subStream() { return mulberry32((rng() * 4294967296) >>> 0); }
+
+/* --------------------------------------------------------------------- *
+ * § NOISE  (seeded value noise + fbm)
+ * --------------------------------------------------------------------- */
+
+function makeNoise(rand) {
+  // Permutation table + per-lattice random values, both seeded.
+  const perm = new Uint8Array(512);
+  const vals = new Float32Array(256);
+  const p = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) p[i] = i;
+  for (let i = 255; i > 0; i--) {           // Fisher–Yates shuffle
+    const j = (rand() * (i + 1)) | 0;
+    const t = p[i]; p[i] = p[j]; p[j] = t;
+  }
+  for (let i = 0; i < 512; i++) perm[i] = p[i & 255];
+  for (let i = 0; i < 256; i++) vals[i] = rand();
+
+  const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const hash = (ix, iy) => perm[(ix + perm[iy & 255]) & 255];
+
+  function noise2(x, y) {
+    const ix = Math.floor(x), iy = Math.floor(y);
+    const fx = x - ix, fy = y - iy;
+    const ux = fade(fx), uy = fade(fy);
+    const v00 = vals[hash(ix,     iy)];
+    const v10 = vals[hash(ix + 1, iy)];
+    const v01 = vals[hash(ix,     iy + 1)];
+    const v11 = vals[hash(ix + 1, iy + 1)];
+    return lerp(lerp(v00, v10, ux), lerp(v01, v11, ux), uy); // [0,1]
+  }
+
+  // Fractal Brownian motion: summed octaves, normalized to [0,1].
+  function fbm(x, y, octaves, lacunarity, gain) {
+    let amp = 0.5, freq = 1.0, sum = 0, norm = 0;
+    for (let o = 0; o < octaves; o++) {
+      sum += amp * noise2(x * freq, y * freq);
+      norm += amp;
+      amp *= gain;
+      freq *= lacunarity;
+    }
+    return sum / norm;
+  }
+
+  return { noise2, fbm };
+}
+
+/* --------------------------------------------------------------------- *
+ * § WORLD CONFIG
+ * --------------------------------------------------------------------- */
+
+const GRID = 256;             // heightmap resolution (GRID x GRID)
+const WORLD = 220.0;          // island spans WORLD world-units
+const HALF = WORLD * 0.5;
+const CELL = WORLD / (GRID - 1);
+const AMP = 34.0;             // vertical scale
+const SEA_LEVEL = 0.0;        // water sits at y = 0
+
+const noise = makeNoise(subStream());
+
+// Baked heightmap so both the mesh and later gameplay queries agree.
+const heightmap = new Float32Array(GRID * GRID);
+
+function buildHeightmap() {
+  const freq = 2.6;           // # of large features across the island
+  for (let z = 0; z < GRID; z++) {
+    for (let x = 0; x < GRID; x++) {
+      const u = x / (GRID - 1);
+      const v = z / (GRID - 1);
+      // fbm elevation
+      let h = noise.fbm(u * freq, v * freq, 6, 2.0, 0.5);
+      h = Math.pow(h, 1.25);                  // sharpen peaks a touch
+      // radial falloff → ocean around the edges
+      const dx = u - 0.5, dz = v - 0.5;
+      const d = Math.sqrt(dx * dx + dz * dz) * 2.0;        // 0 center → ~1 edge
+      const fall = 1.0 - smoothstep(0.55, 1.0, d);
+      const island = h * fall;
+      heightmap[z * GRID + x] = (island - 0.30) * AMP;     // < -? underwater
+    }
+  }
+}
+
+function smoothstep(a, b, x) {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+}
+
+// Bilinear height query in world space (used by later milestones).
+function heightAt(wx, wz) {
+  const gx = (wx + HALF) / CELL;
+  const gz = (wz + HALF) / CELL;
+  const x0 = Math.floor(gx), z0 = Math.floor(gz);
+  if (x0 < 0 || z0 < 0 || x0 >= GRID - 1 || z0 >= GRID - 1) return -8.0;
+  const fx = gx - x0, fz = gz - z0;
+  const h00 = heightmap[z0 * GRID + x0];
+  const h10 = heightmap[z0 * GRID + x0 + 1];
+  const h01 = heightmap[(z0 + 1) * GRID + x0];
+  const h11 = heightmap[(z0 + 1) * GRID + x0 + 1];
+  const a = h00 + (h10 - h00) * fx;
+  const b = h01 + (h11 - h01) * fx;
+  return a + (b - a) * fz;
+}
+
+/* --------------------------------------------------------------------- *
+ * § MATH  (column-major mat4)
+ * --------------------------------------------------------------------- */
+
+const M4 = {
+  perspective(fovy, aspect, near, far) {
+    const f = 1 / Math.tan(fovy / 2);
+    const nf = 1 / (near - far);
+    return new Float32Array([
+      f / aspect, 0, 0, 0,
+      0, f, 0, 0,
+      0, 0, (far + near) * nf, -1,
+      0, 0, 2 * far * near * nf, 0,
+    ]);
+  },
+  lookAt(eye, center, up) {
+    const zx = eye[0]-center[0], zy = eye[1]-center[1], zz = eye[2]-center[2];
+    let zl = Math.hypot(zx, zy, zz) || 1;
+    const z = [zx/zl, zy/zl, zz/zl];
+    let xx = up[1]*z[2] - up[2]*z[1];
+    let xy = up[2]*z[0] - up[0]*z[2];
+    let xz = up[0]*z[1] - up[1]*z[0];
+    let xl = Math.hypot(xx, xy, xz) || 1;
+    const x = [xx/xl, xy/xl, xz/xl];
+    const y = [z[1]*x[2]-z[2]*x[1], z[2]*x[0]-z[0]*x[2], z[0]*x[1]-z[1]*x[0]];
+    return new Float32Array([
+      x[0], y[0], z[0], 0,
+      x[1], y[1], z[1], 0,
+      x[2], y[2], z[2], 0,
+      -(x[0]*eye[0]+x[1]*eye[1]+x[2]*eye[2]),
+      -(y[0]*eye[0]+y[1]*eye[1]+y[2]*eye[2]),
+      -(z[0]*eye[0]+z[1]*eye[1]+z[2]*eye[2]),
+      1,
+    ]);
+  },
+};
+
+/* --------------------------------------------------------------------- *
+ * § GL  helpers
+ * --------------------------------------------------------------------- */
+
+const canvas = document.getElementById("gl");
+const gl = canvas.getContext("webgl2", { antialias: true, alpha: false });
+if (!gl) alert("WebGL2 is required for this game.");
+
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS))
+    throw new Error(gl.getShaderInfoLog(s) + "\n" + src);
+  return s;
+}
+function program(vsSrc, fsSrc) {
+  const p = gl.createProgram();
+  gl.attachShader(p, compile(gl.VERTEX_SHADER, vsSrc));
+  gl.attachShader(p, compile(gl.FRAGMENT_SHADER, fsSrc));
+  gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS))
+    throw new Error(gl.getProgramInfoLog(p));
+  return p;
+}
+
+/* --------------------------------------------------------------------- *
+ * § TERRAIN  (indexed mesh; flat shading + banded color in the shader)
+ * --------------------------------------------------------------------- */
+
+const terrainVS = `#version 300 es
+precision highp float;
+uniform mat4 uProj, uView;
+in vec3 aPos;
+out vec3 vWorld;
+void main() {
+  vWorld = aPos;
+  gl_Position = uProj * uView * vec4(aPos, 1.0);
+}`;
+
+const terrainFS = `#version 300 es
+precision highp float;
+in vec3 vWorld;
+out vec4 frag;
+uniform vec3 uSunDir;
+uniform vec3 uCamPos;
+
+void main() {
+  // Flat shading: face normal from screen-space derivatives of world pos.
+  vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+  if (n.y < 0.0) n = -n;                       // keep normals facing up-ish
+  float h = vWorld.y;
+  float slope = 1.0 - clamp(n.y, 0.0, 1.0);    // 0 flat .. 1 vertical
+
+  // Cohesive palette, selected by height then overridden by slope (rock).
+  vec3 cSeafloor = vec3(0.42, 0.46, 0.40);
+  vec3 cSandWet  = vec3(0.74, 0.67, 0.51);
+  vec3 cSandDry  = vec3(0.87, 0.79, 0.60);
+  vec3 cGrass    = vec3(0.44, 0.53, 0.31);
+  vec3 cForest   = vec3(0.23, 0.35, 0.21);
+  vec3 cRock     = vec3(0.46, 0.43, 0.40);
+
+  vec3 col = cSeafloor;
+  col = mix(col, cSandWet, smoothstep(-2.0, 0.15, h));
+  col = mix(col, cSandDry, smoothstep(0.2, 1.4, h));
+  col = mix(col, cGrass,   smoothstep(2.0, 4.5, h));
+  col = mix(col, cForest,  smoothstep(8.0, 13.0, h));
+  col = mix(col, cRock,    smoothstep(0.35, 0.62, slope));
+
+  float diff = max(dot(n, normalize(uSunDir)), 0.0);
+  float ambient = 0.35;
+  col *= ambient + (1.0 - ambient) * diff;
+
+  frag = vec4(col, 1.0);
+}`;
+
+const terrainProg = program(terrainVS, terrainFS);
+
+function buildTerrainMesh() {
+  const positions = new Float32Array(GRID * GRID * 3);
+  let p = 0;
+  for (let z = 0; z < GRID; z++) {
+    for (let x = 0; x < GRID; x++) {
+      positions[p++] = x * CELL - HALF;
+      positions[p++] = heightmap[z * GRID + x];
+      positions[p++] = z * CELL - HALF;
+    }
+  }
+  // Indexed triangles (32-bit indices; GRID*GRID > 65535).
+  const indices = new Uint32Array((GRID - 1) * (GRID - 1) * 6);
+  let i = 0;
+  for (let z = 0; z < GRID - 1; z++) {
+    for (let x = 0; x < GRID - 1; x++) {
+      const a = z * GRID + x;
+      const b = a + 1;
+      const c = a + GRID;
+      const d = c + 1;
+      indices[i++] = a; indices[i++] = c; indices[i++] = b;
+      indices[i++] = b; indices[i++] = c; indices[i++] = d;
+    }
+  }
+
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(terrainProg, "aPos");
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+  const ibo = gl.createBuffer();
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
+  gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+  gl.bindVertexArray(null);
+
+  return { vao, count: indices.length };
+}
+
+/* --------------------------------------------------------------------- *
+ * § WATER  (Milestone 1: a simple translucent plane at sea level.
+ *            Waves + foam arrive in Milestone 2.)
+ * --------------------------------------------------------------------- */
+
+const waterVS = `#version 300 es
+precision highp float;
+uniform mat4 uProj, uView;
+in vec2 aXZ;
+out vec3 vWorld;
+void main() {
+  vWorld = vec3(aXZ.x, 0.0, aXZ.y);
+  gl_Position = uProj * uView * vec4(vWorld, 1.0);
+}`;
+
+const waterFS = `#version 300 es
+precision highp float;
+in vec3 vWorld;
+out vec4 frag;
+uniform vec3 uCamPos;
+void main() {
+  vec3 deep    = vec3(0.07, 0.26, 0.33);
+  vec3 shallow = vec3(0.26, 0.55, 0.57);
+  float dist = length(vWorld.xz - uCamPos.xz);
+  float f = clamp(dist / 160.0, 0.0, 1.0);
+  vec3 col = mix(shallow, deep, f);
+  frag = vec4(col, 0.72);
+}`;
+
+const waterProg = program(waterVS, waterFS);
+
+function buildWaterMesh() {
+  const S = WORLD * 1.6;   // extends past the island to the horizon
+  const verts = new Float32Array([
+    -S, -S,  S, -S,  S, S,
+    -S, -S,  S,  S, -S, S,
+  ]);
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(waterProg, "aXZ");
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+  gl.bindVertexArray(null);
+  return { vao, count: 6 };
+}
+
+/* --------------------------------------------------------------------- *
+ * § CAMERA  (free-fly; walker + head-bob come in Milestone 3)
+ * --------------------------------------------------------------------- */
+
+const cam = {
+  pos: [0, 40, 90],
+  yaw: 0,           // radians, around Y
+  pitch: -0.35,     // radians, around X
+  speed: 40,        // units / second
+};
+
+// Point the camera roughly at the island center on spawn.
+(function aimAtIsland() {
+  const dx = 0 - cam.pos[0], dz = 0 - cam.pos[2];
+  cam.yaw = Math.atan2(dx, -dz);
+})();
+
+function camForward() {
+  const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
+  const cy = Math.cos(cam.yaw), sy = Math.sin(cam.yaw);
+  return [sy * cp, sp, -cy * cp];
+}
+
+/* --------------------------------------------------------------------- *
+ * § INPUT
+ * --------------------------------------------------------------------- */
+
+const keys = Object.create(null);
+addEventListener("keydown", (e) => { keys[e.code] = true; });
+addEventListener("keyup",   (e) => { keys[e.code] = false; });
+
+canvas.addEventListener("click", () => {
+  if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
+});
+document.addEventListener("mousemove", (e) => {
+  if (document.pointerLockElement !== canvas) return;
+  const s = 0.0022;
+  cam.yaw += e.movementX * s;
+  cam.pitch -= e.movementY * s;
+  const lim = Math.PI / 2 - 0.02;
+  cam.pitch = Math.max(-lim, Math.min(lim, cam.pitch));
+});
+addEventListener("wheel", (e) => {
+  cam.speed = Math.max(8, Math.min(160, cam.speed * (e.deltaY < 0 ? 1.12 : 0.89)));
+}, { passive: true });
+
+/* --------------------------------------------------------------------- *
+ * § UI
+ * --------------------------------------------------------------------- */
+
+const overlay = document.getElementById("overlay");
+document.getElementById("seedText").textContent = SEED_STR;
+document.getElementById("startBtn").addEventListener("click", () => {
+  overlay.classList.add("hidden");
+  canvas.requestPointerLock();
+});
+document.getElementById("newBtn").addEventListener("click", () => {
+  const buf = new Uint32Array(2);
+  crypto.getRandomValues(buf);
+  const s = (buf[0] >>> 0).toString(36) + (buf[1] >>> 0).toString(36);
+  location.href = location.pathname + "?seed=" + s;
+});
+document.addEventListener("pointerlockchange", () => {
+  if (document.pointerLockElement !== canvas) overlay.classList.remove("hidden");
+});
+
+const hud = document.getElementById("hud");
+
+/* --------------------------------------------------------------------- *
+ * § BUILD + LOOP
+ * --------------------------------------------------------------------- */
+
+buildHeightmap();
+const terrain = buildTerrainMesh();
+const water = buildWaterMesh();
+
+// Cache uniform locations.
+const U = {
+  tProj: gl.getUniformLocation(terrainProg, "uProj"),
+  tView: gl.getUniformLocation(terrainProg, "uView"),
+  tSun:  gl.getUniformLocation(terrainProg, "uSunDir"),
+  tCam:  gl.getUniformLocation(terrainProg, "uCamPos"),
+  wProj: gl.getUniformLocation(waterProg, "uProj"),
+  wView: gl.getUniformLocation(waterProg, "uView"),
+  wCam:  gl.getUniformLocation(waterProg, "uCamPos"),
+};
+
+let proj = new Float32Array(16);
+function resize() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = Math.floor(innerWidth * dpr);
+  const h = Math.floor(innerHeight * dpr);
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w; canvas.height = h;
+  }
+  gl.viewport(0, 0, canvas.width, canvas.height);
+  proj = M4.perspective(Math.PI / 3, canvas.width / canvas.height, 0.1, 900);
+}
+addEventListener("resize", resize);
+resize();
+
+gl.enable(gl.DEPTH_TEST);
+gl.clearColor(0.55, 0.72, 0.80, 1.0);   // simple sky (gradient comes in M2)
+
+const SUN = [0.5, 0.75, 0.35];
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+
+  // ---- movement ----
+  const fwd = camForward();
+  const flen = Math.hypot(fwd[0], fwd[2]) || 1;
+  const right = [fwd[2] / flen, 0, -fwd[0] / flen];   // horizontal right
+  let mx = 0, my = 0, mz = 0;
+  if (keys["KeyW"]) { mx += fwd[0]; my += fwd[1]; mz += fwd[2]; }
+  if (keys["KeyS"]) { mx -= fwd[0]; my -= fwd[1]; mz -= fwd[2]; }
+  if (keys["KeyD"]) { mx += right[0]; mz += right[2]; }
+  if (keys["KeyA"]) { mx -= right[0]; mz -= right[2]; }
+  if (keys["Space"]) my += 1;
+  if (keys["ShiftLeft"] || keys["ControlLeft"]) my -= 1;
+  const ml = Math.hypot(mx, my, mz);
+  if (ml > 0) {
+    const step = cam.speed * dt / ml;
+    cam.pos[0] += mx * step; cam.pos[1] += my * step; cam.pos[2] += mz * step;
+  }
+
+  // ---- view matrix ----
+  const f = camForward();
+  const view = M4.lookAt(cam.pos, [cam.pos[0]+f[0], cam.pos[1]+f[1], cam.pos[2]+f[2]], [0, 1, 0]);
+
+  // ---- draw ----
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+  gl.useProgram(terrainProg);
+  gl.uniformMatrix4fv(U.tProj, false, proj);
+  gl.uniformMatrix4fv(U.tView, false, view);
+  gl.uniform3fv(U.tSun, SUN);
+  gl.uniform3fv(U.tCam, cam.pos);
+  gl.bindVertexArray(terrain.vao);
+  gl.drawElements(gl.TRIANGLES, terrain.count, gl.UNSIGNED_INT, 0);
+
+  gl.useProgram(waterProg);
+  gl.uniformMatrix4fv(U.wProj, false, proj);
+  gl.uniformMatrix4fv(U.wView, false, view);
+  gl.uniform3fv(U.wCam, cam.pos);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.depthMask(false);
+  gl.bindVertexArray(water.vao);
+  gl.drawArrays(gl.TRIANGLES, 0, water.count);
+  gl.depthMask(true);
+  gl.disable(gl.BLEND);
+
+  gl.bindVertexArray(null);
+
+  // ---- hud ----
+  hud.textContent =
+    `seed ${SEED_STR}\n` +
+    `pos  ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}\n` +
+    `speed ${cam.speed.toFixed(0)}`;
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
