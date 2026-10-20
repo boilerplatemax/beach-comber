@@ -39,6 +39,12 @@
     font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
     opacity: .75; line-height: 1.5; text-shadow: 0 1px 2px rgba(0,0,0,.6);
   }
+  #dbg {
+    position: fixed; left: 12px; top: 12px; z-index: 5; pointer-events: none;
+    font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
+    color: #9fe; opacity: .85; line-height: 1.5; white-space: pre;
+    text-shadow: 0 1px 2px rgba(0,0,0,.7); display: none;
+  }
   #help {
     position: fixed; right: 12px; bottom: 12px; z-index: 5; pointer-events: none;
     font-size: 12px; opacity: .55; text-align: right; line-height: 1.5;
@@ -60,6 +66,7 @@
 </div>
 
 <div id="hud"></div>
+<div id="dbg"></div>
 <div id="help">
   WASD — move · Shift — run<br>
   Mouse — look · Esc — pause · G — dither
@@ -250,7 +257,7 @@ function ridgedMF(n, x, y, oct) {
 }
 
 const SEA_THRESH = 0.16;     // elevation field value that maps to the waterline
-const SHELF_POW = 1.45;      // >1 flattens near shore → wide tidal margins, but
+const SHELF_POW = 1.7;       // >1 flattens near shore → wide tidal margins, but
                              // gentle enough that dunes & interior still rise
 
 const heightmap = new Float32Array(GRID * GRID);
@@ -310,7 +317,7 @@ function smoothstep(a, b, x) {
   return t * t * (3 - 2 * t);
 }
 
-// Bilinear height query in world space (used by later milestones).
+// Bilinear height query (fast, used for generation / placement).
 function heightAt(wx, wz) {
   const gx = (wx + HALF) / CELL;
   const gz = (wz + HALF) / CELL;
@@ -324,6 +331,46 @@ function heightAt(wx, wz) {
   const a = h00 + (h10 - h00) * fx;
   const b = h01 + (h11 - h01) * fx;
   return a + (b - a) * fz;
+}
+
+// Exact surface query on the SAME two triangles the terrain mesh renders, so
+// the camera never floats or clips. Returns height, unit normal and slope.
+const _surf = { h: 0, nx: 0, ny: 1, nz: 0, slope: 0 };
+function surfaceAt(wx, wz) {
+  const gx = (wx + HALF) / CELL, gz = (wz + HALF) / CELL;
+  const x0 = Math.floor(gx), z0 = Math.floor(gz);
+  if (x0 < 0 || z0 < 0 || x0 >= GRID - 1 || z0 >= GRID - 1) {
+    _surf.h = -8.0; _surf.nx = 0; _surf.ny = 1; _surf.nz = 0; _surf.slope = 0;
+    return _surf;
+  }
+  const fx = gx - x0, fz = gz - z0;
+  const h00 = heightmap[z0 * GRID + x0],       h10 = heightmap[z0 * GRID + x0 + 1];
+  const h01 = heightmap[(z0 + 1) * GRID + x0], h11 = heightmap[(z0 + 1) * GRID + x0 + 1];
+  let h, e1x, e1y, e1z, e2x, e2y, e2z;
+  if (fx + fz < 1.0) {                       // lower triangle (a, b, c)
+    h = h00 + (h10 - h00) * fx + (h01 - h00) * fz;
+    e1x = CELL; e1y = h10 - h00; e1z = 0;  e2x = 0; e2y = h01 - h00; e2z = CELL;
+  } else {                                   // upper triangle (b, d, c)
+    h = h10 + (fx + fz - 1) * (h11 - h10) + (1 - fx) * (h01 - h10);
+    e1x = 0; e1y = h11 - h10; e1z = CELL;  e2x = -CELL; e2y = h01 - h10; e2z = CELL;
+  }
+  let nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+  const L = Math.hypot(nx, ny, nz) || 1;
+  nx /= L; ny /= L; nz /= L;
+  if (ny < 0) { nx = -nx; ny = -ny; nz = -nz; }
+  _surf.h = h; _surf.nx = nx; _surf.ny = ny; _surf.nz = nz;
+  _surf.slope = Math.acos(Math.max(-1, Math.min(1, ny)));
+  return _surf;
+}
+
+// Highest point on the island (spawn faces it; a sightline anchor for POIs).
+let HIGH = { x: 0, z: 0, h: -1e9 };
+function findHighPoint() {
+  for (let z = 0; z < GRID; z += 2)
+    for (let x = 0; x < GRID; x += 2) {
+      const h = heightmap[z * GRID + x];
+      if (h > HIGH.h) { HIGH.h = h; HIGH.x = x * CELL - HALF; HIGH.z = z * CELL - HALF; }
+    }
 }
 
 /* --------------------------------------------------------------------- *
@@ -505,12 +552,13 @@ void main() {
   vec3 cForest   = vec3(0.23, 0.35, 0.21);
   vec3 cRock     = vec3(0.46, 0.43, 0.40);
 
+  // Bands rescaled for the big world: a wide sand beach before the dunes.
   vec3 col = cSeafloor;
-  col = mix(col, cSandWet, smoothstep(-2.0, 0.15, h));
-  col = mix(col, cSandDry, smoothstep(0.2, 1.4, h));
-  col = mix(col, cGrass,   smoothstep(2.0, 4.5, h));
-  col = mix(col, cForest,  smoothstep(8.0, 13.0, h));
-  col = mix(col, cRock,    smoothstep(0.35, 0.62, slope));
+  col = mix(col, cSandWet, smoothstep(-3.0, 0.4, h));
+  col = mix(col, cSandDry, smoothstep(0.6, 4.0, h));
+  col = mix(col, cGrass,   smoothstep(10.0, 20.0, h));
+  col = mix(col, cForest,  smoothstep(30.0, 58.0, h));
+  col = mix(col, cRock,    smoothstep(0.45, 0.70, slope));
 
   // Directional light: warm in the sun, gently cool in shadow.
   float diff = max(dot(n, normalize(uSunDir)), 0.0);
@@ -837,20 +885,23 @@ function camForward() {
  *   bob and can't wade into deep water, so the sea bounds the island.)
  * --------------------------------------------------------------------- */
 
-const EYE = 1.7;              // eye height above the ground
-const WALK_SPEED = 9.5;       // units / second (vast map, so not too slow)
-const WADE_LIMIT = -1.4;      // can't step where the ground is deeper than this
-const player = { x: 0, z: 0, bob: 0 };
+const EYE = 1.7;             // eye height above the ground
+const WALK_SPEED = 9.5;      // units / second (vast map, so not too slow)
+const SPRINT = 1.8;          // sprint multiplier
+const SLOPE_LIMIT = 40 * Math.PI / 180;   // can't climb steeper than this
+const WADE_DEPTH = 1.0;      // can wade up to this depth, then it blocks
+let waterLevel = 0.0;        // a variable (not a constant) — tides move it later
+const player = { x: 0, z: 0, bob: 0, eyeY: EYE, sprinting: false };
 
-// Spawn on a beach: march inland from a seeded bearing to the first dry land.
+// Spawn on dry sand at the shore, facing the island's highest point.
 function findSpawn() {
   const ang = rng() * Math.PI * 2;
   const dx = Math.sin(ang), dz = -Math.cos(ang);
-  for (let rr = HALF * 0.95; rr > 0; rr -= 4) {
+  for (let rr = HALF * 0.98; rr > 0; rr -= 3) {
     const h = heightAt(dx * rr, dz * rr);
-    if (h > 1.2) {                                  // first land above water
-      const sx = dx * (rr - 12), sz = dz * (rr - 12);  // a few steps inland
-      return { x: sx, z: sz, yaw: Math.atan2(-sx, sz) };  // face inland
+    if (h > 1.8) {                                   // first dry sand above water
+      const sx = dx * (rr - 6), sz = dz * (rr - 6);  // a step onto the sand
+      return { x: sx, z: sz, yaw: Math.atan2(HIGH.x - sx, -(HIGH.z - sz)) };
     }
   }
   return { x: 0, z: 0, yaw: 0 };
@@ -859,8 +910,62 @@ function findSpawn() {
 function enterWalk() {
   const s = findSpawn();
   player.x = s.x; player.z = s.z; player.bob = 0;
-  cam.yaw = s.yaw; cam.pitch = -0.02;
+  player.eyeY = surfaceAt(s.x, s.z).h + EYE;
+  cam.yaw = s.yaw; cam.pitch = -0.04;
   mode = "walk";
+}
+
+// Surface type under the player, for the footstep audio hook (Phase 6).
+function surfaceType(h, slope) {
+  if (h < waterLevel + 0.1) return "water";
+  if (slope > 0.6) return "rock";
+  if (h > 24) return "rock";
+  if (h > 11) return "grass";
+  return "sand";
+}
+// Footstep hook: audio wires into this later. Called once per footfall.
+let onFootstep = null;   // (surfaceType, strength) => {}
+let _stepPhase = 0;
+
+/* --------------------------------------------------------------------- *
+ * § COLLISION  (circle colliders — trunks, boulders, POIs — in a spatial
+ *   hash so the player can slide around them cheaply. Props/POIs fill it.)
+ * --------------------------------------------------------------------- */
+
+const PLAYER_R = 0.45;
+const colliders = [];           // { x, z, r }
+const COLL_CELL = 16;
+const collHash = new Map();
+function rebuildCollHash() {
+  collHash.clear();
+  for (const c of colliders) {
+    const minX = Math.floor((c.x - c.r) / COLL_CELL), maxX = Math.floor((c.x + c.r) / COLL_CELL);
+    const minZ = Math.floor((c.z - c.r) / COLL_CELL), maxZ = Math.floor((c.z + c.r) / COLL_CELL);
+    for (let cx = minX; cx <= maxX; cx++)
+      for (let cz = minZ; cz <= maxZ; cz++) {
+        const k = cx + "," + cz;
+        (collHash.get(k) || collHash.set(k, []).get(k)).push(c);
+      }
+  }
+}
+// Push the point out of any overlapping collider → slides around smoothly.
+function slideCircles(x, z) {
+  const cx = Math.floor(x / COLL_CELL), cz = Math.floor(z / COLL_CELL);
+  for (let i = -1; i <= 1; i++)
+    for (let j = -1; j <= 1; j++) {
+      const bucket = collHash.get((cx + i) + "," + (cz + j));
+      if (!bucket) continue;
+      for (const c of bucket) {
+        const dx = x - c.x, dz = z - c.z;
+        const minD = c.r + PLAYER_R;
+        let d = Math.hypot(dx, dz);
+        if (d < minD) {
+          if (d < 1e-4) { x += minD; }
+          else { const p = (minD - d) / d; x += dx * p; z += dz * p; }
+        }
+      }
+    }
+  return [x, z];
 }
 
 /* --------------------------------------------------------------------- *
@@ -869,14 +974,23 @@ function enterWalk() {
 
 const keys = Object.create(null);
 let ditherOn = true;
+let debugOn = false;             // ` toggles the perf overlay
 
 // Single flag for the (temporary) mobile build; drives lower res too.
 const IS_TOUCH = matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0;
 // Analog movement axis (mobile joystick writes here; stays 0 on desktop).
 const analog = { x: 0, y: 0 };   // x = strafe, y = forward, each -1..1
+let mobileSprint = false;        // mobile "Run" toggle writes here
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (e.code === "KeyG") ditherOn = !ditherOn;
+  if (e.code === "Backquote") debugOn = !debugOn;          // perf overlay
+  if (e.code === "KeyF" && (mode === "walk" || mode === "free")) {
+    // toggle debug fly <-> walk, keeping position/look
+    if (mode === "walk") { cam.pos = [player.x, player.eyeY, player.z]; mode = "free"; }
+    else { player.x = cam.pos[0]; player.z = cam.pos[2];
+           player.eyeY = surfaceAt(player.x, player.z).h + EYE; mode = "walk"; }
+  }
 });
 addEventListener("keyup", (e) => { keys[e.code] = false; });
 
@@ -964,6 +1078,7 @@ if (IS_TOUCH) (function mobileControls() {
     `<div id="mLayer"></div>
      <div id="mJoy"><div id="mKnob"></div></div>
      <div id="mBtns">
+       <div class="mBtn" data-act="run">Run</div>
        <div class="mBtn" data-key="KeyE">Pick up</div>
        <div class="mBtn" data-key="Tab">Journal</div>
        <div class="mBtn" data-act="pause">Pause</div>
@@ -999,6 +1114,7 @@ if (IS_TOUCH) (function mobileControls() {
       e.preventDefault(); e.stopPropagation();
       unlockAudio();
       if (btn.dataset.act === "pause") overlay.classList.remove("hidden");
+      else if (btn.dataset.act === "run") { mobileSprint = !mobileSprint; btn.style.background = mobileSprint ? "rgba(60,120,130,.8)" : ""; }
       else tapKey(btn.dataset.key);
     }, { passive: false });
   });
@@ -1073,10 +1189,434 @@ if (IS_TOUCH) (function mobileControls() {
 })();
 
 /* --------------------------------------------------------------------- *
+ * § PROP & POI MESH BUILDER  (tiny procedural models; triangle soup, flat
+ *   shaded in the fragment shader like everything else)
+ * --------------------------------------------------------------------- */
+
+function Mesh() { return { pos: [], col: [] }; }
+function mV(m, x, y, z, c) { m.pos.push(x, y, z); m.col.push(c[0], c[1], c[2]); }
+function mTri(m, a, b, c, col) { mV(m, a[0], a[1], a[2], col); mV(m, b[0], b[1], b[2], col); mV(m, c[0], c[1], c[2], col); }
+function mQuad(m, a, b, c, d, col) { mTri(m, a, b, c, col); mTri(m, a, c, d, col); }
+// Tapered cylinder / cone around the Y axis (r1=0 → cone).
+function mCyl(m, y0, y1, r0, r1, sides, col) {
+  for (let i = 0; i < sides; i++) {
+    const a0 = (i / sides) * 6.2832, a1 = ((i + 1) / sides) * 6.2832;
+    const p00 = [Math.cos(a0) * r0, y0, Math.sin(a0) * r0];
+    const p10 = [Math.cos(a1) * r0, y0, Math.sin(a1) * r0];
+    const p01 = [Math.cos(a0) * r1, y1, Math.sin(a0) * r1];
+    const p11 = [Math.cos(a1) * r1, y1, Math.sin(a1) * r1];
+    if (r1 < 1e-4) mTri(m, p00, p10, p01, col);
+    else mQuad(m, p00, p10, p11, p01, col);
+  }
+}
+function mBox(m, cx, cy, cz, hx, hy, hz, col) {
+  const s = [[cx-hx,cy-hy,cz-hz],[cx+hx,cy-hy,cz-hz],[cx+hx,cy-hy,cz+hz],[cx-hx,cy-hy,cz+hz],
+             [cx-hx,cy+hy,cz-hz],[cx+hx,cy+hy,cz-hz],[cx+hx,cy+hy,cz+hz],[cx-hx,cy+hy,cz+hz]];
+  mQuad(m, s[4],s[5],s[6],s[7], col); mQuad(m, s[1],s[0],s[3],s[2], col);
+  mQuad(m, s[0],s[1],s[5],s[4], col); mQuad(m, s[2],s[3],s[7],s[6], col);
+  mQuad(m, s[3],s[0],s[4],s[7], col); mQuad(m, s[1],s[2],s[6],s[5], col);
+}
+// Low-poly rock (perturbed octahedron).
+function mRock(m, rand, col) {
+  const d = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+  const p = d.map((v) => { const r = 0.7 + rand() * 0.6; return [v[0]*r, v[1]*r*(v[1]>0?0.9:0.5), v[2]*r]; });
+  const f = [[2,0,4],[2,4,1],[2,1,5],[2,5,0],[3,4,0],[3,1,4],[3,5,1],[3,0,5]];
+  for (const t of f) {
+    const k = 0.85 + rand() * 0.3;
+    mTri(m, p[t[0]], p[t[1]], p[t[2]], [col[0]*k, col[1]*k, col[2]*k]);
+  }
+}
+
+// Base prop meshes (object space, ~1 unit tall; instance scale sets real size).
+const BROWN = [0.34, 0.24, 0.16], BARK = [0.30, 0.22, 0.16];
+function palmMesh() {
+  const m = Mesh();
+  mCyl(m, 0, 0.86, 0.05, 0.03, 6, BROWN);
+  const frond = [0.30, 0.42, 0.25], base = [0, 0.86, 0];
+  for (let k = 0; k < 7; k++) {
+    const a = (k / 7) * 6.2832, dx = Math.cos(a), dz = Math.sin(a);
+    const px = -dz, pz = dx;                              // perpendicular
+    const tip = [dx * 0.55, 0.70, dz * 0.55];
+    const midL = [dx * 0.3 + px * 0.07, 0.92, dz * 0.3 + pz * 0.07];
+    const midR = [dx * 0.3 - px * 0.07, 0.92, dz * 0.3 - pz * 0.07];
+    mTri(m, base, midL, tip, frond); mTri(m, base, tip, midR, frond);
+  }
+  return m;
+}
+function pineMesh() {
+  const m = Mesh();
+  mCyl(m, 0, 0.22, 0.05, 0.045, 5, BARK);
+  const g = [0.20, 0.33, 0.20];
+  mCyl(m, 0.14, 0.55, 0.30, 0, 6, g);
+  mCyl(m, 0.42, 0.80, 0.22, 0, 6, [g[0]*1.05, g[1]*1.05, g[2]*1.05]);
+  mCyl(m, 0.68, 1.02, 0.13, 0, 6, g);
+  return m;
+}
+function boulderMesh() { const m = Mesh(); mRock(m, mulberry32(0x9e37 ^ SEED_INT), [0.46, 0.44, 0.41]); return m; }
+function driftwoodMesh() {
+  const m = Mesh(); const col = [0.62, 0.57, 0.5];
+  // bent octagonal log along X, resting on the ground
+  const sides = 6, rad = 0.12;
+  for (let seg = 0; seg < 2; seg++) {
+    const x0 = seg === 0 ? -0.5 : 0.0, x1 = seg === 0 ? 0.0 : 0.5;
+    const yb = seg === 0 ? 0 : 0.05;                      // slight bend
+    for (let i = 0; i < sides; i++) {
+      const a0 = (i/sides)*6.2832, a1 = ((i+1)/sides)*6.2832;
+      const p00 = [x0, rad + Math.cos(a0)*rad + yb*0, rad*0 + Math.sin(a0)*rad];
+      const p10 = [x1, rad + Math.cos(a0)*rad + yb,   Math.sin(a0)*rad];
+      const p11 = [x1, rad + Math.cos(a1)*rad + yb,   Math.sin(a1)*rad];
+      const p01 = [x0, rad + Math.cos(a1)*rad,         Math.sin(a1)*rad];
+      mQuad(m, p00, p10, p11, p01, col);
+    }
+  }
+  return m;
+}
+function grassMesh(col) {
+  const m = Mesh(); col = col || [0.45, 0.5, 0.28];
+  for (let k = 0; k < 3; k++) {
+    const a = (k / 3) * 6.2832 + 0.4, dx = Math.cos(a) * 0.05, dz = Math.sin(a) * 0.05;
+    mTri(m, [-dx, 0, -dz], [dx, 0, dz], [dx * 2.2, 1.0, dz * 2.2], col);
+  }
+  return m;
+}
+function fenceMesh() { const m = Mesh(); mBox(m, 0, 0.45, 0, 0.05, 0.45, 0.05, [0.4, 0.34, 0.26]); return m; }
+
+/* --------------------------------------------------------------------- *
+ * § INSTANCED PROP RENDERER  (one draw call per prop type)
+ * --------------------------------------------------------------------- */
+
+const propVS = `#version 300 es
+precision highp float;
+uniform mat4 uProj, uView;
+in vec3 aPos;
+in vec3 aCol;
+in vec3 iOff;        // world position
+in vec4 iSRL;        // scale, yaw, lean, leanDir
+in vec3 iTint;
+out vec3 vWorld;
+out vec3 vCol;
+void main() {
+  float s = iSRL.x, yaw = iSRL.y, lean = iSRL.z, ld = iSRL.w;
+  vec3 p = aPos * s;
+  vec3 axis = vec3(cos(ld), 0.0, sin(ld));          // lean (tilt) via Rodrigues
+  float cl = cos(lean), sl = sin(lean);
+  p = p * cl + cross(axis, p) * sl + axis * dot(axis, p) * (1.0 - cl);
+  float cy = cos(yaw), sy = sin(yaw);               // yaw around Y
+  vec3 r = vec3(p.x * cy + p.z * sy, p.y, -p.x * sy + p.z * cy);
+  vec3 wp = r + iOff;
+  vWorld = wp; vCol = aCol * iTint;
+  gl_Position = uProj * uView * vec4(wp, 1.0);
+}`;
+
+const propFS = `#version 300 es
+precision highp float;
+in vec3 vWorld;
+in vec3 vCol;
+out vec4 frag;
+uniform vec3 uSunDir, uCamPos, uZenith, uHorizon, uWarm;
+uniform float uFogDensity, uFogNear;
+${SKY_GLSL}
+void main() {
+  vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+  float diff = abs(dot(n, normalize(uSunDir)));      // abs → foliage lit both sides
+  vec3 col = vCol * (0.5 + 0.6 * diff);
+  col *= mix(vec3(0.85, 0.89, 0.99), uWarm, diff);
+  vec3 viewVec = vWorld - uCamPos;
+  float dist = length(viewVec);
+  float fd = max(dist - uFogNear, 0.0) * uFogDensity;
+  float fog = 1.0 - exp(-fd * fd);
+  col = mix(col, skyColor(viewVec, uSunDir, uZenith, uHorizon, uWarm), fog);
+  frag = vec4(col, 1.0);
+}`;
+
+const propProg = program(propVS, propFS);
+const propU = uniforms(propProg);
+const propLoc = {
+  aPos: gl.getAttribLocation(propProg, "aPos"), aCol: gl.getAttribLocation(propProg, "aCol"),
+  iOff: gl.getAttribLocation(propProg, "iOff"), iSRL: gl.getAttribLocation(propProg, "iSRL"),
+  iTint: gl.getAttribLocation(propProg, "iTint"),
+};
+
+function makeInstanced(mesh, inst) {
+  if (inst.length === 0) return { vao: null, vertCount: 0, count: 0, tris: 0 };
+  const pos = new Float32Array(mesh.pos), col = new Float32Array(mesh.col);
+  const idata = new Float32Array(inst);
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const pb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, pb);
+  gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(propLoc.aPos); gl.vertexAttribPointer(propLoc.aPos, 3, gl.FLOAT, false, 0, 0);
+  const cb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, cb);
+  gl.bufferData(gl.ARRAY_BUFFER, col, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(propLoc.aCol); gl.vertexAttribPointer(propLoc.aCol, 3, gl.FLOAT, false, 0, 0);
+  const ib = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, ib);
+  gl.bufferData(gl.ARRAY_BUFFER, idata, gl.STATIC_DRAW);
+  const ST = 40;
+  gl.enableVertexAttribArray(propLoc.iOff);  gl.vertexAttribPointer(propLoc.iOff, 3, gl.FLOAT, false, ST, 0);  gl.vertexAttribDivisor(propLoc.iOff, 1);
+  gl.enableVertexAttribArray(propLoc.iSRL);  gl.vertexAttribPointer(propLoc.iSRL, 4, gl.FLOAT, false, ST, 12); gl.vertexAttribDivisor(propLoc.iSRL, 1);
+  gl.enableVertexAttribArray(propLoc.iTint); gl.vertexAttribPointer(propLoc.iTint, 3, gl.FLOAT, false, ST, 28); gl.vertexAttribDivisor(propLoc.iTint, 1);
+  gl.bindVertexArray(null);
+  const vc = pos.length / 3, n = inst.length / 10;
+  return { vao, vertCount: vc, count: n, tris: (vc / 3) * n };
+}
+
+/* --------------------------------------------------------------------- *
+ * § POINTS OF INTEREST  (2–4 per island, chosen & placed by seed)
+ * --------------------------------------------------------------------- */
+
+let POIS = [];
+const POI_R = { shipwreck: 7, lighthouse: 6, tidepools: 9, seacave: 7, cairn: 3, hut: 4, pier: 5 };
+
+function marchToShore(ang) {                 // find the waterline along a bearing
+  const dx = Math.sin(ang), dz = -Math.cos(ang);
+  let prev = HALF * 0.99;
+  for (let rr = HALF * 0.99; rr > 20; rr -= 2) {
+    if (heightAt(dx * rr, dz * rr) > 0.3) {  // first land
+      return { x: dx * rr, z: dz * rr, rr, dx, dz };
+    }
+    prev = rr;
+  }
+  return null;
+}
+function coastSlope(x, z) { return surfaceAt(x, z).slope; }
+
+function placePOIs() {
+  const W = HALF * 2, minSep = W * 0.25, out = [];
+  // archetype-weighted pool
+  const pool = [];
+  const add = (t, n) => { for (let i = 0; i < n; i++) pool.push(t); };
+  add("lighthouse", 2); add("cairn", 2); add("hut", 1);
+  if (CHARACTER === "lowlands" || CHARACTER === "atoll") { add("shipwreck", 3); add("pier", 2); add("tidepools", 1); }
+  if (CHARACTER === "highlands") { add("tidepools", 3); add("shipwreck", 1); add("seacave", 1); }
+  if (CHARACTER === "peaks") { add("seacave", 3); add("tidepools", 2); add("lighthouse", 2); }
+  const want = 2 + Math.floor(rng() * 3);   // 2–4
+  let tries = 0;
+  while (out.length < want && tries < 120) {
+    tries++;
+    const type = pool[(rng() * pool.length) | 0];
+    if (out.some((o) => o.type === type) && tries < 95) continue;   // prefer variety
+    let pos = null;
+    if (type === "lighthouse" || type === "cairn") {
+      // a high point, jittered
+      pos = { x: HIGH.x + (rng() - 0.5) * 120, z: HIGH.z + (rng() - 0.5) * 120 };
+      if (heightAt(pos.x, pos.z) < HIGH.h * 0.45) continue;
+    } else if (type === "hut") {
+      for (let k = 0; k < 10 && !pos; k++) {
+        const a = rng() * 6.2832, r = rng() * HALF * 0.6;
+        const x = Math.sin(a) * r, z = -Math.cos(a) * r, h = heightAt(x, z);
+        if (h > 12 && h < 40 && surfaceAt(x, z).slope < 0.4) pos = { x, z };
+      }
+    } else {
+      const sh = marchToShore(rng() * 6.2832);
+      if (!sh) continue;
+      const sl = coastSlope(sh.x, sh.z);
+      if (type === "seacave" && sl < 0.55) continue;        // needs a cliff
+      if (type === "tidepools" && (sl < 0.12 || sl > 0.5)) continue;  // a rocky shelf
+      if (type === "shipwreck") { pos = { x: sh.x - sh.dx * 14, z: sh.z - sh.dz * 14 }; } // out on the flats
+      else if (type === "pier") { pos = { x: sh.x - sh.dx * 10, z: sh.z - sh.dz * 10 }; }
+      else pos = { x: sh.x, z: sh.z };
+    }
+    if (!pos) continue;
+    if (out.some((o) => Math.hypot(o.x - pos.x, o.z - pos.z) < minSep)) continue;
+    out.push({ type, x: pos.x, z: pos.z, radius: POI_R[type] });
+  }
+  return out;
+}
+
+// POI models, emitted into a single world-space mesh (one draw call).
+function emitPOI(m, poi) {
+  const x = poi.x, z = poi.z, g = heightAt(x, z);
+  const put = (lm, ox, oy, oz, yaw) => {   // place a local mesh into world space
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    for (let i = 0; i < lm.pos.length; i += 3) {
+      const px = lm.pos[i], py = lm.pos[i+1], pz = lm.pos[i+2];
+      m.pos.push(px*cy + pz*sy + ox, py + oy, -px*sy + pz*cy + oz);
+      m.col.push(lm.col[i], lm.col[i+1], lm.col[i+2]);
+    }
+  };
+  if (poi.type === "lighthouse") {
+    const lm = Mesh(), white = [0.85,0.85,0.82], red = [0.6,0.2,0.18];
+    mCyl(lm, 0, 7, 3.2, 2.2, 10, white);
+    mCyl(lm, 7, 13, 2.2, 1.7, 10, red);
+    mCyl(lm, 13, 18, 1.7, 1.4, 10, white);
+    mBox(lm, 0, 19, 0, 1.6, 1.4, 1.6, [0.2,0.22,0.24]);
+    mBox(lm, 0, 20.6, 0, 1.0, 0.4, 1.0, [1.0, 0.92, 0.5]);   // lantern (bright)
+    mCyl(lm, 21, 22.4, 0.9, 0, 6, red);
+    put(lm, x, g, z, rng() * 6.28);
+  } else if (poi.type === "cairn") {
+    const lm = Mesh(); let r = 1.3, y = 0;
+    const rand = mulberry32((x * 131 + z * 977) >>> 0);
+    for (let k = 0; k < 6; k++) { const mm = Mesh(); mRock(mm, rand, [0.5,0.48,0.45]);
+      for (let i=0;i<mm.pos.length;i+=3){ lm.pos.push(mm.pos[i]*r, mm.pos[i+1]*r*0.6+y, mm.pos[i+2]*r); lm.col.push(mm.col[i],mm.col[i+1],mm.col[i+2]); }
+      y += r * 0.7; r *= 0.82; }
+    put(lm, x, g, z, 0);
+  } else if (poi.type === "hut") {
+    const lm = Mesh(), wood = [0.35,0.28,0.2], roof = [0.25,0.22,0.2];
+    mBox(lm, 0, 1.4, 0, 2.2, 1.4, 1.8, wood);
+    mTri(lm, [-2.4,2.8,-2],[2.4,2.8,-2],[0,4.2,0], roof);
+    mTri(lm, [-2.4,2.8,2],[2.4,2.8,2],[0,4.2,0], roof);
+    mQuad(lm, [-2.4,2.8,-2],[0,4.2,0],[0,4.2,0],[-2.4,2.8,2], roof);
+    put(lm, x, g, z, rng() * 6.28);
+  } else if (poi.type === "shipwreck") {
+    const lm = Mesh(), wood = [0.3,0.26,0.22];
+    mBox(lm, 0, 0.45, 0, 1.9, 0.4, 5.2, wood);           // keel / hull base
+    for (let i = 0; i < 7; i++) {                         // curved ribs
+      const t = i / 6, zz = (t - 0.5) * 9, hh = 2.6 - Math.abs(t - 0.5) * 2.0;
+      mBox(lm, -1.5, hh * 0.5, zz, 0.13, hh * 0.5, 0.15, wood);
+      mBox(lm, 1.5, hh * 0.5, zz, 0.13, hh * 0.5, 0.15, wood);
+    }
+    mBox(lm, 0.3, 2.4, 0, 0.12, 2.4, 0.12, wood);        // broken mast stump
+    put(lm, x, g - 0.6, z, rng() * 6.28);                 // half-buried, tilted
+  } else if (poi.type === "pier") {
+    const lm = Mesh(), wood = [0.34,0.27,0.2];
+    for (let i = 0; i < 6; i++) { const zz = i * 3; mBox(lm, -1.4, 1.2, zz, 0.18, 1.2, 0.18, wood); mBox(lm, 1.4, 1.2, zz, 0.18, 1.2, 0.18, wood); }
+    mBox(lm, 0, 2.3, 7.5, 1.7, 0.12, 8, wood);
+    const dir = Math.atan2(-x, z);               // point out to sea
+    put(lm, x, Math.max(g, -1), z, dir);
+  } else if (poi.type === "tidepools" || poi.type === "seacave") {
+    const lm = Mesh(), rock = [0.44,0.43,0.42];
+    const rand = mulberry32((x * 71 + z * 233) >>> 0);
+    const n = poi.type === "seacave" ? 5 : 9;
+    for (let k = 0; k < n; k++) {
+      const mm = Mesh(); mRock(mm, rand, rock);
+      const s = 1.2 + rand() * 2.2, ox = (rand()-0.5)*9, oz = (rand()-0.5)*9;
+      const oy = poi.type === "seacave" ? 2 + rand()*3 : 0;
+      for (let i=0;i<mm.pos.length;i+=3){ lm.pos.push(mm.pos[i]*s+ox, mm.pos[i+1]*s+oy, mm.pos[i+2]*s+oz); lm.col.push(mm.col[i],mm.col[i+1],mm.col[i+2]); }
+    }
+    put(lm, x, g, z, 0);
+  }
+}
+
+/* --------------------------------------------------------------------- *
+ * § PLACEMENT  (jittered grid ≈ Poisson; bands by height & slope)
+ * --------------------------------------------------------------------- */
+
+let propTypes = [];
+const bigCells = new Set();      // keeps trunks/boulders from stacking
+
+function nearPOI(x, z, extra) {
+  for (const p of POIS) if (Math.hypot(x - p.x, z - p.z) < p.radius + extra) return true;
+  return false;
+}
+function reserveBig(x, z) {
+  const k = Math.floor(x / 3) + "," + Math.floor(z / 3);
+  if (bigCells.has(k)) return false; bigCells.add(k); return true;
+}
+// Scatter one prop type over a jittered grid; fn returns true to keep a point.
+function scatter(spacing, jitter, maxN, fn) {
+  const inst = [];
+  for (let gz = -HALF; gz < HALF && inst.length < maxN * 10; gz += spacing)
+    for (let gx = -HALF; gx < HALF; gx += spacing) {
+      const x = gx + (rng() - 0.5) * spacing * jitter;
+      const z = gz + (rng() - 0.5) * spacing * jitter;
+      fn(x, z, inst);
+    }
+  return inst;
+}
+function pushInst(inst, x, y, z, s, yaw, lean, ld, t) {
+  inst.push(x, y, z, s, yaw, lean, ld, t[0], t[1], t[2]);
+}
+
+function buildProps() {
+  POIS = placePOIs();
+  const poiMesh = Mesh();
+  for (const p of POIS) emitPOI(poiMesh, p);
+
+  const vary = (base, amt) => [base[0]*(1+(rng()-0.5)*amt), base[1]*(1+(rng()-0.5)*amt), base[2]*(1+(rng()-0.5)*amt)];
+  colliders.length = 0; bigCells.clear();
+
+  // seaweed clumps along the high-tide line (walkable)
+  const seaweed = scatter(9, 0.9, 3000, (x, z, inst) => {
+    const s = surfaceAt(x, z); if (s.h < 0.2 || s.h > 4 || s.slope > 0.4) return;
+    if (rng() > 0.45 || nearPOI(x, z, 2)) return;
+    pushInst(inst, x, s.h, z, 0.6 + rng()*0.5, rng()*6.28, 0, 0, vary([0.26,0.3,0.2], 0.3));
+  });
+  // driftwood along the shore (walkable)
+  const drift = scatter(26, 0.9, 1200, (x, z, inst) => {
+    const s = surfaceAt(x, z); if (s.h < 0.4 || s.h > 7 || s.slope > 0.35) return;
+    if (rng() > 0.5 || nearPOI(x, z, 2)) return;
+    pushInst(inst, x, s.h + 0.1, z, 1.5 + rng()*2.2, rng()*6.28, 0, 0, vary([0.6,0.55,0.48], 0.15));
+  });
+  // dune grass (walkable)
+  const grass = scatter(5.5, 1.0, 7000, (x, z, inst) => {
+    const s = surfaceAt(x, z); if (s.h < 5 || s.h > 26 || s.slope > 0.5) return;
+    if (rng() > 0.7 || nearPOI(x, z, 2)) return;
+    pushInst(inst, x, s.h, z, 0.6 + rng()*0.8, rng()*6.28, 0, 0, vary([0.5,0.54,0.3], 0.25));
+  });
+  // palms at the beach/dune edge (collide)
+  const palms = scatter(15, 0.9, 1500, (x, z, inst) => {
+    const s = surfaceAt(x, z); if (s.h < 3 || s.h > 17 || s.slope > 0.4) return;
+    if (rng() > 0.5 || nearPOI(x, z, 3) || !reserveBig(x, z)) return;
+    const sc = 7 + rng()*6;
+    pushInst(inst, x, s.h, z, sc, rng()*6.28, 0.05 + rng()*0.18, rng()*6.28, vary([0.9,0.95,0.8], 0.15));
+    colliders.push({ x, z, r: 0.5 });
+  });
+  // interior pines, thinning on slopes & toward the summit (keep sightlines)
+  const trees = scatter(11, 0.9, 3500, (x, z, inst) => {
+    const s = surfaceAt(x, z); if (s.h < 20 || s.slope > 0.6) return;
+    const thin = 1 - smoothstep(HIGH.h * 0.55, HIGH.h * 0.95, s.h);   // fewer up high
+    if (rng() > 0.55 * thin || nearPOI(x, z, 3) || !reserveBig(x, z)) return;
+    const sc = 6 + rng()*10;
+    pushInst(inst, x, s.h, z, sc, rng()*6.28, rng()*0.1, rng()*6.28, vary([1,1,1], 0.2));
+    colliders.push({ x, z, r: 0.6 });
+  });
+  // boulders: rocky high ground and scattered on the flats (collide)
+  const rocks = scatter(20, 0.9, 1500, (x, z, inst) => {
+    const s = surfaceAt(x, z);
+    const high = s.h > 38, flat = s.h > 2 && s.h < 16;
+    if (!(high || flat) || s.h < 1) return;
+    if (rng() > (high ? 0.5 : 0.12) || nearPOI(x, z, 3) || !reserveBig(x, z)) return;
+    const sc = 1.2 + rng()*3.5;
+    pushInst(inst, x, s.h + sc*0.1, z, sc, rng()*6.28, 0, 0, vary([1,1,1], 0.15));
+    colliders.push({ x, z, r: sc*0.5 });
+  });
+  // occasional old fence posts (collide)
+  const fences = scatter(28, 1.0, 600, (x, z, inst) => {
+    const s = surfaceAt(x, z); if (s.h < 6 || s.h > 26 || s.slope > 0.4) return;
+    if (rng() > 0.1 || nearPOI(x, z, 2) || !reserveBig(x, z)) return;
+    pushInst(inst, x, s.h, z, 1 + rng()*0.8, rng()*6.28, 0.08 + rng()*0.2, rng()*6.28, vary([1,1,1], 0.15));
+    colliders.push({ x, z, r: 0.3 });
+  });
+
+  propTypes = [
+    { inst: makeInstanced(grassMesh(), grass) },
+    { inst: makeInstanced(grassMesh([0.28,0.32,0.22]), seaweed) },
+    { inst: makeInstanced(driftwoodMesh(), drift) },
+    { inst: makeInstanced(palmMesh(), palms) },
+    { inst: makeInstanced(pineMesh(), trees) },
+    { inst: makeInstanced(boulderMesh(), rocks) },
+    { inst: makeInstanced(fenceMesh(), fences) },
+    { inst: makeInstanced(poiMesh, poiMesh.pos.length ? [0,0,0, 1,0,0,0, 1,1,1] : []) },
+  ];
+  rebuildCollHash();
+}
+
+function drawProps(view) {
+  gl.useProgram(propProg);
+  gl.uniformMatrix4fv(propU.uProj, false, proj);
+  gl.uniformMatrix4fv(propU.uView, false, view);
+  gl.uniform3fv(propU.uSunDir, SKY.sun);
+  gl.uniform3fv(propU.uCamPos, cam.pos);
+  gl.uniform3fv(propU.uZenith, SKY.zenith);
+  gl.uniform3fv(propU.uHorizon, SKY.horizon);
+  gl.uniform3fv(propU.uWarm, SKY.warm);
+  gl.uniform1f(propU.uFogDensity, FOG_DENSITY);
+  gl.uniform1f(propU.uFogNear, FOG_NEAR);
+  for (const t of propTypes) {
+    if (!t.inst.vao || t.inst.count === 0) continue;
+    gl.bindVertexArray(t.inst.vao);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, t.inst.vertCount, t.inst.count);
+    countDraw(t.inst.tris);
+  }
+}
+
+/* --------------------------------------------------------------------- *
  * § BUILD + LOOP
  * --------------------------------------------------------------------- */
 
 buildHeightmap();
+findHighPoint();
+buildProps();
 const terrain = buildTerrainMesh();
 const water = buildWaterMesh();
 const heightTex = buildHeightTexture();
@@ -1095,10 +1635,16 @@ addEventListener("resize", resize);
 resize();
 
 let last = performance.now();
+let frameDraws = 0, frameTris = 0, fpsSmooth = 60;
+function countDraw(tris) { frameDraws++; frameTris += tris; }
+const dbgEl = document.getElementById("dbg");
 function frame(now) {
-  const dt = Math.min(0.05, (now - last) / 1000);
+  const raw = (now - last) / 1000;
+  const dt = Math.min(0.05, raw);
   last = now;
   const t = now * 0.001;
+  if (raw > 0) fpsSmooth += (1 / raw - fpsSmooth) * 0.1;
+  frameDraws = 0; frameTris = 0;
 
   // ---- movement ----
   const fwd = camForward();
@@ -1131,7 +1677,7 @@ function frame(now) {
       cam.pos[0] += mx * step; cam.pos[1] += my * step; cam.pos[2] += mz * step;
     }
   } else {
-    // ---- walk: horizontal wish-dir, collide, follow terrain, head bob ----
+    // ---- walk: wish-dir, then collide against water depth, slope & props ----
     const hf = [fwd[0] / flen, fwd[2] / flen];   // forward on the ground plane
     let wx = 0, wz = 0;
     if (keys["KeyW"]) { wx += hf[0]; wz += hf[1]; }
@@ -1141,22 +1687,41 @@ function frame(now) {
     wx += right[0] * analog.x + hf[0] * analog.y;
     wz += right[2] * analog.x + hf[1] * analog.y;
     const wl = Math.hypot(wx, wz);
-    if (wl > 0) {
-      const run = keys["ShiftLeft"] ? 1.7 : 1.0;
-      const step = WALK_SPEED * run * dt / wl;
-      const nx = player.x + wx * step, nz = player.z + wz * step;
-      // collide against deep water, sliding along each axis independently
-      if (heightAt(nx, player.z) > WADE_LIMIT) player.x = nx;
-      if (heightAt(player.x, nz) > WADE_LIMIT) player.z = nz;
-      player.bob += step;
-    } else {
-      player.bob += dt * 0.6;    // settle the bob back toward rest
+    player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01;
+
+    const here = surfaceAt(player.x, player.z);
+    if (wl > 0.01) {
+      wx /= wl; wz /= wl;
+      const wading = (waterLevel - here.h) > 0.05;
+      const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * (wading ? 0.5 : 1);
+      const dist = speed * dt;
+      const maxClimb = Math.tan(SLOPE_LIMIT) * dist;
+      const canStep = (nx, nz) => {
+        const s = surfaceAt(nx, nz);
+        if (waterLevel - s.h > WADE_DEPTH) return false;              // too deep
+        if (s.h - here.h > maxClimb && s.slope > SLOPE_LIMIT) return false; // cliff
+        return true;
+      };
+      let px = player.x, pz = player.z;
+      const nx = player.x + wx * dist, nz = player.z + wz * dist;
+      if (canStep(nx, player.z)) px = nx;      // slide along each axis
+      if (canStep(px, nz)) pz = nz;
+      [px, pz] = slideCircles(px, pz);         // slide around trunks & boulders
+      player.x = px; player.z = pz;
+      player.bob += dist;
+      if (player.bob - _stepPhase >= 1.15) {   // footstep hook (audio in Phase 6)
+        _stepPhase = player.bob;
+        if (onFootstep) onFootstep(surfaceType(here.h, here.slope), player.sprinting ? 1 : 0.7);
+      }
     }
-    const ground = heightAt(player.x, player.z);
-    const bob = Math.sin(player.bob * 1.1) * 0.09 * (wl > 0 ? 1 : 0);
-    cam.pos[0] = player.x;
-    cam.pos[1] = ground + EYE + bob;
-    cam.pos[2] = player.z;
+
+    // follow terrain with a speed-scaled head bob, smoothed vertically
+    const g = surfaceAt(player.x, player.z);
+    const amp = (0.06 + (player.sprinting ? 0.06 : 0)) * (wl > 0.01 ? 1 : 0);
+    const bob = Math.sin(player.bob * 2.6) * amp;
+    const target = g.h + EYE + bob;
+    player.eyeY += (target - player.eyeY) * Math.min(1, dt * 14);
+    cam.pos[0] = player.x; cam.pos[1] = player.eyeY; cam.pos[2] = player.z;
   }
 
   // ---- matrices ----
@@ -1184,6 +1749,7 @@ function frame(now) {
   gl.uniform3fv(skyU.uWarm, SKY.warm);
   gl.bindVertexArray(fsTri);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
+  countDraw(1);
 
   // terrain
   gl.enable(gl.DEPTH_TEST);
@@ -1200,6 +1766,10 @@ function frame(now) {
   gl.uniform1f(terrainU.uFogNear, FOG_NEAR);
   gl.bindVertexArray(terrain.vao);
   gl.drawElements(gl.TRIANGLES, terrain.count, gl.UNSIGNED_INT, 0);
+  countDraw(terrain.count / 3);
+
+  // props & points of interest (instanced), before the transparent water
+  drawProps(view);
 
   // water
   gl.enable(gl.BLEND);
@@ -1224,6 +1794,7 @@ function frame(now) {
   gl.uniform1i(waterU.uHeight, 0);
   gl.bindVertexArray(water.vao);
   gl.drawElements(gl.TRIANGLES, water.count, gl.UNSIGNED_INT, 0);
+  countDraw(water.count / 3);
   gl.disable(gl.BLEND);
 
   // ============ PASS 2: post → screen ============
@@ -1239,14 +1810,26 @@ function frame(now) {
   gl.uniform1i(postU.uDither, ditherOn ? 1 : 0);
   gl.bindVertexArray(fsTri);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
+  countDraw(1);
 
   gl.bindVertexArray(null);
 
   // ---- hud ----
   hud.textContent =
     `seed ${SEED_STR}  ·  ${archetype}\n` +
-    `res  ${fbo.w}x${fbo.h}  dither ${ditherOn ? "on" : "off"}\n` +
-    `pos  ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}  spd ${cam.speed.toFixed(0)}`;
+    `mode ${mode}  ·  POIs ${POIS.map((p) => p.type).join(", ")}`;
+
+  if (debugOn) {
+    dbgEl.style.display = "block";
+    dbgEl.textContent =
+      `fps   ${fpsSmooth.toFixed(0)}\n` +
+      `draws ${frameDraws}\n` +
+      `tris  ${(frameTris / 1000).toFixed(0)}k\n` +
+      `res   ${fbo.w}x${fbo.h}\n` +
+      `pos   ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}`;
+  } else if (dbgEl.style.display !== "none") {
+    dbgEl.style.display = "none";
+  }
 
   requestAnimationFrame(frame);
 }
