@@ -51,13 +51,24 @@
     z-index: 7; pointer-events: none; display: none; text-align: center;
     background: rgba(10,18,22,.78); border: 1px solid rgba(255,255,255,.2);
     border-radius: 10px; padding: 12px 20px; max-width: 320px;
-    backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px); animation: cardIn .22s ease;
   }
+  @keyframes cardIn { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
   #crosshair {
     position: fixed; left: 50%; top: 50%; width: 5px; height: 5px; margin: -3px 0 0 -3px;
     border-radius: 50%; background: rgba(255,255,255,.55); z-index: 5; pointer-events: none;
-    box-shadow: 0 0 2px rgba(0,0,0,.6); display: none;
+    box-shadow: 0 0 2px rgba(0,0,0,.6); display: none; transition: all .12s ease;
   }
+  #crosshair.active {
+    width: 11px; height: 11px; margin: -6px 0 0 -6px;
+    background: rgba(255,240,200,.9); box-shadow: 0 0 6px rgba(255,220,150,.7);
+  }
+  #prompt {
+    position: fixed; left: 50%; top: calc(50% + 20px); transform: translateX(-50%);
+    z-index: 5; pointer-events: none; display: none; font-size: 13px; opacity: .9;
+    letter-spacing: .02em; text-shadow: 0 1px 3px rgba(0,0,0,.8); white-space: nowrap;
+  }
+  #prompt b { color: #ffe6b0; }
   #card b { font-size: 17px; letter-spacing: .02em; }
   #card span { opacity: .8; font-size: 13px; }
   /* field journal */
@@ -97,6 +108,7 @@
 <div id="hud"></div>
 <div id="dbg"></div>
 <div id="crosshair"></div>
+<div id="prompt"></div>
 <div id="card"></div>
 <div id="journal"></div>
 <div id="help">
@@ -988,6 +1000,9 @@ void main() {
   vec3 q;
   if (uDither == 1) q = floor(c * levels + bayer[idx] / 16.0) / levels;
   else              q = floor(c * levels + 0.5) / levels;
+  // soft vignette for a little focus and moodiness
+  vec2 d = vUv - 0.5;
+  q *= 1.0 - dot(d, d) * 0.5;
   frag = vec4(q, 1.0);
 }`;
 
@@ -1205,6 +1220,7 @@ document.addEventListener("pointerlockchange", () => {
 });
 const hud = document.getElementById("hud");
 const crossEl = document.getElementById("crosshair");
+const promptEl = document.getElementById("prompt");
 
 /* ===================================================================== *
  * § MOBILE CONTROLS  (TEMPORARY — delete this whole block to remove)
@@ -2041,7 +2057,8 @@ function drawLife(view) {
       let y = g, sc = e.scale, lean = 0, ld = 0;
       if (e.kind === "creature") {
         if (e.t === "fish") y = (e.poolRim !== undefined ? Math.max(waterLevel, e.poolRim) : waterLevel) - 0.3 + Math.sin(e.phase*4)*0.05;
-        else if (e.t === "gull") y = (e.state === "circle") ? g + e.alt : g + 0.2;
+        else if (e.t === "gull") { y = (e.state === "circle") ? g + e.alt : g + 0.2;
+          if (e.state === "circle") { lean = Math.sin(e.phase * 7.0) * 0.18; ld = e.yaw; } } // wingbeat
         else if (e.t === "jelly") sc = e.scale * (0.9 + Math.sin(e.phase*2)*0.1);
         if (e.t === "crab" || e.t === "anemone") sc = e.scale * (1 - 0.6*e.closed);
         if (e.t === "star" || e.t === "anemone" || e.t === "urchin") y += 0.02;
@@ -2509,6 +2526,17 @@ function frame(now) {
 
   // ---- hud ----
   crossEl.style.display = (mode === "walk" && !IS_TOUCH) ? "block" : "none";
+  // interaction hint: what's in reach of the crosshair
+  if (mode === "walk") {
+    const e = nearestInteractable();
+    if (e) {
+      const nm = e.special ? e.name : (e.kind === "find" ? FINDS[e.t].label : CREATURES[e.t].label);
+      const verb = e.kind === "find" ? "pick up" : "inspect";
+      promptEl.innerHTML = `<b>${IS_TOUCH ? "tap" : "E"}</b> · ${verb} ${nm}`;
+      promptEl.style.display = "block";
+      crossEl.classList.add("active");
+    } else { promptEl.style.display = "none"; crossEl.classList.remove("active"); }
+  } else { promptEl.style.display = "none"; crossEl.classList.remove("active"); }
   const ti = tideInfo();
   const mins = Math.floor(ti.tToLow / 60), secs = Math.floor(ti.tToLow % 60);
   hud.textContent =
