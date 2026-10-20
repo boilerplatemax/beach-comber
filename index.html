@@ -45,6 +45,30 @@
     color: #9fe; opacity: .85; line-height: 1.5; white-space: pre;
     text-shadow: 0 1px 2px rgba(0,0,0,.7); display: none;
   }
+  /* creature/find name card */
+  #card {
+    position: fixed; left: 50%; bottom: 20%; transform: translateX(-50%);
+    z-index: 7; pointer-events: none; display: none; text-align: center;
+    background: rgba(10,18,22,.78); border: 1px solid rgba(255,255,255,.2);
+    border-radius: 10px; padding: 12px 20px; max-width: 320px;
+    backdrop-filter: blur(3px);
+  }
+  #card b { font-size: 17px; letter-spacing: .02em; }
+  #card span { opacity: .8; font-size: 13px; }
+  /* field journal */
+  #journal {
+    position: fixed; inset: 0; z-index: 12; display: none; overflow: auto;
+    background: rgba(8,14,18,.92); padding: 40px 24px; text-align: center;
+  }
+  #journal h2 { font-size: 30px; font-weight: 650; margin-bottom: 8px; letter-spacing: .04em; }
+  #journal h3 { margin: 22px 0 10px; opacity: .7; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; font-size: 13px; }
+  .jgrid { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-width: 720px; margin: 0 auto; }
+  .jitem {
+    min-width: 128px; padding: 14px 10px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,.14); background: rgba(255,255,255,.06); font-size: 14px;
+  }
+  .jitem.unk { color: #5a6b72; background: rgba(255,255,255,.02); letter-spacing: .3em; }
+  .jhint { margin-top: 26px; opacity: .5; font-size: 13px; }
   #help {
     position: fixed; right: 12px; bottom: 12px; z-index: 5; pointer-events: none;
     font-size: 12px; opacity: .55; text-align: right; line-height: 1.5;
@@ -67,6 +91,8 @@
 
 <div id="hud"></div>
 <div id="dbg"></div>
+<div id="card"></div>
+<div id="journal"></div>
 <div id="help">
   WASD — move · Shift — run<br>
   Mouse — look · Esc — pause · G — dither
@@ -1128,6 +1154,9 @@ addEventListener("keydown", (e) => {
     else { player.x = cam.pos[0]; player.z = cam.pos[2];
            player.eyeY = surfaceAt(player.x, player.z).h + EYE; mode = "walk"; }
   }
+  if (e.code === "KeyE") interact();                  // pick up / inspect
+  if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
+  if (e.code === "KeyB") forceSpawn = !forceSpawn;    // debug: show all creatures
 });
 addEventListener("keyup", (e) => { keys[e.code] = false; });
 
@@ -1747,6 +1776,330 @@ function drawProps(view) {
   }
 }
 
+/* ===================================================================== *
+ * § LIFE  (creatures & finds — instanced, animated, tide/time aware)
+ * ===================================================================== */
+
+// Dynamic instanced type: static base mesh + a per-frame instance buffer.
+function makeDynamic(mesh, maxN) {
+  const pos = new Float32Array(mesh.pos), col = new Float32Array(mesh.col);
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const pb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, pb);
+  gl.bufferData(gl.ARRAY_BUFFER, pos, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(propLoc.aPos); gl.vertexAttribPointer(propLoc.aPos, 3, gl.FLOAT, false, 0, 0);
+  const cb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, cb);
+  gl.bufferData(gl.ARRAY_BUFFER, col, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(propLoc.aCol); gl.vertexAttribPointer(propLoc.aCol, 3, gl.FLOAT, false, 0, 0);
+  const ib = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, ib);
+  gl.bufferData(gl.ARRAY_BUFFER, maxN * 40, gl.DYNAMIC_DRAW);
+  const ST = 40;
+  gl.enableVertexAttribArray(propLoc.iOff);  gl.vertexAttribPointer(propLoc.iOff, 3, gl.FLOAT, false, ST, 0);  gl.vertexAttribDivisor(propLoc.iOff, 1);
+  gl.enableVertexAttribArray(propLoc.iSRL);  gl.vertexAttribPointer(propLoc.iSRL, 4, gl.FLOAT, false, ST, 12); gl.vertexAttribDivisor(propLoc.iSRL, 1);
+  gl.enableVertexAttribArray(propLoc.iTint); gl.vertexAttribPointer(propLoc.iTint, 3, gl.FLOAT, false, ST, 28); gl.vertexAttribDivisor(propLoc.iTint, 1);
+  gl.bindVertexArray(null);
+  const vc = pos.length / 3;
+  return {
+    vao, ib, vc,
+    draw(arr, n) {
+      if (n === 0) return;
+      gl.bindBuffer(gl.ARRAY_BUFFER, ib);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, arr, 0, n * 10);
+      gl.bindVertexArray(vao);
+      gl.drawArraysInstanced(gl.TRIANGLES, 0, vc, n);
+      countDraw((vc / 3) * n);
+    },
+  };
+}
+
+// --- tiny creature & find meshes (object space, ~1 unit) ---
+function discMesh(y, r, sides, dome, col) { const m = Mesh(); for (let i=0;i<sides;i++){ const a0=i/sides*6.283,a1=(i+1)/sides*6.283; mTri(m,[0,y+dome,0],[Math.cos(a0)*r,y,Math.sin(a0)*r],[Math.cos(a1)*r,y,Math.sin(a1)*r],col);} return m; }
+function crabMesh(col) {
+  const m = discMesh(0.12, 0.5, 6, 0.1, col);
+  mBox(m, 0.48, 0.12, 0.22, 0.12, 0.07, 0.07, col); mBox(m, 0.48, 0.12, -0.22, 0.12, 0.07, 0.07, col);
+  for (const s of [-1, 1]) for (let k = -1; k <= 1; k++)
+    mTri(m, [0.0, 0.1, s*0.4], [0.3 + k*0.2, 0.0, s*0.72], [0.1 + k*0.2, 0.1, s*0.45], col);
+  return m;
+}
+function fishMesh(col) { const m = Mesh(); mTri(m,[0.4,0.05,0],[-0.2,0.05,0.14],[-0.2,0.05,-0.14],col); mTri(m,[-0.2,0.05,0.14],[-0.2,0.05,-0.14],[-0.45,0.05,0],[col[0]*0.8,col[1]*0.8,col[2]*0.8]); return m; }
+function anemoneMesh(col) { const m = Mesh(); mCyl(m,0,0.2,0.28,0.24,7,[col[0]*0.7,col[1]*0.7,col[2]*0.7]); for(let i=0;i<9;i++){const a=i/9*6.283; mTri(m,[Math.cos(a)*0.2,0.2,Math.sin(a)*0.2],[Math.cos(a)*0.32,0.52,Math.sin(a)*0.32],[Math.cos(a+0.35)*0.2,0.2,Math.sin(a+0.35)*0.2],col);} return m; }
+function starMesh(col) { const m = Mesh(); for(let i=0;i<5;i++){const a0=i/5*6.283,a1=(i+0.5)/5*6.283,a2=(i+1)/5*6.283; mTri(m,[0,0.06,0],[Math.cos(a0)*0.2,0.05,Math.sin(a0)*0.2],[Math.cos(a1)*0.5,0.08,Math.sin(a1)*0.5],col); mTri(m,[0,0.06,0],[Math.cos(a1)*0.5,0.08,Math.sin(a1)*0.5],[Math.cos(a2)*0.2,0.05,Math.sin(a2)*0.2],col);} return m; }
+function urchinMesh(col) { const m = discMesh(0.1,0.3,6,0.15,col); const sp=[col[0]*1.3,col[1]*1.3,col[2]*1.3]; for(let i=0;i<10;i++){const a=i/10*6.283; mTri(m,[Math.cos(a)*0.25,0.1,Math.sin(a)*0.25],[Math.cos(a)*0.5,0.45,Math.sin(a)*0.5],[Math.cos(a+0.25)*0.25,0.1,Math.sin(a+0.25)*0.25],sp);} return m; }
+function hermitMesh(col) { const m = Mesh(); mCyl(m,0,0.4,0.3,0,7,col); mBox(m,0.2,0.05,0,0.2,0.05,0.14,[0.5,0.35,0.25]); return m; }
+function gullMesh() { const m = Mesh(), w=[0.9,0.9,0.92], g=[0.5,0.52,0.55]; mBox(m,0,0,0,0.12,0.1,0.35,w); mTri(m,[0,0.05,0.1],[0,0.3,0.9],[0,0.05,-0.1],g); mTri(m,[0,0.05,0.1],[0,0.3,-0.9],[0,0.05,-0.1],g); mBox(m,0.2,0.0,0,0.14,0.06,0.06,[0.8,0.7,0.3]); return m; }
+function sealMesh() { const m = Mesh(); const c=[0.4,0.4,0.42]; for(let i=0;i<7;i++){const a0=i/7*6.283,a1=(i+1)/7*6.283,r1=0.35; mTri(m,[1.3,0.3,0],[0.2,0.3+Math.sin(a0)*r1,Math.cos(a0)*r1*0.8],[0.2,0.3+Math.sin(a1)*r1,Math.cos(a1)*r1*0.8],c); mTri(m,[-0.9,0.25,0],[0.2,0.3+Math.sin(a0)*r1,Math.cos(a0)*r1*0.8],[0.2,0.3+Math.sin(a1)*r1,Math.cos(a1)*r1*0.8],[c[0]*0.9,c[1]*0.9,c[2]*0.9]);} return m; }
+function jellyMesh() { const m = discMesh(0.3,0.4,8,0.25,[0.75,0.7,0.85]); for(let i=0;i<6;i++){const a=i/6*6.283; mTri(m,[Math.cos(a)*0.3,0.3,Math.sin(a)*0.3],[Math.cos(a)*0.3,-0.3,Math.sin(a)*0.3],[Math.cos(a+0.25)*0.3,0.1,Math.sin(a+0.25)*0.3],[0.7,0.65,0.8]);} return m; }
+// finds
+function shellMesh() { const m = Mesh(); mCyl(m,0,0.4,0.25,0,7,[0.9,0.85,0.78]); for(let i=0;i<5;i++){const a=i/5*6.283; mTri(m,[0,0,0],[Math.cos(a)*0.28,0.05,Math.sin(a)*0.28],[Math.cos(a+0.6)*0.28,0.05,Math.sin(a+0.6)*0.28],[0.85,0.78,0.7]);} return m; }
+function glassMesh(col) { const m = Mesh(); mRock(m, mulberry32(7), col); return m; }
+function floatMesh() { const m = Mesh(); mRock(m, mulberry32(11), [0.4,0.6,0.55]); return m; }
+function cuttleMesh() { return discMesh(0.05,0.4,6,0.05,[0.92,0.9,0.85]); }
+function eggMesh() { const m = Mesh(); mBox(m,0,0.1,0,0.35,0.1,0.22,[0.12,0.1,0.09]); for(const s of [-1,1]) mTri(m,[s*0.35,0.1,0.22],[s*0.6,0.3,0.3],[s*0.35,0.1,-0.22],[0.1,0.09,0.08]); return m; }
+function bottleMesh() { const m = Mesh(); mCyl(m,0,0.7,0.2,0.2,7,[0.35,0.5,0.4]); mCyl(m,0.7,1.0,0.2,0.09,7,[0.35,0.5,0.4]); mCyl(m,1.0,1.15,0.09,0.09,6,[0.3,0.25,0.2]); return m; }
+function boneMesh() { const m = Mesh(); mCyl(m,-0.6,0.6,0.16,0.16,6,[0.88,0.85,0.78]); mRock(m,mulberry32(3),[0.88,0.85,0.78]); return m; }
+
+// --- registries: mesh, palette, scale, how many may draw, behaviour ---
+const CREATURES = {
+  crab:     { mesh: () => crabMesh([0.6,0.35,0.3]),  base: 0.6, max: 160, label: "Shore Crab", desc: "Sidles across the wet sand; shy of footsteps." },
+  fish:     { mesh: () => fishMesh([0.7,0.75,0.8]),  base: 0.5, max: 220, label: "Pool Fish", desc: "Darts between the rocks of a tide pool." },
+  anemone:  { mesh: () => anemoneMesh([0.8,0.4,0.45]),base: 0.7, max: 160, label: "Beadlet Anemone", desc: "Closes up when touched or left by the tide." },
+  star:     { mesh: () => starMesh([0.85,0.5,0.3]),   base: 0.8, max: 140, label: "Sea Star", desc: "Rests on the pool floor, arms slowly working." },
+  urchin:   { mesh: () => urchinMesh([0.3,0.2,0.38]), base: 0.7, max: 140, label: "Sea Urchin", desc: "A pincushion wedged in a rocky crevice." },
+  hermit:   { mesh: () => hermitMesh([0.75,0.7,0.6]), base: 0.5, max: 140, label: "Hermit Crab", desc: "Carries a borrowed shell across the pool." },
+  gull:     { mesh: () => gullMesh(),                 base: 1.1, max: 60,  label: "Grey Gull", desc: "Wheels over the beach and settles on the sand." },
+  seal:     { mesh: () => sealMesh(),                 base: 2.2, max: 24,  label: "Harbour Seal", desc: "Hauls out on the rocks at low water." },
+  jelly:    { mesh: () => jellyMesh(),                base: 0.9, max: 90,  label: "Stranded Jelly", desc: "Left glistening on the flats by the ebbing tide." },
+};
+const FINDS = {
+  shell:    { mesh: () => shellMesh(),               base: 0.5, max: 200, label: "Spiral Shell", desc: "An empty whelk, worn smooth.", rare: 0 },
+  seaglass: { mesh: () => glassMesh([0.4,0.7,0.6]),  base: 0.35,max: 200, label: "Sea Glass", desc: "A frosted shard, tumbled by the waves.", rare: 0 },
+  float:    { mesh: () => floatMesh(),               base: 0.55,max: 90,  label: "Glass Float", desc: "A fishing-net float, long adrift.", rare: 1 },
+  molt:     { mesh: () => crabMesh([0.8,0.72,0.62]), base: 0.55,max: 120, label: "Crab Molt", desc: "A hollow shell a crab outgrew.", rare: 0 },
+  cuttle:   { mesh: () => cuttleMesh(),              base: 0.5, max: 140, label: "Cuttlebone", desc: "Chalky white, light as air.", rare: 0 },
+  egg:      { mesh: () => eggMesh(),                 base: 0.5, max: 110, label: "Mermaid's Purse", desc: "The egg case of a skate.", rare: 1 },
+  bottle:   { mesh: () => bottleMesh(),              base: 0.7, max: 50,  label: "Old Bottle", desc: "Sea-green glass, stoppered tight.", rare: 1 },
+  bone:     { mesh: () => boneMesh(),                base: 1.0, max: 40,  label: "Whale Bone", desc: "A great pale vertebra from the deep.", rare: 2 },
+};
+
+// build dynamic draw objects
+for (const k in CREATURES) CREATURES[k].dyn = makeDynamic(CREATURES[k].mesh(), CREATURES[k].max);
+for (const k in FINDS) FINDS[k].dyn = makeDynamic(FINDS[k].mesh(), FINDS[k].max);
+
+let life = [];                 // all entities
+const lifeScratch = new Float32Array(240 * 10);
+
+// Oddities: 1–2 Latin-named specials per island.
+const ODD_GENUS = ["Carcinus","Palaemon","Asterias","Actinia","Larus","Mytilus","Aurelia","Pagurus","Echinus"];
+const ODD_SPECIES = ["spectralis","nebulosa","pallida","umbrae","vitrea","cavernae","liminalis","obscura","sine-nomine"];
+function latinName() { return ODD_GENUS[(rng()*ODD_GENUS.length)|0] + " " + ODD_SPECIES[(rng()*ODD_SPECIES.length)|0]; }
+
+function spawnCreature(t, x, z, extra) {
+  const e = { kind: "creature", t, x, z, yaw: rng()*6.283, scale: CREATURES[t].base*(0.85+rng()*0.3),
+              phase: rng()*6.283, state: "idle", timer: rng()*3, vx: 0, vz: 0, hx: x, hz: z, hr: extra?.hr||6,
+              closed: 0, special: false, name: CREATURES[t].label, tint: [1,1,1] };
+  Object.assign(e, extra); life.push(e); return e;
+}
+function spawnFind(t, x, z) {
+  life.push({ kind: "find", t, x, z, yaw: rng()*6.283, scale: FINDS[t].base*(0.85+rng()*0.3),
+              phase: rng()*6.283, name: FINDS[t].label, tint: [1,1,1] });
+}
+
+function populateLife() {
+  life = [];
+  // pools: fish, anemones, stars, urchins, hermits
+  for (const p of pools) {
+    const area = p.n, cx = p.x, cz = p.z, rad = Math.min(14, Math.sqrt(area) * CELL * 0.4);
+    const nFish = Math.min(6, 1 + (area / 120) | 0);
+    for (let i = 0; i < nFish; i++) spawnCreature("fish", cx + (rng()-0.5)*rad, cz + (rng()-0.5)*rad, { hx: cx, hz: cz, hr: rad, poolRim: p.rim });
+    for (let i = 0; i < 2 + (rng()*3|0); i++) spawnCreature(rng()<0.5?"anemone":"star", cx+(rng()-0.5)*rad, cz+(rng()-0.5)*rad, { poolRim: p.rim });
+    if (rng() < 0.6) spawnCreature("urchin", cx+(rng()-0.5)*rad, cz+(rng()-0.5)*rad, { poolRim: p.rim });
+    if (rng() < 0.5) spawnCreature("hermit", cx+(rng()-0.5)*rad, cz+(rng()-0.5)*rad, { hr: rad, poolRim: p.rim });
+  }
+  // crabs along the shore band (wet sand zone)
+  for (let i = 0; i < 70; i++) {
+    const a = rng()*6.283, r = HALF*(0.3 + rng()*0.6), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const h = heightAt(x, z); if (h > 1 && h < 9) spawnCreature("crab", x, z, { hr: 10 });
+  }
+  // gulls over the beaches
+  for (let i = 0; i < 10; i++) {
+    const a = rng()*6.283, r = HALF*(0.35+rng()*0.4), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    spawnCreature("gull", x, z, { state: "circle", cxx: x, czz: z, orbit: 20+rng()*25, alt: 22+rng()*18 });
+  }
+  // seals on rocky POIs / high rock
+  for (const p of POIS) if (p.type === "tidepools" || p.type === "seacave") {
+    if (rng() < 0.7) spawnCreature("seal", p.x + (rng()-0.5)*6, p.z + (rng()-0.5)*6, {});
+  }
+  // oddities: 1–2 special creatures
+  const oddN = 1 + (rng()<0.5?1:0);
+  for (let i = 0; i < oddN; i++) {
+    const pool = ["crab","star","anemone","fish","urchin"][(rng()*5)|0];
+    const base = life.filter((e) => e.t === pool);
+    if (base.length) {
+      const e = base[(rng()*base.length)|0];
+      e.special = true; e.scale *= 1.7; e.tint = [1.4, 0.7 + rng()*0.5, 1.4]; e.name = latinName();
+    }
+  }
+  // initial finds
+  washUp(true);
+}
+
+// Wash fresh finds along the current wrack line + exposed flats at low tide.
+let lastLowCount = 0;
+function washUp(initial) {
+  const n = initial ? 60 : 30;
+  for (let i = 0; i < n; i++) {
+    const a = rng()*6.283, r = HALF*(0.25 + rng()*0.72), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const h = heightAt(x, z);
+    // rarer finds sit lower / farther out (only exposed at the lowest tides)
+    const low = h < waterLevel + 1.5;
+    const roll = rng();
+    let pick;
+    const pool = Object.keys(FINDS);
+    if (low && roll < 0.5) pick = ["float","egg","bottle","bone"][(rng()*4)|0];
+    else pick = ["shell","seaglass","molt","cuttle","shell","seaglass"][(rng()*6)|0];
+    const want = FINDS[pick]; if (!want) continue;
+    if (h > waterLevel + 0.3 && h < wetLevel + 4) spawnFind(pick, x, z);  // on exposed sand near wrack
+  }
+  // cap total finds
+  const finds = life.filter((e) => e.kind === "find");
+  if (finds.length > 500) life = life.filter((e) => e.kind !== "find").concat(finds.slice(-500));
+}
+
+// visibility: is this entity currently present given tide/time?
+function lifeVisible(e) {
+  const g = heightAt(e.x, e.z);
+  if (e.kind === "find") return waterLevel < g + 0.25;                 // exposed by tide
+  if (e.t === "crab") { const d = waterLevel - g; return d < 0.1 && d > -4; }  // wet sand
+  if (e.t === "jelly") return waterLevel < g + 0.2;                    // stranded low tide
+  if (e.t === "seal") return waterLevel < g + 0.6 && e.state !== "gone";
+  if (e.t === "gull") return true;
+  if (e.poolRim !== undefined) return true;                           // pool life always (pool holds water)
+  return true;
+}
+
+const UPDATE_R = 70, DRAW_R = 190;
+function updateLife(dt, tSec) {
+  const px = cam.pos[0], pz = cam.pos[2];
+  for (const e of life) {
+    const dx = e.x - px, dz = e.z - pz, d2 = dx*dx + dz*dz;
+    if (d2 > UPDATE_R*UPDATE_R) continue;                // sleep distant entities
+    const d = Math.sqrt(d2);
+    e.phase += dt;
+    if (e.kind === "find") continue;
+    behave(e, dt, d, dx, dz);
+  }
+}
+function behave(e, dt, d, dx, dz) {
+  const g = heightAt(e.x, e.z);
+  if (e.t === "crab") {
+    if (e.state === "burrow") { e.closed = Math.min(1, e.closed + dt*2); if (e.closed >= 1) { const a=rng()*6.283; e.x=e.hx+Math.sin(a)*e.hr; e.z=e.hz-Math.cos(a)*e.hr; e.state="wander"; } return; }
+    if (d < 2.6) { e.state = "burrow"; return; }
+    if (d < 11) { const a = Math.atan2(-dz, -dx); e.x -= Math.cos(a)*dt*6; e.z -= Math.sin(a)*dt*6; e.yaw = a+1.57; e.closed = Math.max(0, e.closed-dt*2); return; }
+    e.timer -= dt; if (e.timer < 0) { e.timer = 0.6+rng()*1.4; e.vx = (rng()-0.5); e.vz = (rng()-0.5); }
+    e.x += e.vx*dt*2.5; e.z += e.vz*dt*2.5; e.yaw = Math.atan2(e.vz, e.vx)+1.57;
+    if (Math.hypot(e.x-e.hx, e.z-e.hz) > e.hr) { e.vx = (e.hx-e.x)*0.1; e.vz = (e.hz-e.z)*0.1; }
+    e.closed = Math.max(0, e.closed - dt);
+  } else if (e.t === "fish") {
+    const fast = d < 12 ? 7 : 2.5;
+    e.timer -= dt; if (e.timer < 0 || d < 12) { e.timer = 0.4+rng()*1.2; e.tx = e.hx+(rng()-0.5)*e.hr; e.tz = e.hz+(rng()-0.5)*e.hr; }
+    const a = Math.atan2(e.tz-e.z, e.tx-e.x); e.x += Math.cos(a)*dt*fast; e.z += Math.sin(a)*dt*fast; e.yaw = a;
+  } else if (e.t === "gull") {
+    if (e.state === "circle") { e.phase += dt*0.6; e.x = e.cxx + Math.cos(e.phase)*e.orbit; e.z = e.czz + Math.sin(e.phase)*e.orbit; e.yaw = e.phase+1.57;
+      if (rng() < dt*0.08) { e.state = "land"; } }
+    else if (e.state === "land") { const gy = heightAt(e.cxx, e.czz); e.x = e.cxx; e.z = e.czz; e.state = "ground"; e.timer = 3+rng()*5; }
+    else if (e.state === "ground") { e.timer -= dt; if (d < 16 || e.timer < 0) { e.state = "circle"; e.phase = rng()*6.283; } }
+  } else if (e.t === "seal") {
+    if (e.state === "gone") return;
+    if (d < 20) { const a = Math.atan2(-dz, -dx); e.x -= Math.cos(a)*dt*5; e.z -= Math.sin(a)*dt*5; if (heightAt(e.x,e.z) < waterLevel) e.state = "gone"; }
+  } else if (e.t === "anemone") {
+    const exposed = waterLevel < g - 0.05;
+    e.closed += ((d < 2.5 || exposed) ? 1 : 0 - e.closed) * 0; // simple target
+    e.closed += (((d < 2.5 || exposed) ? 1 : 0) - e.closed) * Math.min(1, dt*4);
+  } else { // star, urchin, hermit, jelly: subtle
+    if (e.t === "hermit") { e.timer -= dt; if (e.timer < 0) { e.timer = 1+rng()*2; e.vx=(rng()-0.5); e.vz=(rng()-0.5);} e.x += e.vx*dt*0.5; e.z += e.vz*dt*0.5; }
+  }
+}
+
+function drawLife(view) {
+  gl.useProgram(propProg);
+  gl.uniformMatrix4fv(propU.uProj, false, proj);
+  gl.uniformMatrix4fv(propU.uView, false, view);
+  gl.uniform3fv(propU.uSunDir, SKY.sun);
+  gl.uniform3fv(propU.uCamPos, cam.pos);
+  gl.uniform3fv(propU.uZenith, SKY.zenith);
+  gl.uniform3fv(propU.uHorizon, SKY.horizon);
+  gl.uniform3fv(propU.uWarm, SKY.warm);
+  gl.uniform1f(propU.uFogDensity, FOG_DENSITY);
+  gl.uniform1f(propU.uFogNear, FOG_NEAR);
+  const px = cam.pos[0], pz = cam.pos[2];
+  const buckets = {};
+  for (const k in CREATURES) buckets[k] = 0;
+  for (const k in FINDS) buckets["f_" + k] = 0;
+  // fill per-type scratch and draw (one pass per type to reuse the buffer)
+  const drawType = (key, reg, filter) => {
+    let n = 0;
+    for (const e of life) {
+      if (!filter(e)) continue;
+      const dx = e.x - px, dz = e.z - pz; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
+      if (forceSpawn ? false : !lifeVisible(e)) continue;
+      if (n >= reg.max) break;
+      const g = heightAt(e.x, e.z);
+      let y = g, sc = e.scale, lean = 0, ld = 0;
+      if (e.kind === "creature") {
+        if (e.t === "fish") y = (e.poolRim !== undefined ? Math.max(waterLevel, e.poolRim) : waterLevel) - 0.3 + Math.sin(e.phase*4)*0.05;
+        else if (e.t === "gull") y = (e.state === "circle") ? g + e.alt : g + 0.2;
+        else if (e.t === "jelly") sc = e.scale * (0.9 + Math.sin(e.phase*2)*0.1);
+        if (e.t === "crab" || e.t === "anemone") sc = e.scale * (1 - 0.6*e.closed);
+        if (e.t === "star" || e.t === "anemone" || e.t === "urchin") y += 0.02;
+      } else { y = g + 0.05; lean = 0.2; }
+      const o = n*10;
+      lifeScratch[o]=e.x; lifeScratch[o+1]=y; lifeScratch[o+2]=e.z;
+      lifeScratch[o+3]=sc; lifeScratch[o+4]=e.yaw; lifeScratch[o+5]=lean; lifeScratch[o+6]=ld;
+      lifeScratch[o+7]=e.tint[0]; lifeScratch[o+8]=e.tint[1]; lifeScratch[o+9]=e.tint[2];
+      n++;
+    }
+    reg.dyn.draw(lifeScratch, n);
+  };
+  for (const k in CREATURES) drawType(k, CREATURES[k], (e) => e.kind === "creature" && e.t === k);
+  for (const k in FINDS) drawType(k, FINDS[k], (e) => e.kind === "find" && e.t === k);
+}
+
+/* --------------------------------------------------------------------- *
+ * § INVENTORY / JOURNAL / INTERACTION
+ * --------------------------------------------------------------------- */
+
+const inventory = {};                 // find type -> count
+const discovered = new Set();         // discovered creature/find type keys
+let forceSpawn = false;               // debug: draw every entity regardless of tide
+
+function nearestInteractable() {
+  const px = cam.pos[0], pz = cam.pos[2];
+  const f = camForward(); let best = null, bestD = 4.0;
+  for (const e of life) {
+    if (e.kind === "creature" && (e.t === "gull" && e.state === "circle")) continue;
+    const dx = e.x - px, dz = e.z - pz, d = Math.hypot(dx, dz);
+    if (d > bestD) continue;
+    const dot = (dx*f[0] + dz*f[2]) / (d || 1);
+    if (dot < 0.2 && d > 1.5) continue;   // must be roughly ahead
+    best = e; bestD = d;
+  }
+  return best;
+}
+function interact() {
+  const e = nearestInteractable();
+  if (!e) return;
+  if (e.kind === "find") {
+    inventory[e.t] = (inventory[e.t] || 0) + 1;
+    discovered.add("f_" + e.t);
+    showCard(e.special ? e.name : FINDS[e.t].label, FINDS[e.t].desc + (e.special ? "  (an oddity!)" : ""));
+    life.splice(life.indexOf(e), 1);
+  } else {
+    discovered.add(e.t);
+    showCard(e.special ? e.name : CREATURES[e.t].label, CREATURES[e.t].desc + (e.special ? "  —  found only on this island." : ""));
+  }
+}
+let cardTimer = 0;
+function showCard(name, desc) {
+  const el = document.getElementById("card");
+  el.innerHTML = `<b>${name}</b><br><span>${desc}</span>`;
+  el.style.display = "block"; cardTimer = 3.5;
+}
+
+function toggleJournal() {
+  const j = document.getElementById("journal");
+  if (j.style.display === "block") { j.style.display = "none"; return; }
+  const row = (reg, prefix) => Object.keys(reg).map((k) => {
+    const key = prefix + k, got = discovered.has(key);
+    const cnt = prefix === "f_" ? (inventory[k] ? " ×" + inventory[k] : "") : "";
+    return `<div class="jitem ${got ? "" : "unk"}">${got ? reg[k].label + cnt : "??? "}</div>`;
+  }).join("");
+  j.innerHTML = `<h2>Field Journal</h2>
+    <h3>Creatures</h3><div class="jgrid">${row(CREATURES, "")}</div>
+    <h3>Finds</h3><div class="jgrid">${row(FINDS, "f_")}</div>
+    <div class="jhint">Tab to close</div>`;
+  j.style.display = "block";
+}
+
 /* --------------------------------------------------------------------- *
  * § BUILD + LOOP
  * --------------------------------------------------------------------- */
@@ -1755,6 +2108,7 @@ buildHeightmap();
 findHighPoint();
 computeBasins();
 buildProps();
+populateLife();
 const terrain = buildTerrainMesh();
 const water = buildWaterMesh();
 const heightTex = buildHeightTexture();
@@ -1774,7 +2128,7 @@ addEventListener("resize", resize);
 resize();
 
 let last = performance.now();
-let frameDraws = 0, frameTris = 0, fpsSmooth = 60;
+let frameDraws = 0, frameTris = 0, fpsSmooth = 60, washedThisLow = false;
 function countDraw(tris) { frameDraws++; frameTris += tris; }
 const dbgEl = document.getElementById("dbg");
 function frame(now) {
@@ -1786,6 +2140,9 @@ function frame(now) {
   frameDraws = 0; frameTris = 0;
 
   updateTide(dt);
+  if (tideT > 0.73 && tideT < 0.78) { if (!washedThisLow) { washUp(false); washedThisLow = true; } }
+  else if (tideT < 0.55) washedThisLow = false;
+  if (cardTimer > 0) { cardTimer -= dt; if (cardTimer <= 0) document.getElementById("card").style.display = "none"; }
 
   // ---- movement ----
   const fwd = camForward();
@@ -1865,6 +2222,8 @@ function frame(now) {
     cam.pos[0] = player.x; cam.pos[1] = player.eyeY; cam.pos[2] = player.z;
   }
 
+  updateLife(dt, t);
+
   // ---- matrices ----
   const f = camForward();
   const view = M4.lookAt(cam.pos, [cam.pos[0]+f[0], cam.pos[1]+f[1], cam.pos[2]+f[2]], [0, 1, 0]);
@@ -1913,6 +2272,7 @@ function frame(now) {
 
   // props & points of interest (instanced), before the transparent water
   drawProps(view);
+  drawLife(view);
 
   // water
   gl.enable(gl.BLEND);
