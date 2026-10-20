@@ -61,8 +61,8 @@
 
 <div id="hud"></div>
 <div id="help">
-  WASD — move · Space/Shift — up/down<br>
-  Mouse — look · Esc — release · Scroll — speed · G — dither
+  WASD — move · Shift — run<br>
+  Mouse — look · Esc — pause · G — dither
 </div>
 
 <script>
@@ -811,9 +811,12 @@ function ensureFBO() {
  * --------------------------------------------------------------------- */
 
 const cam = { pos: [0, 150, 700], yaw: 0, pitch: -0.14, speed: 120 };
-(function aimAtIsland() {
-  cam.yaw = Math.atan2(0 - cam.pos[0], -(0 - cam.pos[2]));
-})();
+
+// Modes: "preview" = slow orbit of the island (title screen); "walk" = first
+// person on foot; "free" = debug fly (enabled by ?cam=).
+let mode = "preview";
+let previewAngle = 0;
+
 // Optional ?cam=x,y,z[,yaw,pitch] — share a seed together with a viewpoint.
 (function camFromURL() {
   const p = new URLSearchParams(location.search).get("cam");
@@ -822,10 +825,42 @@ const cam = { pos: [0, 150, 700], yaw: 0, pitch: -0.14, speed: 120 };
   if (a.length >= 3 && a.every((n) => isFinite(n))) cam.pos = [a[0], a[1], a[2]];
   if (a.length >= 4) cam.yaw = a[3];
   if (a.length >= 5) cam.pitch = a[4];
+  mode = "free";
 })();
 function camForward() {
   const cp = Math.cos(cam.pitch), sp = Math.sin(cam.pitch);
   return [Math.sin(cam.yaw) * cp, sp, -Math.cos(cam.yaw) * cp];
+}
+
+/* --------------------------------------------------------------------- *
+ * § PLAYER  (first-person walker: follows the terrain with a gentle head
+ *   bob and can't wade into deep water, so the sea bounds the island.)
+ * --------------------------------------------------------------------- */
+
+const EYE = 1.7;              // eye height above the ground
+const WALK_SPEED = 9.5;       // units / second (vast map, so not too slow)
+const WADE_LIMIT = -1.4;      // can't step where the ground is deeper than this
+const player = { x: 0, z: 0, bob: 0 };
+
+// Spawn on a beach: march inland from a seeded bearing to the first dry land.
+function findSpawn() {
+  const ang = rng() * Math.PI * 2;
+  const dx = Math.sin(ang), dz = -Math.cos(ang);
+  for (let rr = HALF * 0.95; rr > 0; rr -= 4) {
+    const h = heightAt(dx * rr, dz * rr);
+    if (h > 1.2) {                                  // first land above water
+      const sx = dx * (rr - 12), sz = dz * (rr - 12);  // a few steps inland
+      return { x: sx, z: sz, yaw: Math.atan2(-sx, sz) };  // face inland
+    }
+  }
+  return { x: 0, z: 0, yaw: 0 };
+}
+
+function enterWalk() {
+  const s = findSpawn();
+  player.x = s.x; player.z = s.z; player.bob = 0;
+  cam.yaw = s.yaw; cam.pitch = -0.02;
+  mode = "walk";
 }
 
 /* --------------------------------------------------------------------- *
@@ -869,6 +904,7 @@ const overlay = document.getElementById("overlay");
 document.getElementById("seedText").textContent = SEED_STR;
 document.getElementById("startBtn").addEventListener("click", () => {
   overlay.classList.add("hidden");
+  if (mode === "preview") enterWalk();      // first time: step onto the island
   if (!IS_TOUCH) canvas.requestPointerLock();
 });
 document.getElementById("newBtn").addEventListener("click", () => {
@@ -1064,24 +1100,63 @@ function frame(now) {
   last = now;
   const t = now * 0.001;
 
-  // ---- movement (fly) ----
+  // ---- movement ----
   const fwd = camForward();
   const flen = Math.hypot(fwd[0], fwd[2]) || 1;
   const right = [fwd[2] / flen, 0, -fwd[0] / flen];
-  let mx = 0, my = 0, mz = 0;
-  if (keys["KeyW"]) { mx += fwd[0]; my += fwd[1]; mz += fwd[2]; }
-  if (keys["KeyS"]) { mx -= fwd[0]; my -= fwd[1]; mz -= fwd[2]; }
-  if (keys["KeyD"]) { mx += right[0]; mz += right[2]; }
-  if (keys["KeyA"]) { mx -= right[0]; mz -= right[2]; }
-  if (keys["Space"]) my += 1;
-  if (keys["ShiftLeft"] || keys["ControlLeft"]) my -= 1;
-  // analog joystick (mobile): horizontal strafe + forward
-  mx += right[0] * analog.x + fwd[0] * analog.y;
-  mz += right[2] * analog.x + fwd[2] * analog.y;
-  const ml = Math.hypot(mx, my, mz);
-  if (ml > 0) {
-    const step = cam.speed * dt / ml;
-    cam.pos[0] += mx * step; cam.pos[1] += my * step; cam.pos[2] += mz * step;
+
+  if (mode === "preview") {
+    // slow establishing orbit of the island
+    previewAngle += dt * 0.04;
+    const R = 720, H = 155;
+    cam.pos[0] = Math.sin(previewAngle) * R;
+    cam.pos[1] = H;
+    cam.pos[2] = Math.cos(previewAngle) * R;
+    cam.yaw = Math.atan2(-cam.pos[0], cam.pos[2]);
+    cam.pitch = -0.15;
+  } else if (mode === "free") {
+    // debug fly
+    let mx = 0, my = 0, mz = 0;
+    if (keys["KeyW"]) { mx += fwd[0]; my += fwd[1]; mz += fwd[2]; }
+    if (keys["KeyS"]) { mx -= fwd[0]; my -= fwd[1]; mz -= fwd[2]; }
+    if (keys["KeyD"]) { mx += right[0]; mz += right[2]; }
+    if (keys["KeyA"]) { mx -= right[0]; mz -= right[2]; }
+    if (keys["Space"]) my += 1;
+    if (keys["ShiftLeft"] || keys["ControlLeft"]) my -= 1;
+    mx += right[0] * analog.x + fwd[0] * analog.y;
+    mz += right[2] * analog.x + fwd[2] * analog.y;
+    const ml = Math.hypot(mx, my, mz);
+    if (ml > 0) {
+      const step = cam.speed * dt / ml;
+      cam.pos[0] += mx * step; cam.pos[1] += my * step; cam.pos[2] += mz * step;
+    }
+  } else {
+    // ---- walk: horizontal wish-dir, collide, follow terrain, head bob ----
+    const hf = [fwd[0] / flen, fwd[2] / flen];   // forward on the ground plane
+    let wx = 0, wz = 0;
+    if (keys["KeyW"]) { wx += hf[0]; wz += hf[1]; }
+    if (keys["KeyS"]) { wx -= hf[0]; wz -= hf[1]; }
+    if (keys["KeyD"]) { wx += right[0]; wz += right[2]; }
+    if (keys["KeyA"]) { wx -= right[0]; wz -= right[2]; }
+    wx += right[0] * analog.x + hf[0] * analog.y;
+    wz += right[2] * analog.x + hf[1] * analog.y;
+    const wl = Math.hypot(wx, wz);
+    if (wl > 0) {
+      const run = keys["ShiftLeft"] ? 1.7 : 1.0;
+      const step = WALK_SPEED * run * dt / wl;
+      const nx = player.x + wx * step, nz = player.z + wz * step;
+      // collide against deep water, sliding along each axis independently
+      if (heightAt(nx, player.z) > WADE_LIMIT) player.x = nx;
+      if (heightAt(player.x, nz) > WADE_LIMIT) player.z = nz;
+      player.bob += step;
+    } else {
+      player.bob += dt * 0.6;    // settle the bob back toward rest
+    }
+    const ground = heightAt(player.x, player.z);
+    const bob = Math.sin(player.bob * 1.1) * 0.09 * (wl > 0 ? 1 : 0);
+    cam.pos[0] = player.x;
+    cam.pos[1] = ground + EYE + bob;
+    cam.pos[2] = player.z;
   }
 
   // ---- matrices ----
