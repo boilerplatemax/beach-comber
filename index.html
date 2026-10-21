@@ -73,11 +73,11 @@
     -webkit-mask: radial-gradient(transparent 13px, #000 14px); mask: radial-gradient(transparent 13px, #000 14px);
   }
   #actionIcon {
-    position: fixed; left: calc(50% + 14px); top: calc(50% - 10px); width: 20px; height: 20px;
-    z-index: 5; pointer-events: none; display: none; opacity: .92;
-    filter: drop-shadow(0 1px 2px rgba(0,0,0,.7));
+    position: fixed; left: calc(50% + 16px); top: calc(50% + 6px);
+    z-index: 5; pointer-events: none; display: none;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,.75)); transform-origin: center;
   }
-  #actionIcon svg { width: 20px; height: 20px; }
+  #actionIcon canvas { image-rendering: pixelated; display: block; }
   #prompt {
     position: fixed; left: 50%; top: calc(50% + 20px); transform: translateX(-50%);
     z-index: 5; pointer-events: none; display: none; font-size: 13px; opacity: .9;
@@ -1736,19 +1736,81 @@ const crossEl = document.getElementById("crosshair");
 const promptEl = document.getElementById("prompt");
 const staminaEl = document.getElementById("stamina");
 const actionIconEl = document.getElementById("actionIcon");
+let actionCv = null, actionCtx = null, actionPop = 0, lastIconKey = "";
+function blitActionIcon(desc) {
+  if (!actionCv) { actionCv = document.createElement("canvas"); actionCtx = actionCv.getContext("2d"); actionIconEl.innerHTML = ""; actionIconEl.appendChild(actionCv); }
+  const scale = innerWidth < 640 ? 2 : 3, S = 16 * scale;
+  if (actionCv.width !== S) { actionCv.width = S; actionCv.height = S; }
+  actionCtx.imageSmoothingEnabled = false; actionCtx.clearRect(0, 0, S, S);
+  const base = pixelIconCanvas(desc.id, desc.cant); if (base) actionCtx.drawImage(base, 0, 0, S, S);
+  const key = desc.id + (desc.cant ? "!" : "");
+  if (key !== lastIconKey) { lastIconKey = key; actionPop = 1; }       // one-frame pop on change
+}
+// project a world point to screen pixels (null if behind the camera); mirrors rayFromNDC's matrix order
+function projectToScreen(wx, wy, wz) {
+  if (!lastVP) return null; const c = [wx, wy, wz, 1], o = [0, 0, 0, 0];
+  for (let r = 0; r < 4; r++) o[r] = lastVP[r]*c[0] + lastVP[4+r]*c[1] + lastVP[8+r]*c[2] + lastVP[12+r]*c[3];
+  if (o[3] <= 0.01) return null;
+  return [(o[0]/o[3]*0.5 + 0.5) * innerWidth, (1 - (o[1]/o[3]*0.5 + 0.5)) * innerHeight];
+}
 
 // Small crosshair action icons (hand, magnifier, shovel, axe, pickaxe, seed, leaves).
-const _svg = (inner) => `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
-const ACTION_ICONS = {
-  hand:   _svg('<path d="M8 12V5.5a1.5 1.5 0 013 0V11m0-.5V4.5a1.5 1.5 0 013 0V11m0-.5V6.5a1.5 1.5 0 013 0V13a6 6 0 01-6 6h-1a5 5 0 01-3.8-1.8L5 14.5a1.6 1.6 0 012.4-2.1L9 14"/>'),
-  look:   _svg('<circle cx="10.5" cy="10.5" r="6"/><line x1="15" y1="15" x2="21" y2="21"/>'),
-  shovel: _svg('<line x1="20" y1="4" x2="12.5" y2="11.5"/><path d="M12.5 11.5l-4.5 4.5-2-2 4.5-4.5zM6 16l-2.5 2.5"/>'),
-  axe:    _svg('<line x1="5" y1="19" x2="13.5" y2="10.5"/><path d="M13.5 10.5l3-3a4.2 4.2 0 014 4l-3 3a4.2 4.2 0 01-4-4z"/>'),
-  pick:   _svg('<line x1="6" y1="18" x2="12" y2="12"/><path d="M4 8.5c4.5-3.5 11.5-3.5 16 0M12 12V7.5"/>'),
-  seed:   _svg('<path d="M12 21v-7M12 14c-4 0-6.5-2.5-6.5-6.5 4 0 6.5 2.5 6.5 6.5zm0 0c0-3.2 2.3-6 6.5-6 0 3.2-2.3 6-6.5 6z"/>'),
-  leaves: _svg('<path d="M5 19c0-8 6.5-14 14-14 0 8-6.5 14-14 14zM5.5 18.5c3-3.5 6.5-6 10-7.5"/>'),
-  place:  _svg('<path d="M4 17l8-4 8 4-8 4zM12 13V4M8.5 7.5L12 4l3.5 3.5"/>'),
+/* ---- pixel-art action icons (§10.2): 16×16 grids, one char per pixel ---- */
+// Palette pulled from the game's own colours, plus a 1px dark outline (1).
+const PX_PAL = { ".": null, "1": "#241c14", "2": "#ccd5de", "3": "#8793a0", "4": "#9a6336",
+  "5": "#5f3d22", "6": "#dcc78f", "7": "#6f8a46", "8": "#5aa0c0", "9": "#eef3f2",
+  "a": "#c6523e", "b": "#d4a468", "c": "#8a4a6a", "d": "#c7a24a" };
+const PX_ICONS = {
+  // shovel: wood shaft (4/5), steel blade (2/3)
+  dig: ["......11........","......1451......","......1451......","......1451......","......1451......",
+        "......1451......",".....145541.....","....1132231.....","...123222321....","...123322321....",
+        "...123222321....","....1322231.....",".....13221......",".....1131.......","......11........"],
+  // axe: steel head (2/3) biting left, wood handle (4/5) down-right
+  chop: [".....1111.......","...11322311.....","..123333321.....",".12333333211....",".1233333331.....",
+         ".1233333321.....","..12333321......","...113345.......","......1451......","......1451......",
+         ".......1451.....",".......1451.....",".......1451.....",".......111......"],
+  // pickaxe: curved steel head (2/3), wood handle (4/5)
+  mine: ["..1.......1.....","..121...121.....",".12321.12321....","123332123332....",".12332232321....",
+         "...11232311.....","......1451......","......1451......","......1451......",".......1451.....",
+         ".......1451.....",".......1451.....",".......111......"],
+  // open hand (skin b, highlight 9)
+  hand: ["...1.1.1........","...1b1b1b1......","..1b1b1b1b1.....","..1bbbbbbb1.....",".11bbbbbbb1.....",
+         ".1bbbbbbbb1.....","11bbbbbbbbb1....","1b9bbbbbbbb1....","1b9bbbbbbbb1....",".1bbbbbbbbb1....",
+         "..1bbbbbbbb1....","...1bbbbbbb1....","....1bbbbb1.....",".....111111....."],
+  // magnifier (inspect): glass ring (8/9), handle (5)
+  look: ["...11111........","..1999991.......",".19888889 1.....",".19822889 1.....","1982338891......",
+         "1982338891......","1988888891......","1988888891......",".19888891.......","..1999991.......",
+         "...11115........","......1551.......","......15551......",".......1551......",".......111......"],
+  // bucket (scoop): steel pail (3/2) with water (8)
+  scoop: ["..111111111.....",".19888888891....","1988888888891...","198888888891....",".13888888831....",
+          "..1322222231....","...13222231.....","...13222231.....","...13222231.....","....132231......",
+          "....132231......",".....1331.......",".....1111......."],
+  // material block (place): a cube (tan 6, sides shaded 5)
+  place: ["....111111......","...16666661.....","..166666661.....",".16666666661....","1666666666661...",
+          "1566666666651...","1556666666551...","1555666665551...","1555566655551...","15555566555551..",
+          ".1555555555551..","..155555555551..","...1555555551...","....15555551....",".....111111....."],
+  // food (eat): a red berry with a green leaf (a/9/7)
+  eat: [".......71.......",".....17771......","....1779 1......","....111.........","...1aaa1........",
+        "..1aaaaa1.......",".1aa9aaaaa1.....","1aaaaaaaaaa1....","1aa99aaaaaa1....","1aaaaaaaaaa1....",
+        "1aaaaaaaaaa1....",".1aaaaaaaa1.....","..1aaaaaa1......","...111111......."],
 };
+// render a 16×16 grid once to an offscreen canvas (crisp pixels)
+const _iconCache = {};
+function pixelIconCanvas(name, cant) {
+  const key = name + (cant ? "!" : "");
+  if (_iconCache[key]) return _iconCache[key];
+  const rows = PX_ICONS[name]; const cv = document.createElement("canvas"); cv.width = 16; cv.height = 16;
+  const ctx = cv.getContext("2d"); ctx.imageSmoothingEnabled = false;
+  if (cant) ctx.globalAlpha = 0.5;                                     // dim for the "can't" variant
+  if (rows) for (let y = 0; y < rows.length && y < 16; y++) { const row = rows[y];
+    for (let x = 0; x < row.length && x < 16; x++) { const c = PX_PAL[row[x]]; if (c) { ctx.fillStyle = c; ctx.fillRect(x, y, 1, 1); } } }
+  if (cant) { ctx.globalAlpha = 1;                                     // tiny red X, bottom-right
+    ctx.fillStyle = "#241c14"; const xs = [[10,10],[11,11],[12,12],[13,13],[13,10],[12,11],[11,12],[10,13]];
+    for (const [a, c] of [[10,10],[13,13],[13,10],[10,13]]) ctx.fillRect(a, c, 1, 1);
+    ctx.fillStyle = "#e85a46"; for (const [a, c] of [[11,11],[12,12],[12,11],[11,12]]) ctx.fillRect(a, c, 1, 1);
+  }
+  _iconCache[key] = cv; return cv;
+}
 // First-run key hints: shown the first few times each action is available, then retired.
 let hintsOn = true;
 const hintCount = {};
@@ -1756,25 +1818,39 @@ try { Object.assign(hintCount, JSON.parse(localStorage.getItem("bc_hints") || "{
 function saveHints() { try { localStorage.setItem("bc_hints", JSON.stringify(hintCount)); localStorage.setItem("bc_hintsOff", hintsOn ? "0" : "1"); } catch (e) {} }
 function resetHints() { for (const k in hintCount) delete hintCount[k]; hintsOn = true; saveHints(); }
 let lastAction = null, hintT = 0, hintText = "";
-const HINT_VERB = { hand: "pick up", look: "inspect", shovel: "dig", axe: "chop", pick: "mine", seed: "plant", leaves: "use leaves", place: "place material" };
+const HINT_VERB = { hand: "pick up", look: "inspect", dig: "dig", chop: "chop", mine: "mine", scoop: "scoop", place: "place", eat: "eat" };
 // What the crosshair is on right now → which action icon to show.
+// Edible items → food value (refined in §5). Lets the eat icon show now.
+const EDIBLE = { clam: 1, cockle: 1, mussel: 1, kelp: 1, seaweed: 1, coconut: 1, berry: 1 };
+function isFood(id) { return EDIBLE[id] !== undefined; }
+function toolIcon(tool) {
+  if (tool === "shovel") return "dig"; if (tool === "axe") return "chop"; if (tool === "pickaxe") return "mine";
+  if (tool === "bucket") return "scoop"; if (MAT_ITEM[tool] !== undefined || SEED_TREE[tool]) return "place";
+  if (isFood(tool)) return "eat"; if (tool === "leaves") return "hand"; return null;
+}
+// What the crosshair is on → {id, cant}. `cant` shows the dimmed-with-X variant (§10.2),
+// which lines up with the failStrike reaction in §10.1.
 function crosshairAction() {
   const tool = selectedTool();
   if (curTarget) {
     const k = curTarget.kind;
-    if (k === "find" || k === "rubble") return "hand";
-    if (k === "creature") return "look";
-    if (k === "goat" || k === "salt") return "hand";
-    if (k === "tree" || k === "fallentree") return tool === "axe" ? "axe" : null;
-    if (k === "rock") return tool === "pickaxe" ? "pick" : null;
-    if (k === "stump") return tool === "shovel" ? "shovel" : tool === "axe" ? "axe" : null;
+    if (k === "find") return { id: isFood(curTarget.obj.t) ? "eat" : "hand" };
+    if (k === "rubble" || k === "goat" || k === "salt") return { id: "hand" };
+    if (k === "creature") return { id: tool === "bucket" ? "scoop" : "look" };
+    if (k === "tree" || k === "fallentree") return tool === "axe" ? { id: "chop" } : { id: toolIcon(tool) || "chop", cant: true };
+    if (k === "rock") return tool === "pickaxe" ? { id: "mine" } : { id: toolIcon(tool) || "mine", cant: true };
+    if (k === "stump") return (tool === "shovel" || tool === "axe") ? { id: tool === "shovel" ? "dig" : "chop" } : { id: toolIcon(tool) || "dig", cant: true };
   }
+  if (isFood(tool)) return { id: "eat" };                   // food in hand: eat it anytime
   const pt = rayGround(0, 0); if (!pt) return null;
   if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return null;
-  if (tool === "shovel") return "shovel";
-  if (MAT_ITEM[tool] !== undefined) return "place";
-  if (SEED_TREE[tool]) return "seed";
-  if (tool === "leaves") return "leaves";
+  if (tool === "shovel") return { id: "dig", cant: surfaceKind(pt[0], pt[1]) === "rock" };   // can't dig stone
+  if (tool === "pickaxe") return { id: "mine", cant: !nearestObj(rockObjs, pt[0], pt[1], 4.5) && !(cellIndex(pt[0],pt[1])>=0 && built[cellIndex(pt[0],pt[1])] > 0.05) };
+  if (tool === "axe") return { id: "chop", cant: !nearestObj(treeObjs, pt[0], pt[1], REACH+1.2) && !nearestFallen(pt[0], pt[1], REACH+1.4) && !nearestStump(pt[0], pt[1], REACH+1.2) };
+  if (MAT_ITEM[tool] !== undefined) return { id: "place", cant: !canPlaceAt(pt[0], pt[1]) };
+  if (tool === "bucket") return { id: "scoop" };
+  if (SEED_TREE[tool]) return { id: "place", cant: !canPlant(SEED_TREE[tool], pt[0], pt[1]) };
+  if (tool === "leaves") return { id: "hand" };
   return null;
 }
 
@@ -3347,7 +3423,7 @@ function toggleJournal() {
 
 const NAV = 4, navN = Math.ceil(GRID / NAV);
 let pathActive = false, pathPts = [], pathI = 0, pathGoal = null, pendingEntity = null;
-let lastInvVP = null;
+let lastInvVP = null, lastVP = null;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 function navH(ix, iz) { const gx = Math.min(GRID-1, ix*NAV), gz = Math.min(GRID-1, iz*NAV); const i = gz*GRID+gx; return heightmap[i] + dig[i] + built[i]; }
@@ -4918,7 +4994,8 @@ function frame(now) {
     f = [Math.sin(yaw) * cp, sp, -Math.cos(yaw) * cp];
   }
   const view = M4.lookAt(cam.pos, [cam.pos[0]+f[0], cam.pos[1]+f[1], cam.pos[2]+f[2]], [0, 1, 0]);
-  const invVP = M4.invert(M4.multiply(proj, view));
+  lastVP = M4.multiply(proj, view);
+  const invVP = M4.invert(lastVP);
   lastInvVP = invVP;
 
   // ============ PASS 1: scene → low-res FBO ============
@@ -5041,14 +5118,20 @@ function frame(now) {
     curTarget = targetAlongRay(rayFromNDC(0, 0), curTarget);
     const action = crosshairAction();
     if (action) {
-      actionIconEl.innerHTML = ACTION_ICONS[action] || "";
+      blitActionIcon(action);
       actionIconEl.style.display = "block";
+      // Desktop: just below-right of the crosshair. Mobile: floating above the targeted object.
+      if (IS_TOUCH && curTarget) { const sp = projectToScreen(curTarget.x, surfaceAt(curTarget.x, curTarget.z).h + 1.2, curTarget.z);
+        if (sp) { actionIconEl.style.left = (sp[0] - (innerWidth<640?16:24)) + "px"; actionIconEl.style.top = (sp[1] - (innerWidth<640?40:56)) + "px"; } }
+      else { actionIconEl.style.left = "calc(50% + 16px)"; actionIconEl.style.top = "calc(50% + 6px)"; }
+      if (actionPop > 0) actionPop = Math.max(0, actionPop - dt * 6);
+      actionIconEl.style.transform = `scale(${1 + actionPop * 0.45})`;
       crossEl.classList.toggle("active", !!curTarget);
-      if (action !== lastAction) {                      // action just became available
-        lastAction = action;
-        if (hintsOn && (hintCount[action] || 0) < 3) {
-          hintCount[action] = (hintCount[action] || 0) + 1; saveHints();
-          hintText = `${IS_TOUCH ? "tap" : "click / E"} — ${HINT_VERB[action] || "use"}`; hintT = 2.6;
+      if (action.id !== lastAction) {                   // action just became available
+        lastAction = action.id;
+        if (hintsOn && (hintCount[action.id] || 0) < 3 && !action.cant) {
+          hintCount[action.id] = (hintCount[action.id] || 0) + 1; saveHints();
+          hintText = `${IS_TOUCH ? "tap" : "click / E"} — ${HINT_VERB[action.id] || "use"}`; hintT = 2.6;
         }
       }
     } else { actionIconEl.style.display = "none"; crossEl.classList.remove("active"); lastAction = null; }
