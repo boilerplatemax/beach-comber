@@ -114,25 +114,36 @@
   .hslot.sel { border-color: #ffe6b0; box-shadow: 0 0 8px rgba(255,220,150,.5); }
   .hslot img { width: 100%; height: 100%; image-rendering: pixelated; }
   .hslot b { position: absolute; left: 3px; top: 1px; font-size: 10px; opacity: .55; }
+  .hslot span { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 2px #000; }
   /* inventory & debug panels */
   #invpanel, #debugpanel {
     position: fixed; z-index: 13; display: none; background: rgba(10,16,20,.95);
     border: 1px solid rgba(255,255,255,.15); border-radius: 12px; padding: 18px 20px;
   }
-  #invpanel { left: 50%; top: 50%; transform: translate(-50%,-50%); width: 380px; text-align: center; }
-  #invpanel h2 { font-size: 22px; margin-bottom: 12px; }
-  .igrid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 7px; margin-bottom: 14px; }
+  #invpanel { left: 50%; top: 50%; transform: translate(-50%,-50%); width: 384px; max-width: 94vw; text-align: center; touch-action: none; }
+  #invpanel h2 { font-size: 20px; margin-bottom: 4px; }
+  #invpanel .ihead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  #invpanel .ihead button { font-size: 12px; padding: 4px 10px; }
+  .igrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
+  .igrid.hot { margin-top: 10px; grid-template-columns: repeat(8, 1fr); }
   .islot { aspect-ratio: 1; border-radius: 6px; border: 1px solid rgba(255,255,255,.1);
-    background: rgba(255,255,255,.03); position: relative; cursor: pointer; }
+    background: rgba(255,255,255,.03); position: relative; cursor: grab; touch-action: none; user-select: none; }
+  .igrid.hot .islot { border-color: rgba(255,255,255,.22); background: rgba(10,18,22,.5); }
   .islot.full { background: rgba(255,255,255,.08); }
-  .islot.sel { border-color: #ffe6b0; }
-  .islot img { width: 100%; height: 100%; image-rendering: pixelated; }
-  .islot span { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 2px #000; }
-  .idetail, .idetail-empty { font-size: 14px; min-height: 60px; }
-  .idetail b { font-size: 16px; }
-  .idetail p { opacity: .8; margin: 6px 0 10px; font-size: 13px; }
-  .irar { display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; opacity: .8; }
-  .irar.uncommon { color: #6fc; } .irar.rare { color: #fc6; } .irar.tool { color: #9bd; }
+  .islot.sel { border-color: #ffe6b0; box-shadow: 0 0 6px rgba(255,220,150,.4); }
+  .islot.dragover { border-color: #9fe3ef; background: rgba(120,200,220,.18); }
+  .islot img { width: 100%; height: 100%; image-rendering: pixelated; pointer-events: none; }
+  .islot span { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 2px #000; pointer-events: none; }
+  .islot .hk { position: absolute; left: 3px; top: 1px; font-size: 9px; opacity: .5; pointer-events: none; }
+  #invpanel .ihint { font-size: 11px; opacity: .5; margin-top: 10px; }
+  #dragGhost { position: fixed; z-index: 30; width: 48px; height: 48px; pointer-events: none; display: none;
+    image-rendering: pixelated; filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)); transform: translate(-50%,-50%); }
+  #dragGhost span { position: absolute; right: 2px; bottom: 0; font-size: 12px; font-weight: 700; text-shadow: 0 1px 2px #000; }
+  #itip { position: fixed; z-index: 31; display: none; pointer-events: none; max-width: 200px;
+    background: rgba(10,16,20,.96); border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 7px 10px; text-align: left; }
+  #itip b { font-size: 14px; } #itip .r { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; opacity: .75; }
+  #itip p { font-size: 12px; opacity: .82; margin-top: 4px; }
+  .irar.uncommon,.r.uncommon { color: #6fc; } .irar.rare,.r.rare { color: #fc6; } .irar.tool,.r.tool { color: #9bd; } .irar.legendary,.r.legendary{color:#f9a;}
   #invpanel button, #debugpanel button {
     font: inherit; font-size: 13px; padding: 6px 14px; border-radius: 7px; cursor: pointer;
     border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.08); color: #eaf2f5; }
@@ -174,6 +185,8 @@
 <div id="hotbar"></div>
 <div id="journal"></div>
 <div id="invpanel"></div>
+<div id="dragGhost"></div>
+<div id="itip"></div>
 <div id="debugpanel"></div>
 <div id="help">
   WASD / click — move · Shift — run · click — use tool · E — pick up<br>
@@ -2499,42 +2512,109 @@ digItem("bell", "Ship's Bell", "relic", "rare", "A green bronze bell from a lost
 digItem("tin", "Sealed Tin", "relic", "rare", "A rusted tin, something rattles inside.", () => tinMesh(), [0.6,0.55,0.5]);
 
 /* ---- inventory (slot model + hotbar) ---- */
-const INV_SLOTS = 20, HOTBAR_SLOTS = 4;
+// 36 main slots + an 8-slot hotbar; every cell is a {id,qty} stack or null.
+const INV_SLOTS = 36, HOTBAR_SLOTS = 8;
 const Inv = {
-  slots: new Array(INV_SLOTS).fill(null),      // { id, qty }
-  hotbar: new Array(HOTBAR_SLOTS).fill(null),   // tool item ids
+  main: new Array(INV_SLOTS).fill(null),
+  hotbar: new Array(HOTBAR_SLOTS).fill(null),
   selected: 0,
   listeners: [],
   onChange(fn) { this.listeners.push(fn); },
   emit() { for (const fn of this.listeners) fn(); saveState(); },
-  count(id) { let c = 0; for (const s of this.slots) if (s && s.id === id) c += s.qty; return c; },
+  count(id) { let c = 0; for (const s of this.main) if (s && s.id === id) c += s.qty; for (const s of this.hotbar) if (s && s.id === id) c += s.qty; return c; },
   has(id) { return this.count(id) > 0; },
   add(id, qty = 1) {
-    const it = ITEMS[id]; if (!it) return 0; let rem = qty;
-    if (it.stackable) for (const s of this.slots) { if (rem <= 0) break; if (s && s.id === id && s.qty < it.maxStack) { const c = Math.min(it.maxStack - s.qty, rem); s.qty += c; rem -= c; } }
-    while (rem > 0) { const i = this.slots.indexOf(null); if (i < 0) break; const c = it.stackable ? Math.min(it.maxStack, rem) : 1; this.slots[i] = { id, qty: c }; rem -= c; }
+    const it = ITEMS[id]; if (!it) return 0; let rem = qty; const arrs = [this.main, this.hotbar];
+    if (it.stackable) for (const arr of arrs) for (const s of arr) { if (rem <= 0) break; if (s && s.id === id && s.qty < it.maxStack) { const c = Math.min(it.maxStack - s.qty, rem); s.qty += c; rem -= c; } }
+    for (const arr of arrs) for (let i = 0; i < arr.length; i++) { if (rem <= 0) break; if (!arr[i]) { const c = it.stackable ? Math.min(it.maxStack, rem) : 1; arr[i] = { id, qty: c }; rem -= c; } }
     const added = qty - rem; if (added > 0) this.emit(); return added;
   },
-  remove(id, qty = 1) { let r = qty; for (let i = 0; i < this.slots.length; i++) { const s = this.slots[i]; if (s && s.id === id) { const t = Math.min(s.qty, r); s.qty -= t; r -= t; if (s.qty <= 0) this.slots[i] = null; if (r <= 0) break; } } if (r < qty) this.emit(); return qty - r; },
-  equipTool(id) { const i = this.hotbar.indexOf(null); if (this.hotbar.includes(id)) return; if (i >= 0) this.hotbar[i] = id; else this.hotbar[0] = id; this.emit(); },
-  dropSlot(i) { const s = this.slots[i]; if (!s) return; this.slots[i] = null; this.emit(); dropItemOnGround(s.id, s.qty); },
+  remove(id, qty = 1) { let r = qty; for (const arr of [this.main, this.hotbar]) for (let i = 0; i < arr.length; i++) { const s = arr[i]; if (s && s.id === id) { const t = Math.min(s.qty, r); s.qty -= t; r -= t; if (s.qty <= 0) arr[i] = null; if (r <= 0) break; } } if (r < qty) this.emit(); return qty - r; },
+  hotbarHasId(id) { return this.hotbar.some(s => s && s.id === id); },
+  equipTool(id) { if (this.hotbarHasId(id)) return; const i = this.hotbar.indexOf(null); const slot = { id, qty: 1 }; if (i >= 0) this.hotbar[i] = slot; else this.hotbar[0] = slot; this.emit(); },
+  // ensure a collected seed/salt/leaves ends up on the hotbar (first empty slot)
+  autoHotbar(id) { if (this.hotbarHasId(id)) return; const hi = this.hotbar.indexOf(null); if (hi < 0) return; const mi = this.main.findIndex(s => s && s.id === id); if (mi < 0) return; this.hotbar[hi] = this.main[mi]; this.main[mi] = null; this.emit(); },
+  cell(idx) { return idx < INV_SLOTS ? this.main[idx] : this.hotbar[idx - INV_SLOTS]; },
+  setCell(idx, v) { if (idx < INV_SLOTS) this.main[idx] = v; else this.hotbar[idx - INV_SLOTS] = v; },
+  sort() {
+    const merged = {};
+    for (const s of this.main) if (s) { (merged[s.id] = merged[s.id] || { id: s.id, qty: 0 }).qty += s.qty; }
+    const stacks = [];
+    for (const id in merged) { let q = merged[id].qty; const ms = ITEMS[id].maxStack || 99; while (q > 0) { const c = Math.min(ms, q); stacks.push({ id, qty: c }); q -= c; } }
+    const CAT = { tool: 0, relic: 1, find: 2, material: 3, seed: 4, consumable: 5 };
+    const RAR = { tool: 0, legendary: 1, rare: 2, uncommon: 3, common: 4 };
+    stacks.sort((a, b) => { const ca = CAT[ITEMS[a.id].category] ?? 9, cb = CAT[ITEMS[b.id].category] ?? 9; if (ca !== cb) return ca - cb;
+      const ra = RAR[ITEMS[a.id].rarity] ?? 9, rb = RAR[ITEMS[b.id].rarity] ?? 9; if (ra !== rb) return ra - rb; return a.id < b.id ? -1 : 1; });
+    this.main = new Array(INV_SLOTS).fill(null);
+    for (let i = 0; i < stacks.length && i < INV_SLOTS; i++) this.main[i] = stacks[i];
+    this.emit();
+  },
 };
-function selectedTool() { return Inv.hotbar[Inv.selected]; }
-function selectHotbar(i) {
-  if (i < 0 || i >= HOTBAR_SLOTS) return;
-  if (i === 3 && Inv.selected === 3 && typeof cycleConsumable === "function") { cycleConsumable(); return; }  // tap slot 4 again to swap seed/salt
-  Inv.selected = i; renderHotbar();
+function selectedTool() { const c = Inv.hotbar[Inv.selected]; return c ? c.id : null; }
+function selectHotbar(i) { if (i < 0 || i >= HOTBAR_SLOTS) return; Inv.selected = i; renderHotbar(); }
+
+/* ---- inventory stack operations (drag / split / drop) ---- */
+function invMove(from, to) {
+  if (from === to) return;
+  const a = Inv.cell(from); if (!a) return;
+  const b = Inv.cell(to);
+  if (!b) { Inv.setCell(to, a); Inv.setCell(from, null); }
+  else if (b.id === a.id && ITEMS[a.id] && ITEMS[a.id].stackable) {
+    const room = (ITEMS[a.id].maxStack || 99) - b.qty, move = Math.min(room, a.qty);
+    b.qty += move; a.qty -= move; if (a.qty <= 0) Inv.setCell(from, null);
+  } else { Inv.setCell(to, a); Inv.setCell(from, b); }   // swap
+  Inv.emit();
+}
+function invSplit(idx) {
+  const s = Inv.cell(idx); if (!s || s.qty < 2 || !ITEMS[s.id] || !ITEMS[s.id].stackable) return;
+  let dest = -1; for (let i = 0; i < INV_SLOTS + HOTBAR_SLOTS; i++) if (i !== idx && !Inv.cell(i)) { dest = i; break; }
+  if (dest < 0) return;
+  const half = Math.floor(s.qty / 2); Inv.setCell(dest, { id: s.id, qty: half }); s.qty -= half; Inv.emit();
+}
+function invDrop(idx, one) {
+  const s = Inv.cell(idx); if (!s) return;
+  if (!FINDS[s.id]) { showCard("Can't drop that", "Tools stay in your pack."); return; }   // tools aren't world-droppable
+  const q = one ? 1 : s.qty; dropItemWorld(s.id, q);
+  s.qty -= q; if (s.qty <= 0) Inv.setCell(idx, null); Inv.emit();
 }
 
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
-  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ slots: Inv.slots, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered] })); } catch (e) {}
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered] })); } catch (e) {}
 }
 function loadState() {
   try {
     const s = JSON.parse(localStorage.getItem("bc_" + SEED_STR) || "null");
-    if (s) { Inv.slots = s.slots || Inv.slots; Inv.hotbar = s.hotbar || Inv.hotbar; Inv.selected = s.sel || 0; (s.disc || []).forEach((d) => discovered.add(d)); }
+    if (s) {
+      if (Array.isArray(s.main)) { Inv.main = padArr(s.main, INV_SLOTS); Inv.hotbar = padArr((s.hotbar || []).map(normCell), HOTBAR_SLOTS); }
+      Inv.selected = Math.min(HOTBAR_SLOTS - 1, s.sel || 0); (s.disc || []).forEach((d) => discovered.add(d));
+    }
   } catch (e) {}
+}
+function padArr(a, n) { const o = new Array(n).fill(null); for (let i = 0; i < n && i < a.length; i++) o[i] = a[i] || null; return o; }
+function normCell(c) { return (typeof c === "string") ? { id: c, qty: 1 } : c; }   // migrate old hotbar (bare ids)
+
+/* ---- dropped world items (persist per seed) ---- */
+let worldDrops = [];
+function dropItemWorld(id, qty) {
+  if (!FINDS[id]) return;                       // only items with an in-world mesh can be dropped
+  const fx = Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);
+  for (let k = 0; k < qty && k < 30; k++) {
+    const a = rng() * 6.283, r = 0.6 + rng() * 1.1;
+    const x = player.x + fx * 2 + Math.cos(a) * r, z = player.z + fz * 2 + Math.sin(a) * r;
+    const d = { id, x, z }; worldDrops.push(d); spawnDropEntity(d);
+  }
+  saveDrops();
+}
+function spawnDropEntity(d) {
+  if (!FINDS[d.id]) return;
+  spawnFind(d.id, d.x, d.z);
+  const e = life[life.length - 1]; if (e) e.drop = d;      // link to the saved record
+}
+function saveDrops() { try { localStorage.setItem("bcd_" + SEED_STR, JSON.stringify(worldDrops.map(d => [d.id, +d.x.toFixed(1), +d.z.toFixed(1)]))); } catch (e) {} }
+function loadDrops() {
+  try { const a = JSON.parse(localStorage.getItem("bcd_" + SEED_STR) || "[]");
+    for (const r of a) { const d = { id: r[0], x: r[1], z: r[2] }; worldDrops.push(d); spawnDropEntity(d); } } catch (e) {}
 }
 
 /* ---- notifications (bottom-left toasts) ---- */
@@ -2595,17 +2675,21 @@ function buildIcons() {
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 }
 
-/* ---- panels: build DOM once, render from state ---- */
+/* ---- panels: build DOM once, render from state; pointer drag (mouse + touch) ---- */
 function buildPanels() {
-  Inv.onChange(() => { renderInventory(); renderHotbar(); });
+  Inv.onChange(() => { renderHotbar(); if (invOpen) renderInventory(); });
   renderHotbar();
+  const panel = document.getElementById("invpanel");
+  panel.addEventListener("pointerdown", invPointerDown);
+  document.addEventListener("pointermove", invPointerMove);
+  document.addEventListener("pointerup", invPointerUp);
+  panel.addEventListener("contextmenu", (e) => { e.preventDefault(); const s = e.target.closest(".islot"); if (s) invDrop(+s.dataset.idx, true); });
 }
 function renderHotbar() {
   const el = document.getElementById("hotbar");
-  el.innerHTML = Inv.hotbar.map((id, i) => {
-    const it = id ? ITEMS[id] : null;
-    const ic = it && it.icon ? `<img src="${it.icon}">` : "";
-    return `<div class="hslot${i === Inv.selected ? " sel" : ""}" data-h="${i}">${ic}<b>${i + 1}</b></div>`;
+  el.innerHTML = Inv.hotbar.map((c, i) => {
+    const it = c ? ITEMS[c.id] : null, ic = it && it.icon ? `<img src="${it.icon}">` : "";
+    return `<div class="hslot${i === Inv.selected ? " sel" : ""}" data-h="${i}">${ic}${c && c.qty > 1 ? `<span>${c.qty}</span>` : ""}<b>${i + 1}</b></div>`;
   }).join("");
   el.querySelectorAll(".hslot").forEach((s) => {
     const pick = (e) => { e.preventDefault(); e.stopPropagation(); selectHotbar(+s.dataset.h); };
@@ -2613,24 +2697,66 @@ function renderHotbar() {
     s.addEventListener("touchstart", pick, { passive: false });   // mobile: tap a slot to switch tool
   });
 }
-let invOpen = false, invDetail = -1;
-function toggleInventory() { invOpen = !invOpen; invDetail = -1; renderInventory(); document.getElementById("invpanel").style.display = invOpen ? "block" : "none"; }
+function slotHTML(cell, idx, hk) {
+  const key = hk !== undefined ? `<i class="hk">${hk}</i>` : "";
+  if (!cell) return `<div class="islot" data-idx="${idx}">${key}</div>`;
+  const it = ITEMS[cell.id], ic = it && it.icon ? `<img src="${it.icon}">` : "";
+  return `<div class="islot full" data-idx="${idx}">${key}${ic}${cell.qty > 1 ? `<span>${cell.qty}</span>` : ""}</div>`;
+}
+let invOpen = false;
+function toggleInventory() { invOpen = !invOpen; document.getElementById("invpanel").style.display = invOpen ? "block" : "none"; if (invOpen) renderInventory(); else hideTip(); }
 function renderInventory() {
   if (!invOpen) return;
-  const grid = Inv.slots.map((s, i) => {
-    if (!s) return `<div class="islot" data-i="${i}"></div>`;
-    const it = ITEMS[s.id], ic = it && it.icon ? `<img src="${it.icon}">` : "";
-    return `<div class="islot full${invDetail === i ? " sel" : ""}" data-i="${i}">${ic}${s.qty > 1 ? `<span>${s.qty}</span>` : ""}</div>`;
-  }).join("");
-  let detail = `<div class="idetail-empty">Select an item</div>`;
-  if (invDetail >= 0 && Inv.slots[invDetail]) {
-    const it = ITEMS[Inv.slots[invDetail].id];
-    detail = `<div class="idetail"><b>${it.name}</b><div class="irar ${it.rarity}">${it.rarity}</div><p>${it.desc}</p><button id="dropBtn">Drop</button></div>`;
-  }
+  const main = Inv.main.map((c, i) => slotHTML(c, i)).join("");
+  const hot = Inv.hotbar.map((c, i) => slotHTML(c, INV_SLOTS + i, i + 1)).join("");
   const p = document.getElementById("invpanel");
-  p.innerHTML = `<h2>Pack</h2><div class="igrid">${grid}</div>${detail}<div class="jhint">I to close</div>`;
-  p.querySelectorAll(".islot").forEach((s) => s.onclick = () => { invDetail = +s.dataset.i; renderInventory(); });
-  const db = document.getElementById("dropBtn"); if (db) db.onclick = () => { Inv.dropSlot(invDetail); invDetail = -1; renderInventory(); };
+  p.innerHTML = `<div class="ihead"><h2>Inventory</h2><button id="sortBtn">Sort ▾</button></div>
+    <div class="igrid main">${main}</div>
+    <div class="igrid hot">${hot}</div>
+    <div class="ihint">${IS_TOUCH ? "drag to move · long-press to split · drag out to drop" : "drag to move/assign · shift-click split · right-click drop one · drag out to drop"} · I to close</div>`;
+  p.querySelector("#sortBtn").onclick = () => Inv.sort();
+}
+/* pointer drag / tooltip */
+let drag = null;
+function showGhost(cell, x, y) { const g = document.getElementById("dragGhost"), it = ITEMS[cell.id];
+  g.innerHTML = `<img src="${it.icon}" style="width:100%;height:100%;image-rendering:pixelated">${cell.qty > 1 ? `<span>${cell.qty}</span>` : ""}`;
+  g.style.left = x + "px"; g.style.top = y + "px"; g.style.display = "block"; }
+function hideGhost() { document.getElementById("dragGhost").style.display = "none"; }
+function showTip(idx, x, y) { const c = Inv.cell(idx); if (!c) { hideTip(); return; } const it = ITEMS[c.id], t = document.getElementById("itip");
+  t.innerHTML = `<b>${it.name}</b>${c.qty > 1 ? " ×" + c.qty : ""}<div class="r ${it.rarity}">${it.rarity}</div>${it.desc ? `<p>${it.desc}</p>` : ""}`;
+  t.style.display = "block"; t.style.left = Math.min(innerWidth - 210, x + 16) + "px"; t.style.top = (y + 16) + "px"; }
+function hideTip() { document.getElementById("itip").style.display = "none"; }
+function invPointerDown(e) {
+  const slot = e.target.closest(".islot"); if (!slot) return;
+  const idx = +slot.dataset.idx, cell = Inv.cell(idx); if (!cell) return;
+  e.preventDefault(); hideTip();
+  if (e.shiftKey) { invSplit(idx); return; }                  // shift-click → split in half
+  drag = { from: idx, moved: false, x: e.clientX, y: e.clientY };
+  drag.lp = setTimeout(() => { if (drag && !drag.moved) { invSplit(idx); drag = null; hideGhost(); } }, 480);  // long-press → split
+  showGhost(cell, e.clientX, e.clientY);
+}
+function invPointerMove(e) {
+  if (!drag) {
+    if (!invOpen) return;
+    const slot = e.target.closest && e.target.closest(".islot");
+    if (slot && Inv.cell(+slot.dataset.idx)) showTip(+slot.dataset.idx, e.clientX, e.clientY); else hideTip();
+    return;
+  }
+  if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 6) drag.moved = true;
+  const g = document.getElementById("dragGhost"); g.style.left = e.clientX + "px"; g.style.top = e.clientY + "px";
+  document.querySelectorAll(".islot.dragover").forEach((s) => s.classList.remove("dragover"));
+  const t = document.elementFromPoint(e.clientX, e.clientY), ts = t && t.closest && t.closest(".islot"); if (ts) ts.classList.add("dragover");
+}
+function invPointerUp(e) {
+  if (!drag) return; clearTimeout(drag.lp); hideGhost();
+  if (drag.moved) {
+    const panel = document.getElementById("invpanel");
+    const t = document.elementFromPoint(e.clientX, e.clientY), ts = t && t.closest && t.closest(".islot");
+    if (ts) invMove(drag.from, +ts.dataset.idx);
+    else if (!panel.contains(t)) invDrop(drag.from, false);    // released outside the panel → drop the stack
+  }
+  drag = null; document.querySelectorAll(".islot.dragover").forEach((s) => s.classList.remove("dragover"));
+  if (invOpen) renderInventory();
 }
 
 /* ---- debug panel ---- */
@@ -2664,10 +2790,6 @@ function syncDebugPanel() {
 }
 
 /* ---- drop an item back onto the ground near the player ---- */
-function dropItemOnGround(id, qty) {
-  if (FINDS[id]) { const a = rng() * 6.283; spawnFind(id, player.x + Math.sin(a) * 2, player.z + Math.cos(a) * 2); }
-  notify(id, qty);
-}
 
 // E interacts with whatever the crosshair is on (same target as a click).
 function interact() { interactTarget(curTarget || targetAlongRay(rayFromNDC(0, 0))); }
@@ -2864,7 +2986,8 @@ function interactWith(e) {
     const first = !discovered.has("f_" + e.t);
     discovered.add("f_" + e.t);
     notify(e.t, 1, first);
-    if (SEED_TREE[e.t] && (!Inv.hotbar[3] || SEED_TREE[Inv.hotbar[3]])) { Inv.hotbar[3] = e.t; renderHotbar(); }  // seeds go to slot 4
+    if (SEED_TREE[e.t] || e.t === "salt" || e.t === "leaves") Inv.autoHotbar(e.t);   // handy items go to the hotbar
+    if (e.drop) { const di = worldDrops.indexOf(e.drop); if (di >= 0) worldDrops.splice(di, 1); saveDrops(); }  // picked a dropped item back up
     const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
   } else {
     const first = !discovered.has(e.t);
@@ -3357,7 +3480,6 @@ function plantAt(x, z) {
   if (!Inv.has(seed)) { showCard("No seeds", "You have none of those to plant."); return; }
   if (!canPlant(species, x, z)) { showCard("Can't plant here", species === "palm" ? "Palms need open sand or low ground." : "Needs open soil or grass, away from trees."); return; }
   Inv.remove(seed, 1);
-  if (!Inv.has(seed)) { const hi = Inv.hotbar.indexOf(seed); if (hi >= 0) Inv.hotbar[hi] = null; }
   planted.push({ species, x, z, plantedAt: clock.t });
   colliders.push({ x, z, r: 0.4, kind: "planted" }); rebuildCollHash();
   if (onDig) onDig("plant");
@@ -3466,13 +3588,6 @@ function loadWorld() {
  * § GOATS & SALT  (Phase 6 Part C)
  * ===================================================================== */
 
-const CONSUMABLE = { coconut: 1, pinecone: 1, salt: 1 };     // share hotbar slot 4
-function cycleConsumable() {
-  const held = Object.keys(CONSUMABLE).filter(id => Inv.has(id));
-  if (!held.length) return;
-  const cur = Inv.hotbar[3], i = held.indexOf(cur);
-  Inv.hotbar[3] = held[(i + 1) % held.length]; renderHotbar();
-}
 
 /* ---- salt crust on high pool rims & spray rocks ---- */
 let saltSpots = [];
@@ -3502,7 +3617,7 @@ function harvestSaltAt(x, z) {
   spendStamina(0.03); s.amt = 0; s.reformAt = clock.t + TIDE_PERIOD * 0.7;
   const n = 1 + (rng()*2|0); Inv.add("salt", n);
   const first = !discovered.has("f_salt"); discovered.add("f_salt"); notify("salt", n, first);
-  if (!Inv.hotbar[3] || CONSUMABLE[Inv.hotbar[3]]) { Inv.hotbar[3] = "salt"; renderHotbar(); }
+  Inv.autoHotbar("salt");
   if (onDig) onDig("scrape");
   sparkle(s.x, surfaceAt(s.x, s.z).h + 0.2, s.z, [1, 1, 1], 6);
   return true;
@@ -3605,9 +3720,9 @@ function drawGoats(view) {
 function nearestGoat(x, z, maxd) { let best = null, bd = maxd; for (const g of goats) { const d = Math.hypot(g.x - x, g.z - z); if (d < bd) { bd = d; best = g; } } return best; }
 function offerSaltTo(g) {
   if (g.tamed) { g.follow = !g.follow; showCard(g.name, g.follow ? "trots along behind you." : "settles in to wait here."); saveTamed(); return; }
-  if (selectedTool() !== "salt" || !Inv.has("salt")) { showCard("Hold out salt", "Select salt (slot 4) and approach a goat slowly."); return; }
+  if (selectedTool() !== "salt" || !Inv.has("salt")) { showCard("Hold out salt", "Select salt in the hotbar and approach a goat slowly."); return; }
   if (clock.t - g.lastOffer < 120) { showCard("Still wary", "Give it a few minutes between offerings."); return; }
-  Inv.remove("salt", 1); if (!Inv.has("salt") && Inv.hotbar[3] === "salt") { Inv.hotbar[3] = null; renderHotbar(); }
+  Inv.remove("salt", 1);
   g.lastOffer = clock.t; g.trust++;
   if (onGoat) onGoat("bleat");
   sparkle(g.x, surfaceAt(g.x, g.z).h + 1, g.z, [1, 1, 0.6], 7);
@@ -3652,9 +3767,9 @@ const fsTri = buildFsTri();
 buildIcons();
 buildPanels();
 loadState();
-if (!Inv.hotbar.includes("shovel")) Inv.hotbar[0] = "shovel";   // slots 1-3: shovel, axe, pickaxe
-if (!Inv.hotbar.includes("axe")) Inv.hotbar[1] = "axe";
-if (!Inv.hotbar.includes("pickaxe")) Inv.hotbar[2] = "pickaxe";
+if (!Inv.hotbarHasId("shovel")) Inv.hotbar[0] = { id: "shovel", qty: 1 };   // slots 1-3: shovel, axe, pickaxe
+if (!Inv.hotbarHasId("axe")) Inv.hotbar[1] = { id: "axe", qty: 1 };
+if (!Inv.hotbarHasId("pickaxe")) Inv.hotbar[2] = { id: "pickaxe", qty: 1 };
 renderHotbar();
 syncDebugPanel();
 seedDigSpots();
@@ -3666,6 +3781,7 @@ goatDyn = makeDynamic(goatMesh(), 10);
 seedSalt();
 seedGoats();
 loadTamed();
+loadDrops();
 if (debugMode) auditRegistries();
 
 let proj = new Float32Array(16);
