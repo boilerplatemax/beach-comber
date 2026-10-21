@@ -3549,9 +3549,10 @@ function clickAt(ndcx, ndcy) {
   const pt = rayGround(ndcx, ndcy); if (!pt) return;
   if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return;   // too far: do nothing
   const tool = selectedTool();
+  const gy = surfaceAt(pt[0], pt[1]).h + 0.3;
   if (tool === "shovel") digAt(pt[0], pt[1]);
-  else if (tool === "axe") chopAt(pt[0], pt[1]);
-  else if (tool === "pickaxe") { if (!mineAt(pt[0], pt[1])) removeBuiltAt(pt[0], pt[1]); }   // no rock → chip placed ground
+  else if (tool === "axe") { if (!chopAt(pt[0], pt[1])) failStrike(false, pt[0], gy, pt[1]); }   // axe bit nothing → thud
+  else if (tool === "pickaxe") { if (!mineAt(pt[0], pt[1]) && !removeBuiltAt(pt[0], pt[1])) failStrike(true, pt[0], gy, pt[1]); }   // pick hit bare ground → clink
   else if (MAT_ITEM[tool] !== undefined) placeMaterial(pt[0], pt[1]);
   else if (SEED_TREE[tool]) plantAt(pt[0], pt[1]);
   else if (tool === "leaves") useLeavesAt(pt[0], pt[1]);
@@ -3904,7 +3905,23 @@ function goatPaw(g) {
 }
 
 // the dig action
-let shovelSwing = 0, camNudge = 0;
+let shovelSwing = 0, camNudge = 0, toolRecoilT = 0, camShake = 0, lastFailT = -99;
+const FAIL_COST = 0.03;          // a bounced swing costs less than a real hit (§10.1)
+// Bright sparks (metal on stone): fast, short-lived, warm.
+function spawnSparks(x, y, z, n) {
+  for (let i = 0; i < (n || 8) && particles.length < 200; i++) { const a = rng()*6.283, s = 2 + rng()*4;
+    particles.push({ x, y, z, vx: Math.cos(a)*s, vy: 1 + rng()*3, vz: Math.sin(a)*s, t: 0, life: 0.18 + rng()*0.18, col: [1.0, 0.82 + rng()*0.15, 0.4] }); }
+}
+// The universal "that didn't work" reaction: swing, recoil + camera jolt, brief
+// stagger, a clink (hard) or thud (soft), sparks or a dust puff, and a small cost (§10.1).
+function failStrike(hard, x, y, z) {
+  shovelSwing = Math.max(shovelSwing, 0.7); toolRecoilT = 1;
+  camShake = Math.max(camShake, hard ? 0.5 : 0.34);
+  player.landStun = Math.max(player.landStun, 0.18);          // brief stagger
+  rootPlayer(); spendStamina(FAIL_COST); lastFailT = clock.t;
+  if (onDig) onDig(hard ? "clink" : "thud");
+  if (hard) spawnSparks(x, y, z, 9); else spawnSand(x, y, z, 6, [0.66, 0.6, 0.5]);
+}
 let holeNear = (x, z) => {
   const gcx = (x + HALF) / CELL, gcz = (z + HALF) / CELL, r = DIG_R / CELL;
   const minx = Math.max(0, (gcx - r*2.3)|0), maxx = Math.min(GRID-1, Math.ceil(gcx + r*2.3));
@@ -3943,7 +3960,7 @@ function digAt(x, z) {
   if (resting) resting = false;
   if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;          // out of reach: no action
   if (player.sprinting || player.airborne) return;                            // no digging mid-sprint or mid-air
-  if (!canHeavyAction()) { shovelSwing = 0.4; return; }                       // tired / exhausted / still committed
+  if (!canHeavyAction()) { failStrike(false, x, surfaceAt(x,z).h + 0.3, z); return; }   // too tired: a weak, staggering miss
   // a stump in reach? the shovel can also lever it out (several strikes)
   const stp = nearestStump(x, z, REACH + 1.0);
   if (stp && Math.hypot(stp.x - player.x, stp.z - player.z) <= REACH + 1.2) { stumpStrike(stp); return; }
@@ -3957,11 +3974,11 @@ function digAt(x, z) {
   // In a pool, or ankle–knee open water: the shovel sifts — no terrain change, a cloudy plume, top-layer finds.
   if (inBasin || depth > ANKLE) { camNudge = 0.04; spendStamina(SIFT_COST); if (onDig) onDig("sift"); spawnSand(x, sy + 0.05, z, 16, [0.72, 0.68, 0.6]); revealSpot(x, z, true); return; }
   // Too many roots: can't dig under trees / boulders / POIs.
-  if (bigPropBlocking(x, z, 1.0)) { camNudge = 0.03; if (onDig) onDig("clang"); spawnSand(x, sy + 0.2, z, 5, [0.5, 0.42, 0.3]); return; }   // roots/boulder block
+  if (bigPropBlocking(x, z, 1.0)) { failStrike(true, x, sy + 0.4, z); return; }   // roots/boulder block → clink + recoil
 
   const kind = surfaceKind(x, z);
-  if (onDig) onDig(kind === "rock" ? "clang" : kind);
-  if (kind === "rock") { spawnSand(x, sy, z, 6, [0.5, 0.5, 0.52]); return; }    // clang, no dig
+  if (kind === "rock") { failStrike(true, x, sy + 0.3, z); return; }             // shovel on rock: sparks, no dig
+  if (onDig) onDig(kind);
 
   // Clicking the spoil mound beside a hole shoves it back in.
   const ci = cellIndex(x, z);
@@ -4123,8 +4140,9 @@ function drawShovel(view) {
   let rx = -f[2], rz = f[0]; const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl;      // camera right (horizontal)
   const upx = -rz*f[1], upy = rz*f[0] - rx*f[2], upz = rx*f[1];                           // camera up = right × forward
   const sw = Math.sin(Math.min(1, shovelSwing) * Math.PI);                               // 0→1→0 swing
-  const ox = 0.42, oy = -0.42 - sw * 0.25, oz = 0.78 + sw * 0.32;
-  const scale = 0.5, tilt = -0.5 - sw * 0.9;                                              // head swings down-forward
+  const rec = toolRecoilT * toolRecoilT;                                                 // recoil kick on a bounced hit
+  const ox = 0.42, oy = -0.42 - sw * 0.25 + rec * 0.28, oz = 0.78 + sw * 0.32 - rec * 0.5;
+  const scale = 0.5, tilt = -0.5 - sw * 0.9 + rec * 0.8;                                  // head swings down, then kicks back up
   const ct = Math.cos(tilt), st = Math.sin(tilt);
   const src = fp.mesh.pos, world = fp.world; let p = 0;
   for (let i = 0; i < src.length; i += 3) {
@@ -4147,6 +4165,8 @@ function updateDigging(dt) {
   const swingRate = 3.5 * (stamina < 0.3 ? 0.6 : 1);        // slower, heavier swing when tired
   if (shovelSwing > 0) shovelSwing = Math.max(0, shovelSwing - dt * swingRate);
   if (camNudge > 0) camNudge = Math.max(0, camNudge - dt * 0.4);
+  if (toolRecoilT > 0) toolRecoilT = Math.max(0, toolRecoilT - dt * 4.5);     // quick recoil settle
+  if (camShake > 0) camShake = Math.max(0, camShake - dt * 3.5);              // jolt decays fast
   updateParticles(dt);
   updateStamina(dt);
   updateRegrow();
@@ -4212,20 +4232,21 @@ function setRockInstance(o) {
 /* ---- chopping ---- */
 function chopStanding(o) {                                     // one axe strike on a standing tree
   if (!o || o.gone || o.falling || o.fallen) return;
-  if (!canHeavyAction()) { shovelSwing = 0.4; return; }
+  if (!canHeavyAction()) { failStrike(false, o.x, surfaceAt(o.x,o.z).h + 1.0, o.z); return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST); rootPlayer();
   if (onDig) onDig("chop");
   o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species)); o.hp--;
   if (o.hp <= 0) startFall(o);
 }
 function chopAt(x, z) {
-  if (mode !== "walk" || selectedTool() !== "axe") return;
+  if (mode !== "walk" || selectedTool() !== "axe") return false;
   const o = nearestObj(treeObjs, x, z, REACH + 1.2);
-  if (o && !o.falling && !o.fallen && Math.hypot(o.x - player.x, o.z - player.z) <= REACH + 1.4) { chopStanding(o); return; }
+  if (o && !o.falling && !o.fallen && Math.hypot(o.x - player.x, o.z - player.z) <= REACH + 1.4) { chopStanding(o); return true; }
   // a fallen trunk? (crown end first → Sticks + Leaves, then trunk → Logs)
-  const ft = nearestFallen(x, z, REACH + 1.4); if (ft) { chopFallen(ft); return; }
+  const ft = nearestFallen(x, z, REACH + 1.4); if (ft) { chopFallen(ft); return true; }
   // a stump? chop it out for a little wood (leaves a healing hole)
-  const st = nearestStump(x, z, REACH + 1.2); if (st) chopStump(st);
+  const st = nearestStump(x, z, REACH + 1.2); if (st) { chopStump(st); return true; }
+  return false;                                              // nothing choppable here
 }
 function leafCol(sp) { return sp === "broadleaf" ? [0.34,0.5,0.27] : sp === "palm" ? [0.3,0.42,0.25] : [0.2,0.33,0.2]; }
 // Leaves appear only when a tree is chopped: a short-lived burst (shared particle system).
@@ -4278,7 +4299,7 @@ function trunkHeightAt(x, z) {
 }
 function removeFallen(o) { o.gone = true; o.scale = 0; setTreeInstance(o); const i = fallenTrees.indexOf(o); if (i >= 0) fallenTrees.splice(i, 1); }
 function chopFallen(o) {
-  if (!canHeavyAction()) { shovelSwing = 0.4; return; }
+  if (!canHeavyAction()) { failStrike(false, o.x, surfaceAt(o.x,o.z).h + 0.6, o.z); return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST); rootPlayer(); if (onDig) onDig("chop");
   const [cx, cz] = fallenCrownPos(o), top = surfaceAt(cx, cz).h + 0.6;
   if (o.crownChops > 0) {                                      // crown end first → Sticks + Leaves
@@ -4308,7 +4329,7 @@ function stumpStrike(st) {
     saveWorld();
   }
 }
-function chopStump(st) { if (!canHeavyAction()) { shovelSwing = 0.4; return; } stumpStrike(st); }
+function chopStump(st) { if (!canHeavyAction()) { failStrike(false, st.x, surfaceAt(st.x,st.z).h + 0.4, st.z); return; } stumpStrike(st); }
 // digging the ground out from under a tree makes it topple
 function checkUndermine(x, z) {
   for (const o of treeObjs) {
@@ -4354,7 +4375,7 @@ function mineObj(o) {                                           // one pickaxe s
   if (!o || o.gone) return;
   if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 1.4) return;
   if (player.sprinting || player.airborne) return;                            // no mining mid-sprint or mid-air
-  if (!canHeavyAction()) { shovelSwing = 0.4; return; }
+  if (!canHeavyAction()) { failStrike(true, o.x, surfaceAt(o.x,o.z).h + o.sc*0.3, o.z); return; }   // too tired: pick bounces off
   shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST); rootPlayer();
   if (onDig) onDig("mine");
   o.hp--;
@@ -4887,10 +4908,14 @@ function frame(now) {
   // ---- matrices ----
   let f = camForward();
   const breathe = (resting || stamina < 0.35) ? Math.sin(t * 1.6) * (resting ? 0.03 : (0.35 - stamina) * 0.11) : 0;
-  if (mode === "walk" && (player.scramble > 0.01 || camNudge > 0.001 || breathe !== 0)) {   // dip + breathe + dig kick
-    const dip = player.scramble * 0.14 + Math.sin(t * 2.2) * player.scramble * 0.025 + camNudge + breathe;
+  // a bounced-tool jolt: a fast jitter on yaw & pitch that decays (§10.1)
+  const shk = camShake > 0.001 ? camShake * 0.09 : 0;
+  const shakeYaw = shk ? Math.sin(t * 90) * shk : 0, shakePit = shk ? Math.cos(t * 83) * shk : 0;
+  if (mode === "walk" && (player.scramble > 0.01 || camNudge > 0.001 || breathe !== 0 || shk !== 0)) {   // dip + breathe + dig kick + jolt
+    const dip = player.scramble * 0.14 + Math.sin(t * 2.2) * player.scramble * 0.025 + camNudge + breathe + shakePit;
+    const yaw = cam.yaw + shakeYaw;
     const cp = Math.cos(cam.pitch - dip), sp = Math.sin(cam.pitch - dip);
-    f = [Math.sin(cam.yaw) * cp, sp, -Math.cos(cam.yaw) * cp];
+    f = [Math.sin(yaw) * cp, sp, -Math.cos(yaw) * cp];
   }
   const view = M4.lookAt(cam.pos, [cam.pos[0]+f[0], cam.pos[1]+f[1], cam.pos[2]+f[2]], [0, 1, 0]);
   const invVP = M4.invert(M4.multiply(proj, view));
