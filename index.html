@@ -189,8 +189,8 @@
 <div id="itip"></div>
 <div id="debugpanel"></div>
 <div id="help">
-  WASD / click — move · Shift — run · click — use tool · E — pick up<br>
-  1 dig · 2 chop · 3 mine · 4 seed/salt · Q stomp · R rest · Tab journal · I pack · Esc pause
+  WASD move · Shift run · Space jump · click — use/interact · E — pick up<br>
+  1-8 hotbar · R rest · I pack · Tab journal · Esc pause
 </div>
 
 <script>
@@ -1548,10 +1548,11 @@ if (IS_TOUCH) (function mobileControls() {
     `<div id="mLayer"></div>
      <div id="mJoy"><div id="mKnob"></div></div>
      <div id="mBtns">
+       <div class="mBtn" data-act="jump">Jump</div>
        <div class="mBtn" data-act="run">Run</div>
-       <div class="mBtn" data-key="KeyE">Pick up</div>
-       <div class="mBtn" data-key="KeyQ">Stomp</div>
+       <div class="mBtn" data-key="KeyE">Use</div>
        <div class="mBtn" data-key="KeyR">Rest</div>
+       <div class="mBtn" data-key="KeyI">Pack</div>
        <div class="mBtn" data-key="Tab">Journal</div>
        <div class="mBtn" data-act="pause">Pause</div>
      </div>`;
@@ -1587,6 +1588,7 @@ if (IS_TOUCH) (function mobileControls() {
       unlockAudio();
       if (btn.dataset.act === "pause") overlay.classList.remove("hidden");
       else if (btn.dataset.act === "run") { mobileSprint = !mobileSprint; btn.style.background = mobileSprint ? "rgba(60,120,130,.8)" : ""; }
+      else if (btn.dataset.act === "jump") tryJump();
       else tapKey(btn.dataset.key);
     }, { passive: false });
   });
@@ -2982,7 +2984,7 @@ function clickAt(ndcx, ndcy) {
 function interactWith(e) {
   if (e.kind === "find") {
     const added = Inv.add(e.t, 1);
-    if (added <= 0) { notify(e.t, 1); showCard("Pack full", "Drop something to make room."); return; }
+    if (added <= 0) { showCard("Pack full", "Drop something to make room."); return; }
     const first = !discovered.has("f_" + e.t);
     discovered.add("f_" + e.t);
     notify(e.t, 1, first);
@@ -3202,7 +3204,7 @@ function seedDigSpots() {
 function nearestSpot(x, z, maxd) { let best = null, bd = maxd; for (const s of digSpots) { if (s.revealed) continue; const d = Math.hypot(s.x - x, s.z - z); if (d < bd) { bd = d; best = s; } } return best; }
 
 // the dig action
-let shovelSwing = 0, camNudge = 0, stompCd = 0;
+let shovelSwing = 0, camNudge = 0;
 let holeNear = (x, z) => {
   const gcx = (x + HALF) / CELL, gcz = (z + HALF) / CELL, r = DIG_R / CELL;
   const minx = Math.max(0, (gcx - r*2.3)|0), maxx = Math.min(GRID-1, Math.ceil(gcx + r*2.3));
@@ -3214,14 +3216,13 @@ let holeNear = (x, z) => {
 function revealSpot(x, z, sift) {
   const spot = nearestSpot(x, z, DIG_R + 0.5);
   if (spot) {
-    if (!sift && spot.razor && spot.strikes > 0 && clock.t - spot.lastStrike > 1.3) { spot.needed++; showCard("It wriggled deeper!", "Razor clams burrow — strike again, fast."); }
+    if (!sift && spot.razor && spot.strikes > 0 && clock.t - spot.lastStrike > 1.3) { spot.needed++; }   // razor clam burrows deeper
     spot.lastStrike = clock.t; spot.strikes++;
     if (spot.strikes >= spot.needed) {
       if (onDig) onDig("clink");
       spot.revealed = true;
       spawnFind(spot.item, spot.x, spot.z);
       const e = life[life.length - 1]; if (e) { e.dug = true; e.special = !!spot.special; if (spot.special) e.name = ODDITY_NAME; }
-      showCard(sift ? "Sifted something out!" : "Clink!", "Something's here — click it to collect.");
     }
   } else if (rng() < 0.12) {
     spawnFind(pick(["shell", "seaglass", "molt"]), x + (rng()-0.5), z + (rng()-0.5));
@@ -3231,18 +3232,18 @@ function digAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "shovel") return;
   if (resting) resting = false;
   if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;          // out of reach: no action
-  if (stamina <= 0.04) { shovelSwing = 0.4; showCard("Too tired", "Rest to recover before digging again."); return; }
+  if (stamina <= 0.04) { shovelSwing = 0.4; return; }                         // too tired (stamina ring shows it)
   const ci0 = cellIndex(x, z);
   const inBasin = ci0 >= 0 && filled[ci0] > heightmap[ci0] + 0.1;   // a tide pool / basin cell
   const sy = surfaceAt(x, z).h, depth = waterSurfaceAt(x, z) - sy;
   shovelSwing = 1; camNudge = 0.05;
 
   // Past knee depth in open water: no digging or sifting.
-  if (!inBasin && depth > KNEE) { if (onDig) onDig("splash"); spawnSand(x, sy + 0.1, z, 8, [0.82, 0.86, 0.9]); showCard("Too deep", "Wade to shallower water to dig."); return; }
+  if (!inBasin && depth > KNEE) { if (onDig) onDig("splash"); spawnSand(x, sy + 0.1, z, 8, [0.82, 0.86, 0.9]); return; }   // too deep
   // In a pool, or ankle–knee open water: the shovel sifts — no terrain change, a cloudy plume, top-layer finds.
   if (inBasin || depth > ANKLE) { camNudge = 0.04; spendStamina(0.045); if (onDig) onDig("sift"); spawnSand(x, sy + 0.05, z, 16, [0.72, 0.68, 0.6]); revealSpot(x, z, true); return; }
   // Too many roots: can't dig under trees / boulders / POIs.
-  if (bigPropBlocking(x, z, 1.0)) { camNudge = 0.03; if (onDig) onDig("clang"); spawnSand(x, sy + 0.2, z, 5, [0.5, 0.42, 0.3]); showCard("Too many roots", "Can't dig here — the ground is bound with roots."); return; }
+  if (bigPropBlocking(x, z, 1.0)) { camNudge = 0.03; if (onDig) onDig("clang"); spawnSand(x, sy + 0.2, z, 5, [0.5, 0.42, 0.3]); return; }   // roots/boulder block
 
   const kind = surfaceKind(x, z);
   if (onDig) onDig(kind === "rock" ? "clang" : kind);
@@ -3250,7 +3251,7 @@ function digAt(x, z) {
 
   // Clicking the spoil mound beside a hole shoves it back in.
   const ci = cellIndex(x, z);
-  if (ci >= 0 && dig[ci] > 0.3 && holeNear(x, z)) { spendStamina(0.03); fillHole(x, z); spawnSand(x, sy + 0.2, z, 8, [0.7, 0.62, 0.5]); showCard("Filled in", "You push the spoil back into the hole."); return; }
+  if (ci >= 0 && dig[ci] > 0.3 && holeNear(x, z)) { spendStamina(0.03); fillHole(x, z); spawnSand(x, sy + 0.2, z, 8, [0.7, 0.62, 0.5]); return; }   // push spoil back in
 
   spendStamina(0.06);
   const weak = stamina < 0.22 ? 0.6 : 1;                     // weaker, heavier strokes when tired
@@ -3264,12 +3265,6 @@ function digAt(x, z) {
   revealSpot(x, z, false);
 }
 let pendingDig = null;
-function stomp() {
-  if (stompCd > 0 || mode !== "walk") return;
-  stompCd = 2.5; camNudge = 0.04;
-  if (onDig) onDig("stomp");
-  for (const s of digSpots) { if (s.revealed) continue; const d = Math.hypot(s.x - player.x, s.z - player.z); if (d < 13 && surfaceKind(s.x, s.z) === "wet") { s.react = 1.2; spawnSand(s.x, surfaceAt(s.x, s.z).h, s.z, 3, [0.5, 0.6, 0.65]); } }
-}
 
 /* ---- sand particles ---- */
 const particles = [];
@@ -3358,7 +3353,6 @@ function updateDigging(dt) {
   const swingRate = 3.5 * (stamina < 0.3 ? 0.6 : 1);        // slower, heavier swing when tired
   if (shovelSwing > 0) shovelSwing = Math.max(0, shovelSwing - dt * swingRate);
   if (camNudge > 0) camNudge = Math.max(0, camNudge - dt * 0.4);
-  if (stompCd > 0) stompCd -= dt;
   updateParticles(dt);
   updateStamina(dt);
   updateRegrow();
@@ -3423,7 +3417,7 @@ function chopAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "axe") return;
   const o = nearestObj(treeObjs, x, z, 4.5); if (!o) return;
   if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 0.8) return;
-  if (stamina <= 0.04) { shovelSwing = 0.4; showCard("Too tired", "Rest before swinging the axe again."); return; }
+  if (stamina <= 0.04) { shovelSwing = 0.4; return; }
   if (o.falling) return;
   shovelSwing = 1; camNudge = 0.04; spendStamina(0.07);
   if (onDig) onDig("chop");
@@ -3441,7 +3435,6 @@ function startFall(o) {
   o.falling = true; o.fall = 0;
   o.leanDir = Math.atan2(o.z - player.z, o.x - player.x);      // topple away from the player
   if (onDig) onDig("timber");
-  showCard("Timber!", "The tree comes down.");
 }
 function finishFall(o) {
   o.gone = true; o.scale = 0; setTreeInstance(o);
@@ -3477,13 +3470,12 @@ function canPlant(species, x, z) {
 function plantAt(x, z) {
   const seed = selectedTool(), species = SEED_TREE[seed]; if (!species) return;
   if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;
-  if (!Inv.has(seed)) { showCard("No seeds", "You have none of those to plant."); return; }
-  if (!canPlant(species, x, z)) { showCard("Can't plant here", species === "palm" ? "Palms need open sand or low ground." : "Needs open soil or grass, away from trees."); return; }
+  if (!Inv.has(seed)) return;
+  if (!canPlant(species, x, z)) return;
   Inv.remove(seed, 1);
   planted.push({ species, x, z, plantedAt: clock.t });
   colliders.push({ x, z, r: 0.4, kind: "planted" }); rebuildCollHash();
   if (onDig) onDig("plant");
-  showCard("Planted", "A seedling. Give it a few days to grow.");
   saveWorld();
 }
 function plantStage(pl) { return Math.max(0, Math.min(1, (clock.t - pl.plantedAt) / (GROW_DAYS*DAY_PERIOD))); }
@@ -3493,7 +3485,7 @@ function mineAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "pickaxe") return;
   const o = nearestObj(rockObjs, x, z, 4.5); if (!o) return;
   if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 0.8) return;
-  if (stamina <= 0.04) { shovelSwing = 0.4; showCard("Too tired", "Rest before mining again."); return; }
+  if (stamina <= 0.04) { shovelSwing = 0.4; return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(0.08);
   if (onDig) onDig("mine");
   o.hp--;
@@ -3613,7 +3605,7 @@ function nearestSalt(x, z, maxd) { let best = null, bd = maxd; for (const s of s
 function harvestSaltAt(x, z) {
   const s = nearestSalt(x, z, 3.2); if (!s) return false;
   if (Math.hypot(s.x - player.x, s.z - player.z) > REACH + 1.4) return false;
-  if (stamina <= 0.03) { showCard("Too tired", "Rest before scraping salt."); return true; }
+  if (stamina <= 0.03) return true;
   spendStamina(0.03); s.amt = 0; s.reformAt = clock.t + TIDE_PERIOD * 0.7;
   const n = 1 + (rng()*2|0); Inv.add("salt", n);
   const first = !discovered.has("f_salt"); discovered.add("f_salt"); notify("salt", n, first);
@@ -3721,13 +3713,12 @@ function nearestGoat(x, z, maxd) { let best = null, bd = maxd; for (const g of g
 function offerSaltTo(g) {
   if (g.tamed) { g.follow = !g.follow; showCard(g.name, g.follow ? "trots along behind you." : "settles in to wait here."); saveTamed(); return; }
   if (selectedTool() !== "salt" || !Inv.has("salt")) { showCard("Hold out salt", "Select salt in the hotbar and approach a goat slowly."); return; }
-  if (clock.t - g.lastOffer < 120) { showCard("Still wary", "Give it a few minutes between offerings."); return; }
+  if (clock.t - g.lastOffer < 120) return;    // still wary — wait a few game-minutes between offerings
   Inv.remove("salt", 1);
   g.lastOffer = clock.t; g.trust++;
   if (onGoat) onGoat("bleat");
   sparkle(g.x, surfaceAt(g.x, g.z).h + 1, g.z, [1, 1, 0.6], 7);
   if (g.trust >= g.needTame) tameGoat(g);
-  else showCard("The goat edges closer", `It takes the salt. Trust ${g.trust}/${g.needTame}.`);
 }
 function tameGoat(g) {
   if (goats.filter(x => x.tamed).length >= 3) { showCard("Herd's full", "You can keep three goats at a time."); return; }
