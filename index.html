@@ -1459,7 +1459,7 @@ function crosshairAction() {
   const tool = selectedTool();
   if (curTarget) {
     const k = curTarget.kind;
-    if (k === "find") return "hand";
+    if (k === "find" || k === "rubble") return "hand";
     if (k === "creature") return "look";
     if (k === "goat" || k === "salt") return "hand";
     if (k === "tree" || k === "fallentree") return tool === "axe" ? "axe" : null;
@@ -1508,6 +1508,7 @@ function drawBounds(view) {
   for (const o of treeObjs) { if (o.gone || o.falling || !near(o.x, o.z)) continue; add(o.x, o.z, o.fallen ? 0.9 : 0.8 + o.scale*0.05, curTarget && curTarget.obj === o); }
   for (const o of rockObjs) { if (o.gone || !near(o.x, o.z)) continue; add(o.x, o.z, 0.5 + o.sc*0.45, curTarget && curTarget.obj === o); }
   for (const s of stumps) if (near(s.x, s.z)) add(s.x, s.z, 1.0, curTarget && curTarget.obj === s);
+  for (const lr of looseRocks) if (near(lr.x, lr.z)) add(lr.x, lr.z, 0.45 + lr.sc*0.4, curTarget && curTarget.obj === lr);
   if (n) { propUniforms(view); boundsDyn.draw(arr, n); }
 }
 
@@ -3042,6 +3043,7 @@ function targetAlongRay(r, sticky) {
   for (const o of rockObjs) { if (o.gone) continue; const gy = surfaceAt(o.x, o.z).h;
     capsule(o, "rock", o.x, o.z, o.x, gy, o.z, o.x, gy+o.sc*0.5, o.z, 0.5 + o.sc*0.45); }
   for (const s of stumps) { const gy = surfaceAt(s.x, s.z).h; capsule(s, "stump", s.x, s.z, s.x, gy, s.z, s.x, gy+0.8, s.z, 1.0); }
+  for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
 
   // stickiness: keep the locked target unless another is clearly closer
   if (stick && (!best || best.obj !== stick.obj) && (!best || bestT > stickT - STICK_MARGIN)) return stick;
@@ -3056,6 +3058,7 @@ function useToolOnTarget(t) {
   const tool = selectedTool();
   switch (t.kind) {
     case "find": case "creature": interactWith(t.obj); return true;
+    case "rubble": pickRubble(t.obj); return true;
     case "goat": offerSaltTo(t.obj); return true;
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
@@ -3676,16 +3679,24 @@ function mineObj(o) {                                           // one pickaxe s
   o.hp--;
   const sy = surfaceAt(o.x, o.z).h + o.sc*0.3;
   spawnSand(o.x, sy, o.z, 7, [0.5, 0.48, 0.46]);               // rock chips
-  if (!o.split && o.hp <= Math.ceil(o.maxhp/2)) {              // breaks into smaller rocks
+  if (!o.split && o.hp <= Math.ceil(o.maxhp/2)) {              // cracks apart, shedding pickable rubble
     o.split = true; o.scale *= 0.62;
-    for (let i = 0; i < 2 + (rng()*2|0); i++) looseRocks.push({ x: o.x+(rng()-0.5)*2.5, z: o.z+(rng()-0.5)*2.5, sc: 0.5+rng()*0.5, bornT: clock.t });
+    for (let i = 0; i < 2 + (rng()*2|0); i++) dropRubble(o.x+(rng()-0.5)*2.5, o.z+(rng()-0.5)*2.5, 0.5+rng()*0.5);
   }
-  if (o.hp <= 0) {
+  if (o.hp <= 0) {                                             // destroyed completely — nothing left but Stone rubble
     o.gone = true; o.scale = 0; setRockInstance(o);
     if (o.coll) { o.coll.r = 0; rebuildCollHash(); }
-    const n = 2 + (rng()*2|0); for (let i = 0; i < n; i++) spawnFind("stone", o.x+(rng()-0.5)*2, o.z+(rng()-0.5)*2);
-    for (let i = 0; i < 2; i++) looseRocks.push({ x: o.x+(rng()-0.5)*2, z: o.z+(rng()-0.5)*2, sc: 0.4+rng()*0.4, bornT: clock.t });
+    const n = 3 + (rng()*2|0); for (let i = 0; i < n; i++) dropRubble(o.x+(rng()-0.5)*2, o.z+(rng()-0.5)*2, 0.4+rng()*0.4);
   } else setRockInstance(o);
+}
+// Small rubble pieces: no mining needed — walk up and pick one for Stone.
+function dropRubble(x, z, sc) { if (looseRocks.length < 240) looseRocks.push({ x, z, sc, bornT: clock.t }); }
+function pickRubble(lr) {
+  const added = Inv.add("stone", 1);
+  if (added <= 0) { showCard("Pack full", "Drop something to make room."); return; }
+  const first = !discovered.has("f_stone"); discovered.add("f_stone"); notify("stone", 1, first);
+  const i = looseRocks.indexOf(lr); if (i >= 0) looseRocks.splice(i, 1);
+  sparkle(lr.x, surfaceAt(lr.x, lr.z).h + 0.2, lr.z, [0.7, 0.68, 0.64], 5);
 }
 
 /* ---- update + draw all Part-B objects ---- */
