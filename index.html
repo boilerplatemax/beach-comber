@@ -58,29 +58,30 @@
     backdrop-filter: blur(3px); animation: cardIn .22s ease;
   }
   @keyframes cardIn { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  /* interaction indicator: a tiny dot that blooms into a soft-pulsing ring (§11.2) */
   #crosshair {
     position: fixed; left: 50%; top: 50%; width: 5px; height: 5px; margin: -3px 0 0 -3px;
     border-radius: 50%; background: rgba(255,255,255,.55); z-index: 5; pointer-events: none;
-    box-shadow: 0 0 2px rgba(0,0,0,.6); display: none; transition: all .12s ease;
+    box-shadow: 0 0 2px rgba(0,0,0,.6); display: none; transition: width .12s ease, height .12s ease, margin .12s ease, background .12s ease, border-color .12s ease;
   }
-  #crosshair.active {
-    width: 11px; height: 11px; margin: -6px 0 0 -6px;
-    background: rgba(255,240,200,.9); box-shadow: 0 0 6px rgba(255,220,150,.7);
+  #crosshair.ring {
+    width: 16px; height: 16px; margin: -9px 0 0 -9px; background: transparent;
+    border: 2px solid rgba(255,238,200,.95); box-shadow: 0 0 6px rgba(255,220,150,.55), inset 0 0 3px rgba(0,0,0,.35);
+    animation: crosspulse 1.15s ease-in-out infinite;
   }
+  #crosshair.ring.dim { border-color: rgba(205,210,214,.5); box-shadow: 0 0 3px rgba(0,0,0,.4); animation: none; }
+  @keyframes crosspulse { 0%,100% { transform: scale(1); opacity: .95; } 50% { transform: scale(1.16); opacity: .7; } }
   #stamina {
     position: fixed; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px;
     border-radius: 50%; z-index: 4; pointer-events: none; display: none;
     -webkit-mask: radial-gradient(transparent 13px, #000 14px); mask: radial-gradient(transparent 13px, #000 14px);
   }
-  #hungerIcon { position: fixed; left: calc(50% - 46px); top: calc(50% - 16px); z-index: 5; pointer-events: none; display: none;
-    filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); }
-  #hungerIcon canvas { image-rendering: pixelated; display: block; }
-  #actionIcon {
-    position: fixed; left: calc(50% + 16px); top: calc(50% + 6px);
-    z-index: 5; pointer-events: none; display: none;
-    filter: drop-shadow(0 1px 2px rgba(0,0,0,.75)); transform-origin: center;
+  /* hunger: a smaller arc concentric with the stamina ring, only at Hungry or worse (§11.2) */
+  #hungerArc {
+    position: fixed; left: 50%; top: 50%; width: 22px; height: 22px; margin: -11px 0 0 -11px;
+    border-radius: 50%; z-index: 4; pointer-events: none; display: none; opacity: .9;
+    -webkit-mask: radial-gradient(transparent 7px, #000 8px); mask: radial-gradient(transparent 7px, #000 8px);
   }
-  #actionIcon canvas { image-rendering: pixelated; display: block; }
   #prompt {
     position: fixed; left: 50%; top: calc(50% + 20px); transform: translateX(-50%);
     z-index: 5; pointer-events: none; display: none; font-size: 13px; opacity: .9;
@@ -210,8 +211,7 @@
 <canvas id="tidecurve" width="150" height="46"></canvas>
 <div id="dbg"></div>
 <div id="stamina"></div>
-<div id="hungerIcon"></div>
-<div id="actionIcon"></div>
+<div id="hungerArc"></div>
 <div id="crosshair"></div>
 <div id="prompt"></div>
 <div id="card"></div>
@@ -1769,29 +1769,6 @@ const hud = document.getElementById("hud");
 const crossEl = document.getElementById("crosshair");
 const promptEl = document.getElementById("prompt");
 const staminaEl = document.getElementById("stamina");
-const actionIconEl = document.getElementById("actionIcon");
-let actionCv = null, actionCtx = null, actionPop = 0, lastIconKey = "";
-function blitActionIcon(desc) {
-  if (!actionCv) { actionCv = document.createElement("canvas"); actionCtx = actionCv.getContext("2d"); actionIconEl.innerHTML = ""; actionIconEl.appendChild(actionCv); }
-  const scale = innerWidth < 640 ? 2 : 3, S = 16 * scale;
-  if (actionCv.width !== S) { actionCv.width = S; actionCv.height = S; }
-  actionCtx.imageSmoothingEnabled = false; actionCtx.clearRect(0, 0, S, S);
-  const base = pixelIconCanvas(desc.id, desc.cant); if (base) actionCtx.drawImage(base, 0, 0, S, S);
-  const key = desc.id + (desc.cant ? "!" : "");
-  if (key !== lastIconKey) { lastIconKey = key; actionPop = 1; }       // one-frame pop on change
-}
-// stomach icon next to the stamina ring, shown only at Hungry or worse (§10.5)
-let hungerCv = null, hungerCtx = null;
-function updateHungerIcon() {
-  const el = document.getElementById("hungerIcon"), t = hungerTier();
-  const show = mode === "walk" && (t === "hungry" || t === "starving");
-  el.style.display = show ? "block" : "none"; if (!show) return;
-  if (!hungerCv) { hungerCv = document.createElement("canvas"); hungerCtx = hungerCv.getContext("2d"); el.appendChild(hungerCv); }
-  const S = 32; if (hungerCv.width !== S) { hungerCv.width = S; hungerCv.height = S; }
-  hungerCtx.imageSmoothingEnabled = false; hungerCtx.clearRect(0, 0, S, S);
-  const base = pixelIconCanvas("stomach", false); if (base) hungerCtx.drawImage(base, 0, 0, S, S);
-  el.style.opacity = t === "starving" ? (0.55 + 0.35 * Math.abs(Math.sin(performance.now() * 0.005))) : 0.92;   // pulse when starving
-}
 // project a world point to screen pixels (null if behind the camera); mirrors rayFromNDC's matrix order
 function projectToScreen(wx, wy, wz) {
   if (!lastVP) return null; const c = [wx, wy, wz, 1], o = [0, 0, 0, 0];
@@ -1799,77 +1776,14 @@ function projectToScreen(wx, wy, wz) {
   if (o[3] <= 0.01) return null;
   return [(o[0]/o[3]*0.5 + 0.5) * innerWidth, (1 - (o[1]/o[3]*0.5 + 0.5)) * innerHeight];
 }
-
-// Small crosshair action icons (hand, magnifier, shovel, axe, pickaxe, seed, leaves).
-/* ---- pixel-art action icons (§10.2): 16×16 grids, one char per pixel ---- */
-// Palette pulled from the game's own colours, plus a 1px dark outline (1).
-const PX_PAL = { ".": null, "1": "#241c14", "2": "#ccd5de", "3": "#8793a0", "4": "#9a6336",
-  "5": "#5f3d22", "6": "#dcc78f", "7": "#6f8a46", "8": "#5aa0c0", "9": "#eef3f2",
-  "a": "#c6523e", "b": "#d4a468", "c": "#8a4a6a", "d": "#c7a24a" };
-const PX_ICONS = {
-  // shovel: wood shaft (4/5), steel blade (2/3)
-  dig: ["......11........","......1451......","......1451......","......1451......","......1451......",
-        "......1451......",".....145541.....","....1132231.....","...123222321....","...123322321....",
-        "...123222321....","....1322231.....",".....13221......",".....1131.......","......11........"],
-  // axe: steel head (2/3) biting left, wood handle (4/5) down-right
-  chop: [".....1111.......","...11322311.....","..123333321.....",".12333333211....",".1233333331.....",
-         ".1233333321.....","..12333321......","...113345.......","......1451......","......1451......",
-         ".......1451.....",".......1451.....",".......1451.....",".......111......"],
-  // pickaxe: curved steel head (2/3), wood handle (4/5)
-  mine: ["..1.......1.....","..121...121.....",".12321.12321....","123332123332....",".12332232321....",
-         "...11232311.....","......1451......","......1451......","......1451......",".......1451.....",
-         ".......1451.....",".......1451.....",".......111......"],
-  // open hand (skin b, highlight 9)
-  hand: ["...1.1.1........","...1b1b1b1......","..1b1b1b1b1.....","..1bbbbbbb1.....",".11bbbbbbb1.....",
-         ".1bbbbbbbb1.....","11bbbbbbbbb1....","1b9bbbbbbbb1....","1b9bbbbbbbb1....",".1bbbbbbbbb1....",
-         "..1bbbbbbbb1....","...1bbbbbbb1....","....1bbbbb1.....",".....111111....."],
-  // magnifier (inspect): glass ring (8/9), handle (5)
-  look: ["...11111........","..1999991.......",".19888889 1.....",".19822889 1.....","1982338891......",
-         "1982338891......","1988888891......","1988888891......",".19888891.......","..1999991.......",
-         "...11115........","......1551.......","......15551......",".......1551......",".......111......"],
-  // bucket (scoop): steel pail (3/2) with water (8)
-  scoop: ["..111111111.....",".19888888891....","1988888888891...","198888888891....",".13888888831....",
-          "..1322222231....","...13222231.....","...13222231.....","...13222231.....","....132231......",
-          "....132231......",".....1331.......",".....1111......."],
-  // material block (place): a cube (tan 6, sides shaded 5)
-  place: ["....111111......","...16666661.....","..166666661.....",".16666666661....","1666666666661...",
-          "1566666666651...","1556666666551...","1555666665551...","1555566655551...","15555566555551..",
-          ".1555555555551..","..155555555551..","...1555555551...","....15555551....",".....111111....."],
-  // food (eat): a red berry with a green leaf (a/9/7)
-  eat: [".......71.......",".....17771......","....1779 1......","....111.........","...1aaa1........",
-        "..1aaaaa1.......",".1aa9aaaaa1.....","1aaaaaaaaaa1....","1aa99aaaaaa1....","1aaaaaaaaaa1....",
-        "1aaaaaaaaaa1....",".1aaaaaaaa1.....","..1aaaaaa1......","...111111......."],
-  // stomach (hunger meter): a rounded belly (c/a/9)
-  stomach: ["....11111.......","...1ccccc11.....","..1cccccccc1....",".1ccccccccc1....",".1cccc9cccc1....",
-            "1ccccccccccc1...","1ccccccccccc1...","1ccccccccccc1...","1ccccccccccc1...",".1cccccccccc1...",
-            ".1cccccccccc1...","..1ccccccccc1...","...1cccccc11....","....111111......"],
-};
-// render a 16×16 grid once to an offscreen canvas (crisp pixels)
-const _iconCache = {};
-function pixelIconCanvas(name, cant) {
-  const key = name + (cant ? "!" : "");
-  if (_iconCache[key]) return _iconCache[key];
-  const rows = PX_ICONS[name]; const cv = document.createElement("canvas"); cv.width = 16; cv.height = 16;
-  const ctx = cv.getContext("2d"); ctx.imageSmoothingEnabled = false;
-  if (cant) ctx.globalAlpha = 0.5;                                     // dim for the "can't" variant
-  if (rows) for (let y = 0; y < rows.length && y < 16; y++) { const row = rows[y];
-    for (let x = 0; x < row.length && x < 16; x++) { const c = PX_PAL[row[x]]; if (c) { ctx.fillStyle = c; ctx.fillRect(x, y, 1, 1); } } }
-  if (cant) { ctx.globalAlpha = 1;                                     // tiny red X, bottom-right
-    ctx.fillStyle = "#241c14"; const xs = [[10,10],[11,11],[12,12],[13,13],[13,10],[12,11],[11,12],[10,13]];
-    for (const [a, c] of [[10,10],[13,13],[13,10],[10,13]]) ctx.fillRect(a, c, 1, 1);
-    ctx.fillStyle = "#e85a46"; for (const [a, c] of [[11,11],[12,12],[12,11],[11,12]]) ctx.fillRect(a, c, 1, 1);
-  }
-  _iconCache[key] = cv; return cv;
-}
-// First-run key hints: shown the first few times each action is available, then retired.
+// First-run hint shown the first few times anything targetable comes into reach.
 let hintsOn = true;
 const hintCount = {};
 try { Object.assign(hintCount, JSON.parse(localStorage.getItem("bc_hints") || "{}")); if (localStorage.getItem("bc_hintsOff") === "1") hintsOn = false; } catch (e) {}
 function saveHints() { try { localStorage.setItem("bc_hints", JSON.stringify(hintCount)); localStorage.setItem("bc_hintsOff", hintsOn ? "0" : "1"); } catch (e) {} }
 function resetHints() { for (const k in hintCount) delete hintCount[k]; hintsOn = true; saveHints(); }
-let lastAction = null, hintT = 0, hintText = "";
-const HINT_VERB = { hand: "pick up", look: "inspect", dig: "dig", chop: "chop", mine: "mine", scoop: "scoop", place: "place", eat: "eat" };
-// What the crosshair is on right now → which action icon to show.
+let hintT = 0, hintText = "", lastAimShown = false;
+
 // Edible items → how much hunger they restore (§10.5). Tuned so a beach walk keeps you fed.
 const EDIBLE = { clam: 0.12, cockle: 0.1, mussel: 0.1, kelp: 0.08, seaweed: 0.08, coconut: 0.26, berry: 0.14 };
 const COOKABLE = { clam: 1, cockle: 1, mussel: 1 };            // shellfish: a campfire doubles their value
@@ -1884,40 +1798,34 @@ function feedPlayer(id) {
   saveState();
 }
 let chewT = 0;
-function toolIcon(tool) {
-  if (tool === "shovel") return "dig"; if (tool === "axe") return "chop"; if (tool === "pickaxe") return "mine";
-  if (tool === "bucket") return "scoop"; if (MAT_ITEM[tool] !== undefined || SEED_TREE[tool]) return "place";
-  if (isFood(tool)) return "eat"; if (tool === "leaves") return "hand"; return null;
-}
-// What the crosshair is on → {id, cant}. `cant` shows the dimmed-with-X variant (§10.2),
-// which lines up with the failStrike reaction in §10.1.
-function crosshairAction() {
+
+/* ---- the interaction target, independent of the equipped tool (§11.2 / §11.3) ---- */
+// Which tool performs the primary action on each target kind.
+const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", goat: "hand", salt: "hand", creature: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
+function aimInfo() {
+  if (mode !== "walk") return null;
+  if (curTarget) return { kind: curTarget.kind, obj: curTarget.obj, x: curTarget.x, z: curTarget.z, need: TOOL_FOR_KIND[curTarget.kind] || "hand" };
   const tool = selectedTool();
-  if (curTarget) {
-    const k = curTarget.kind;
-    if (k === "find") return { id: isFood(curTarget.obj.t) ? "eat" : "hand" };
-    if (k === "rubble" || k === "goat" || k === "salt") return { id: "hand" };
-    if (k === "bush") return { id: "hand", cant: !curTarget.obj.ripe };
-    if (k === "creature") return tool === "bucket"
-      ? { id: "scoop", cant: !bucket.water || bucket.creatures.length >= BUCKET_CAP || !BUCKETABLE[curTarget.obj.t] }
-      : { id: "look" };
-    if (k === "tree" || k === "fallentree") return tool === "axe" ? { id: "chop" } : { id: toolIcon(tool) || "chop", cant: true };
-    if (k === "rock") return tool === "pickaxe" ? { id: "mine" } : { id: toolIcon(tool) || "mine", cant: true };
-    if (k === "stump") return (tool === "shovel" || tool === "axe") ? { id: tool === "shovel" ? "dig" : "chop" } : { id: toolIcon(tool) || "dig", cant: true };
-  }
-  if (isFood(tool)) return { id: "eat" };                   // food in hand: eat it anytime
+  if (isFood(tool)) return { kind: "self", need: "hand" };                 // food in hand: eat anytime
   const pt = rayGround(0, 0); if (!pt) return null;
   if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return null;
-  if (tool === "shovel") return { id: "dig", cant: surfaceKind(pt[0], pt[1]) === "rock" };   // can't dig stone
-  if (tool === "pickaxe") return { id: "mine", cant: !nearestObj(rockObjs, pt[0], pt[1], 4.5) && !(cellIndex(pt[0],pt[1])>=0 && built[cellIndex(pt[0],pt[1])] > 0.05) };
-  if (tool === "axe") return { id: "chop", cant: !nearestObj(treeObjs, pt[0], pt[1], REACH+1.2) && !nearestFallen(pt[0], pt[1], REACH+1.4) && !nearestStump(pt[0], pt[1], REACH+1.2) };
-  if (MAT_ITEM[tool] !== undefined) return { id: "place", cant: !canPlaceAt(pt[0], pt[1]) };
+  if (MAT_ITEM[tool] !== undefined) return canPlaceAt(pt[0], pt[1]) ? { kind: "ground", x: pt[0], z: pt[1], need: "self" } : null;
+  if (SEED_TREE[tool]) return canPlant(SEED_TREE[tool], pt[0], pt[1]) ? { kind: "ground", x: pt[0], z: pt[1], need: "self" } : null;
   if (tool === "bucket") { const atWater = waterDepthAt(pt[0], pt[1]) > 0.08;
-    if (!bucket.water && bucket.creatures.length === 0) return { id: "scoop", cant: !atWater };   // empty: fill only at water
-    return { id: "scoop" }; }                                                                      // full: pour anywhere
-  if (SEED_TREE[tool]) return { id: "place", cant: !canPlant(SEED_TREE[tool], pt[0], pt[1]) };
-  if (tool === "leaves") return { id: "hand" };
+    return (bucket.water || bucket.creatures.length || atWater) ? { kind: "ground", x: pt[0], z: pt[1], need: "bucket" } : null; }
+  if (tool === "leaves") return { kind: "ground", x: pt[0], z: pt[1], need: "self" };
+  if (surfaceKind(pt[0], pt[1]) !== "rock") return { kind: "ground", x: pt[0], z: pt[1], need: "shovel" };   // diggable ground → a shovel target
   return null;
+}
+// Do you OWN a tool that can affect this target (even if not equipped — auto-switch will reach for it)?
+function aimAffordable(info) {
+  if (!info) return false;
+  const n = info.need;
+  if (n === "hand" || n === "self") return true;
+  if (info.kind === "creature") return true;                 // inspecting always works
+  if (info.kind === "stump") return Inv.hotbarHasId("axe") || Inv.hotbarHasId("shovel") || selectedTool() === "axe" || selectedTool() === "shovel";
+  if (n === "bucket") return Inv.hotbarHasId("bucket") || selectedTool() === "bucket";
+  return Inv.hotbarHasId(n) || selectedTool() === n;
 }
 
 // Debug: audit every registry mesh for invisible / degenerate geometry.
@@ -5435,40 +5343,42 @@ function frame(now) {
   gl.bindVertexArray(null);
 
   // ---- hud ----
-  crossEl.style.display = (mode === "walk" && !IS_TOUCH) ? "block" : "none";
   // stamina ring near the crosshair — only visible while it isn't full
   if (mode === "walk" && stamina < 0.995) {
     const deg = Math.max(0, stamina) * 360, col = stamina < 0.25 ? "#d9694e" : resting ? "#8fd0a0" : "#79bcc6";
     staminaEl.style.display = "block";
     staminaEl.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.1) ${deg}deg 360deg)`;
   } else staminaEl.style.display = "none";
-  updateHungerIcon();
+  // hunger arc — a smaller concentric arc, only at Hungry or worse
+  const hTier = hungerTier(), hShow = mode === "walk" && (hTier === "hungry" || hTier === "starving");
+  const hArc = document.getElementById("hungerArc");
+  if (hShow) { const deg = Math.max(0.04, hunger) * 360, col = hTier === "starving" ? "#d05a46" : "#d59a4a";
+    hArc.style.display = "block"; hArc.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.07) ${deg}deg 360deg)`;
+    hArc.style.opacity = hTier === "starving" ? (0.6 + 0.3 * Math.abs(Math.sin(performance.now() * 0.005))) : 0.9;
+  } else hArc.style.display = "none";
   document.getElementById("hotbar").style.display = (mode === "walk") ? "flex" : "none";
-  // targeting: recompute the crosshair target, show its action icon + a glint; no constant text
+  // interaction indicator: a dot that becomes a soft-pulsing ring over anything in reach (§11.2)
   if (mode === "walk") {
     curTarget = targetAlongRay(rayFromNDC(0, 0), curTarget);
-    const action = crosshairAction();
-    if (action) {
-      blitActionIcon(action);
-      actionIconEl.style.display = "block";
-      // Desktop: just below-right of the crosshair. Mobile: floating above the targeted object.
-      if (IS_TOUCH && curTarget) { const sp = projectToScreen(curTarget.x, surfaceAt(curTarget.x, curTarget.z).h + 1.2, curTarget.z);
-        if (sp) { actionIconEl.style.left = (sp[0] - (innerWidth<640?16:24)) + "px"; actionIconEl.style.top = (sp[1] - (innerWidth<640?40:56)) + "px"; } }
-      else { actionIconEl.style.left = "calc(50% + 16px)"; actionIconEl.style.top = "calc(50% + 6px)"; }
-      if (actionPop > 0) actionPop = Math.max(0, actionPop - dt * 6);
-      actionIconEl.style.transform = `scale(${1 + actionPop * 0.45})`;
-      crossEl.classList.toggle("active", !!curTarget);
-      if (action.id !== lastAction) {                   // action just became available
-        lastAction = action.id;
-        if (hintsOn && (hintCount[action.id] || 0) < 3 && !action.cant) {
-          hintCount[action.id] = (hintCount[action.id] || 0) + 1; saveHints();
-          hintText = `${IS_TOUCH ? "tap" : "click / E"} — ${HINT_VERB[action.id] || "use"}`; hintT = 2.6;
-        }
-      }
-    } else { actionIconEl.style.display = "none"; crossEl.classList.remove("active"); lastAction = null; }
+    const info = aimInfo();
+    if (info) {
+      const dim = !aimAffordable(info);
+      crossEl.className = "ring" + (dim ? " dim" : "");
+      if (IS_TOUCH && info.obj) {                        // mobile: the ring floats over the object
+        const sp = projectToScreen(info.x, surfaceAt(info.x, info.z).h + 0.8, info.z);
+        if (sp) { crossEl.style.left = sp[0] + "px"; crossEl.style.top = sp[1] + "px"; crossEl.style.display = "block"; } else crossEl.style.display = "none";
+      } else if (IS_TOUCH) { crossEl.style.display = "none"; }
+      else { crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = "block"; }
+      if (!lastAimShown) { lastAimShown = true;
+        if (hintsOn && (hintCount.use || 0) < 3) { hintCount.use = (hintCount.use || 0) + 1; saveHints(); hintText = IS_TOUCH ? "tap to use" : "click / E to use"; hintT = 2.2; } }
+    } else {
+      crossEl.className = ""; lastAimShown = false;
+      if (IS_TOUCH) crossEl.style.display = "none";
+      else { crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = "block"; }
+    }
     if (hintT > 0) { hintT -= dt; promptEl.textContent = hintText; promptEl.style.display = "block"; }
     else promptEl.style.display = "none";
-  } else { actionIconEl.style.display = "none"; promptEl.style.display = "none"; crossEl.classList.remove("active"); curTarget = null; }
+  } else { promptEl.style.display = "none"; crossEl.className = ""; crossEl.style.display = "none"; curTarget = null; }
   const ti = tideInfo();
   const mins = Math.floor(ti.tToLow / 60), secs = Math.floor(ti.tToLow % 60);
   hud.textContent =
