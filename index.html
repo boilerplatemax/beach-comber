@@ -380,6 +380,47 @@ const CAUSEWAY = (function (r) {
            width: 9 + r() * 5 };            // causeway half-width (world units)
 })(subStream());
 
+/* --------------------------------------------------------------------- *
+ * § COASTAL BIOMES  (Phase 9 Part C): the coast is split into seeded
+ *   angular segments (soft-blended), each with its own look, props,
+ *   critters, loot weights, dig-tell density and walking feel.
+ * --------------------------------------------------------------------- */
+// mat ids are the fixed MAT.* values (grass1 dirt2 sand3 gravel4 stone5 mud6), hardcoded
+// here because MAT is declared further down; keep in sync with the MAT block.
+const COAST_BIOMES = {
+  sandy:   { mat: 3, feet: "sand",   speed: 1.0,  tell: 1.0,  crit: ["crab","gull","piper"],
+             finds: ["shell","seaglass","sanddollar","moonsnail","cockle"], label: "Sandy beach" },
+  cobble:  { mat: 4, feet: "gravel", speed: 0.92, tell: 0.5,  crit: ["crab","hopper","gull"],
+             finds: ["seaglass","agate","stone","shell","driftwood"], label: "Cobble beach", flip: true },
+  reef:    { mat: 5, feet: "rock",   speed: 0.85, tell: 0.4,  crit: ["star","anemone","urchin"],
+             finds: ["mussel","limpet","seaglass","shell","cuttle"], label: "Rocky reef shelf" },
+  mudflat: { mat: 6, feet: "mud",    speed: 0.6,  tell: 1.3,  crit: ["heron","piper","gull"],
+             finds: ["clam","cockle","wormcast","mud","worm"], label: "Mudflat" },
+  marsh:   { mat: 1, feet: "grass",  speed: 0.8,  tell: 0.7,  crit: ["heron","piper","gull"],
+             finds: ["pickleweed","salt","cockle","shell","worm"], label: "Salt marsh" },
+};
+const BIOME_SEG = (function (r, ch) {
+  const w = { sandy: 3, cobble: 2, reef: 2, mudflat: 2, marsh: 1 };
+  if (ch === "atoll")     { w.reef = 4; w.sandy = 4; w.mudflat = 1; w.marsh = 1; }
+  if (ch === "lowlands")  { w.sandy = 4; w.mudflat = 3; w.marsh = 3; w.cobble = 1; }
+  if (ch === "peaks")     { w.cobble = 4; w.reef = 4; w.sandy = 1; w.mudflat = 1; }
+  if (ch === "highlands") { w.cobble = 3; w.reef = 3; w.sandy = 2; }
+  const pool = []; for (const k in w) for (let i = 0; i < w[k]; i++) pool.push(k);
+  const segs = 5 + (r() * 3 | 0), sizes = []; let acc = 0;
+  for (let i = 0; i < segs; i++) { const s = 0.6 + r(); sizes.push(s); acc += s; }
+  const list = []; let a = 0;
+  for (let i = 0; i < segs; i++) { const frac = sizes[i] / acc * 6.2831853; list.push({ start: a, end: a + frac, biome: pool[(r() * pool.length) | 0] }); a += frac; }
+  list[list.length - 1].end = 6.2831854;
+  return list;
+})(subStream(), CHARACTER);
+function coastBiomeAt(x, z) {
+  let ang = Math.atan2(z, x);
+  ang += (nBar.fbm(x * 0.004 + 11, z * 0.004 + 7, 2, 2, 0.5) - 0.5) * 0.35;   // soft, wavy boundaries
+  ang = (ang % 6.2831853 + 6.2831853) % 6.2831853;
+  for (const s of BIOME_SEG) if (ang >= s.start && ang < s.end) return s.biome;
+  return BIOME_SEG[0].biome;
+}
+
 // Ridged multifractal → sharp mountain ridgelines & rock formations.
 function ridgedMF(n, x, y, oct) {
   let sum = 0, amp = 0.5, freq = 1.0, norm = 0, prev = 1.0;
@@ -498,6 +539,15 @@ function buildHeightmap() {
 function smoothstep(a, b, x) {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
+}
+// Paint the coastal band with each segment's biome material (§C palette).
+function paintBiomes() {
+  for (let z = 0; z < GRID; z++) for (let x = 0; x < GRID; x++) {
+    const i = z * GRID + x, hb = heightmap[i];
+    if (hb < -TIDE_RANGE * 0.7 || hb > 8.5) continue;          // only the coastal / intertidal band
+    const bi = COAST_BIOMES[coastBiomeAt(x * CELL - HALF, z * CELL - HALF)];
+    material[i] = bi.mat; matField[i] = bi.mat;
+  }
 }
 
 // Bilinear height query (fast, used for generation / placement).
@@ -665,6 +715,7 @@ const SKY_NIGHT = { zenith: [0.05, 0.07, 0.13], horizon: [0.10, 0.12, 0.18], war
 const SKY = { zenith: [0,0,0], horizon: [0,0,0], warm: [0,0,0], sun: [0,0,0] };
 
 function dayFactor() { return smoothstep(-0.32, 0.5, Math.cos((timeOfDay - 0.3) * 6.2831853)); }
+let booted = false;              // true once init finishes (gates runtime-only telegraphs in updateSun)
 function updateSun() {
   const ang = (timeOfDay - 0.3) * 6.2831853;           // 0 at the day's peak
   const el = Math.cos(ang) * 0.9, az = 0.5 + timeOfDay * 3.0;
@@ -673,6 +724,12 @@ function updateSun() {
   const f = dayFactor();
   for (const k of ["zenith", "horizon", "warm"])
     SKY[k] = SKY_DAY[k].map((v, i) => v * f + SKY_NIGHT[k][i] * (1 - f));
+  // telegraph an approaching storm: grey, flatten the sky
+  const mood = booted ? eventMood() : 0;
+  if (mood > 0) { const grey = [0.5, 0.52, 0.55];
+    for (const k of ["zenith", "horizon"]) SKY[k] = SKY[k].map((v, i) => v * (1 - mood * 0.6) + grey[i] * mood * 0.6);
+    SKY.warm = SKY.warm.map(v => v * (1 - mood * 0.45));
+  }
 }
 updateSun();
 
@@ -722,6 +779,9 @@ function updateTide(gdt) {       // gdt = game-time seconds (already clock-scale
   waterLevel = levelAt(tideT, tideDay);
   if (waterLevel >= wetLevel) wetLevel = waterLevel;          // instantly wet
   else wetLevel += (waterLevel - wetLevel) * Math.min(1, gdt * 0.05);  // slow dry-back
+  // roll the next event once per high tide (near tideT 0.25)
+  if (tideT > 0.2 && tideT < 0.3) { if (!eventRolled) { nextEvent = rollTideEvent(); eventRolled = true; } }
+  else if (tideT > 0.45) eventRolled = false;
 }
 function tideInfo() {
   const rising = tideLevelAt((tideT + 0.002) % 1) > waterLevel;
@@ -774,9 +834,25 @@ function updateSurf() {
   if (!surfAudio) return;
   try {
     const rel = Math.max(0, Math.min(1, (waterLevel + TIDE_RANGE * 0.6) / (TIDE_RANGE * 1.2)));  // 0 low … 1 high
-    const target = (mode === "walk" ? 0.02 + rel * 0.07 : 0);
+    const target = (mode === "walk" ? 0.02 + rel * 0.07 + eventMood() * 0.06 : 0);   // louder surf before a storm
     surfAudio.gain.gain.value += (target - surfAudio.gain.gain.value) * 0.04;
   } catch (e) {}
+}
+
+/* ---- tide events (§C): each high tide rolls what the next low washes up ---- */
+const TIDE_EVENTS = [
+  { id: "calm", w: 50 }, { id: "storm", w: 14 }, { id: "kelp", w: 12 }, { id: "stars", w: 8 },
+  { id: "jelly", w: 8 }, { id: "driftseed", w: 6 }, { id: "floats", w: 3 }, { id: "oddity", w: 1 },
+];
+const EVENT_LABEL = { calm: "A calm tide", storm: "A storm surge", kelp: "A kelp storm", stars: "A sea-star stranding",
+  jelly: "A jellyfish bloom", driftseed: "A drift-seed day", floats: "Glass floats washed in", oddity: "Something rare washed in" };
+let nextEvent = "calm", currentEvent = "calm", eventRolled = false, starsRescued = 0, carryingStars = 0;
+function rollTideEvent() { let tot = 0; for (const e of TIDE_EVENTS) tot += e.w; let x = rng() * tot; for (const e of TIDE_EVENTS) { x -= e.w; if (x <= 0) return e.id; } return "calm"; }
+// Storminess 0..1 to telegraph an approaching storm/kelp wash through sky + surf (no UI text).
+function eventMood() {
+  if (nextEvent !== "storm" && nextEvent !== "kelp") return 0;
+  const fall = Math.max(0, Math.min(1, (tideT - 0.25) / 0.5));
+  return (nextEvent === "storm" ? 1 : 0.5) * fall;
 }
 
 // Ripple marks: the ebbing tide leaves ripples in the sand it just uncovered (§B).
@@ -2532,6 +2608,22 @@ function sandMatMesh()   { return clumpMesh([0.86,0.78,0.59]); }
 function dirtMatMesh()   { return clumpMesh([0.40,0.30,0.20]); }
 function gravelMatMesh() { return clumpMesh([0.56,0.55,0.51]); }
 function mudMatMesh()    { return clumpMesh([0.34,0.28,0.20]); }
+// --- Part C biome finds & critters ---
+function sanddollarMesh() { const m = discMesh(0, 0.26, 10, 0.03, [0.92,0.9,0.84]); mergeMesh(m, discMesh(-0.01, 0.26, 10, -0.02, [0.86,0.84,0.78])); return m; }
+function moonsnailMesh() { const m = Mesh(); mCyl(m,0,0.22,0.2,0.05,8,[0.6,0.56,0.62]); mergeMesh(m, discMesh(0,0.2,8,0.08,[0.68,0.62,0.66])); return m; }
+function agateMesh() { const m = Mesh(); mRock(m, mulberry32(0xa6a7 ^ SEED_INT), [0.82,0.58,0.4]); return m; }
+function musselMesh() { const m = Mesh(); mCyl(m,-0.2,0.2,0.1,0.02,6,[0.18,0.2,0.32]); mergeMesh(m, discMesh(0.2,0.1,6,0.05,[0.24,0.26,0.4])); return m; }
+function limpetMesh() { const m = Mesh(); mCyl(m,0,0.14,0.2,0.0,8,[0.7,0.64,0.5]); mergeMesh(m, discMesh(0,0.2,8,0,[0.6,0.55,0.44])); return m; }
+function wormcastMesh() { const m = Mesh(); for (let i=0;i<5;i++){ const a=i*0.9; mCyl(m, 0.02*i, 0.06+0.02*i, 0.06-0.008*i, 0.055-0.008*i, 6, [0.4,0.33,0.24]); } return m; }
+function pickleweedMesh() { const m = Mesh(); const g=[0.42,0.56,0.33]; for (let i=0;i<4;i++){ const a=i/4*6.283, r=0.06; for(let s=0;s<3;s++) mCyl(m, 0.1+s*0.12, 0.2+s*0.12, 0.04, 0.035, 5, [g[0],g[1]-s*0.03,g[2]]); } return m; }
+function kelpMesh() { const m = Mesh(); mCyl(m,0,1.4,0.04,0.06,6,[0.32,0.26,0.14]); mCyl(m,1.4,1.7,0.12,0.06,7,[0.4,0.34,0.18]); for(let i=0;i<4;i++){const a=i/4*6.283; mBox(m, Math.cos(a)*0.3, 1.8+i*0.05, Math.sin(a)*0.3, 0.5, 0.03, 0.12, [0.34,0.3,0.16]); } return m; }
+function seabeanMesh() { const m = Mesh(); mBox(m,0,0.06,0,0.14,0.08,0.1,[0.4,0.26,0.16]); mBox(m,0,0.08,0,0.1,0.04,0.12,[0.3,0.2,0.12]); return m; }
+function hopperMesh() { const m = Mesh(); mBox(m,0,0.05,0,0.08,0.05,0.06,[0.72,0.68,0.55]); mBox(m,-0.05,0.04,0.03,0.015,0.06,0.015,[0.6,0.55,0.4]); mBox(m,-0.05,0.04,-0.03,0.015,0.06,0.015,[0.6,0.55,0.4]); return m; }
+function heronMesh() { const m = Mesh(), g=[0.56,0.6,0.64], pale=[0.8,0.82,0.85];
+  mBox(m, 0, 0.9, 0, 0.16, 0.16, 0.32, g); mCyl(m, 0, 1.5, 0.05, 0.05, 6, pale);          // body + neck (vertical cyl up)
+  mBox(m, 0.1, 1.55, 0, 0.1, 0.1, 0.1, pale); mBox(m, 0.26, 1.55, 0, 0.14, 0.02, 0.02, [0.85,0.7,0.2]);  // head + beak
+  mBox(m, 0, 0.45, 0.06, 0.02, 0.5, 0.02, [0.5,0.45,0.35]); mBox(m, 0, 0.45, -0.06, 0.02, 0.5, 0.02, [0.5,0.45,0.35]);  // legs
+  return m; }
 // fallen trunk: a log lying along +X from x=0 (base) to x=1 (unit, scaled by length)
 function fallenTrunkMesh() { const m = Mesh(); const c = BROWN;
   mBox(m, 0.5, 0.17, 0, 0.5, 0.15, 0.15, c);
@@ -2554,6 +2646,8 @@ const CREATURES = {
   seal:     { mesh: () => sealMesh(),                 base: 2.2, max: 24,  label: "Harbour Seal", desc: "Hauls out on the rocks at low water." },
   jelly:    { mesh: () => jellyMesh(),                base: 0.9, max: 90,  label: "Stranded Jelly", desc: "Left glistening on the flats by the ebbing tide." },
   piper:    { mesh: () => piperMesh(),                base: 0.7, max: 80,  label: "Sandpiper", desc: "Scurries along the wave edge, chasing the water in and out." },
+  hopper:   { mesh: () => hopperMesh(),               base: 0.5, max: 120, label: "Beach Hopper", desc: "Springs out from under a flipped cobble." },
+  heron:    { mesh: () => heronMesh(),                base: 1.0, max: 30,  label: "Grey Heron", desc: "Stalks the shallows of the flats, dead still, then stabs." },
 };
 const FINDS = {
   shell:    { mesh: () => shellMesh(),               base: 0.5, max: 200, label: "Spiral Shell", desc: "An empty whelk, worn smooth.", rare: 0 },
@@ -2590,6 +2684,16 @@ const FINDS = {
   root:     { mesh: () => rootMesh(),                base: 0.45,max: 70,  label: "Root", desc: "A knotty taproot, prised from the dirt.", rare: 0 },
   flint:    { mesh: () => flintMesh(),               base: 0.4, max: 70,  label: "Flint", desc: "A dark, sharp-edged nodule.", rare: 0 },
   driftwood:{ mesh: () => driftwoodMesh(),           base: 0.6, max: 50,  label: "Driftwood", desc: "Grey, sea-worn and sun-bleached.", rare: 0 },
+  // --- Part C biome finds ---
+  sanddollar:{ mesh: () => sanddollarMesh(),         base: 0.5, max: 120, label: "Sand Dollar", desc: "A pale urchin test, round as a coin.", rare: 1 },
+  moonsnail:{ mesh: () => moonsnailMesh(),           base: 0.5, max: 120, label: "Moon Snail Shell", desc: "A smooth grey whorl from the sand flats.", rare: 1 },
+  agate:    { mesh: () => agateMesh(),               base: 0.4, max: 80,  label: "Agate", desc: "A banded pebble that glows in the light. Prized on cobble beaches.", rare: 2 },
+  mussel:   { mesh: () => musselMesh(),              base: 0.45,max: 140, label: "Mussel", desc: "A blue-black shell, clustered on the reef.", rare: 0 },
+  limpet:   { mesh: () => limpetMesh(),              base: 0.4, max: 120, label: "Limpet", desc: "A little conical cap, clamped to the rock.", rare: 0 },
+  wormcast: { mesh: () => wormcastMesh(),            base: 0.4, max: 100, label: "Worm Cast", desc: "A coiled squiggle of mud — a lugworm lives below.", rare: 0 },
+  pickleweed:{ mesh: () => pickleweedMesh(),         base: 0.6, max: 100, label: "Pickleweed", desc: "Crisp, salty marsh samphire.", rare: 0 },
+  kelp:     { mesh: () => kelpMesh(),                base: 1.0, max: 80,  label: "Bull Kelp", desc: "A long rubbery stipe with a float at its head.", rare: 1 },
+  seabean:  { mesh: () => seabeanMesh(),             base: 0.4, max: 70,  label: "Sea Bean", desc: "A drift seed carried here from a far-off shore.", rare: 2 },
 };
 
 // build dynamic draw objects
@@ -2641,6 +2745,15 @@ function populateLife() {
     const a = rng()*6.283, r = HALF*(0.3 + rng()*0.55), x = Math.sin(a)*r, z = -Math.cos(a)*r;
     const h = heightAt(x, z); if (h > -1 && h < 5) spawnCreature("piper", x, z, { timer: rng(), side: rng()<0.5?1:-1 });
   }
+  // biome-specific critters along the coast (herons on flats/marsh, hoppers on cobble)
+  for (let i = 0; i < 70; i++) {
+    const a = rng()*6.283, r = HALF*(0.3 + rng()*0.52), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const h = heightAt(x, z); if (h < -2 || h > 6) continue;
+    const t = COAST_BIOMES[coastBiomeAt(x, z)].crit[(rng()*COAST_BIOMES[coastBiomeAt(x, z)].crit.length)|0];
+    if (t === "heron" && rng() < 0.3) spawnCreature("heron", x, z, { timer: rng()*3, tx: x, tz: z });
+    else if (t === "hopper" && rng() < 0.5) spawnCreature("hopper", x, z, { timer: rng() });
+    else if (t === "crab" && rng() < 0.4) spawnCreature("crab", x, z, { hr: 10 });
+  }
   // seals on rocky POIs / high rock
   for (const p of POIS) if (p.type === "tidepools" || p.type === "seacave") {
     if (rng() < 0.7) spawnCreature("seal", p.x + (rng()-0.5)*6, p.z + (rng()-0.5)*6, {});
@@ -2662,20 +2775,34 @@ function populateLife() {
 // Wash fresh finds along the current wrack line + exposed flats at low tide.
 let lastLowCount = 0;
 function washUp(initial) {
-  const n = initial ? 60 : 30;
+  const ev = currentEvent;
+  const baseN = initial ? 60 : 30, n = ev === "storm" ? baseN * 2 : baseN;
   for (let i = 0; i < n; i++) {
     const a = rng()*6.283, r = HALF*(0.25 + rng()*0.72), x = Math.sin(a)*r, z = -Math.cos(a)*r;
     const h = heightAt(x, z);
-    // rarer finds sit lower / farther out (only exposed at the lowest tides)
-    const low = h < waterLevel + 1.5;
-    const roll = rng();
+    if (!(h > waterLevel + 0.3 && h < wetLevel + 4)) continue;       // only on exposed sand near the wrack line
+    const cb = COAST_BIOMES[coastBiomeAt(x, z)], roll = rng();
+    // event flavour (rare finds weighted down; see §C variety)
+    if (ev === "kelp" && roll < 0.55) { spawnFind("kelp", x, z); if (rng() < 0.5) { const p = cb.finds[(rng()*cb.finds.length)|0]; if (FINDS[p]) spawnFind(p, x+(rng()-0.5), z+(rng()-0.5)); } continue; }
+    if (ev === "driftseed" && roll < 0.5) { spawnFind(rng() < 0.65 ? "seabean" : "coconut", x, z); continue; }
+    if (ev === "floats" && roll < 0.4) { spawnFind("float", x, z); continue; }
+    if (ev === "storm" && roll < 0.28) { spawnFind(["driftwood","bottle","bone","float"][(rng()*4)|0], x, z); continue; }
+    // otherwise biome-weighted: mostly commons, rarer finds sit lower / farther out
+    const low = h < waterLevel + 1.6;
     let pick;
-    const pool = Object.keys(FINDS);
-    if (low && roll < 0.5) pick = ["float","egg","bottle","bone"][(rng()*4)|0];
-    else pick = ["shell","seaglass","molt","cuttle","shell","seaglass"][(rng()*6)|0];
-    const want = FINDS[pick]; if (!want) continue;
-    if (h > waterLevel + 0.3 && h < wetLevel + 4) spawnFind(pick, x, z);  // on exposed sand near wrack
+    if (low && rng() < (ev === "storm" ? 0.42 : 0.22)) pick = ["float","egg","bottle","bone","agate"][(rng()*5)|0];
+    else pick = cb.finds[(rng()*cb.finds.length)|0];
+    if (FINDS[pick]) spawnFind(pick, x, z);
   }
+  // sea-star stranding: scatter rescuable stars across the just-bared sand
+  if (ev === "stars") for (let i = 0; i < 40; i++) { const a = rng()*6.283, r = HALF*(0.28+rng()*0.55), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z);
+    if (h > waterLevel + 0.1 && h < wetLevel + 2.5) spawnCreature("star", x, z, { stranded: true }); }
+  // jellyfish bloom across the flats
+  if (ev === "jelly") for (let i = 0; i < 36; i++) { const a = rng()*6.283, r = HALF*(0.28+rng()*0.55), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z);
+    if (h > waterLevel + 0.1 && h < wetLevel + 2.0) spawnCreature("jelly", x, z, {}); }
+  // very rare: the island oddity washes up
+  if (ev === "oddity" && ODDITY_ITEM) { const a = rng()*6.283, r = HALF*(0.35+rng()*0.4), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    if (heightAt(x, z) > waterLevel + 0.2) spawnFind(ODDITY_ITEM, x, z); }
   // Minus tide: the outer zone, normally underwater, is bared — the best wash-up (§B).
   if (isMinusTideNow()) {
     for (let i = 0; i < 24; i++) {
@@ -2751,6 +2878,13 @@ function behave(e, dt, d, dx, dz) {
     e.timer -= dt; if (e.timer < 0) { e.timer = 0.5 + rng()*1.3; e.side = rng() < 0.5 ? 1 : -1; }
     mx += -grad.dz * e.side * 0.8; mz += grad.dx * e.side * 0.8;    // lateral run along the shore
     const m = Math.hypot(mx, mz) || 1; e.x += mx/m*dt*4.5; e.z += mz/m*dt*4.5; e.yaw = Math.atan2(mz, mx) + 1.57;
+  } else if (e.t === "heron") {
+    if (d < 15) { const a = Math.atan2(-dz, -dx); e.x -= Math.cos(a)*dt*3.2; e.z -= Math.sin(a)*dt*3.2; e.yaw = a + 1.57; return; }  // stalk off, unhurried
+    e.timer -= dt; if (e.timer < 0) { e.timer = 2.5 + rng()*5; e.tx = e.x + (rng()-0.5)*8; e.tz = e.z + (rng()-0.5)*8; }
+    const a = Math.atan2(e.tz - e.z, e.tx - e.x); e.x += Math.cos(a)*dt*0.8; e.z += Math.sin(a)*dt*0.8; e.yaw = a + 1.57;
+  } else if (e.t === "hopper") {
+    if (d < 5) { const a = rng()*6.283; e.x += Math.cos(a)*0.45; e.z += Math.sin(a)*0.45; return; }   // startle hop
+    e.timer -= dt; if (e.timer < 0) { e.timer = 0.8 + rng()*1.6; const a = rng()*6.283; e.x += Math.cos(a)*0.3; e.z += Math.sin(a)*0.3; }
   } else { // star, urchin, hermit, jelly: subtle
     if (e.t === "hermit") { e.timer -= dt; if (e.timer < 0) { e.timer = 1+rng()*2; e.vx=(rng()-0.5); e.vz=(rng()-0.5);} e.x += e.vx*dt*0.5; e.z += e.vz*dt*0.5; }
   }
@@ -2913,7 +3047,7 @@ function invDrop(idx, one) {
 
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
-  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered] })); } catch (e) {}
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued })); } catch (e) {}
 }
 function loadState() {
   try {
@@ -2921,6 +3055,7 @@ function loadState() {
     if (s) {
       if (Array.isArray(s.main)) { Inv.main = padArr(s.main, INV_SLOTS); Inv.hotbar = padArr((s.hotbar || []).map(normCell), HOTBAR_SLOTS); }
       Inv.selected = Math.min(HOTBAR_SLOTS - 1, s.sel || 0); (s.disc || []).forEach((d) => discovered.add(d));
+      starsRescued = s.rescued || 0;
     }
   } catch (e) {}
 }
@@ -3200,6 +3335,7 @@ function toggleJournal() {
     <h3>Creatures</h3><div class="jgrid">${row(CREATURES, "")}</div>
     <h3>Finds</h3><div class="jgrid">${row(FINDS, "f_")}</div>
     <h3>Unearthed</h3><div class="jgrid">${digRow}</div>
+    <h3>Coast &amp; tide</h3><div class="jhint">Sea stars rescued: ${starsRescued}${carryingStars?`  ·  carrying ${carryingStars}`:""}<br>Last tide: ${EVENT_LABEL[currentEvent]||"—"}  ·  next: ${EVENT_LABEL[nextEvent]||"—"}</div>
     <div class="jhint">Tab to close</div>`;
   j.style.display = "block";
 }
@@ -3430,6 +3566,11 @@ function interactWith(e) {
     if (SEED_TREE[e.t] || e.t === "salt" || e.t === "leaves") Inv.autoHotbar(e.t);   // handy items go to the hotbar
     if (e.drop) { const di = worldDrops.indexOf(e.drop); if (di >= 0) worldDrops.splice(di, 1); saveDrops(); }  // picked a dropped item back up
     const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
+  } else if (e.kind === "creature" && e.stranded) {
+    // pick up a stranded sea star to carry it back to the water
+    discovered.add(e.t); carryingStars++;
+    const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
+    showCard("Sea star", `Carried (${carryingStars}). Wade into the water to set it free.`);
   } else {
     const first = !discovered.has(e.t);
     discovered.add(e.t);
@@ -3437,6 +3578,15 @@ function interactWith(e) {
              CREATURES[e.t].desc + (e.special ? "  —  found only on this island." : (first ? "  (new — added to journal)" : "")));
   }
   saveState();
+}
+// Release carried sea stars once you're in the water: they count as rescued (§C).
+function updateStarRescue() {
+  if (carryingStars > 0 && waterDepthAt(player.x, player.z) > ANKLE) {
+    starsRescued += carryingStars;
+    sparkle(player.x, surfaceAt(player.x, player.z).h + 0.3, player.z, [0.9, 0.6, 0.4], 10);
+    showCard("Released", `${carryingStars} sea star${carryingStars>1?"s":""} back in the sea. Rescued so far: ${starsRescued}.`);
+    carryingStars = 0; saveState();
+  }
 }
 const markerDyn = makeDynamic((function(){ const m = Mesh(); mCyl(m,0,3,0.25,0,5,[1,0.85,0.4]); mCyl(m,0,0.4,0.9,0.9,10,[1,0.85,0.4]); return m; })(), 1);
 function drawMarker(view) {
@@ -3718,6 +3868,7 @@ function seedDigSpots() {
     const a = rng() * 6.283, r = HALF * (0.3 + rng() * 0.64), x = Math.sin(a) * r, z = -Math.cos(a) * r;
     const h = heightAt(x, z), s = surfaceAt(x, z).slope, ci = cellIndex(x, z);
     if (h < 0.5 || h > BEACH_MAX_H || s > 0.4 || bigPropBlocking(x, z, 1.5)) continue;   // tells live on the beach only; never where roots block
+    if (rng() > COAST_BIOMES[coastBiomeAt(x, z)].tell) continue;                         // §C: dig-tell frequency per biome
     if (ci >= 0 && filled[ci] - heightmap[ci] > KNEE) continue;                 // never at the bottom of a permanently-deep pool
     const roll = rng();
     let item, band, tell, needed;
@@ -3779,10 +3930,13 @@ function revealSpot(x, z, sift) {
 }
 // Blind digging: almost always just the raw material of the biome you're on; a real find is rare.
 function blindDig(x, z) {
-  const T = BLIND_LOOT[digBiome(x, z)]; if (!T) return;
+  const db = digBiome(x, z), T = BLIND_LOOT[db]; if (!T) return;
   const jx = x + (rng()-0.5), jz = z + (rng()-0.5);
-  if (T.find.length && rng() < BLIND_FIND_CHANCE) spawnFind(pick(T.find), jx, jz);   // rare: a real find
-  else if (rng() < T.rawChance) spawnFind(pick(T.raw), jx, jz);                       // common: raw material
+  // near the coast, the local shore biome decides which rare find turns up
+  let findPool = T.find;
+  if (db === "wet" || db === "sand") findPool = COAST_BIOMES[coastBiomeAt(x, z)].finds.filter(k => FINDS[k]);
+  if (findPool.length && rng() < BLIND_FIND_CHANCE) spawnFind(pick(findPool), jx, jz);   // rare: a real find
+  else if (rng() < T.rawChance) spawnFind(pick(T.raw), jx, jz);                           // common: raw material
 }
 function digAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "shovel") return;
@@ -3876,10 +4030,12 @@ function updateErosion(gdt) {
 function digMaterialItem(x, z) {
   const m = Terrain.materialAt(x, z);
   if (m === MAT.SAND) return "sand";
-  if (m === MAT.GRAVEL) return "gravel";
+  if (m === MAT.GRAVEL || m === MAT.STONE) return "gravel";
   if (m === MAT.MUD) return "mud";
   return "dirt";                                             // grass, dirt and anything else diggable → dirt
 }
+// Per-material walking multiplier (§C walking feel): mud is slow, reef/cobble a touch slower.
+function matSpeedMul(m) { return m === MAT.MUD ? 0.6 : m === MAT.STONE ? 0.85 : m === MAT.GRAVEL ? 0.92 : 1.0; }
 function paintCells(x, z, radius, mat) {
   if (mat === undefined) return;
   const gcx = (x + HALF) / CELL, gcz = (z + HALF) / CELL, r = radius / CELL;
@@ -4222,6 +4378,9 @@ function pickRubble(lr) {
   const first = !discovered.has("f_stone"); discovered.add("f_stone"); notify("stone", 1, first);
   const i = looseRocks.indexOf(lr); if (i >= 0) looseRocks.splice(i, 1);
   sparkle(lr.x, surfaceAt(lr.x, lr.z).h + 0.2, lr.z, [0.7, 0.68, 0.64], 5);
+  // flipping a cobble on a cobble beach can reveal a crab or hopper beneath
+  if (COAST_BIOMES[coastBiomeAt(lr.x, lr.z)].flip && rng() < 0.3)
+    spawnCreature(rng() < 0.5 ? "crab" : "hopper", lr.x + (rng()-0.5), lr.z + (rng()-0.5), { hr: 8, timer: rng() });
 }
 
 /* ---- update + draw all Part-B objects ---- */
@@ -4517,6 +4676,7 @@ let frameDraws = 0, frameTris = 0;
 function countDraw(tris) { frameDraws++; frameTris += tris; }
 
 buildHeightmap();
+paintBiomes();
 findHighPoint();
 computeBasins();
 buildProps();
@@ -4582,7 +4742,8 @@ function frame(now) {
     updateTide(s);
     updateLife(s, clock.t);
     healDig(s);
-    if (tideT > 0.73 && tideT < 0.78) { if (!washedThisLow) { washUp(false); seedDigSpots(); washedThisLow = true; } }
+    if (tideT > 0.73 && tideT < 0.78) { if (!washedThisLow) { currentEvent = nextEvent; washUp(false); seedDigSpots(); washedThisLow = true;
+      if (currentEvent !== "calm") showCard(EVENT_LABEL[currentEvent], "The low tide has left something along the shore."); } }
     else if (tideT < 0.55) washedThisLow = false;
     gdt -= s;
   }
@@ -4591,6 +4752,7 @@ function frame(now) {
   updateGoats(dt);
   updateSalt();
   updateAutoPickup();
+  updateStarRescue();
   updateSurf();
   updateRipples(dt, gdtTotal);
   if (cardTimer > 0) { cardTimer -= dt; if (cardTimer <= 0) document.getElementById("card").style.display = "none"; }
@@ -4657,7 +4819,7 @@ function frame(now) {
       let surfMul = 1;
       if (depth > 0.05) surfMul = Math.max(0.25, 1 - depth * 0.45); // deeper wading, slower
       else if (here.h < 12) surfMul = 0.9;                          // soft sand
-      const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * sm * surfMul * (player.landStun > 0 ? 0.5 : 1);
+      const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * sm * surfMul * (player.landStun > 0 ? 0.5 : 1) * matSpeedMul(Terrain.materialAt(player.x, player.z));
       const dist = speed * dt;
       const maxClimb = Math.tan(SLOPE_LIMIT) * Math.max(dist, 0.05);
       const canStep = (nx, nz) => {
@@ -4891,6 +5053,7 @@ function frame(now) {
 
   requestAnimationFrame(frame);
 }
+booted = true;
 requestAnimationFrame(frame);
 </script>
 </body>
