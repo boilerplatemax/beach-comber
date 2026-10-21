@@ -72,6 +72,9 @@
     border-radius: 50%; z-index: 4; pointer-events: none; display: none;
     -webkit-mask: radial-gradient(transparent 13px, #000 14px); mask: radial-gradient(transparent 13px, #000 14px);
   }
+  #hungerIcon { position: fixed; left: calc(50% - 46px); top: calc(50% - 16px); z-index: 5; pointer-events: none; display: none;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,.7)); }
+  #hungerIcon canvas { image-rendering: pixelated; display: block; }
   #actionIcon {
     position: fixed; left: calc(50% + 16px); top: calc(50% + 6px);
     z-index: 5; pointer-events: none; display: none;
@@ -207,6 +210,7 @@
 <canvas id="tidecurve" width="150" height="46"></canvas>
 <div id="dbg"></div>
 <div id="stamina"></div>
+<div id="hungerIcon"></div>
 <div id="actionIcon"></div>
 <div id="crosshair"></div>
 <div id="prompt"></div>
@@ -1411,20 +1415,22 @@ out vec4 frag;
 uniform sampler2D uScene;
 uniform vec2 uSceneSize;
 uniform int uDither;
+uniform float uHungerFx;                        // 0..1 starving: desaturate + darken edges
 const float bayer[16] = float[16](
   0.0, 8.0, 2.0, 10.0,  12.0, 4.0, 14.0, 6.0,
   3.0, 11.0, 1.0, 9.0,  15.0, 7.0, 13.0, 5.0);
 void main() {
   vec3 c = clamp(texture(uScene, vUv).rgb, 0.0, 1.0);
+  if (uHungerFx > 0.001) { float g = dot(c, vec3(0.299, 0.587, 0.114)); c = mix(c, vec3(g), uHungerFx * 0.7); }  // desaturate when starving
   float levels = 8.0;
   ivec2 p = ivec2(vUv * uSceneSize);            // low-res texel → chunky pattern
   int idx = (p.x & 3) * 4 + (p.y & 3);
   vec3 q;
   if (uDither == 1) q = floor(c * levels + bayer[idx] / 16.0) / levels;
   else              q = floor(c * levels + 0.5) / levels;
-  // soft vignette for a little focus and moodiness
+  // soft vignette for a little focus and moodiness (stronger when starving)
   vec2 d = vUv - 0.5;
-  q *= 1.0 - dot(d, d) * 0.5;
+  q *= 1.0 - dot(d, d) * (0.5 + uHungerFx * 1.3);
   frag = vec4(q, 1.0);
 }`;
 
@@ -1774,6 +1780,18 @@ function blitActionIcon(desc) {
   const key = desc.id + (desc.cant ? "!" : "");
   if (key !== lastIconKey) { lastIconKey = key; actionPop = 1; }       // one-frame pop on change
 }
+// stomach icon next to the stamina ring, shown only at Hungry or worse (§10.5)
+let hungerCv = null, hungerCtx = null;
+function updateHungerIcon() {
+  const el = document.getElementById("hungerIcon"), t = hungerTier();
+  const show = mode === "walk" && (t === "hungry" || t === "starving");
+  el.style.display = show ? "block" : "none"; if (!show) return;
+  if (!hungerCv) { hungerCv = document.createElement("canvas"); hungerCtx = hungerCv.getContext("2d"); el.appendChild(hungerCv); }
+  const S = 32; if (hungerCv.width !== S) { hungerCv.width = S; hungerCv.height = S; }
+  hungerCtx.imageSmoothingEnabled = false; hungerCtx.clearRect(0, 0, S, S);
+  const base = pixelIconCanvas("stomach", false); if (base) hungerCtx.drawImage(base, 0, 0, S, S);
+  el.style.opacity = t === "starving" ? (0.55 + 0.35 * Math.abs(Math.sin(performance.now() * 0.005))) : 0.92;   // pulse when starving
+}
 // project a world point to screen pixels (null if behind the camera); mirrors rayFromNDC's matrix order
 function projectToScreen(wx, wy, wz) {
   if (!lastVP) return null; const c = [wx, wy, wz, 1], o = [0, 0, 0, 0];
@@ -1821,6 +1839,10 @@ const PX_ICONS = {
   eat: [".......71.......",".....17771......","....1779 1......","....111.........","...1aaa1........",
         "..1aaaaa1.......",".1aa9aaaaa1.....","1aaaaaaaaaa1....","1aa99aaaaaa1....","1aaaaaaaaaa1....",
         "1aaaaaaaaaa1....",".1aaaaaaaa1.....","..1aaaaaa1......","...111111......."],
+  // stomach (hunger meter): a rounded belly (c/a/9)
+  stomach: ["....11111.......","...1ccccc11.....","..1cccccccc1....",".1ccccccccc1....",".1cccc9cccc1....",
+            "1ccccccccccc1...","1ccccccccccc1...","1ccccccccccc1...","1ccccccccccc1...",".1cccccccccc1...",
+            ".1cccccccccc1...","..1ccccccccc1...","...1cccccc11....","....111111......"],
 };
 // render a 16×16 grid once to an offscreen canvas (crisp pixels)
 const _iconCache = {};
@@ -1848,9 +1870,20 @@ function resetHints() { for (const k in hintCount) delete hintCount[k]; hintsOn 
 let lastAction = null, hintT = 0, hintText = "";
 const HINT_VERB = { hand: "pick up", look: "inspect", dig: "dig", chop: "chop", mine: "mine", scoop: "scoop", place: "place", eat: "eat" };
 // What the crosshair is on right now → which action icon to show.
-// Edible items → food value (refined in §5). Lets the eat icon show now.
-const EDIBLE = { clam: 1, cockle: 1, mussel: 1, kelp: 1, seaweed: 1, coconut: 1, berry: 1 };
+// Edible items → how much hunger they restore (§10.5). Tuned so a beach walk keeps you fed.
+const EDIBLE = { clam: 0.12, cockle: 0.1, mussel: 0.1, kelp: 0.08, seaweed: 0.08, coconut: 0.26, berry: 0.14 };
+const COOKABLE = { clam: 1, cockle: 1, mussel: 1 };            // shellfish: a campfire doubles their value
 function isFood(id) { return EDIBLE[id] !== undefined; }
+// Eat a food item: restore hunger (doubled for shellfish cooked at a nearby campfire), with a chew + sound.
+function feedPlayer(id) {
+  let val = EDIBLE[id] || 0; let cooked = false;
+  if (COOKABLE[id] && nearCampfire(player.x, player.z)) { val *= 2; cooked = true; }
+  hunger = Math.min(1, hunger + val);
+  chewT = 0.5; camNudge = Math.max(camNudge, 0.03); if (onDig) onDig("eat");
+  showCard((cooked ? "Ate cooked " : "Ate ") + ITEMS[id].name, "Hunger " + Math.round(hunger * 100) + "%");
+  saveState();
+}
+let chewT = 0;
 function toolIcon(tool) {
   if (tool === "shovel") return "dig"; if (tool === "axe") return "chop"; if (tool === "pickaxe") return "mine";
   if (tool === "bucket") return "scoop"; if (MAT_ITEM[tool] !== undefined || SEED_TREE[tool]) return "place";
@@ -1864,6 +1897,7 @@ function crosshairAction() {
     const k = curTarget.kind;
     if (k === "find") return { id: isFood(curTarget.obj.t) ? "eat" : "hand" };
     if (k === "rubble" || k === "goat" || k === "salt") return { id: "hand" };
+    if (k === "bush") return { id: "hand", cant: !curTarget.obj.ripe };
     if (k === "creature") return tool === "bucket"
       ? { id: "scoop", cant: !bucket.water || bucket.creatures.length >= BUCKET_CAP || !BUCKETABLE[curTarget.obj.t] }
       : { id: "look" };
@@ -2738,6 +2772,18 @@ function heronMesh() { const m = Mesh(), g=[0.56,0.6,0.64], pale=[0.8,0.82,0.85]
   mBox(m, 0.1, 1.55, 0, 0.1, 0.1, 0.1, pale); mBox(m, 0.26, 1.55, 0, 0.14, 0.02, 0.02, [0.85,0.7,0.2]);  // head + beak
   mBox(m, 0, 0.45, 0.06, 0.02, 0.5, 0.02, [0.5,0.45,0.35]); mBox(m, 0, 0.45, -0.06, 0.02, 0.5, 0.02, [0.5,0.45,0.35]);  // legs
   return m; }
+function berryMesh() { const m = Mesh(); const c = [0.62,0.16,0.3]; for (let i = 0; i < 3; i++) { const a = i/3*6.283; mBox(m, Math.cos(a)*0.06, 0.08+(i%2)*0.04, Math.sin(a)*0.06, 0.07, 0.07, 0.07, [c[0]*(0.9+0.1*(i%2)),c[1],c[2]]); } mBox(m,0.0,0.16,0,0.02,0.05,0.02,[0.4,0.5,0.3]); return m; }
+// a low inland shrub; ripe=true studs it with berries
+function berryBushMesh(ripe) { const m = Mesh(); const g = [0.33,0.46,0.26];
+  for (let i = 0; i < 9; i++) { const a = i/9*6.283, r = 0.1 + (i%3)*0.16; mBox(m, Math.cos(a)*r, 0.3 + (i%3)*0.12, Math.sin(a)*r, 0.22, 0.2, 0.22, [g[0]*(0.85+0.15*(i%2)),g[1],g[2]]); }
+  mBox(m, 0, 0.5, 0, 0.26, 0.26, 0.26, g);
+  if (ripe) for (let i = 0; i < 12; i++) { const a = i/12*6.283, r = 0.28 + (i%2)*0.12, y = 0.3 + (i%4)*0.12; mBox(m, Math.cos(a)*r, y, Math.sin(a)*r, 0.05, 0.05, 0.05, [0.66,0.16,0.3]); }
+  return m; }
+function campfireMesh() { const m = Mesh(); const st = [0.5,0.48,0.46];
+  for (let i = 0; i < 7; i++) { const a = i/7*6.283; mBox(m, Math.cos(a)*0.5, 0.1, Math.sin(a)*0.5, 0.12, 0.12, 0.12, st); }   // stone ring
+  mBox(m, 0, 0.12, 0, 0.5, 0.05, 0.1, [0.4,0.3,0.2]); mBox(m, 0, 0.17, 0, 0.1, 0.05, 0.5, [0.46,0.34,0.22]);              // crossed logs
+  for (let i = 0; i < 3; i++) { const a = i/3*6.283; mTri(m, [Math.cos(a)*0.13, 0.26, Math.sin(a)*0.13], [Math.cos(a+1.2)*0.13, 0.26, Math.sin(a+1.2)*0.13], [0, 0.72, 0], [1, 1, 1]); }  // flame (tinted per instance)
+  return m; }
 // fallen trunk: a log lying along +X from x=0 (base) to x=1 (unit, scaled by length)
 function fallenTrunkMesh() { const m = Mesh(); const c = BROWN;
   mBox(m, 0.5, 0.17, 0, 0.5, 0.15, 0.15, c);
@@ -2808,6 +2854,7 @@ const FINDS = {
   pickleweed:{ mesh: () => pickleweedMesh(),         base: 0.6, max: 100, label: "Pickleweed", desc: "Crisp, salty marsh samphire.", rare: 0 },
   kelp:     { mesh: () => kelpMesh(),                base: 1.0, max: 80,  label: "Bull Kelp", desc: "A long rubbery stipe with a float at its head.", rare: 1 },
   seabean:  { mesh: () => seabeanMesh(),             base: 0.4, max: 70,  label: "Sea Bean", desc: "A drift seed carried here from a far-off shore.", rare: 2 },
+  berry:    { mesh: () => berryMesh(),               base: 0.45,max: 80,  label: "Berries", desc: "Tart wild berries from an inland bush. A good snack.", rare: 0 },
 };
 
 // build dynamic draw objects
@@ -3167,7 +3214,7 @@ function invDrop(idx, one) {
 
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
-  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued,
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger,
     bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim })) } })); } catch (e) {}
 }
 function loadState() {
@@ -3177,6 +3224,7 @@ function loadState() {
       if (Array.isArray(s.main)) { Inv.main = padArr(s.main, INV_SLOTS); Inv.hotbar = padArr((s.hotbar || []).map(normCell), HOTBAR_SLOTS); }
       Inv.selected = Math.min(HOTBAR_SLOTS - 1, s.sel || 0); (s.disc || []).forEach((d) => discovered.add(d));
       starsRescued = s.rescued || 0;
+      if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.bucket) { bucket.water = !!s.bucket.water; bucket.creatures = Array.isArray(s.bucket.creatures) ? s.bucket.creatures : []; }
     }
   } catch (e) {}
@@ -3348,7 +3396,7 @@ function renderInventory() {
   if (!invOpen) return;
   const groups = { Finds: [], Food: [], Materials: [], Misc: [] };
   for (let i = 0; i < INV_SLOTS; i++) { const c = Inv.main[i]; if (c) groups[itemCompartment(c.id)].push(i); }
-  let html = `<div class="ihead"><h2>Satchel</h2><button id="sortBtn">Tidy ▾</button></div>`;
+  let html = `<div class="ihead"><h2>Satchel</h2><div>${canBuildCampfire() ? `<button id="fireBtn">Build campfire</button> ` : ""}<button id="sortBtn">Tidy ▾</button></div></div>`;
   for (const cat of COMPARTMENTS) {
     const idxs = groups[cat], cells = Math.max(6, Math.ceil((idxs.length + 1) / 6) * 6);   // a little room to grow
     let grid = "";
@@ -3360,6 +3408,7 @@ function renderInventory() {
   html += `<div class="ihint">${IS_TOUCH ? "tap use · long-press menu · drag to the belt" : "click use · shift-click → belt · right-click menu · drag to move · drag out to drop"} · I to close</div>`;
   const p = document.getElementById("invpanel"); p.innerHTML = html;
   p.querySelector("#sortBtn").onclick = () => Inv.sort();
+  const fb = p.querySelector("#fireBtn"); if (fb) fb.onclick = () => { buildCampfire(); renderInventory(); };
 }
 /* ---- item actions (§10.3) ---- */
 function equipToBelt(idx) {
@@ -3705,6 +3754,7 @@ function targetAlongRay(r, sticky) {
   for (const o of rockObjs) { if (o.gone) continue; const gy = surfaceAt(o.x, o.z).h;
     capsule(o, "rock", o.x, o.z, o.x, gy, o.z, o.x, gy+o.sc*0.5, o.z, 0.5 + o.sc*0.45); }
   for (const s of stumps) { const gy = surfaceAt(s.x, s.z).h; capsule(s, "stump", s.x, s.z, s.x, gy, s.z, s.x, gy+0.8, s.z, 1.0); }
+  for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
 
   // stickiness: keep the locked target unless another is clearly closer
@@ -3722,6 +3772,7 @@ function useToolOnTarget(t) {
     case "creature": if (tool === "bucket" && bucketScoop(t.obj)) return true; interactWith(t.obj); return true;
     case "find": interactWith(t.obj); return true;
     case "rubble": pickRubble(t.obj); return true;
+    case "bush": harvestBush(t.obj); return true;
     case "goat": offerSaltTo(t.obj); return true;
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
@@ -3822,19 +3873,33 @@ let stamina = 1, resting = false, exhausted = false, digCommit = 0;
 let DIG_COST = 0.1, CHOP_COST = 0.09, MINE_COST = 0.1, SIFT_COST = 0.06, SALT_COST = 0.045;
 let SPRINT_DRAIN = 0.08, SCRAMBLE_DRAIN = 0.13, REGEN_ACTIVE = 0.05, REGEN_IDLE = 0.11, REGEN_REST = 0.26, EXHAUST_RECOVER = 0.33, COMMIT_TIME = 0.5;
 let BLIND_FIND_CHANCE = 0.05;    // blind digging (no tell) rarely turns up a find; mostly raw material
-function spendStamina(a) { stamina = Math.max(0, stamina - a); if (stamina <= 0.001) exhausted = true; }
+/* ---- hunger (§10.5): drains slowly, worse tiers pinch stamina & speed; never fatal ---- */
+let hunger = 1, growlT = 0;
+const HUNGER_DRAIN = 1 / (1.5 * DAY_PERIOD);   // full → empty in ~1.5 in-game days at rest
+const HUNGER_WORK = 0.045;                     // extra hunger per unit of heavy-action stamina spent
+const H_FULL = 0.75, H_PECKISH = 0.4, H_HUNGRY = 0.15;   // tier thresholds
+function hungerTier() { return hunger > H_FULL ? "full" : hunger > H_PECKISH ? "peckish" : hunger > H_HUNGRY ? "hungry" : "starving"; }
+function maxStamina() { const t = hungerTier(); return t === "starving" ? 0.4 : t === "hungry" ? 0.7 : 1; }   // less max stamina when hungry
+function heavyCostMul() { const t = hungerTier(); return t === "starving" ? 1.6 : t === "hungry" ? 1.25 : 1; } // heavy actions cost more
+function swingRateMul() { const t = hungerTier(); return t === "starving" ? 0.45 : t === "hungry" ? 0.72 : 1; }// and swing slower
+function spendStamina(a, heavy) { if (heavy) { hunger = Math.max(0, hunger - a * HUNGER_WORK); a *= heavyCostMul(); } stamina = Math.max(0, stamina - a); if (stamina <= 0.001) exhausted = true; }
 function canHeavyAction() { return !exhausted && stamina > 0.02 && digCommit <= 0; }
 function rootPlayer() { digCommit = COMMIT_TIME; }              // short wind-up: rooted ~0.5s per strike
+function updateHunger(gdt) { hunger = Math.max(0, hunger - HUNGER_DRAIN * gdt);      // passive drain (game-time)
+  if (hungerTier() === "starving") { growlT -= gdt; if (growlT <= 0) { growlT = 9 + rng()*6; if (onDig) onDig("growl"); } } }
 function updateStamina(dt) {
   if (mode !== "walk") { stamina = 1; resting = false; exhausted = false; digCommit = 0; return; }
   if (digCommit > 0) digCommit = Math.max(0, digCommit - dt);
   const moving = Math.abs(analog.x) + Math.abs(analog.y) > 0.01 || keys["KeyW"] || keys["KeyA"] || keys["KeyS"] || keys["KeyD"];
   if (moving) resting = false;
-  if (player.sprinting) spendStamina(SPRINT_DRAIN * dt);
+  const tier = hungerTier();
+  if (player.sprinting) spendStamina(SPRINT_DRAIN * dt * (tier === "hungry" ? 2 : 1));   // half sprint duration when hungry
   if (player.scramble > 0.3) spendStamina(SCRAMBLE_DRAIN * dt * player.scramble);
-  const regen = resting ? REGEN_REST : (moving ? REGEN_ACTIVE : REGEN_IDLE);
-  stamina = Math.min(1, stamina + regen * dt);
-  if (exhausted && stamina >= EXHAUST_RECOVER) exhausted = false;   // recovered enough to work again
+  const regen = (resting ? REGEN_REST : (moving ? REGEN_ACTIVE : REGEN_IDLE)) * (tier === "full" ? 1.15 : 1);   // full = a regen bonus
+  const cap = maxStamina();
+  stamina = Math.min(cap, stamina + regen * dt);
+  if (stamina > cap) stamina = cap;
+  if (exhausted && stamina >= Math.min(EXHAUST_RECOVER, cap - 0.02)) exhausted = false;
 }
 
 /* ---- water flowing into a fresh hole: a quick foam swirl ---- */
@@ -4168,7 +4233,7 @@ function digAt(x, z) {
   // Past knee depth in open water: no digging or sifting.
   if (!inBasin && depth > KNEE) { if (onDig) onDig("splash"); spawnSand(x, sy + 0.1, z, 8, [0.82, 0.86, 0.9]); return; }   // too deep
   // In a pool, or ankle–knee open water: the shovel sifts — no terrain change, a cloudy plume, top-layer finds.
-  if (inBasin || depth > ANKLE) { camNudge = 0.04; spendStamina(SIFT_COST); if (onDig) onDig("sift"); spawnSand(x, sy + 0.05, z, 16, [0.72, 0.68, 0.6]); revealSpot(x, z, true); return; }
+  if (inBasin || depth > ANKLE) { camNudge = 0.04; spendStamina(SIFT_COST, true); if (onDig) onDig("sift"); spawnSand(x, sy + 0.05, z, 16, [0.72, 0.68, 0.6]); revealSpot(x, z, true); return; }
   // Too many roots: can't dig under trees / boulders / POIs.
   if (bigPropBlocking(x, z, 1.0)) { failStrike(true, x, sy + 0.4, z); return; }   // roots/boulder block → clink + recoil
 
@@ -4180,7 +4245,7 @@ function digAt(x, z) {
   const ci = cellIndex(x, z);
   if (ci >= 0 && dig[ci] > 0.3 && holeNear(x, z)) { spendStamina(DIG_COST*0.4); fillHole(x, z); spawnSand(x, sy + 0.2, z, 8, [0.7, 0.62, 0.5]); return; }   // push spoil back in
 
-  spendStamina(DIG_COST);
+  spendStamina(DIG_COST, true);
   const weak = stamina < 0.22 ? 0.6 : 1;                     // weaker, heavier strokes when tired
   const amt = (kind === "wet" ? 1.5 : kind === "dry" ? 1.1 : 0.7) * weak;
   const holeAng = Math.atan2(player.z - z, player.x - x);
@@ -4307,6 +4372,60 @@ function updateBucketPanel() {
   c.strokeStyle = "#6b7077"; c.lineWidth = 3; c.beginPath(); c.arc(cx, cyTop - ry*0.4, rx, Math.PI*1.08, -Math.PI*0.08, false); c.stroke();
   c.fillStyle = "#e4eef2"; c.font = "11px ui-monospace, monospace"; c.textAlign = "center";
   c.fillText(`${bucket.creatures.length}/${BUCKET_CAP}`, cx, H-3);
+}
+
+/* ---- berry bushes (§10.5): inland shrubs; regrow a few in-game days after picking ---- */
+let berryBushes = [], berryRipeDyn = null, berryBareDyn = null;
+const BERRY_REGROW = 3;        // in-game days to ripen again
+function seedBerryBushes() {
+  berryBushes = [];
+  for (let i = 0; i < 48; i++) { const a = rng()*6.283, r = HALF*(0.15 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const h = heightAt(x, z); if (h < 9 || h > 34 || surfaceAt(x, z).slope > 0.4 || bigPropBlocking(x, z, 1.5)) continue;
+    berryBushes.push({ x, z, ripe: true, regrowAt: 0, scale: 0.9 + rng()*0.5 });
+  }
+}
+function updateBerries() { for (const b of berryBushes) if (!b.ripe && clock.t >= b.regrowAt) b.ripe = true; }
+function nearestBush(x, z, maxd) { let best = null, bd = maxd; for (const b of berryBushes) { const d = Math.hypot(b.x - x, b.z - z); if (d < bd) { bd = d; best = b; } } return best; }
+function harvestBush(b) {
+  if (!b.ripe) { showCard("Not ripe", "This bush will berry again in a few days."); return; }
+  const n = 2 + (rng()*2|0); const first = !discovered.has("f_berry");
+  for (let i = 0; i < n; i++) Inv.add("berry", 1);
+  discovered.add("f_berry"); notify("berry", n, first);
+  b.ripe = false; b.regrowAt = clock.t + BERRY_REGROW * DAY_PERIOD;
+  sparkle(b.x, surfaceAt(b.x, b.z).h + 0.6, b.z, [0.6, 0.2, 0.3], 6); if (onDig) onDig("pluck"); saveWorld();
+}
+function drawBerryBushes(view) {
+  if (!berryBushes.length) return;
+  if (!berryRipeDyn) { berryRipeDyn = makeDynamic(berryBushMesh(true), 60); berryBareDyn = makeDynamic(berryBushMesh(false), 60); }
+  propUniforms(view);
+  const a = rockScratch;
+  for (const ripe of [true, false]) { let n = 0;
+    for (const b of berryBushes) { if (b.ripe !== ripe) continue; const dx = b.x-cam.pos[0], dz = b.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R || n >= 60) continue;
+      const o = n*10, y = surfaceAt(b.x, b.z).h; a[o]=b.x;a[o+1]=y;a[o+2]=b.z;a[o+3]=b.scale;a[o+4]=0;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
+    if (n) (ripe ? berryRipeDyn : berryBareDyn).draw(a, n);
+  }
+}
+
+/* ---- campfire (§10.5 stretch): built from Sticks + Stone; doubles shellfish value nearby ---- */
+let campfires = [], campfireDyn = null;
+const CAMPFIRE_COST = { stick: 3, stone: 3 }, CAMPFIRE_R = 4;
+function canBuildCampfire() { return Inv.count("stick") >= CAMPFIRE_COST.stick && Inv.count("stone") >= CAMPFIRE_COST.stone; }
+function buildCampfire() {
+  if (!canBuildCampfire()) { showCard("Need materials", `A campfire takes ${CAMPFIRE_COST.stick} Sticks and ${CAMPFIRE_COST.stone} Stone.`); return; }
+  const fx = Math.sin(cam.yaw), fz = -Math.cos(cam.yaw), x = player.x + fx*2, z = player.z + fz*2;
+  if (waterDepthAt(x, z) > 0.1 || bigPropBlocking(x, z, 1)) { showCard("No room", "Not here."); return; }
+  Inv.remove("stick", CAMPFIRE_COST.stick); Inv.remove("stone", CAMPFIRE_COST.stone);
+  campfires.push({ x, z }); if (onDig) onDig("plant"); showCard("Campfire built", "Eat shellfish nearby to cook it — double the food."); saveWorld();
+}
+function nearCampfire(x, z) { for (const c of campfires) if (Math.hypot(c.x - x, c.z - z) < CAMPFIRE_R) return true; return false; }
+function drawCampfires(view) {
+  if (!campfires.length) return;
+  if (!campfireDyn) campfireDyn = makeDynamic(campfireMesh(), 30);
+  propUniforms(view); const a = rockScratch; let n = 0;
+  for (const c of campfires) { if (n >= 30) break; const dx = c.x-cam.pos[0], dz = c.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    const o = n*10, y = surfaceAt(c.x, c.z).h, fl = 0.9 + Math.sin(clock.t*8 + c.x)*0.1;
+    a[o]=c.x;a[o+1]=y;a[o+2]=c.z;a[o+3]=1;a[o+4]=0;a[o+5]=0;a[o+6]=0;a[o+7]=fl;a[o+8]=fl*0.8;a[o+9]=fl*0.6; n++; }
+  if (n) campfireDyn.draw(a, n);
 }
 
 // Placed material in the wash zone slowly erodes; everywhere else it's permanent.
@@ -4443,7 +4562,7 @@ function drawShovel(view) {
 }
 
 function updateDigging(dt) {
-  const swingRate = 3.5 * (stamina < 0.3 ? 0.6 : 1);        // slower, heavier swing when tired
+  const swingRate = 3.5 * (stamina < 0.3 ? 0.6 : 1) * swingRateMul();   // slower, heavier swing when tired or hungry
   if (shovelSwing > 0) shovelSwing = Math.max(0, shovelSwing - dt * swingRate);
   if (camNudge > 0) camNudge = Math.max(0, camNudge - dt * 0.4);
   if (toolRecoilT > 0) toolRecoilT = Math.max(0, toolRecoilT - dt * 4.5);     // quick recoil settle
@@ -4514,7 +4633,7 @@ function setRockInstance(o) {
 function chopStanding(o) {                                     // one axe strike on a standing tree
   if (!o || o.gone || o.falling || o.fallen) return;
   if (!canHeavyAction()) { failStrike(false, o.x, surfaceAt(o.x,o.z).h + 1.0, o.z); return; }
-  shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST); rootPlayer();
+  shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST, true); rootPlayer();
   if (onDig) onDig("chop");
   o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species)); o.hp--;
   if (o.hp <= 0) startFall(o);
@@ -4581,7 +4700,7 @@ function trunkHeightAt(x, z) {
 function removeFallen(o) { o.gone = true; o.scale = 0; setTreeInstance(o); const i = fallenTrees.indexOf(o); if (i >= 0) fallenTrees.splice(i, 1); }
 function chopFallen(o) {
   if (!canHeavyAction()) { failStrike(false, o.x, surfaceAt(o.x,o.z).h + 0.6, o.z); return; }
-  shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST); rootPlayer(); if (onDig) onDig("chop");
+  shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
   const [cx, cz] = fallenCrownPos(o), top = surfaceAt(cx, cz).h + 0.6;
   if (o.crownChops > 0) {                                      // crown end first → Sticks + Leaves
     o.crownChops--; spawnLeaves(cx, cz, top, leafCol(o.species));
@@ -4599,7 +4718,7 @@ function chopFallen(o) {
 function nearestStump(x, z, maxd) { let best = null, bd = maxd; for (const s of stumps) { const d = Math.hypot(s.x - x, s.z - z); if (d < bd) { bd = d; best = s; } } return best; }
 function stumpStrike(st) {
   if (st.hp === undefined) st.hp = 4;
-  shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST); rootPlayer(); if (onDig) onDig("chop");
+  shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
   spawnSand(st.x, surfaceAt(st.x, st.z).h + 0.3, st.z, 5, [0.5, 0.4, 0.28]);
   st.hp--;
   if (st.hp <= 0) {
@@ -4657,7 +4776,7 @@ function mineObj(o) {                                           // one pickaxe s
   if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 1.4) return;
   if (player.sprinting || player.airborne) return;                            // no mining mid-sprint or mid-air
   if (!canHeavyAction()) { failStrike(true, o.x, surfaceAt(o.x,o.z).h + o.sc*0.3, o.z); return; }   // too tired: pick bounces off
-  shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST); rootPlayer();
+  shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST, true); rootPlayer();
   if (onDig) onDig("mine");
   o.hp--;
   const sy = surfaceAt(o.x, o.z).h + o.sc*0.3;
@@ -4706,6 +4825,7 @@ function updateTools(dt, gdt) {
   if (rockfallT > 90 && rockObjs.length < 220) { rockfallT = 0; spawnRockNode(); }
   updateFallen(dt, gdt);
   updateErosion(gdt);
+  updateBerries();
   // scattered seeds near mature trees slowly replenish (low density)
   seedScatterT += gdt;
   if (seedScatterT > 45) { seedScatterT = 0; maybeScatterSeed(); }
@@ -4782,6 +4902,8 @@ function saveWorld() {
     fallen: fallenTrees.filter(o => !o.gone).map(o => [o.i, o.species, +o.treeScale.toFixed(2), +o.scale.toFixed(2), o.crownChops, o.trunkChops, +o.leanDir.toFixed(2), +(clock.t - o.bornFall).toFixed(0)]),
     // player-built terrain (sparse): [cell index, built height, material]
     build: [...builtCells].map(i => [i, +built[i].toFixed(2), material[i]]),
+    berries: berryBushes.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),   // 0 = ripe, else seconds left
+    fires: campfires.map(c => [+c.x.toFixed(1), +c.z.toFixed(1)]),
   })); } catch (e) {}
 }
 function loadWorld() {
@@ -4805,6 +4927,8 @@ function loadWorld() {
       // rebuild the whole terrain + textures so loaded builds appear
       rebuildRegion(0, 0, GRID-1, GRID-1); updateHeightTex(0, 0, GRID-1, GRID-1);
     }
+    if (Array.isArray(w.berries)) w.berries.forEach((v, i) => { if (berryBushes[i]) { if (v > 0) { berryBushes[i].ripe = false; berryBushes[i].regrowAt = clock.t + v; } else berryBushes[i].ripe = true; } });
+    if (Array.isArray(w.fires)) campfires = w.fires.map(c => ({ x: c[0], z: c[1] }));
     rebuildCollHash();
   } catch (e) {}
 }
@@ -4983,6 +5107,7 @@ findHighPoint();
 computeBasins();
 buildProps();
 seedSetPieces();
+seedBerryBushes();
 populateLife();
 const terrain = buildTerrainMesh();
 const water = buildWaterMesh();
@@ -5043,6 +5168,7 @@ function frame(now) {
   while (gdt > 1e-4) {
     const s = Math.min(0.05, gdt);
     updateTide(s);
+    updateHunger(s);
     updateLife(s, clock.t);
     healDig(s);
     if (tideT > 0.73 && tideT < 0.78) { if (!washedThisLow) { currentEvent = nextEvent; washUp(false); seedDigSpots(); washedThisLow = true;
@@ -5105,7 +5231,7 @@ function frame(now) {
     if (digCommit > 0) { wx = 0; wz = 0; manual = false; }   // rooted during a committed strike
 
     const wl = Math.hypot(wx, wz);
-    player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01;
+    player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01 && hungerTier() !== "starving";   // no sprint when starving
     const here = surfaceAt(player.x, player.z);
     let scrambleTarget = 0;
 
@@ -5253,6 +5379,8 @@ function frame(now) {
   drawProps(view);
   drawTools(view);
   drawSetPieces(view);
+  drawBerryBushes(view);
+  drawCampfires(view);
   drawGoats(view);
   drawSalt(view);
   drawLife(view);
@@ -5304,6 +5432,7 @@ function frame(now) {
   gl.uniform1i(postU.uScene, 0);
   gl.uniform2f(postU.uSceneSize, fbo.w, fbo.h);
   gl.uniform1i(postU.uDither, ditherOn ? 1 : 0);
+  gl.uniform1f(postU.uHungerFx, mode === "walk" && hunger < H_HUNGRY ? Math.min(1, (H_HUNGRY - hunger) / H_HUNGRY) : 0);
   gl.bindVertexArray(fsTri);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   countDraw(1);
@@ -5318,6 +5447,7 @@ function frame(now) {
     staminaEl.style.display = "block";
     staminaEl.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.1) ${deg}deg 360deg)`;
   } else staminaEl.style.display = "none";
+  updateHungerIcon();
   document.getElementById("hotbar").style.display = (mode === "walk") ? "flex" : "none";
   // targeting: recompute the crosshair target, show its action icon + a glint; no constant text
   if (mode === "walk") {
