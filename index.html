@@ -2310,7 +2310,7 @@ function makeInstanced(mesh, inst) {
  * --------------------------------------------------------------------- */
 
 let POIS = [];
-const POI_R = { shipwreck: 7, lighthouse: 6, tidepools: 9, seacave: 7, cairn: 3, hut: 4, pier: 5 };
+const POI_R = { lighthouse: 6, tidepools: 9, seacave: 7, cairn: 3, hut: 4, pier: 5 };
 
 function marchToShore(ang) {                 // find the waterline along a bearing
   const dx = Math.sin(ang), dz = -Math.cos(ang);
@@ -2331,8 +2331,8 @@ function placePOIs() {
   const pool = [];
   const add = (t, n) => { for (let i = 0; i < n; i++) pool.push(t); };
   add("lighthouse", 2); add("cairn", 2); add("hut", 1);
-  if (CHARACTER === "lowlands" || CHARACTER === "atoll") { add("shipwreck", 3); add("pier", 2); add("tidepools", 1); }
-  if (CHARACTER === "highlands") { add("tidepools", 3); add("shipwreck", 1); add("seacave", 1); }
+  if (CHARACTER === "lowlands" || CHARACTER === "atoll") { add("pier", 3); add("tidepools", 2); }
+  if (CHARACTER === "highlands") { add("tidepools", 3); add("seacave", 2); }
   if (CHARACTER === "peaks") { add("seacave", 3); add("tidepools", 2); add("lighthouse", 2); }
   const want = 2 + Math.floor(rng() * 3);   // 2–4
   let tries = 0;
@@ -2357,8 +2357,7 @@ function placePOIs() {
       const sl = coastSlope(sh.x, sh.z);
       if (type === "seacave" && sl < 0.55) continue;        // needs a cliff
       if (type === "tidepools" && (sl < 0.12 || sl > 0.5)) continue;  // a rocky shelf
-      if (type === "shipwreck") { pos = { x: sh.x - sh.dx * 14, z: sh.z - sh.dz * 14 }; } // out on the flats
-      else if (type === "pier") { pos = { x: sh.x - sh.dx * 10, z: sh.z - sh.dz * 10 }; }
+      if (type === "pier") { pos = { x: sh.x - sh.dx * 10, z: sh.z - sh.dz * 10 }; }
       else pos = { x: sh.x, z: sh.z };
     }
     if (!pos) continue;
@@ -2402,16 +2401,6 @@ function emitPOI(m, poi) {
     mTri(lm, [-2.4,2.8,2],[2.4,2.8,2],[0,4.2,0], roof);
     mQuad(lm, [-2.4,2.8,-2],[0,4.2,0],[0,4.2,0],[-2.4,2.8,2], roof);
     put(lm, x, g, z, rng() * 6.28);
-  } else if (poi.type === "shipwreck") {
-    const lm = Mesh(), wood = [0.3,0.26,0.22];
-    mBox(lm, 0, 0.45, 0, 1.9, 0.4, 5.2, wood);           // keel / hull base
-    for (let i = 0; i < 7; i++) {                         // curved ribs
-      const t = i / 6, zz = (t - 0.5) * 9, hh = 2.6 - Math.abs(t - 0.5) * 2.0;
-      mBox(lm, -1.5, hh * 0.5, zz, 0.13, hh * 0.5, 0.15, wood);
-      mBox(lm, 1.5, hh * 0.5, zz, 0.13, hh * 0.5, 0.15, wood);
-    }
-    mBox(lm, 0.3, 2.4, 0, 0.12, 2.4, 0.12, wood);        // broken mast stump
-    put(lm, x, g - 0.6, z, rng() * 6.28);                 // half-buried, tilted
   } else if (poi.type === "pier") {
     const lm = Mesh(), wood = [0.34,0.27,0.2];
     for (let i = 0; i < 6; i++) { const zz = i * 3; mBox(lm, -1.4, 1.2, zz, 0.18, 1.2, 0.18, wood); mBox(lm, 1.4, 1.2, zz, 0.18, 1.2, 0.18, wood); }
@@ -2766,6 +2755,10 @@ function wormcastMesh() { const m = Mesh(); for (let i=0;i<5;i++){ const a=i*0.9
 function pickleweedMesh() { const m = Mesh(); const g=[0.42,0.56,0.33]; for (let i=0;i<4;i++){ const a=i/4*6.283, r=0.06; for(let s=0;s<3;s++) mCyl(m, 0.1+s*0.12, 0.2+s*0.12, 0.04, 0.035, 5, [g[0],g[1]-s*0.03,g[2]]); } return m; }
 function kelpMesh() { const m = Mesh(); mCyl(m,0,1.4,0.04,0.06,6,[0.32,0.26,0.14]); mCyl(m,1.4,1.7,0.12,0.06,7,[0.4,0.34,0.18]); for(let i=0;i<4;i++){const a=i/4*6.283; mBox(m, Math.cos(a)*0.3, 1.8+i*0.05, Math.sin(a)*0.3, 0.5, 0.03, 0.12, [0.34,0.3,0.16]); } return m; }
 function seabeanMesh() { const m = Mesh(); mBox(m,0,0.06,0,0.14,0.08,0.1,[0.4,0.26,0.16]); mBox(m,0,0.08,0,0.1,0.04,0.12,[0.3,0.2,0.12]); return m; }
+// generic storm flotsam (§11.1)
+function ropeMesh() { const m = Mesh(); const c = [0.66,0.56,0.36]; for (let i = 0; i < 6; i++) { const a = i*1.1; mCyl(m, Math.cos(a)*0.14, Math.cos(a)*0.14+0.06, 0.05, 0.05, 5, [c[0]-0.03*(i%2),c[1],c[2]]); } mergeMesh(m, discMesh(0.0,0.2,8,0.03,[0.6,0.5,0.32])); return m; }
+function crateMesh() { const m = Mesh(); const w = [0.5,0.37,0.24], e = [0.4,0.29,0.18]; mBox(m,0,0.2,0,0.22,0.2,0.22,w);
+  for (const s of [-0.21,0.21]) { mBox(m,s,0.2,0,0.02,0.22,0.22,e); mBox(m,0,0.2,s,0.22,0.22,0.02,e); } mBox(m,0,0.2,0,0.23,0.04,0.23,e); mBox(m,0,0.38,0,0.23,0.04,0.23,e); return m; }
 function hopperMesh() { const m = Mesh(); mBox(m,0,0.05,0,0.08,0.05,0.06,[0.72,0.68,0.55]); mBox(m,-0.05,0.04,0.03,0.015,0.06,0.015,[0.6,0.55,0.4]); mBox(m,-0.05,0.04,-0.03,0.015,0.06,0.015,[0.6,0.55,0.4]); return m; }
 function heronMesh() { const m = Mesh(), g=[0.56,0.6,0.64], pale=[0.8,0.82,0.85];
   mBox(m, 0, 0.9, 0, 0.16, 0.16, 0.32, g); mCyl(m, 0, 1.5, 0.05, 0.05, 6, pale);          // body + neck (vertical cyl up)
@@ -2855,6 +2848,8 @@ const FINDS = {
   kelp:     { mesh: () => kelpMesh(),                base: 1.0, max: 80,  label: "Bull Kelp", desc: "A long rubbery stipe with a float at its head.", rare: 1 },
   seabean:  { mesh: () => seabeanMesh(),             base: 0.4, max: 70,  label: "Sea Bean", desc: "A drift seed carried here from a far-off shore.", rare: 2 },
   berry:    { mesh: () => berryMesh(),               base: 0.45,max: 80,  label: "Berries", desc: "Tart wild berries from an inland bush. A good snack.", rare: 0 },
+  rope:     { mesh: () => ropeMesh(),                base: 0.5, max: 60,  label: "Coiled Rope", desc: "A tangle of weathered rope, washed in on the surge.", rare: 0 },
+  crate:    { mesh: () => crateMesh(),               base: 0.7, max: 40,  label: "Broken Crate", desc: "A salt-stained wooden crate, its boards sprung.", rare: 1 },
 };
 
 // build dynamic draw objects
@@ -2947,7 +2942,7 @@ function washUp(initial) {
     if (ev === "kelp" && roll < 0.55) { spawnFind("kelp", x, z); if (rng() < 0.5) { const p = cb.finds[(rng()*cb.finds.length)|0]; if (FINDS[p]) spawnFind(p, x+(rng()-0.5), z+(rng()-0.5)); } continue; }
     if (ev === "driftseed" && roll < 0.5) { spawnFind(rng() < 0.65 ? "seabean" : "coconut", x, z); continue; }
     if (ev === "floats" && roll < 0.4) { spawnFind("float", x, z); continue; }
-    if (ev === "storm" && roll < 0.28) { spawnFind(["driftwood","bottle","bone","float"][(rng()*4)|0], x, z); continue; }
+    if (ev === "storm" && roll < 0.28) { spawnFind(["driftwood","float","bottle","rope","crate"][(rng()*5)|0], x, z); continue; }   // generic flotsam, not wreck debris
     // otherwise biome-weighted: mostly commons, rarer finds sit lower / farther out
     const low = h < waterLevel + 1.6;
     let pick;
