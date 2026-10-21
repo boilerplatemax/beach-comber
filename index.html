@@ -382,10 +382,33 @@ const SEA_THRESH = 0.16;     // elevation field value that maps to the waterline
 const SHELF_POW = 1.7;       // >1 flattens near shore → wide tidal margins, but
                              // gentle enough that dunes & interior still rise
 
-const heightmap = new Float32Array(GRID * GRID);
-const dig = new Float32Array(GRID * GRID);    // digging offset layer (Part B); +spoil / -holes
+const heightmap = new Float32Array(GRID * GRID);   // base generated terrain (never mutated by play)
+const dig = new Float32Array(GRID * GRID);    // digging offset layer; +spoil / -holes (heals back)
+const built = new Float32Array(GRID * GRID);  // player-built height — permanent, kept apart from dig so healing can't erase it
 const fresh = new Float32Array(GRID * GRID);  // "freshness" of dug soil 0..1 (Phase 6; darkens, fades back)
+const material = new Uint8Array(GRID * GRID); // surface material id (0 = natural/by-height, else MAT.*)
+const matField = new Float32Array(GRID * GRID);    // float copy of `material` for the GPU texture
+const builtCells = new Set();                 // grid indices with built height (for intertidal erosion)
 const hcombined = new Float32Array(GRID * GRID);   // scratch for base+dig texture uploads
+
+// Surface materials. 0 = "natural" (coloured by height/slope as before).
+const MAT = { NATURAL: 0, GRASS: 1, DIRT: 2, SAND: 3, GRAVEL: 4, STONE: 5, MUD: 6 };
+const MAT_NAME = ["natural", "grass", "dirt", "sand", "gravel", "stone", "mud"];
+const MAT_ITEM = { dirt: MAT.DIRT, sand: MAT.SAND, gravel: MAT.GRAVEL, stone: MAT.STONE, mud: MAT.MUD };  // placeable material items
+// natural material of a base cell, from its height & local slope
+function defaultMat(i) {
+  const hb = heightmap[i];
+  const gx = i % GRID, gz = (i / GRID) | 0;
+  let slope = 0;
+  if (gx > 0 && gx < GRID - 1 && gz > 0 && gz < GRID - 1) {
+    const dhx = (heightmap[i+1] - heightmap[i-1]) / (2 * CELL), dhz = (heightmap[i+GRID] - heightmap[i-GRID]) / (2 * CELL);
+    slope = Math.atan(Math.hypot(dhx, dhz));
+  }
+  if (slope > 0.62 || hb > 34) return MAT.STONE;
+  if (hb > 20) return MAT.GRAVEL;
+  if (hb < 6) return MAT.SAND;
+  return MAT.GRASS;
+}
 
 function buildHeightmap() {
   for (let z = 0; z < GRID; z++) {
@@ -450,8 +473,8 @@ function heightAt(wx, wz) {
   if (x0 < 0 || z0 < 0 || x0 >= GRID - 1 || z0 >= GRID - 1) return -8.0;
   const fx = gx - x0, fz = gz - z0;
   const i00 = z0 * GRID + x0, i10 = i00 + 1, i01 = i00 + GRID, i11 = i01 + 1;
-  const h00 = heightmap[i00] + dig[i00], h10 = heightmap[i10] + dig[i10];
-  const h01 = heightmap[i01] + dig[i01], h11 = heightmap[i11] + dig[i11];
+  const h00 = heightmap[i00] + dig[i00] + built[i00], h10 = heightmap[i10] + dig[i10] + built[i10];
+  const h01 = heightmap[i01] + dig[i01] + built[i01], h11 = heightmap[i11] + dig[i11] + built[i11];
   const a = h00 + (h10 - h00) * fx;
   const b = h01 + (h11 - h01) * fx;
   return a + (b - a) * fz;
@@ -469,8 +492,8 @@ function surfaceAt(wx, wz) {
   }
   const fx = gx - x0, fz = gz - z0;
   const i00 = z0 * GRID + x0, i10 = i00 + 1, i01 = i00 + GRID, i11 = i01 + 1;
-  const h00 = heightmap[i00] + dig[i00], h10 = heightmap[i10] + dig[i10];
-  const h01 = heightmap[i01] + dig[i01], h11 = heightmap[i11] + dig[i11];
+  const h00 = heightmap[i00] + dig[i00] + built[i00], h10 = heightmap[i10] + dig[i10] + built[i10];
+  const h01 = heightmap[i01] + dig[i01] + built[i01], h11 = heightmap[i11] + dig[i11] + built[i11];
   let h, e1x, e1y, e1z, e2x, e2y, e2z;
   if (fx + fz < 1.0) {                       // lower triangle (a, b, c)
     h = h00 + (h10 - h00) * fx + (h01 - h00) * fz;
@@ -789,6 +812,7 @@ out vec4 frag;
 uniform vec3 uSunDir, uCamPos, uZenith, uHorizon, uWarm;
 uniform float uFogDensity, uFogNear, uWaterLevel, uWetLevel;
 uniform sampler2D uFresh;
+uniform sampler2D uMaterial;
 ${SKY_GLSL}
 void main() {
   // Flat shading: face normal from screen-space derivatives of world pos.
@@ -811,6 +835,20 @@ void main() {
   col = mix(col, cGrass,   smoothstep(10.0, 20.0, h));
   col = mix(col, cForest,  smoothstep(30.0, 58.0, h));
   col = mix(col, cRock,    smoothstep(0.45, 0.70, slope));
+
+  // Painted surface material (dug or player-placed) overrides the height bands.
+  vec2 muv = clamp((vWorld.xz + ${HALF.toFixed(1)}) / ${WORLD.toFixed(1)}, 0.0, 1.0);
+  float m = texture(uMaterial, muv).r;
+  if (m > 0.5) {
+    vec3 mc = cGrass;
+    if      (m < 1.5) mc = vec3(0.44, 0.53, 0.31);   // grass
+    else if (m < 2.5) mc = vec3(0.40, 0.30, 0.20);   // dirt
+    else if (m < 3.5) mc = vec3(0.86, 0.78, 0.59);   // sand
+    else if (m < 4.5) mc = vec3(0.56, 0.55, 0.51);   // gravel
+    else if (m < 5.5) mc = vec3(0.47, 0.44, 0.41);   // stone
+    else              mc = vec3(0.34, 0.28, 0.20);   // mud
+    col = mix(col, mc, 0.82);
+  }
 
   // Wet sand: darker from the waterline up to the recent high-water mark,
   // drying back toward dry sand above it (wetLevel lags the tide).
@@ -851,7 +889,7 @@ function fillChunkPositions(ch, out) {
   for (let z = ch.z0; z <= ch.z1; z++)
     for (let x = ch.x0; x <= ch.x1; x++) {
       const i = z * GRID + x;
-      out[p++] = x * CELL - HALF; out[p++] = heightmap[i] + dig[i]; out[p++] = z * CELL - HALF;
+      out[p++] = x * CELL - HALF; out[p++] = heightmap[i] + dig[i] + built[i]; out[p++] = z * CELL - HALF;
     }
 }
 function buildTerrainMesh() {
@@ -922,6 +960,18 @@ function buildFreshTexture() {
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, GRID, GRID, 0, gl.RED, gl.FLOAT, fresh);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+// Surface-material texture: the painted material id per cell (NEAREST; 0 = natural).
+function buildMaterialTexture() {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, GRID, GRID, 0, gl.RED, gl.FLOAT, matField);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
@@ -1481,6 +1531,7 @@ const ACTION_ICONS = {
   pick:   _svg('<line x1="6" y1="18" x2="12" y2="12"/><path d="M4 8.5c4.5-3.5 11.5-3.5 16 0M12 12V7.5"/>'),
   seed:   _svg('<path d="M12 21v-7M12 14c-4 0-6.5-2.5-6.5-6.5 4 0 6.5 2.5 6.5 6.5zm0 0c0-3.2 2.3-6 6.5-6 0 3.2-2.3 6-6.5 6z"/>'),
   leaves: _svg('<path d="M5 19c0-8 6.5-14 14-14 0 8-6.5 14-14 14zM5.5 18.5c3-3.5 6.5-6 10-7.5"/>'),
+  place:  _svg('<path d="M4 17l8-4 8 4-8 4zM12 13V4M8.5 7.5L12 4l3.5 3.5"/>'),
 };
 // First-run key hints: shown the first few times each action is available, then retired.
 let hintsOn = true;
@@ -1489,7 +1540,7 @@ try { Object.assign(hintCount, JSON.parse(localStorage.getItem("bc_hints") || "{
 function saveHints() { try { localStorage.setItem("bc_hints", JSON.stringify(hintCount)); localStorage.setItem("bc_hintsOff", hintsOn ? "0" : "1"); } catch (e) {} }
 function resetHints() { for (const k in hintCount) delete hintCount[k]; hintsOn = true; saveHints(); }
 let lastAction = null, hintT = 0, hintText = "";
-const HINT_VERB = { hand: "pick up", look: "inspect", shovel: "dig", axe: "chop", pick: "mine", seed: "plant", leaves: "use leaves" };
+const HINT_VERB = { hand: "pick up", look: "inspect", shovel: "dig", axe: "chop", pick: "mine", seed: "plant", leaves: "use leaves", place: "place material" };
 // What the crosshair is on right now → which action icon to show.
 function crosshairAction() {
   const tool = selectedTool();
@@ -1505,6 +1556,7 @@ function crosshairAction() {
   const pt = rayGround(0, 0); if (!pt) return null;
   if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return null;
   if (tool === "shovel") return "shovel";
+  if (MAT_ITEM[tool] !== undefined) return "place";
   if (SEED_TREE[tool]) return "seed";
   if (tool === "leaves") return "leaves";
   return null;
@@ -2328,6 +2380,12 @@ function wormMesh() { const m = Mesh(); for (let i = 0; i < 6; i++) { const a = 
 function rootMesh() { const m = Mesh(); const c = [0.6,0.45,0.3]; mCyl(m,-0.02,0.3,0.05,0.02,6,c); mCyl(m,0.0,0.22,0.035,0.015,6,[0.55,0.4,0.26]); mBox(m,0.08,0.12,0.03,0.12,0.025,0.025,[0.5,0.38,0.24]); mBox(m,-0.06,0.08,-0.04,0.1,0.022,0.022,[0.52,0.4,0.26]); return m; }
 function flintMesh() { const m = Mesh(); mRock(m, mulberry32(0x5f11 ^ SEED_INT), [0.26, 0.27, 0.31]); return m; }
 function driftwoodMesh() { const m = Mesh(); const g = [0.62,0.6,0.56]; mCyl(m,-0.4,0.4,0.1,0.08,6,g); mergeMesh(m, discMesh(0.4,0.08,6,0.02,[0.66,0.64,0.6])); mergeMesh(m, discMesh(-0.4,0.1,6,-0.02,[0.58,0.56,0.52])); return m; }
+// --- loose material clump (a handful of sand / dirt / gravel / mud) ---
+function clumpMesh(col) { const m = Mesh(); for (let i = 0; i < 7; i++) { const a = i/7*6.283, r = 0.03 + (i%3)*0.06; mBox(m, Math.cos(a)*r, 0.04+(i%2)*0.04, Math.sin(a)*r, 0.09, 0.05, 0.09, [col[0]*(0.9+0.1*(i%2)), col[1], col[2]]); } mBox(m,0,0.08,0,0.1,0.06,0.1,col); return m; }
+function sandMatMesh()   { return clumpMesh([0.86,0.78,0.59]); }
+function dirtMatMesh()   { return clumpMesh([0.40,0.30,0.20]); }
+function gravelMatMesh() { return clumpMesh([0.56,0.55,0.51]); }
+function mudMatMesh()    { return clumpMesh([0.34,0.28,0.20]); }
 // fallen trunk: a log lying along +X from x=0 (base) to x=1 (unit, scaled by length)
 function fallenTrunkMesh() { const m = Mesh(); const c = BROWN;
   mBox(m, 0.5, 0.17, 0, 0.5, 0.15, 0.15, c);
@@ -2377,6 +2435,10 @@ const FINDS = {
   leaves:   { mesh: () => leafPileMesh(),            base: 0.6, max: 60,  label: "Leaves", desc: "A handful of dry leaves. Compost for saplings, or a treat for goats.", rare: 0 },
   stick:    { mesh: () => stickMesh(),               base: 0.5, max: 60,  label: "Sticks", desc: "Snapped twigs from a tree's crown.", rare: 0 },
   // --- inland raw materials (dug from grass / dirt / forest) ---
+  sand:     { mesh: () => sandMatMesh(),             base: 0.5, max: 60,  label: "Sand", desc: "A double handful of sand. Place it to raise the ground.", rare: 0 },
+  dirt:     { mesh: () => dirtMatMesh(),             base: 0.5, max: 60,  label: "Dirt", desc: "Dark earth. Place it to build up the ground.", rare: 0 },
+  gravel:   { mesh: () => gravelMatMesh(),           base: 0.5, max: 60,  label: "Gravel", desc: "Loose pebbles. Place it to build up the ground.", rare: 0 },
+  mud:      { mesh: () => mudMatMesh(),              base: 0.5, max: 60,  label: "Mud", desc: "Heavy, wet mud from the flats. Place it to build.", rare: 0 },
   worm:     { mesh: () => wormMesh(),                base: 0.4, max: 80,  label: "Earthworm", desc: "A fat worm from the dark soil. Good bait.", rare: 0 },
   root:     { mesh: () => rootMesh(),                base: 0.45,max: 70,  label: "Root", desc: "A knotty taproot, prised from the dirt.", rare: 0 },
   flint:    { mesh: () => flintMesh(),               base: 0.4, max: 70,  label: "Flint", desc: "A dark, sharp-edged nodule.", rare: 0 },
@@ -2589,7 +2651,11 @@ ITEMS.pickaxe = { id: "pickaxe", name: "Pickaxe", category: "tool", rarity: "too
                   desc: "A miner's pick. Break boulders into stone.", model: () => pickaxeMesh(), tint: [1,1,1] };
 // materials & seeds (Phase 6; building comes later)
 digItem("log", "Log", "material", "common", "A length of trunk, fresh-cut.", () => logMesh(), [0.5,0.4,0.28]);
-digItem("stone", "Stone", "material", "common", "A heavy chunk of rock.", () => stoneMesh(), [0.52,0.5,0.47]);
+digItem("stone", "Stone", "material", "common", "A heavy chunk of rock. Place it to build; only a pickaxe removes placed stone.", () => stoneMesh(), [0.52,0.5,0.47]);
+digItem("sand", "Sand", "material", "common", "A double handful of sand. Place it to raise the ground.", () => sandMatMesh(), [0.86,0.78,0.59]);
+digItem("dirt", "Dirt", "material", "common", "Dark earth. Place it to build up the ground.", () => dirtMatMesh(), [0.40,0.30,0.20]);
+digItem("gravel", "Gravel", "material", "common", "Loose pebbles. Place it to build up the ground.", () => gravelMatMesh(), [0.56,0.55,0.51]);
+digItem("mud", "Mud", "material", "common", "Heavy, wet mud from the flats. Place it to build.", () => mudMatMesh(), [0.34,0.28,0.20]);
 digItem("coconut", "Coconut", "seed", "common", "A palm seed — plant it on sand.", () => coconutMesh(), [0.5,0.38,0.26]);
 digItem("pinecone", "Pine Cone", "seed", "common", "A conifer seed — plant it on soil or grass.", () => coneMesh2(), [0.44,0.32,0.2]);
 digItem("nut", "Nut", "seed", "common", "A broadleaf seed — plant it on soil or grass.", () => nutMesh(), [0.5,0.36,0.22]);
@@ -2976,7 +3042,7 @@ let pathActive = false, pathPts = [], pathI = 0, pathGoal = null, pendingEntity 
 let lastInvVP = null;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
-function navH(ix, iz) { const gx = Math.min(GRID-1, ix*NAV), gz = Math.min(GRID-1, iz*NAV); const i = gz*GRID+gx; return heightmap[i] + dig[i]; }
+function navH(ix, iz) { const gx = Math.min(GRID-1, ix*NAV), gz = Math.min(GRID-1, iz*NAV); const i = gz*GRID+gx; return heightmap[i] + dig[i] + built[i]; }
 function navXZ(ix, iz) { return [ Math.min(GRID-1, ix*NAV)*CELL - HALF, Math.min(GRID-1, iz*NAV)*CELL - HALF ]; }
 function blockedByCollider(x, z, margin) {
   const cx = Math.floor(x/COLL_CELL), cz = Math.floor(z/COLL_CELL);
@@ -3177,7 +3243,8 @@ function clickAt(ndcx, ndcy) {
   const tool = selectedTool();
   if (tool === "shovel") digAt(pt[0], pt[1]);
   else if (tool === "axe") chopAt(pt[0], pt[1]);
-  else if (tool === "pickaxe") mineAt(pt[0], pt[1]);
+  else if (tool === "pickaxe") { if (!mineAt(pt[0], pt[1])) removeBuiltAt(pt[0], pt[1]); }   // no rock → chip placed ground
+  else if (MAT_ITEM[tool] !== undefined) placeMaterial(pt[0], pt[1]);
   else if (SEED_TREE[tool]) plantAt(pt[0], pt[1]);
   else if (tool === "leaves") useLeavesAt(pt[0], pt[1]);
 }
@@ -3278,7 +3345,7 @@ function updateHeightTex(x0, z0, x1, z1) {
   x0 = Math.max(0, x0 | 0); z0 = Math.max(0, z0 | 0); x1 = Math.min(GRID - 1, x1 | 0); z1 = Math.min(GRID - 1, z1 | 0);
   const w = x1 - x0 + 1, h = z1 - z0 + 1; if (w <= 0 || h <= 0) return;
   const buf = new Float32Array(w * h); let p = 0;
-  for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) { const i = z * GRID + x; buf[p++] = heightmap[i] + dig[i]; }
+  for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) { const i = z * GRID + x; buf[p++] = heightmap[i] + dig[i] + built[i]; }
   gl.bindTexture(gl.TEXTURE_2D, heightTex); gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
   gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, z0, w, h, gl.RED, gl.FLOAT, buf);
   // Filled DEM: a hole on DRY land fills only to the water table (−1000 → local=waterLevel);
@@ -3295,6 +3362,11 @@ function updateHeightTex(x0, z0, x1, z1) {
   for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) ff[p++] = fresh[z * GRID + x];
   gl.bindTexture(gl.TEXTURE_2D, freshTex);
   gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, z0, w, h, gl.RED, gl.FLOAT, ff);
+  // Painted material.
+  const mf = new Float32Array(w * h); p = 0;
+  for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) { const i = z * GRID + x; matField[i] = material[i]; mf[p++] = material[i]; }
+  gl.bindTexture(gl.TEXTURE_2D, materialTex);
+  gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, z0, w, h, gl.RED, gl.FLOAT, mf);
 }
 function rebuildRegion(x0, z0, x1, z1) {
   // rebuild every chunk overlapping the region, once
@@ -3307,10 +3379,48 @@ function rebuildRegion(x0, z0, x1, z1) {
   }
 }
 
+/* ===================================================================== *
+ * § TERRAIN API  (Phase 9 Part A)
+ *   Every gameplay read/write of the ground goes through Terrain.* so the
+ *   heightmap/dig/built/material arrays stay a swappable backend (→ voxels).
+ * ===================================================================== */
+const Terrain = {
+  heightAt,                                                    // effective ground height (base + dig + built)
+  normalAt(wx, wz) { const s = surfaceAt(wx, wz); return [s.nx, s.ny, s.nz]; },
+  slopeAt(wx, wz) { return surfaceAt(wx, wz).slope; },
+  // Painted material if set, else the natural material for this cell.
+  materialAt(wx, wz) { const i = cellIndex(wx, wz); if (i < 0) return MAT.NATURAL; return material[i] || defaultMat(i); },
+  // March the view ray to the ground; returns the hit point + grid cell.
+  raycast(o, d, maxT) { maxT = maxT || 200;
+    for (let t = 0.8; t < maxT; t += 0.6) { const x = o[0]+d[0]*t, y = o[1]+d[1]*t, z = o[2]+d[2]*t;
+      if (y <= surfaceAt(x, z).h) return { hit: true, x, z, y: surfaceAt(x, z).h, t, i: cellIndex(x, z) }; }
+    return { hit: false };
+  },
+  // Unified edit. layer:"dig" writes the healable offset; layer:"built" writes
+  // the permanent player layer. `mat` (optional) paints the surface material.
+  edit(x, z, radius, delta, layer, mat) {
+    const gcx = (x + HALF) / CELL, gcz = (z + HALF) / CELL, r = radius / CELL;
+    const minx = Math.max(0, Math.floor(gcx - r - 1)), maxx = Math.min(GRID-1, Math.ceil(gcx + r + 1));
+    const minz = Math.max(0, Math.floor(gcz - r - 1)), maxz = Math.min(GRID-1, Math.ceil(gcz + r + 1));
+    const arr = layer === "built" ? built : dig;
+    for (let gz = minz; gz <= maxz; gz++) for (let gx = minx; gx <= maxx; gx++) {
+      const d2 = Math.hypot(gx - gcx, gz - gcz); if (d2 > r) continue;
+      const f = 1 - d2 / r, i = gz * GRID + gx;
+      arr[i] += delta * f * f;
+      if (layer === "built") { if (built[i] > 0.01) builtCells.add(i); else { built[i] = 0; builtCells.delete(i); } }
+      else dugCells.add(i);
+      if (mat !== undefined) { material[i] = mat; fresh[i] = Math.max(fresh[i], 0.5); }
+    }
+    rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz);
+    resnapPropsRegion(x - radius - 2, z - radius - 2, x + radius + 2, z + radius + 2);
+  },
+};
+
 function surfaceKind(x, z) {
   // Material follows the ORIGINAL ground (base heightmap), so a deep hole's
   // own steep walls never re-classify it as un-diggable "rock".
   const i = cellIndex(x, z);
+  if (i >= 0 && material[i] === MAT.STONE && built[i] > 0.05) return "rock";   // placed stone: pickaxe only
   if (i < 0) return "rock";
   const hb = heightmap[i];
   const gx = i % GRID, gz = (i / GRID) | 0;
@@ -3501,11 +3611,75 @@ function digAt(x, z) {
   const amt = (kind === "wet" ? 1.5 : kind === "dry" ? 1.1 : 0.7) * weak;
   const holeAng = Math.atan2(player.z - z, player.x - x);
   const wasAbove = waterSurfaceAt(x, z) < surfaceAt(x, z).h - 0.02;
+  const matItem = digMaterialItem(x, z);                     // what you dig out (grass → dirt)
+  paintCells(x, z, DIG_R * 0.55, MAT_ITEM[matItem]);         // the floor of the hole shows the exposed material
   applyDig(x, z, amt, holeAng);
+  Inv.add(matItem, 1);                                       // ~1 material per strike
   removeFoliageAround(x, z, DIG_R);                          // clear grass/seaweed with a burst
   spawnSand(x, sy + 0.3, z, 14, kind === "wet" ? [0.62, 0.56, 0.46] : kind === "gravel" ? [0.6, 0.58, 0.55] : [0.86, 0.78, 0.6]);
   if (wasAbove && waterSurfaceAt(x, z) >= surfaceAt(x, z).h - 0.02) spawnInflow(x, z);   // just hit the water table
   revealSpot(x, z, false);
+}
+/* ---- placing materials: raise the ground + paint its surface (§A) ---- */
+const MAT_COL_JS = [[0,0,0], [0.44,0.53,0.31], [0.40,0.30,0.20], [0.86,0.78,0.59], [0.56,0.55,0.51], [0.47,0.44,0.41], [0.34,0.28,0.20]];
+const PLACE_R = 4.8, PLACE_RAISE = 0.7;      // grid is coarse (~3m cells), so a "small" mound still spans a few cells
+function canPlaceAt(x, z) {
+  const dp = Math.hypot(x - player.x, z - player.z);
+  if (dp > REACH + 1.4 || dp < 0.8) return false;                 // out of reach, or inside the player
+  for (const g of goats) if (Math.hypot(g.x - x, g.z - z) < 1.0) return false;
+  for (const e of life) if (e.kind === "creature" && Math.hypot(e.x - x, e.z - z) < 1.0) return false;
+  if (bigPropBlocking(x, z, 0.8)) return false;                   // not inside trees / boulders / POIs
+  return true;
+}
+function placeMaterial(x, z) {
+  const id = selectedTool(), mat = MAT_ITEM[id]; if (mat === undefined) return;
+  if (!Inv.has(id) || !canPlaceAt(x, z)) return;
+  Inv.remove(id, 1);
+  Terrain.edit(x, z, PLACE_R, PLACE_RAISE, "built", mat);         // raise built height + paint material
+  if (onDig) onDig("plant");
+  spawnSand(x, surfaceAt(x, z).h + 0.2, z, 8, MAT_COL_JS[mat] || [0.7,0.6,0.5]);
+  saveWorld();
+}
+// Pickaxe on placed stone (or any player-built ground) lowers it a step.
+function removeBuiltAt(x, z) {
+  const i = cellIndex(x, z); if (i < 0 || built[i] <= 0.01) return false;
+  Terrain.edit(x, z, PLACE_R, -Math.min(built[i] + 0.2, PLACE_RAISE + 0.2), "built");
+  // if fully removed, clear its painted material back to natural
+  const j = cellIndex(x, z); if (j >= 0 && built[j] <= 0.02) { material[j] = MAT.NATURAL; updateHeightTex((j%GRID)-2, ((j/GRID)|0)-2, (j%GRID)+2, ((j/GRID)|0)+2); }
+  const give = material[i] === MAT.STONE ? "stone" : material[i] === MAT.GRAVEL ? "gravel" : material[i] === MAT.SAND ? "sand" : material[i] === MAT.MUD ? "mud" : "dirt";
+  Inv.add(give, 1); if (onDig) onDig("mine"); spawnSand(x, surfaceAt(x,z).h + 0.2, z, 6, [0.5,0.5,0.52]);
+  saveWorld(); return true;
+}
+// Placed material in the wash zone slowly erodes; everywhere else it's permanent.
+let erosionT = 0;
+function updateErosion(gdt) {
+  if (!builtCells.size) return;
+  erosionT += gdt; if (erosionT < 1.0) return; const step = erosionT; erosionT = 0;
+  let any = false, minx = 1e9, minz = 1e9, maxx = -1e9, maxz = -1e9;
+  for (const i of [...builtCells]) {
+    const gx = i % GRID, gz = (i / GRID) | 0;
+    if (heightmap[i] + dig[i] + built[i] >= wetLevel + 0.6) continue;    // above the wash zone → permanent
+    built[i] -= 0.035 * step;
+    if (built[i] <= 0.02) { built[i] = 0; material[i] = MAT.NATURAL; builtCells.delete(i); }
+    any = true; if (gx<minx) minx=gx; if (gx>maxx) maxx=gx; if (gz<minz) minz=gz; if (gz>maxz) maxz=gz;
+  }
+  if (any) { rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz); }
+}
+// The material item a strike here yields (grass gives dirt).
+function digMaterialItem(x, z) {
+  const m = Terrain.materialAt(x, z);
+  if (m === MAT.SAND) return "sand";
+  if (m === MAT.GRAVEL) return "gravel";
+  if (m === MAT.MUD) return "mud";
+  return "dirt";                                             // grass, dirt and anything else diggable → dirt
+}
+function paintCells(x, z, radius, mat) {
+  if (mat === undefined) return;
+  const gcx = (x + HALF) / CELL, gcz = (z + HALF) / CELL, r = radius / CELL;
+  const minx = Math.max(0, Math.floor(gcx-r)), maxx = Math.min(GRID-1, Math.ceil(gcx+r));
+  const minz = Math.max(0, Math.floor(gcz-r)), maxz = Math.min(GRID-1, Math.ceil(gcz+r));
+  for (let gz = minz; gz <= maxz; gz++) for (let gx = minx; gx <= maxx; gx++)
+    if (Math.hypot(gx-gcx, gz-gcz) <= r) material[gz*GRID+gx] = mat;
 }
 let pendingDig = null;
 
@@ -3544,6 +3718,20 @@ function drawTells(view, dt) {
   }
   if (n) { propUniforms(view); dimpleDyn.draw(digScratch, n); }
 }
+// Ghost preview of where a material would land: a disc on the ground, green = ok, red = blocked.
+const ghostDyn = makeDynamic((function () { const m = discMesh(0, 0.5, 14, 0.02, [1, 1, 1]); return m; })(), 1);
+function drawPlaceGhost(view) {
+  if (mode !== "walk") return;
+  const tool = selectedTool(); if (MAT_ITEM[tool] === undefined) return;
+  const pt = rayGround(0, 0); if (!pt) return;
+  const ok = canPlaceAt(pt[0], pt[1]);
+  const base = MAT_COL_JS[MAT_ITEM[tool]] || [0.7,0.6,0.5];
+  const col = ok ? [base[0]*0.6+0.25, base[1]*0.6+0.4, base[2]*0.6+0.2] : [0.85, 0.3, 0.25];
+  const y = surfaceAt(pt[0], pt[1]).h + 0.08, o = 0, a = ghostScratch;
+  a[o]=pt[0]; a[o+1]=y; a[o+2]=pt[1]; a[o+3]=PLACE_R*2.1; a[o+4]=0; a[o+5]=0; a[o+6]=0; a[o+7]=col[0]; a[o+8]=col[1]; a[o+9]=col[2];
+  propUniforms(view); ghostDyn.draw(a, 1);
+}
+const ghostScratch = new Float32Array(10);
 
 /* ---- first-person tool (shovel / axe / pickaxe, built in world space each frame) ---- */
 const TOOL_FP = {};
@@ -3795,9 +3983,9 @@ function plantStage(pl) { return Math.max(0, Math.min(1, (clock.t - pl.plantedAt
 
 /* ---- mining ---- */
 function mineAt(x, z) {
-  if (mode !== "walk" || selectedTool() !== "pickaxe") return;
-  const o = nearestObj(rockObjs, x, z, 4.5); if (!o) return;
-  mineObj(o);
+  if (mode !== "walk" || selectedTool() !== "pickaxe") return false;
+  const o = nearestObj(rockObjs, x, z, 4.5); if (!o) return false;
+  mineObj(o); return true;
 }
 function mineObj(o) {                                           // one pickaxe strike on a rock
   if (!o || o.gone) return;
@@ -3849,6 +4037,7 @@ function updateTools(dt, gdt) {
   rockfallT += gdt;
   if (rockfallT > 90 && rockObjs.length < 220) { rockfallT = 0; spawnRockNode(); }
   updateFallen(dt, gdt);
+  updateErosion(gdt);
   // scattered seeds near mature trees slowly replenish (low density)
   seedScatterT += gdt;
   if (seedScatterT > 45) { seedScatterT = 0; maybeScatterSeed(); }
@@ -3923,6 +4112,8 @@ function saveWorld() {
     chopped: treeObjs.filter(o => o.gone).map(o => o.i + ":" + o.species),
     // fallen trees are real toppled instances: save the instance ref + its whittle state
     fallen: fallenTrees.filter(o => !o.gone).map(o => [o.i, o.species, +o.treeScale.toFixed(2), +o.scale.toFixed(2), o.crownChops, o.trunkChops, +o.leanDir.toFixed(2), +(clock.t - o.bornFall).toFixed(0)]),
+    // player-built terrain (sparse): [cell index, built height, material]
+    build: [...builtCells].map(i => [i, +built[i].toFixed(2), material[i]]),
   })); } catch (e) {}
 }
 function loadWorld() {
@@ -3939,6 +4130,12 @@ function loadWorld() {
       o.bornFall = clock.t - (f[7]||0); o.sink = 0;
       setTreeInstance(o); if (o.coll) o.coll.r = 0;
       fallenTrees.push(o);
+    }
+    const bd = w.build || [];
+    if (bd.length) {
+      for (const [i, h, m] of bd) { if (i < 0 || i >= GRID*GRID) continue; built[i] = h; material[i] = m; matField[i] = m; if (h > 0.01) builtCells.add(i); }
+      // rebuild the whole terrain + textures so loaded builds appear
+      rebuildRegion(0, 0, GRID-1, GRID-1); updateHeightTex(0, 0, GRID-1, GRID-1);
     }
     rebuildCollHash();
   } catch (e) {}
@@ -4122,6 +4319,7 @@ const water = buildWaterMesh();
 const heightTex = buildHeightTexture();
 const filledTex = buildFilledTexture();
 const freshTex = buildFreshTexture();
+const materialTex = buildMaterialTexture();
 const fsTri = buildFsTri();
 
 // Phase 5 setup: icons, inventory, panels, saved state, starting shovel.
@@ -4366,6 +4564,9 @@ function frame(now) {
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, freshTex);
   gl.uniform1i(terrainU.uFresh, 0);
+  gl.activeTexture(gl.TEXTURE1);
+  gl.bindTexture(gl.TEXTURE_2D, materialTex);
+  gl.uniform1i(terrainU.uMaterial, 1);
   drawTerrainChunks();
 
   // props & points of interest (instanced), before the transparent water
@@ -4375,6 +4576,7 @@ function frame(now) {
   drawSalt(view);
   drawLife(view);
   drawTells(view, dt);
+  drawPlaceGhost(view);
   drawParticles(view);
   drawBounds(view);
   drawShovel(view);
