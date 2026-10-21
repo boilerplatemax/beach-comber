@@ -39,6 +39,10 @@
     font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
     opacity: .75; line-height: 1.5; text-shadow: 0 1px 2px rgba(0,0,0,.6);
   }
+  #tidecurve {
+    position: fixed; left: 12px; bottom: 76px; z-index: 5; pointer-events: none;
+    opacity: .82; filter: drop-shadow(0 1px 2px rgba(0,0,0,.6));
+  }
   #dbg {
     position: fixed; left: 12px; top: 12px; z-index: 5; pointer-events: none;
     font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px;
@@ -175,6 +179,7 @@
 </div>
 
 <div id="hud"></div>
+<canvas id="tidecurve" width="150" height="46"></canvas>
 <div id="dbg"></div>
 <div id="stamina"></div>
 <div id="actionIcon"></div>
@@ -349,7 +354,9 @@ const AP = (function (r, ch) {
     lakeDepth:  5.0 + 7.0 * r(),
     poolFreq:   6.0 + 5.0 * r(),
     heightScale:(gentle ? 95 : big ? 250 : 165) + 55 * r(),      // vertical scale
-    tideRange:  (gentle || atoll ? 8.0 : big ? 4.5 : 6.0) + 2.5 * r(),  // tidal range
+    tideRange:  (gentle || atoll ? 9.5 : big ? 6.0 : 7.5) + 2.5 * r(),  // tidal range (bigger for drama, §B)
+    barFreq:    10 + 8 * r(),             // sandbar/channel count across the intertidal band
+    barAmp:     1.3 + 1.1 * r(),          // sandbar height / channel depth
   };
 })(rng, CHARACTER);
 const archetype = CHARACTER;   // HUD alias
@@ -363,6 +370,15 @@ const nRidge = makeNoise(subStream());
 const nMacro = makeNoise(subStream());
 const nBasin = makeNoise(subStream());
 const nPool  = makeNoise(subStream());
+const nBar   = makeNoise(subStream());    // sandbars & tidal channels in the intertidal band (§B)
+// Per-seed causeway to a small low-tide islet (present on some seeds).
+const CAUSEWAY = (function (r) {
+  const has = r() < 0.5;
+  const ang = r() * 6.2831853;
+  return { has, ang, dx: Math.sin(ang), dz: -Math.cos(ang),
+           dist: 0.62 + r() * 0.12,         // islet distance as a fraction of HALF
+           width: 9 + r() * 5 };            // causeway half-width (world units)
+})(subStream());
 
 // Ridged multifractal → sharp mountain ridgelines & rock formations.
 function ridgedMF(n, x, y, oct) {
@@ -452,8 +468,27 @@ function buildHeightmap() {
       const pool = nPool.fbm(u * AP.poolFreq, v * AP.poolFreq, 3, 2, 0.5);
       height -= band * smoothstep(0.58, 0.72, pool) * 2.4;
 
+      // Sandbars & tidal channels: alternating ridges/troughs across the wide
+      // intertidal band so a falling tide drains through the channels first (§B).
+      const barBand = 1 - smoothstep(0, 9, Math.abs(height));
+      const barPhase = d * AP.barFreq + (nBar.fbm(wu * 2.6, wv * 2.6, 3, 2, 0.5) - 0.5) * 1.6;
+      height += barBand * Math.sin(barPhase * 6.2831853) * AP.barAmp;
+
       // Deepen toward open sea so the island reads as surrounded (and bounds you).
       height -= smoothstep(AP.coastInner, 1.5, d) * 14.0;
+
+      // Causeway + small islet, walkable only at low tide, on some seeds (§B).
+      if (CAUSEWAY.has) {
+        const wx = x * CELL - HALF, wz = z * CELL - HALF;
+        const proj = wx * CAUSEWAY.dx + wz * CAUSEWAY.dz, perp = Math.abs(-wx * CAUSEWAY.dz + wz * CAUSEWAY.dx);
+        const isletR = HALF * CAUSEWAY.dist;
+        const across = 1 - smoothstep(CAUSEWAY.width, CAUSEWAY.width + 6, perp);
+        const along = smoothstep(HALF * 0.26, HALF * 0.33, proj) * (1 - smoothstep(isletR - 8, isletR + 6, proj));
+        const mask = across * along;
+        if (mask > 0.01) { const lvl = -TIDE_RANGE * 0.22; height = height * (1 - mask) + Math.max(height, lvl) * mask; }
+        const dIslet = Math.hypot(wx - CAUSEWAY.dx * isletR, wz - CAUSEWAY.dz * isletR);
+        if (dIslet < 46) height = Math.max(height, (1 - smoothstep(10, 46, dIslet)) * (TIDE_RANGE * 0.4 + 8));
+      }
 
       heightmap[z * GRID + x] = height;
     }
@@ -646,22 +681,45 @@ updateSun();
  *   extremes; wetLevel is a lagging high-water mark that dries back.)
  * --------------------------------------------------------------------- */
 
-let TIDE_PERIOD = 480;          // seconds for a full cycle (~8 min)
+let TIDE_PERIOD = 300;          // seconds for a full high→low→high cycle (~5 min)
 const TIDE_RANGE = AP.tideRange;
 const TIDE_MID = 0.0;
 let tideT = 0.60;               // phase 0..1 (start part-way down)
+let tideDay = 0;                // in-game days elapsed (drives the spring/neap envelope)
 let waterLevel = 0.0;           // THE variable everything reads
 let wetLevel = 0.0;             // lagging high-water mark (wet sand)
-
+// Spring / neap: amplitude swells and shrinks over a ~7-day cycle (§B).
+const TIDE_CYCLE_DAYS = 7, NEAP_AMP = 0.55, SPRING_AMP = 1.35;
+const MINUS_AMP = 1.15, MINUS_DROP = 0.9;    // above this amp, lows drop extra (minus tides)
+function ampAtDay(day) { const ph = (day / TIDE_CYCLE_DAYS) % 1; return NEAP_AMP + (SPRING_AMP - NEAP_AMP) * (0.5 + 0.5 * Math.cos(ph * 6.2831853)); }
 // Shaped so the tide lingers (slack) near high and low.
 function tideShape(ph) { const s = Math.sin(ph * 6.2831853); return Math.sign(s) * Math.pow(Math.abs(s), 0.7); }
-function tideLevelAt(ph) { return TIDE_MID + tideShape(ph) * TIDE_RANGE * 0.5; }
+// Water level at a given phase + spring/neap day. Strong springs pull the low extra-low (minus tide).
+function levelAt(ph, day) {
+  const s = tideShape(ph), amp = ampAtDay(day);
+  let lvl = s * TIDE_RANGE * 0.5 * amp;
+  if (s < -0.25 && amp > MINUS_AMP) lvl -= (amp - MINUS_AMP) * TIDE_RANGE * MINUS_DROP * ((-s - 0.25) / 0.75);
+  return TIDE_MID + lvl;
+}
+function tideLevelAt(ph) { return levelAt(ph, tideDay); }
+function levelFuture(sec) { return levelAt((tideT + sec / TIDE_PERIOD) % 1, tideDay + sec / DAY_PERIOD); }
+function isMinusTideNow() { return ampAtDay(tideDay) > MINUS_AMP && tideShape(tideT) < -0.25; }
+// Is a minus tide coming within `sec` seconds? returns seconds-until or -1.
+function nextMinusTide(sec) {
+  const step = TIDE_PERIOD / 40;
+  for (let t = step; t < sec; t += step) {
+    const amp = ampAtDay(tideDay + t / DAY_PERIOD), ph = (tideT + t / TIDE_PERIOD) % 1;
+    if (amp > MINUS_AMP && Math.abs(ph - 0.75) < 0.03) return t;    // near a low during a strong spring
+  }
+  return -1;
+}
 function updateTide(gdt) {       // gdt = game-time seconds (already clock-scaled)
   tideT = (tideT + gdt / TIDE_PERIOD) % 1;
   if (tideT < 0) tideT += 1;
+  tideDay += gdt / DAY_PERIOD;
   timeOfDay = (timeOfDay + gdt / DAY_PERIOD) % 1;
   updateSun();
-  waterLevel = tideLevelAt(tideT);
+  waterLevel = levelAt(tideT, tideDay);
   if (waterLevel >= wetLevel) wetLevel = waterLevel;          // instantly wet
   else wetLevel += (waterLevel - wetLevel) * Math.min(1, gdt * 0.05);  // slow dry-back
 }
@@ -669,7 +727,89 @@ function tideInfo() {
   const rising = tideLevelAt((tideT + 0.002) % 1) > waterLevel;
   const lowPhase = 0.75;                                      // sin() minimum
   let d = (lowPhase - tideT + 1) % 1;
-  return { rising, tToLow: d * TIDE_PERIOD / Math.max(0.01, clock.speed) };
+  return { rising, tToLow: d * TIDE_PERIOD / Math.max(0.01, clock.speed), minusNow: isMinusTideNow() };
+}
+// HUD tide clock: the level curve for the next in-game day, "now" dot, and any upcoming minus tide.
+let tideCanvas = null, tideCtx = null;
+function drawTideCurve() {
+  if (!tideCanvas) { tideCanvas = document.getElementById("tidecurve"); if (!tideCanvas) return; tideCtx = tideCanvas.getContext("2d"); }
+  const W = tideCanvas.width, H = tideCanvas.height, ctx = tideCtx, span = DAY_PERIOD, N = 60;
+  const vals = []; let lo = 1e9, hi = -1e9;
+  for (let k = 0; k <= N; k++) { const v = levelFuture(span * k / N); vals.push(v); if (v < lo) lo = v; if (v > hi) hi = v; }
+  const full = TIDE_RANGE * SPRING_AMP * 0.5 + TIDE_RANGE * MINUS_DROP * 0.3;
+  lo = Math.min(lo, -full); hi = Math.max(hi, full * 0.85);
+  const pad = 3, Y = v => pad + (H - 2 * pad) * (1 - (v - lo) / (hi - lo + 1e-6));
+  ctx.clearRect(0, 0, W, H);
+  ctx.beginPath(); ctx.moveTo(0, H); for (let k = 0; k <= N; k++) ctx.lineTo(W * k / N, Y(vals[k])); ctx.lineTo(W, H); ctx.closePath();
+  ctx.fillStyle = "rgba(88,148,178,0.35)"; ctx.fill();
+  ctx.beginPath(); for (let k = 0; k <= N; k++) { const px = W * k / N, py = Y(vals[k]); k ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }
+  ctx.strokeStyle = "rgba(190,225,235,0.95)"; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = "#ffe08a"; ctx.beginPath(); ctx.arc(1, Y(vals[0]), 2.6, 0, 6.3); ctx.fill();
+  const mt = nextMinusTide(span);
+  if (mt > 0) { const px = W * mt / span, py = Y(levelFuture(mt));
+    ctx.strokeStyle = "#9fe8ff"; ctx.setLineDash([2, 2]); ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, H - 1); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = "#9fe8ff"; ctx.beginPath(); ctx.arc(px, py, 3, 0, 6.3); ctx.fill();
+    ctx.font = "8px ui-monospace, monospace"; ctx.fillText("minus", Math.min(W - 28, px + 3), 9);
+  }
+}
+// Surf: a soft filtered-noise wash whose level rises with the tide (§B). The game's
+// first sound; built lazily on the first user gesture (startAudio) so autoplay rules allow it.
+let surfAudio = null;
+window.startAudio = function () {
+  if (surfAudio) return;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    const ctx = new AC();
+    const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 0.5;   // white noise (not the seeded stream)
+    const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 550; bp.Q.value = 0.4;
+    const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 1300;
+    const gain = ctx.createGain(); gain.gain.value = 0;
+    src.connect(bp); bp.connect(lp); lp.connect(gain); gain.connect(ctx.destination); src.start();
+    surfAudio = { ctx, gain };
+  } catch (e) { surfAudio = null; }
+};
+function updateSurf() {
+  if (!surfAudio) return;
+  try {
+    const rel = Math.max(0, Math.min(1, (waterLevel + TIDE_RANGE * 0.6) / (TIDE_RANGE * 1.2)));  // 0 low … 1 high
+    const target = (mode === "walk" ? 0.02 + rel * 0.07 : 0);
+    surfAudio.gain.gain.value += (target - surfAudio.gain.gain.value) * 0.04;
+  } catch (e) {}
+}
+
+// Ripple marks: the ebbing tide leaves ripples in the sand it just uncovered (§B).
+let ripples = [], rippleT = 0, lastWater = 0;
+const RIPPLE_LIFE = 140;                                 // in-game seconds before they smooth away
+function updateRipples(dt, gdt) {
+  const falling = waterLevel < lastWater - 1e-4; lastWater = waterLevel;
+  rippleT += gdt;
+  if (falling && rippleT > 1.5 && mode === "walk") { rippleT = 0;
+    for (let k = 0; k < 3; k++) {
+      const a = cam.yaw + (Math.random() - 0.5) * 1.6, r = 5 + Math.random() * 24;
+      const x = cam.pos[0] + Math.sin(a) * r, z = cam.pos[2] - Math.cos(a) * r, h = surfaceAt(x, z).h;
+      if (h > waterLevel + 0.02 && h < waterLevel + 1.1 && ripples.length < 140)
+        ripples.push({ x, z, born: clock.t, yaw: Math.atan2(groundGradient(x, z).dz, groundGradient(x, z).dx) });   // aligned across-slope
+    }
+  }
+  for (let i = ripples.length - 1; i >= 0; i--) { const rp = ripples[i];
+    if (clock.t - rp.born > RIPPLE_LIFE || surfaceAt(rp.x, rp.z).h < waterLevel - 0.15) ripples.splice(i, 1);
+  }
+}
+// a few thin parallel ridges = a ripple patch (lazy: mesh helpers load later in the file)
+let ripplesDyn = null;
+function drawRipples(view) {
+  if (!ripples.length) return;
+  if (!ripplesDyn) { const m = Mesh(); for (let i = 0; i < 4; i++) mBox(m, 0, 0.0, (i-1.5)*0.28, 0.6, 0.03, 0.08, [1,1,1]); ripplesDyn = makeDynamic(m, 140); }
+  let n = 0; const a = digScratch;
+  for (const rp of ripples) { if (n >= 140) break;
+    const dx = rp.x - cam.pos[0], dz = rp.z - cam.pos[2]; if (dx*dx + dz*dz > 60*60) continue;
+    const fade = 1 - (clock.t - rp.born) / RIPPLE_LIFE, o = n*10, y = surfaceAt(rp.x, rp.z).h + 0.03;
+    const c = 0.5 - 0.12 * fade;
+    a[o]=rp.x; a[o+1]=y; a[o+2]=rp.z; a[o+3]=1; a[o+4]=rp.yaw; a[o+5]=0; a[o+6]=0; a[o+7]=c; a[o+8]=c*0.95; a[o+9]=c*0.85; n++;
+  }
+  if (n) { propUniforms(view); ripplesDyn.draw(a, n); }
 }
 
 /* --------------------------------------------------------------------- *
@@ -2325,6 +2465,12 @@ function starMesh(col) { const m = Mesh(); for(let i=0;i<5;i++){const a0=i/5*6.2
 function urchinMesh(col) { const m = discMesh(0.1,0.3,6,0.15,col); const sp=[col[0]*1.3,col[1]*1.3,col[2]*1.3]; for(let i=0;i<10;i++){const a=i/10*6.283; mTri(m,[Math.cos(a)*0.25,0.1,Math.sin(a)*0.25],[Math.cos(a)*0.5,0.45,Math.sin(a)*0.5],[Math.cos(a+0.25)*0.25,0.1,Math.sin(a+0.25)*0.25],sp);} return m; }
 function hermitMesh(col) { const m = Mesh(); mCyl(m,0,0.4,0.3,0,7,col); mBox(m,0.2,0.05,0,0.2,0.05,0.14,[0.5,0.35,0.25]); return m; }
 function gullMesh() { const m = Mesh(), w=[0.9,0.9,0.92], g=[0.5,0.52,0.55]; mBox(m,0,0,0,0.12,0.1,0.35,w); mTri(m,[0,0.05,0.1],[0,0.3,0.9],[0,0.05,-0.1],g); mTri(m,[0,0.05,0.1],[0,0.3,-0.9],[0,0.05,-0.1],g); mBox(m,0.2,0.0,0,0.14,0.06,0.06,[0.8,0.7,0.3]); return m; }
+// small shorebird (sandpiper): speckled body, long thin legs, needle beak
+function piperMesh() { const m = Mesh(), bod=[0.68,0.6,0.5], pale=[0.9,0.87,0.8];
+  mBox(m, 0, 0.28, 0, 0.14, 0.1, 0.1, bod); mBox(m, 0.12, 0.34, 0, 0.07, 0.07, 0.07, pale);   // body + head
+  mBox(m, 0.22, 0.34, 0, 0.1, 0.02, 0.02, [0.15,0.12,0.1]);                                    // beak
+  mBox(m, -0.04, 0.12, 0.05, 0.015, 0.14, 0.015, [0.5,0.4,0.3]); mBox(m, -0.04, 0.12, -0.05, 0.015, 0.14, 0.015, [0.5,0.4,0.3]);  // legs
+  return m; }
 function sealMesh() { const m = Mesh(); const c=[0.4,0.4,0.42]; for(let i=0;i<7;i++){const a0=i/7*6.283,a1=(i+1)/7*6.283,r1=0.35; mTri(m,[1.3,0.3,0],[0.2,0.3+Math.sin(a0)*r1,Math.cos(a0)*r1*0.8],[0.2,0.3+Math.sin(a1)*r1,Math.cos(a1)*r1*0.8],c); mTri(m,[-0.9,0.25,0],[0.2,0.3+Math.sin(a0)*r1,Math.cos(a0)*r1*0.8],[0.2,0.3+Math.sin(a1)*r1,Math.cos(a1)*r1*0.8],[c[0]*0.9,c[1]*0.9,c[2]*0.9]);} return m; }
 function jellyMesh() { const m = discMesh(0.3,0.4,8,0.25,[0.75,0.7,0.85]); for(let i=0;i<6;i++){const a=i/6*6.283; mTri(m,[Math.cos(a)*0.3,0.3,Math.sin(a)*0.3],[Math.cos(a)*0.3,-0.3,Math.sin(a)*0.3],[Math.cos(a+0.25)*0.3,0.1,Math.sin(a+0.25)*0.3],[0.7,0.65,0.8]);} return m; }
 // finds
@@ -2407,6 +2553,7 @@ const CREATURES = {
   gull:     { mesh: () => gullMesh(),                 base: 1.1, max: 60,  label: "Grey Gull", desc: "Wheels over the beach and settles on the sand." },
   seal:     { mesh: () => sealMesh(),                 base: 2.2, max: 24,  label: "Harbour Seal", desc: "Hauls out on the rocks at low water." },
   jelly:    { mesh: () => jellyMesh(),                base: 0.9, max: 90,  label: "Stranded Jelly", desc: "Left glistening on the flats by the ebbing tide." },
+  piper:    { mesh: () => piperMesh(),                base: 0.7, max: 80,  label: "Sandpiper", desc: "Scurries along the wave edge, chasing the water in and out." },
 };
 const FINDS = {
   shell:    { mesh: () => shellMesh(),               base: 0.5, max: 200, label: "Spiral Shell", desc: "An empty whelk, worn smooth.", rare: 0 },
@@ -2489,6 +2636,11 @@ function populateLife() {
     const a = rng()*6.283, r = HALF*(0.35+rng()*0.4), x = Math.sin(a)*r, z = -Math.cos(a)*r;
     spawnCreature("gull", x, z, { state: "circle", cxx: x, czz: z, orbit: 20+rng()*25, alt: 22+rng()*18 });
   }
+  // sandpipers along the wave edge
+  for (let i = 0; i < 24; i++) {
+    const a = rng()*6.283, r = HALF*(0.3 + rng()*0.55), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const h = heightAt(x, z); if (h > -1 && h < 5) spawnCreature("piper", x, z, { timer: rng(), side: rng()<0.5?1:-1 });
+  }
   // seals on rocky POIs / high rock
   for (const p of POIS) if (p.type === "tidepools" || p.type === "seacave") {
     if (rng() < 0.7) spawnCreature("seal", p.x + (rng()-0.5)*6, p.z + (rng()-0.5)*6, {});
@@ -2524,6 +2676,16 @@ function washUp(initial) {
     const want = FINDS[pick]; if (!want) continue;
     if (h > waterLevel + 0.3 && h < wetLevel + 4) spawnFind(pick, x, z);  // on exposed sand near wrack
   }
+  // Minus tide: the outer zone, normally underwater, is bared — the best wash-up (§B).
+  if (isMinusTideNow()) {
+    for (let i = 0; i < 24; i++) {
+      const a = rng()*6.283, r = HALF*(0.3 + rng()*0.62), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z);
+      if (h > waterLevel + 0.2 && h < waterLevel + 2.2) {                 // the freshly-bared outer shelf
+        const pick = rng() < 0.3 ? ["float","bell","tin","bone"][(rng()*4)|0] : ["float","egg","bottle","cuttle","seaglass"][(rng()*5)|0];
+        if (FINDS[pick]) spawnFind(pick, x, z);
+      }
+    }
+  }
   // cap total finds
   const finds = life.filter((e) => e.kind === "find");
   if (finds.length > 500) life = life.filter((e) => e.kind !== "find").concat(finds.slice(-500));
@@ -2537,6 +2699,7 @@ function lifeVisible(e) {
   if (e.t === "jelly") return waterLevel < g + 0.2;                    // stranded low tide
   if (e.t === "seal") return waterLevel < g + 0.6 && e.state !== "gone";
   if (e.t === "gull") return true;
+  if (e.t === "piper") return Math.abs(waterLevel - g) < 6;           // stays near the wave edge
   if (e.poolRim !== undefined) return true;                           // pool life always (pool holds water)
   return true;
 }
@@ -2579,6 +2742,15 @@ function behave(e, dt, d, dx, dz) {
     const exposed = waterLevel < g - 0.05;
     e.closed += ((d < 2.5 || exposed) ? 1 : 0 - e.closed) * 0; // simple target
     e.closed += (((d < 2.5 || exposed) ? 1 : 0) - e.closed) * Math.min(1, dt*4);
+  } else if (e.t === "piper") {
+    if (d < 7) { const a = Math.atan2(-dz, -dx); e.x += Math.cos(a)*dt*7.5; e.z += Math.sin(a)*dt*7.5; e.yaw = a + 1.57; return; }  // flee footsteps
+    const gh = g, target = waterLevel + 0.2, grad = groundGradient(e.x, e.z);
+    let mx = 0, mz = 0;
+    if (gh > target + 0.3) { mx = grad.dx; mz = grad.dz; }          // too dry → follow the water down
+    else if (gh < target - 0.1) { mx = -grad.dx; mz = -grad.dz; }  // in the wash → scurry up
+    e.timer -= dt; if (e.timer < 0) { e.timer = 0.5 + rng()*1.3; e.side = rng() < 0.5 ? 1 : -1; }
+    mx += -grad.dz * e.side * 0.8; mz += grad.dx * e.side * 0.8;    // lateral run along the shore
+    const m = Math.hypot(mx, mz) || 1; e.x += mx/m*dt*4.5; e.z += mz/m*dt*4.5; e.yaw = Math.atan2(mz, mx) + 1.57;
   } else { // star, urchin, hermit, jelly: subtle
     if (e.t === "hermit") { e.timer -= dt; if (e.timer < 0) { e.timer = 1+rng()*2; e.vx=(rng()-0.5); e.vz=(rng()-0.5);} e.x += e.vx*dt*0.5; e.z += e.vz*dt*0.5; }
   }
@@ -3503,6 +3675,41 @@ function healDig(gdt) {
 let digSpots = [];
 let ODDITY_ITEM = null, ODDITY_NAME = "";
 function pick(a) { return a[(rng() * a.length) | 0]; }
+/* ---- low-tide set pieces (§B): a stone fish weir + a drowned forest ---- */
+let setPieces = { weir: [], drowned: [], weirDyn: null, drownedDyn: null };
+function findShoreBand(targetH, tol) {
+  tol = tol || 1.3;
+  for (let k = 0; k < 3000; k++) { const a = rng()*6.283, r = HALF*(0.34 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    if (Math.abs(heightAt(x, z) - targetH) < tol && surfaceAt(x, z).slope < 0.4 && !nearPOI(x, z, 8)) return { x, z }; }
+  return null;
+}
+function seedSetPieces() {
+  setPieces.weir = []; setPieces.drowned = [];
+  // fish weir: an arc of stones sitting low, bared by a falling tide
+  const wc = findShoreBand(-TIDE_RANGE * 0.3);
+  if (wc) { const facing = Math.atan2(-wc.z, -wc.x);                 // toward the island centre
+    for (let i = 0; i < 18; i++) { const t = i/17, ang = facing + Math.PI + (t - 0.5) * 1.9, R = 11;
+      setPieces.weir.push({ x: wc.x + Math.cos(ang)*R, z: wc.z + Math.sin(ang)*R, s: 0.8 + rng()*0.5, yaw: rng()*6.283 }); } }
+  // drowned forest: a cluster of old stumps even lower, only minus tides clear them
+  const dc = findShoreBand(-TIDE_RANGE * 0.16);
+  if (dc) for (let i = 0; i < 12; i++) { const a = rng()*6.283, r = rng()*15;
+    setPieces.drowned.push({ x: dc.x + Math.cos(a)*r, z: dc.z + Math.sin(a)*r, s: 0.7 + rng()*0.7, yaw: rng()*6.283 }); }
+}
+function drawSetPieces(view) {
+  if (!setPieces.weir.length && !setPieces.drowned.length) return;
+  if (setPieces.weir.length && !setPieces.weirDyn) setPieces.weirDyn = makeDynamic(boulderMesh(), 40);
+  if (setPieces.drowned.length && !setPieces.drownedDyn) setPieces.drownedDyn = makeDynamic(stumpMesh(), 40);
+  propUniforms(view);
+  const a = rockScratch; let n = 0;
+  for (const s of setPieces.weir) { if (n >= 40) break; const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    const o = n*10, y = heightAt(s.x, s.z); a[o]=s.x;a[o+1]=y;a[o+2]=s.z;a[o+3]=s.s;a[o+4]=s.yaw;a[o+5]=0;a[o+6]=0;a[o+7]=0.5;a[o+8]=0.5;a[o+9]=0.53; n++; }
+  if (n) setPieces.weirDyn.draw(a, n);
+  n = 0;
+  for (const s of setPieces.drowned) { if (n >= 40) break; const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    const o = n*10, y = heightAt(s.x, s.z); a[o]=s.x;a[o+1]=y;a[o+2]=s.z;a[o+3]=s.s;a[o+4]=s.yaw;a[o+5]=0;a[o+6]=0;a[o+7]=0.3;a[o+8]=0.27;a[o+9]=0.2; n++; }
+  if (n) setPieces.drownedDyn.draw(a, n);
+}
+
 function seedDigSpots() {
   digSpots = [];
   if (!ODDITY_ITEM) { ODDITY_ITEM = pick(["bell", "tin", "fossil"]); ODDITY_NAME = latinName(); }
@@ -4313,6 +4520,7 @@ buildHeightmap();
 findHighPoint();
 computeBasins();
 buildProps();
+seedSetPieces();
 populateLife();
 const terrain = buildTerrainMesh();
 const water = buildWaterMesh();
@@ -4383,6 +4591,8 @@ function frame(now) {
   updateGoats(dt);
   updateSalt();
   updateAutoPickup();
+  updateSurf();
+  updateRipples(dt, gdtTotal);
   if (cardTimer > 0) { cardTimer -= dt; if (cardTimer <= 0) document.getElementById("card").style.display = "none"; }
   if (toasts.length) updateToasts(dt);
 
@@ -4572,10 +4782,12 @@ function frame(now) {
   // props & points of interest (instanced), before the transparent water
   drawProps(view);
   drawTools(view);
+  drawSetPieces(view);
   drawGoats(view);
   drawSalt(view);
   drawLife(view);
   drawTells(view, dt);
+  drawRipples(view);
   drawPlaceGhost(view);
   drawParticles(view);
   drawBounds(view);
@@ -4660,9 +4872,10 @@ function frame(now) {
   const mins = Math.floor(ti.tToLow / 60), secs = Math.floor(ti.tToLow % 60);
   hud.textContent =
     `seed ${SEED_STR}  ·  ${archetype}\n` +
-    `tide ${ti.rising ? "▲ rising" : "▼ falling"}  ·  low in ${mins}:${String(secs).padStart(2, "0")}` +
+    `tide ${ti.rising ? "▲ rising" : "▼ falling"}${ti.minusNow ? " ·· MINUS" : ""}  ·  low in ${mins}:${String(secs).padStart(2, "0")}` +
     `${clock.speed > 1 ? `  (${clock.speed}×)` : ""}${clock.paused ? "  (paused)" : ""}\n` +
     `mode ${mode}  ·  POIs ${POIS.map((p) => p.type).join(", ")}`;
+  if (mode === "walk") drawTideCurve();
 
   if (debugOn) {
     dbgEl.style.display = "block";
