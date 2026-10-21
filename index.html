@@ -1418,6 +1418,7 @@ addEventListener("keydown", (e) => {
   if (e.code === "KeyR" && mode === "walk") { resting = !resting; if (resting) { analog.x = analog.y = 0; } }
   if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
   if (e.code === "KeyI") toggleInventory();           // inventory panel
+  if (e.code === "KeyP" && mode === "walk") toggleAutoPickup();   // auto-pickup on/off
   if (/^Digit[1-8]$/.test(e.code)) selectHotbar(+e.code.slice(5) - 1);
   if (debugMode) {                                    // debug-only shortcuts
     if (e.code === "Backquote") debugOn = !debugOn;
@@ -2402,7 +2403,7 @@ function spawnCreature(t, x, z, extra) {
 }
 function spawnFind(t, x, z) {
   life.push({ kind: "find", t, x, z, yaw: rng()*6.283, scale: FINDS[t].base*(0.85+rng()*0.3),
-              phase: rng()*6.283, name: FINDS[t].label, tint: [1,1,1] });
+              phase: rng()*6.283, name: FINDS[t].label, tint: [1,1,1], pickAt: clock.t });
 }
 
 function populateLife() {
@@ -2689,6 +2690,28 @@ function padArr(a, n) { const o = new Array(n).fill(null); for (let i = 0; i < n
 function normCell(c) { return (typeof c === "string") ? { id: c, qty: 1 } : c; }   // migrate old hotbar (bare ids)
 
 /* ---- dropped world items (persist per seed) ---- */
+/* ---- auto-pickup (§8): loose items within a small arc hop into the pack ---- */
+const AUTO_PICK_R = 1.5, AUTO_PICK_GRACE = 2;      // reach radius · just-dropped grace (s)
+let autoPickup = true;
+try { if (localStorage.getItem("bc_autopick") === "0") autoPickup = false; } catch (e) {}
+function saveAutoPick() { try { localStorage.setItem("bc_autopick", autoPickup ? "1" : "0"); } catch (e) {} }
+function toggleAutoPickup() { autoPickup = !autoPickup; saveAutoPick(); showCard("Auto-pickup " + (autoPickup ? "on" : "off"), "Loose items within reach collect themselves. Toggle with P."); }
+function updateAutoPickup() {
+  if (!autoPickup || mode !== "walk" || resting) return;
+  const R2 = AUTO_PICK_R * AUTO_PICK_R;
+  for (let i = life.length - 1; i >= 0; i--) { const e = life[i];
+    if (e.kind !== "find") continue;                            // creatures excluded; buried finds aren't entities yet
+    if (clock.t < (e.pickAt || 0)) continue;                    // just-dropped / fresh grace
+    const dx = e.x - player.x, dz = e.z - player.z; if (dx*dx + dz*dz > R2) continue;
+    interactWith(e);                                            // arc in: adds to inventory, clears drop record
+  }
+  for (let i = looseRocks.length - 1; i >= 0; i--) { const lr = looseRocks[i];
+    if (clock.t - lr.bornT < 0.3) continue;                     // let fresh rubble settle a moment
+    const dx = lr.x - player.x, dz = lr.z - player.z; if (dx*dx + dz*dz > R2) continue;
+    pickRubble(lr);
+  }
+}
+
 let worldDrops = [];
 function dropItemWorld(id, qty) {
   if (!FINDS[id]) return;                       // only items with an in-world mesh can be dropped
@@ -2703,7 +2726,7 @@ function dropItemWorld(id, qty) {
 function spawnDropEntity(d) {
   if (!FINDS[d.id]) return;
   spawnFind(d.id, d.x, d.z);
-  const e = life[life.length - 1]; if (e) e.drop = d;      // link to the saved record
+  const e = life[life.length - 1]; if (e) { e.drop = d; e.pickAt = clock.t + AUTO_PICK_GRACE; }   // no instant re-grab
 }
 function saveDrops() { try { localStorage.setItem("bcd_" + SEED_STR, JSON.stringify(worldDrops.map(d => [d.id, +d.x.toFixed(1), +d.z.toFixed(1)]))); } catch (e) {} }
 function loadDrops() {
@@ -2868,6 +2891,7 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgCreat">${forceSpawn ? "Hide all" : "Spawn all"}</button><button id="dbgPerf">${debugOn ? "Hide FPS" : "Show FPS"}</button></div>
     <div class="dbgrow"><button id="dbgBounds">${showBounds ? "Hide hitboxes" : "Show hitboxes"}</button><button id="dbgAudit">Run audit</button></div>
     <div class="dbgrow"><button id="dbgHints">${hintsOn ? "Hints: on" : "Hints: off"}</button><button id="dbgResetHints">Reset hints</button></div>
+    <div class="dbgrow"><button id="dbgAutoPick">${autoPickup ? "Auto-pickup: on" : "Auto-pickup: off"}</button></div>
     <h3>Shovel / stamina</h3>
     ${TUNABLES.map((t) => `<label>${t.k} <b class="tv" data-k="${t.k}">${(+DBG_GET(t.k)).toFixed(t.step < 0.01 ? 3 : 2)}</b>
       <input class="dbgtune" data-k="${t.k}" type="range" min="${t.min}" max="${t.max}" step="${t.step}" value="${DBG_GET(t.k)}"></label>`).join("")}
@@ -2884,6 +2908,7 @@ function syncDebugPanel() {
   p.querySelector("#dbgAudit").onclick = () => auditRegistries();
   p.querySelector("#dbgHints").onclick = () => { hintsOn = !hintsOn; saveHints(); syncDebugPanel(); };
   p.querySelector("#dbgResetHints").onclick = () => { resetHints(); syncDebugPanel(); };
+  p.querySelector("#dbgAutoPick").onclick = () => { autoPickup = !autoPickup; saveAutoPick(); syncDebugPanel(); };
   p.querySelectorAll(".dbgtune").forEach((el) => el.oninput = (e) => {
     const k = el.dataset.k, v = +e.target.value; DBG_SET(k, v);
     const b = p.querySelector(`.tv[data-k="${k}"]`); if (b) b.textContent = v.toFixed(v < 0.01 ? 3 : 2);
@@ -4159,6 +4184,7 @@ function frame(now) {
   updateTools(dt, gdtTotal);
   updateGoats(dt);
   updateSalt();
+  updateAutoPickup();
   if (cardTimer > 0) { cardTimer -= dt; if (cardTimer <= 0) document.getElementById("card").style.display = "none"; }
   if (toasts.length) updateToasts(dt);
 
