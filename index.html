@@ -68,6 +68,12 @@
     border-radius: 50%; z-index: 4; pointer-events: none; display: none;
     -webkit-mask: radial-gradient(transparent 13px, #000 14px); mask: radial-gradient(transparent 13px, #000 14px);
   }
+  #actionIcon {
+    position: fixed; left: calc(50% + 14px); top: calc(50% - 10px); width: 20px; height: 20px;
+    z-index: 5; pointer-events: none; display: none; opacity: .92;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,.7));
+  }
+  #actionIcon svg { width: 20px; height: 20px; }
   #prompt {
     position: fixed; left: 50%; top: calc(50% + 20px); transform: translateX(-50%);
     z-index: 5; pointer-events: none; display: none; font-size: 13px; opacity: .9;
@@ -160,6 +166,7 @@
 <div id="hud"></div>
 <div id="dbg"></div>
 <div id="stamina"></div>
+<div id="actionIcon"></div>
 <div id="crosshair"></div>
 <div id="prompt"></div>
 <div id="card"></div>
@@ -1180,11 +1187,32 @@ const WALK_SPEED = 9.5;      // units / second (vast map, so not too slow)
 const SPRINT = 1.8;          // sprint multiplier
 const SLOPE_LIMIT = 40 * Math.PI / 180;   // can't climb steeper than this
 const WADE_DEPTH = 1.0;      // can wade up to this depth, then it blocks
-const player = { x: 0, z: 0, bob: 0, eyeY: EYE, sprinting: false, scramble: 0 };
+const player = { x: 0, z: 0, bob: 0, eyeY: EYE, sprinting: false, scramble: 0, air: 0, vy: 0 };
+function tryJump() {
+  if (mode !== "walk" || resting) return;
+  if (player.air > 0.02 || player.vy !== 0) return;           // already airborne
+  if (stamina <= 0.08) return;                                // too tired
+  const s = surfaceAt(player.x, player.z);
+  if (waterLevel - s.h > KNEE) return;                        // no jumping in deep water
+  player.vy = 9.2; spendStamina(0.08);
+}
+function landJump(g) {
+  // bigger shows burst on wet sand (Phase 7: stomp → jump landing)
+  if (typeof surfaceKind === "function" && surfaceKind(player.x, player.z) === "wet") {
+    if (typeof spawnSand === "function") spawnSand(player.x, g.h + 0.1, player.z, 10, [0.6, 0.62, 0.66]);
+    for (const sp of (typeof digSpots !== "undefined" ? digSpots : [])) { if (sp.revealed) continue;
+      if (Math.hypot(sp.x - player.x, sp.z - player.z) < 10 && surfaceKind(sp.x, sp.z) === "wet") { sp.react = 1.3; } }
+  }
+  camNudge = Math.max(camNudge, 0.05);
+  // landing on a too-steep slope slides you back to safe ground
+  if (g.slope > SLOPE_LIMIT && lastSafe) { player.x = lastSafe.x; player.z = lastSafe.z; }
+}
 
 // Spawn on dry sand at the shore, facing the island's highest point.
+// Uses its OWN seeded stream so the spawn is deterministic per seed, independent
+// of how much live gameplay randomness (goats, particles) ran before you entered.
 function findSpawn() {
-  const ang = rng() * Math.PI * 2;
+  const ang = mulberry32(SEED_INT ^ 0x53504e31)() * Math.PI * 2;
   const dx = Math.sin(ang), dz = -Math.cos(ang);
   for (let rr = HALF * 0.98; rr > 0; rr -= 3) {
     const h = heightAt(dx * rr, dz * rr);
@@ -1338,12 +1366,11 @@ addEventListener("keydown", (e) => {
   if (e.code === "KeyG") ditherOn = !ditherOn;
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE") interact();                  // pick up / inspect
-  if (e.code === "KeyQ") stomp();                      // stomp (shows buried things)
-  if (e.code === "KeyR" && mode === "walk") { resting = !resting; if (resting) { cancelPath(); analog.x = analog.y = 0; showCard("Resting", "Catching your breath — stamina returns faster. Move to get up."); } }
+  if (e.code === "Space" && mode === "walk") { e.preventDefault(); tryJump(); }
+  if (e.code === "KeyR" && mode === "walk") { resting = !resting; if (resting) { analog.x = analog.y = 0; } }
   if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
   if (e.code === "KeyI") toggleInventory();           // inventory panel
-  if (e.code === "Digit1" || e.code === "Digit2" || e.code === "Digit3" || e.code === "Digit4")
-    selectHotbar(+e.code.slice(5) - 1);
+  if (/^Digit[1-8]$/.test(e.code)) selectHotbar(+e.code.slice(5) - 1);
   if (debugMode) {                                    // debug-only shortcuts
     if (e.code === "Backquote") debugOn = !debugOn;
     if (e.code === "KeyF" && (mode === "walk" || mode === "free")) toggleFly();
@@ -1393,6 +1420,74 @@ const hud = document.getElementById("hud");
 const crossEl = document.getElementById("crosshair");
 const promptEl = document.getElementById("prompt");
 const staminaEl = document.getElementById("stamina");
+const actionIconEl = document.getElementById("actionIcon");
+
+// Small crosshair action icons (hand, magnifier, shovel, axe, pickaxe, seed, leaves).
+const _svg = (inner) => `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${inner}</svg>`;
+const ACTION_ICONS = {
+  hand:   _svg('<path d="M8 12V5.5a1.5 1.5 0 013 0V11m0-.5V4.5a1.5 1.5 0 013 0V11m0-.5V6.5a1.5 1.5 0 013 0V13a6 6 0 01-6 6h-1a5 5 0 01-3.8-1.8L5 14.5a1.6 1.6 0 012.4-2.1L9 14"/>'),
+  look:   _svg('<circle cx="10.5" cy="10.5" r="6"/><line x1="15" y1="15" x2="21" y2="21"/>'),
+  shovel: _svg('<line x1="20" y1="4" x2="12.5" y2="11.5"/><path d="M12.5 11.5l-4.5 4.5-2-2 4.5-4.5zM6 16l-2.5 2.5"/>'),
+  axe:    _svg('<line x1="5" y1="19" x2="13.5" y2="10.5"/><path d="M13.5 10.5l3-3a4.2 4.2 0 014 4l-3 3a4.2 4.2 0 01-4-4z"/>'),
+  pick:   _svg('<line x1="6" y1="18" x2="12" y2="12"/><path d="M4 8.5c4.5-3.5 11.5-3.5 16 0M12 12V7.5"/>'),
+  seed:   _svg('<path d="M12 21v-7M12 14c-4 0-6.5-2.5-6.5-6.5 4 0 6.5 2.5 6.5 6.5zm0 0c0-3.2 2.3-6 6.5-6 0 3.2-2.3 6-6.5 6z"/>'),
+  leaves: _svg('<path d="M5 19c0-8 6.5-14 14-14 0 8-6.5 14-14 14zM5.5 18.5c3-3.5 6.5-6 10-7.5"/>'),
+};
+// First-run key hints: shown the first few times each action is available, then retired.
+let hintsOn = true;
+const hintCount = {};
+try { Object.assign(hintCount, JSON.parse(localStorage.getItem("bc_hints") || "{}")); if (localStorage.getItem("bc_hintsOff") === "1") hintsOn = false; } catch (e) {}
+function saveHints() { try { localStorage.setItem("bc_hints", JSON.stringify(hintCount)); localStorage.setItem("bc_hintsOff", hintsOn ? "0" : "1"); } catch (e) {} }
+function resetHints() { for (const k in hintCount) delete hintCount[k]; hintsOn = true; saveHints(); }
+let lastAction = null, hintT = 0, hintText = "";
+const HINT_VERB = { hand: "pick up", look: "inspect", shovel: "dig", axe: "chop", pick: "mine", seed: "plant", leaves: "use leaves" };
+// What the crosshair is on right now → which action icon to show.
+function crosshairAction() {
+  if (curTarget) return curTarget.kind === "creature" ? "look" : "hand";
+  const tool = selectedTool();
+  const pt = rayGround(0, 0); if (!pt) return null;
+  if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return null;
+  if (tool === "shovel") return "shovel";
+  if (tool === "axe") return nearestObj(treeObjs, pt[0], pt[1], REACH + 0.8) ? "axe" : null;
+  if (tool === "pickaxe") return nearestObj(rockObjs, pt[0], pt[1], REACH + 0.8) ? "pick" : null;
+  if (SEED_TREE[tool]) return "seed";
+  if (tool === "leaves") return "leaves";
+  return null;
+}
+
+// Debug: audit every registry mesh for invisible / degenerate geometry.
+function auditRegistries() {
+  const bad = [];
+  const check = (name, fn) => { try { const m = fn(); const nv = m.pos.length / 3;
+    if (nv === 0) bad.push(name + ": empty geometry");
+    else if (m.col.length !== m.pos.length) bad.push(name + ": color/pos mismatch");
+    else if (m.pos.every((v) => Math.abs(v) < 1e-4)) bad.push(name + ": zero extent");
+    else if (m.pos.some((v) => !isFinite(v))) bad.push(name + ": NaN positions");
+  } catch (e) { bad.push(name + ": threw " + e.message); } };
+  for (const k in CREATURES) check("creature:" + k, CREATURES[k].mesh);
+  for (const k in FINDS) check("find:" + k, FINDS[k].mesh);
+  for (const k in ITEMS) check("item:" + k, ITEMS[k].model);
+  const total = Object.keys(CREATURES).length + Object.keys(FINDS).length + Object.keys(ITEMS).length;
+  if (bad.length) console.warn("[visibility audit] " + bad.length + " problem(s):\n  " + bad.join("\n  "));
+  else console.log("[visibility audit] all " + total + " registry meshes build with valid geometry");
+  return bad;
+}
+
+// Debug: draw interaction bounds so you can see what's targetable.
+let showBounds = false, boundsDyn = null;
+function drawBounds(view) {
+  if (!showBounds || mode !== "walk") return;
+  if (!boundsDyn) boundsDyn = makeDynamic(discMesh(0, 0.5, 14, 0.0, [1, 1, 1]), 220);
+  let n = 0; const arr = digScratch;
+  const add = (x, z, rad, isT) => { if (n >= 220) return; const gy = surfaceAt(x, z).h + 0.12, o = n*10;
+    arr[o]=x; arr[o+1]=gy; arr[o+2]=z; arr[o+3]=rad*2; arr[o+4]=0; arr[o+5]=0; arr[o+6]=0;
+    arr[o+7]=isT?1:0.25; arr[o+8]=isT?0.85:1; arr[o+9]=0.25; n++; };
+  const near = (x, z) => Math.hypot(x-player.x, z-player.z) < 32;
+  for (const e of life) { if (!lifeVisible(e) || !near(e.x, e.z)) continue; add(e.x, e.z, entityRadius(e), curTarget && curTarget.obj === e); }
+  for (const g of goats) if (near(g.x, g.z)) add(g.x, g.z, 1.1, curTarget && curTarget.obj === g);
+  for (const s of saltSpots) if (s.amt > 0 && near(s.x, s.z)) add(s.x, s.z, 0.75, curTarget && curTarget.obj === s);
+  if (n) { propUniforms(view); boundsDyn.draw(arr, n); }
+}
 
 /* ===================================================================== *
  * § MOBILE CONTROLS  (TEMPORARY — delete this whole block to remove)
@@ -2270,7 +2365,7 @@ function washUp(initial) {
 // visibility: is this entity currently present given tide/time?
 function lifeVisible(e) {
   const g = heightAt(e.x, e.z);
-  if (e.kind === "find") return waterLevel < g + 0.25;                 // exposed by tide
+  if (e.kind === "find") return waterLevel < g + 1.6;                  // exposed, or under shallow clear water
   if (e.t === "crab") { const d = waterLevel - g; return d < 0.1 && d > -4; }  // wet sand
   if (e.t === "jelly") return waterLevel < g + 0.2;                    // stranded low tide
   if (e.t === "seal") return waterLevel < g + 0.6 && e.state !== "gone";
@@ -2551,6 +2646,8 @@ function syncDebugPanel() {
     <label>Heal rate ×${healMul.toFixed(1)} <input id="dbgHeal" type="range" min="0.2" max="6" step="0.1" value="${healMul}"></label>
     <div class="dbgrow"><button id="dbgFly">${mode === "free" ? "Walk" : "Fly"}</button><button id="dbgSpawn">Return to spawn</button></div>
     <div class="dbgrow"><button id="dbgCreat">${forceSpawn ? "Hide all" : "Spawn all"}</button><button id="dbgPerf">${debugOn ? "Hide FPS" : "Show FPS"}</button></div>
+    <div class="dbgrow"><button id="dbgBounds">${showBounds ? "Hide hitboxes" : "Show hitboxes"}</button><button id="dbgAudit">Run audit</button></div>
+    <div class="dbgrow"><button id="dbgHints">${hintsOn ? "Hints: on" : "Hints: off"}</button><button id="dbgResetHints">Reset hints</button></div>
     <div class="jhint">Ctrl+Shift+D to close</div>`;
   p.querySelector("#dbgPause").onclick = () => { clock.paused = !clock.paused; syncDebugPanel(); };
   p.querySelectorAll(".dbgspd").forEach((b) => b.onclick = () => { clock.speed = +b.dataset.s; clock.paused = false; syncDebugPanel(); });
@@ -2560,6 +2657,10 @@ function syncDebugPanel() {
   p.querySelector("#dbgSpawn").onclick = () => returnToSpawn();
   p.querySelector("#dbgCreat").onclick = () => { forceSpawn = !forceSpawn; syncDebugPanel(); };
   p.querySelector("#dbgPerf").onclick = () => { debugOn = !debugOn; syncDebugPanel(); };
+  p.querySelector("#dbgBounds").onclick = () => { showBounds = !showBounds; syncDebugPanel(); };
+  p.querySelector("#dbgAudit").onclick = () => auditRegistries();
+  p.querySelector("#dbgHints").onclick = () => { hintsOn = !hintsOn; saveHints(); syncDebugPanel(); };
+  p.querySelector("#dbgResetHints").onclick = () => { resetHints(); syncDebugPanel(); };
 }
 
 /* ---- drop an item back onto the ground near the player ---- */
@@ -2568,24 +2669,8 @@ function dropItemOnGround(id, qty) {
   notify(id, qty);
 }
 
-function nearestInteractable() {
-  const px = cam.pos[0], pz = cam.pos[2];
-  const f = camForward(); let best = null, bestD = 4.0;
-  for (const e of life) {
-    if (e.kind === "creature" && (e.t === "gull" && e.state === "circle")) continue;
-    const dx = e.x - px, dz = e.z - pz, d = Math.hypot(dx, dz);
-    if (d > bestD) continue;
-    const dot = (dx*f[0] + dz*f[2]) / (d || 1);
-    if (dot < 0.2 && d > 1.5) continue;   // must be roughly ahead
-    best = e; bestD = d;
-  }
-  return best;
-}
-function interact() {
-  const g = nearestGoat(player.x, player.z, 3.2); if (g) { offerSaltTo(g); return; }   // pet / offer salt
-  if (nearestSalt(player.x, player.z, 2.8)) { harvestSaltAt(player.x, player.z); return; }  // scrape salt by hand
-  const e = nearestInteractable(); if (e) interactWith(e);
-}
+// E interacts with whatever the crosshair is on (same target as a click).
+function interact() { interactTarget(curTarget || targetAlongRay(rayFromNDC(0, 0))); }
 let cardTimer = 0;
 function showCard(name, desc) {
   const el = document.getElementById("card");
@@ -2705,37 +2790,72 @@ function walkTo(x, z, entity) {
   easeLookAt(x, z);                 // brief view ease toward the destination
 }
 // A ground point under a screen ray (NDC); marches until below the surface.
-function rayGround(ndcx, ndcy) {
+/* --------------------------------------------------------------------- *
+ * § TARGETING  (crosshair/tap raycast vs. the SAME objects we render,
+ *   within reach and line of sight — no proximity phantoms, no click-to-walk)
+ * --------------------------------------------------------------------- */
+const REACH = 4.6;
+function rayFromNDC(ndcx, ndcy) {
+  if (ndcx === 0 && ndcy === 0) return { o: cam.pos, d: camForward() };   // crosshair center = look dir
   if (!lastInvVP) return null;
   const un = (zc) => { const c = [ndcx, ndcy, zc, 1], o = [0,0,0,0];
     for (let r=0;r<4;r++) o[r] = lastInvVP[r]*c[0]+lastInvVP[4+r]*c[1]+lastInvVP[8+r]*c[2]+lastInvVP[12+r]*c[3];
     return [o[0]/o[3], o[1]/o[3], o[2]/o[3]]; };
   const a = un(-1), b = un(1);
-  const dir = [b[0]-a[0], b[1]-a[1], b[2]-a[2]]; const dl = Math.hypot(...dir); dir[0]/=dl; dir[1]/=dl; dir[2]/=dl;
-  for (let tt = 2; tt < 500; tt += 1.5) {
-    const x = cam.pos[0]+dir[0]*tt, y = cam.pos[1]+dir[1]*tt, z = cam.pos[2]+dir[2]*tt;
-    if (y <= surfaceAt(x, z).h) return [x, z];
-  }
+  const d = [b[0]-a[0], b[1]-a[1], b[2]-a[2]]; const dl = Math.hypot(d[0],d[1],d[2]) || 1;
+  return { o: cam.pos, d: [d[0]/dl, d[1]/dl, d[2]/dl] };
+}
+function rayGround(ndcx, ndcy) {
+  const r = rayFromNDC(ndcx, ndcy); if (!r) return null;
+  for (let tt = 1.0; tt < 160; tt += 0.7) { const x = r.o[0]+r.d[0]*tt, y = r.o[1]+r.d[1]*tt, z = r.o[2]+r.d[2]*tt; if (y <= surfaceAt(x, z).h) return [x, z]; }
   return null;
+}
+function raySphere(o, d, cx, cy, cz, rad) {
+  const mx=o[0]-cx, my=o[1]-cy, mz=o[2]-cz, b=mx*d[0]+my*d[1]+mz*d[2], c=mx*mx+my*my+mz*mz-rad*rad;
+  if (c > 0 && b > 0) return -1; const disc = b*b - c; if (disc < 0) return -1;
+  const t = -b - Math.sqrt(disc); return t < 0 ? 0 : t;
+}
+// A real obstacle (hill/ledge) well above the ray between you and the target — not
+// the gentle approach to a ground item. Sampled before the target, with a tall margin.
+function terrainBlocks(r, t) { if (t < 2) return false; for (const f of [0.35, 0.6]) { const x=r.o[0]+r.d[0]*t*f, y=r.o[1]+r.d[1]*t*f, z=r.o[2]+r.d[2]*t*f; if (surfaceAt(x,z).h > y + 0.6) return true; } return false; }
+function entityRadius(e) { return Math.max(0.6, (e.scale||0.5)*0.75); }
+function entityCY(e) { return e.kind === "find" ? 0.25 : (e.scale||0.5)*0.4 + 0.15; }
+// The one interaction target under a ray: rendered-only, within reach, in line of sight.
+function targetAlongRay(r) {
+  if (!r) return null;
+  let best = null, bestT = REACH + 0.4;
+  const hit = (obj, kind, cx, cz, cyOff, rad) => {
+    const gy = surfaceAt(cx, cz).h, t = raySphere(r.o, r.d, cx, gy+cyOff, cz, rad);
+    if (t >= 0 && t <= REACH && t < bestT && !terrainBlocks(r, t)) { bestT = t; best = { kind, obj, x: cx, z: cz }; }
+  };
+  for (const e of life) { if (!lifeVisible(e)) continue; hit(e, e.kind, e.x, e.z, entityCY(e), entityRadius(e)); }
+  for (const g of goats) hit(g, "goat", g.x, g.z, 0.7, 1.1);
+  for (const s of saltSpots) if (s.amt > 0) hit(s, "salt", s.x, s.z, 0.2, 0.75);
+  if (typeof leafPiles !== "undefined") for (const lp of leafPiles) if (lp.amt > 0.2) hit(lp, "leafpile", lp.x, lp.z, 0.25, 0.9);
+  return best;
+}
+let curTarget = null;    // recomputed each frame from the crosshair (desktop)
+function interactTarget(t) {
+  if (!t) return;
+  if (t.kind === "find" || t.kind === "creature") interactWith(t.obj);
+  else if (t.kind === "goat") offerSaltTo(t.obj);
+  else if (t.kind === "salt") harvestSaltAt(t.obj.x, t.obj.z);
+  else if (t.kind === "leafpile") gatherLeafPile(t.obj);
 }
 function clickAt(ndcx, ndcy) {
   if (mode !== "walk") return;
+  const r = rayFromNDC(ndcx, ndcy);
+  const tgt = targetAlongRay(r);
+  if (tgt) { interactTarget(tgt); return; }
+  // otherwise use the equipped tool on the ground / object under the crosshair, within reach
   const pt = rayGround(ndcx, ndcy); if (!pt) return;
-  // did we click near an item/creature? walk to it and pick up / inspect
-  let ent = null, bd = 6;
-  for (const e of life) { const d = Math.hypot(e.x - pt[0], e.z - pt[1]); if (d < bd && lifeVisible(e)) { bd = d; ent = e; } }
-  if (ent) { walkTo(pt[0], pt[1], ent); return; }
-  // a goat? approach it, and offer salt / toggle follow when close
-  const g = nearestGoat(pt[0], pt[1], 3.5);
-  if (g) { if (Math.hypot(g.x - player.x, g.z - player.z) < 6) offerSaltTo(g); else walkTo(g.x, g.z); return; }
-  // a salt crust? scrape it
-  if (nearestSalt(pt[0], pt[1], 3.0)) { harvestSaltAt(pt[0], pt[1]); return; }
+  if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return;   // too far: do nothing
   const tool = selectedTool();
-  if (tool === "shovel") { digAt(pt[0], pt[1]); return; }
-  if (tool === "axe") { chopAt(pt[0], pt[1]); return; }
-  if (tool === "pickaxe") { mineAt(pt[0], pt[1]); return; }
-  if (SEED_TREE[tool]) { plantAt(pt[0], pt[1]); return; }
-  walkTo(pt[0], pt[1]);
+  if (tool === "shovel") digAt(pt[0], pt[1]);
+  else if (tool === "axe") chopAt(pt[0], pt[1]);
+  else if (tool === "pickaxe") mineAt(pt[0], pt[1]);
+  else if (SEED_TREE[tool]) plantAt(pt[0], pt[1]);
+  else if (tool === "leaves") useLeavesAt(pt[0], pt[1]);
 }
 function interactWith(e) {
   if (e.kind === "find") {
@@ -2987,7 +3107,7 @@ function revealSpot(x, z, sift) {
 function digAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "shovel") return;
   if (resting) resting = false;
-  if (Math.hypot(x - player.x, z - player.z) > 5.5) { walkTo(x, z); pendingDig = [x, z]; return; } // walk into range first
+  if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;          // out of reach: no action
   if (stamina <= 0.04) { shovelSwing = 0.4; showCard("Too tired", "Rest to recover before digging again."); return; }
   const ci0 = cellIndex(x, z);
   const inBasin = ci0 >= 0 && filled[ci0] > heightmap[ci0] + 0.1;   // a tide pool / basin cell
@@ -3119,8 +3239,6 @@ function updateDigging(dt) {
   updateParticles(dt);
   updateStamina(dt);
   updateRegrow();
-  // arrive-to-dig
-  if (pendingDig && !pathActive) { const [dx, dz] = pendingDig; pendingDig = null; if (Math.hypot(dx - player.x, dz - player.z) < 6) digAt(dx, dz); }
 }
 
 /* ===================================================================== *
@@ -3180,8 +3298,8 @@ function setRockInstance(o) {
 /* ---- chopping ---- */
 function chopAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "axe") return;
-  const o = nearestObj(treeObjs, x, z, 4.5); if (!o) { walkTo(x, z); return; }
-  if (Math.hypot(o.x - player.x, o.z - player.z) > 4.2) { walkTo(o.x, o.z); pendingTool = ["axe", o.x, o.z]; return; }
+  const o = nearestObj(treeObjs, x, z, 4.5); if (!o) return;
+  if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 0.8) return;
   if (stamina <= 0.04) { shovelSwing = 0.4; showCard("Too tired", "Rest before swinging the axe again."); return; }
   if (o.falling) return;
   shovelSwing = 1; camNudge = 0.04; spendStamina(0.07);
@@ -3235,7 +3353,7 @@ function canPlant(species, x, z) {
 }
 function plantAt(x, z) {
   const seed = selectedTool(), species = SEED_TREE[seed]; if (!species) return;
-  if (Math.hypot(x - player.x, z - player.z) > 5) { walkTo(x, z); pendingTool = ["plant", x, z]; return; }
+  if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;
   if (!Inv.has(seed)) { showCard("No seeds", "You have none of those to plant."); return; }
   if (!canPlant(species, x, z)) { showCard("Can't plant here", species === "palm" ? "Palms need open sand or low ground." : "Needs open soil or grass, away from trees."); return; }
   Inv.remove(seed, 1);
@@ -3251,8 +3369,8 @@ function plantStage(pl) { return Math.max(0, Math.min(1, (clock.t - pl.plantedAt
 /* ---- mining ---- */
 function mineAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "pickaxe") return;
-  const o = nearestObj(rockObjs, x, z, 4.5); if (!o) { walkTo(x, z); return; }
-  if (Math.hypot(o.x - player.x, o.z - player.z) > 4.2) { walkTo(o.x, o.z); pendingTool = ["pickaxe", o.x, o.z]; return; }
+  const o = nearestObj(rockObjs, x, z, 4.5); if (!o) return;
+  if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 0.8) return;
   if (stamina <= 0.04) { shovelSwing = 0.4; showCard("Too tired", "Rest before mining again."); return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(0.08);
   if (onDig) onDig("mine");
@@ -3290,9 +3408,6 @@ function updateTools(dt, gdt) {
   // occasional new rock node appears on a rocky outcrop (small rockfall)
   rockfallT += gdt;
   if (rockfallT > 90 && rockObjs.length < 220) { rockfallT = 0; spawnRockNode(); }
-  // walk-into-range for a queued tool action
-  if (pendingTool && !pathActive) { const [tool, tx, tz] = pendingTool; pendingTool = null;
-    if (Math.hypot(tx - player.x, tz - player.z) < 5) { if (tool === "axe") chopAt(tx, tz); else if (tool === "pickaxe") mineAt(tx, tz); else if (tool === "plant") plantAt(tx, tz); } }
 }
 function spawnRockNode() {
   for (let tries = 0; tries < 20; tries++) {
@@ -3382,7 +3497,7 @@ function seedSalt() {
 function nearestSalt(x, z, maxd) { let best = null, bd = maxd; for (const s of saltSpots) { if (s.amt <= 0) continue; const d = Math.hypot(s.x - x, s.z - z); if (d < bd) { bd = d; best = s; } } return best; }
 function harvestSaltAt(x, z) {
   const s = nearestSalt(x, z, 3.2); if (!s) return false;
-  if (Math.hypot(x - player.x, z - player.z) > 5.5) { walkTo(s.x, s.z); return true; }
+  if (Math.hypot(s.x - player.x, s.z - player.z) > REACH + 1.4) return false;
   if (stamina <= 0.03) { showCard("Too tired", "Rest before scraping salt."); return true; }
   spendStamina(0.03); s.amt = 0; s.reformAt = clock.t + TIDE_PERIOD * 0.7;
   const n = 1 + (rng()*2|0); Inv.add("salt", n);
@@ -3551,6 +3666,7 @@ goatDyn = makeDynamic(goatMesh(), 10);
 seedSalt();
 seedGoats();
 loadTamed();
+if (debugMode) auditRegistries();
 
 let proj = new Float32Array(16);
 function resize() {
@@ -3597,7 +3713,7 @@ function frame(now) {
   // ---- movement ----
   const fwd = camForward();
   const flen = Math.hypot(fwd[0], fwd[2]) || 1;
-  const right = [fwd[2] / flen, 0, -fwd[0] / flen];
+  const right = [-fwd[2] / flen, 0, fwd[0] / flen];   // camera-right = normalize(cross(forward, up))
 
   if (mode === "preview") {
     // slow establishing orbit of the island
@@ -3633,26 +3749,8 @@ function frame(now) {
     if (keys["KeyD"]) { wx += right[0]; wz += right[2]; manual = true; }
     if (keys["KeyA"]) { wx -= right[0]; wz -= right[2]; manual = true; }
     if (Math.abs(analog.x) + Math.abs(analog.y) > 0.01) { wx += right[0]*analog.x + hf[0]*analog.y; wz += right[2]*analog.x + hf[1]*analog.y; manual = true; }
-    if (resting) { wx = 0; wz = 0; manual = false; }       // sitting: no movement
-    if (manual && pathActive) cancelPath();
-
-    // auto-walk along an A* path toward a clicked destination
-    if (pathActive && !manual) {
-      const tgt = pathPts[pathI];
-      if (tgt) {
-        const dxp = tgt[0] - player.x, dzp = tgt[1] - player.z, dd = Math.hypot(dxp, dzp);
-        if (dd < 2.4) { pathI++; if (pathI >= pathPts.length) arrivePath(); }
-        else { wx = dxp / dd; wz = dzp / dd; }   // move only; view stays free
-      }
-    }
-    // brief view ease toward the click target, then hand look back to player
-    if (lookEaseT > 0) {
-      let dy = ((lookEaseYaw - cam.yaw + Math.PI*3) % (Math.PI*2)) - Math.PI;
-      cam.yaw += dy * Math.min(1, dt * 6);
-      let dp = lookEasePitch - cam.pitch;
-      cam.pitch += dp * Math.min(1, dt * 6);
-      lookEaseT -= dt;
-    }
+    if (resting && (wx || wz)) { resting = false; }         // moving gets you up
+    if (resting) { wx = 0; wz = 0; manual = false; }         // sitting: no movement
 
     const wl = Math.hypot(wx, wz);
     player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01;
@@ -3709,7 +3807,12 @@ function frame(now) {
     const sit = resting ? -0.8 : 0;                          // sit down to rest
     const target = g.h + EYE + bob + sit;
     player.eyeY += (target - player.eyeY) * Math.min(1, dt * 14);
-    cam.pos[0] = player.x; cam.pos[1] = player.eyeY; cam.pos[2] = player.z;
+    // jump arc: gravity, land back onto the terrain surface
+    if (player.air > 0.0001 || player.vy !== 0) {
+      player.air += player.vy * dt; player.vy -= 28 * dt;
+      if (player.air <= 0) { player.air = 0; player.vy = 0; landJump(g); }
+    }
+    cam.pos[0] = player.x; cam.pos[1] = player.eyeY + player.air; cam.pos[2] = player.z;
   }
 
   safetyCheck(dt);
@@ -3776,7 +3879,7 @@ function frame(now) {
   drawLife(view);
   drawTells(view, dt);
   drawParticles(view);
-  drawMarker(view);
+  drawBounds(view);
   drawShovel(view);
 
   // water
@@ -3835,17 +3938,25 @@ function frame(now) {
     staminaEl.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.1) ${deg}deg 360deg)`;
   } else staminaEl.style.display = "none";
   document.getElementById("hotbar").style.display = (mode === "walk") ? "flex" : "none";
-  // interaction hint: what's in reach of the crosshair
+  // targeting: recompute the crosshair target, show its action icon + a glint; no constant text
   if (mode === "walk") {
-    const e = nearestInteractable();
-    if (e) {
-      const nm = e.special ? e.name : (e.kind === "find" ? FINDS[e.t].label : CREATURES[e.t].label);
-      const verb = e.kind === "find" ? "pick up" : "inspect";
-      promptEl.innerHTML = `<b>${IS_TOUCH ? "tap" : "E"}</b> · ${verb} ${nm}`;
-      promptEl.style.display = "block";
-      crossEl.classList.add("active");
-    } else { promptEl.style.display = "none"; crossEl.classList.remove("active"); }
-  } else { promptEl.style.display = "none"; crossEl.classList.remove("active"); }
+    curTarget = targetAlongRay(rayFromNDC(0, 0));
+    const action = crosshairAction();
+    if (action) {
+      actionIconEl.innerHTML = ACTION_ICONS[action] || "";
+      actionIconEl.style.display = "block";
+      crossEl.classList.toggle("active", !!curTarget);
+      if (action !== lastAction) {                      // action just became available
+        lastAction = action;
+        if (hintsOn && (hintCount[action] || 0) < 3) {
+          hintCount[action] = (hintCount[action] || 0) + 1; saveHints();
+          hintText = `${IS_TOUCH ? "tap" : "click / E"} — ${HINT_VERB[action] || "use"}`; hintT = 2.6;
+        }
+      }
+    } else { actionIconEl.style.display = "none"; crossEl.classList.remove("active"); lastAction = null; }
+    if (hintT > 0) { hintT -= dt; promptEl.textContent = hintText; promptEl.style.display = "block"; }
+    else promptEl.style.display = "none";
+  } else { actionIconEl.style.display = "none"; promptEl.style.display = "none"; crossEl.classList.remove("active"); curTarget = null; }
   const ti = tideInfo();
   const mins = Math.floor(ti.tToLow / 60), secs = Math.floor(ti.tToLow % 60);
   hud.textContent =
