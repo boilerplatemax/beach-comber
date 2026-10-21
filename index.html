@@ -1732,6 +1732,15 @@ function pineMesh() {
   mCyl(m, 0.68, 1.02, 0.13, 0, 6, g);
   return m;
 }
+function broadleafMesh() {
+  const m = Mesh(); mCyl(m, 0, 0.5, 0.07, 0.05, 5, BARK);                     // trunk
+  const g = [0.34, 0.5, 0.27];
+  for (const yr of [[0.52, 0.42], [0.74, 0.46], [0.96, 0.3]]) {              // rounded leafy canopy
+    mergeMesh(m, discMesh(yr[0], yr[1], 7, 0.2, g));
+    mergeMesh(m, discMesh(yr[0], yr[1], 7, -0.08, [g[0]*0.86, g[1]*0.86, g[2]*0.86]));
+  }
+  return m;
+}
 function boulderMesh() { const m = Mesh(); mRock(m, mulberry32(0x9e37 ^ SEED_INT), [0.46, 0.44, 0.41]); return m; }
 function driftwoodMesh() {
   const m = Mesh(); const col = [0.62, 0.57, 0.5];
@@ -2040,6 +2049,14 @@ function buildProps() {
     pushInst(inst, x, s.h, z, sc, rng()*6.28, rng()*0.1, rng()*6.28, vary([1,1,1], 0.2));
     colliders.push({ x, z, r: 0.6, kind: "tree", species: "pine", ii: inst.length/10 - 1 });
   });
+  // interior broadleaf trees (the ones that shed leaves) — dunes up to mid-slope
+  const broadleaf = scatter(13, 0.9, 1800, (x, z, inst) => {
+    const s = surfaceAt(x, z); if (s.h < 13 || s.h > 42 || s.slope > 0.5) return;
+    if (rng() > 0.4 || nearPOI(x, z, 3) || !reserveBig(x, z)) return;
+    const sc = 6 + rng()*7;
+    pushInst(inst, x, s.h, z, sc, rng()*6.28, rng()*0.08, rng()*6.28, vary([1,1,1], 0.15));
+    colliders.push({ x, z, r: 0.6, kind: "tree", species: "broadleaf", ii: inst.length/10 - 1 });
+  });
   // boulders: rocky high ground and scattered on the flats (collide)
   const rocks = scatter(20, 0.9, 1500, (x, z, inst) => {
     const s = surfaceAt(x, z);
@@ -2064,6 +2081,7 @@ function buildProps() {
     { kind: "drift",   foliage: false, snap: true, inst: makeInstanced(driftwoodMesh(), drift) },
     { kind: "palm",    foliage: false, snap: true, inst: makeInstanced(palmMesh(), palms) },
     { kind: "pine",    foliage: false, snap: true, inst: makeInstanced(pineMesh(), trees) },
+    { kind: "broadleaf", foliage: false, snap: true, inst: makeInstanced(broadleafMesh(), broadleaf) },
     { kind: "rock",    foliage: false, snap: true, inst: makeInstanced(boulderMesh(), rocks) },
     { kind: "fence",   foliage: false, snap: true, inst: makeInstanced(fenceMesh(), fences) },
     { kind: "poi",     foliage: false, snap: false, inst: makeInstanced(poiMesh, poiMesh.pos.length ? [0,0,0, 1,0,0,0, 1,1,1] : []) },
@@ -2255,6 +2273,18 @@ function goatMesh() {
   return m;
 }
 function saltMesh() { const m = Mesh(); for (let i = 0; i < 6; i++) { const a = i/6*6.283; mBox(m, Math.cos(a)*0.13, 0.05+(i%2)*0.07, Math.sin(a)*0.13, 0.07, 0.07, 0.07, [0.93,0.95,0.97]); } mBox(m,0,0.1,0,0.09,0.09,0.09,[0.96,0.97,0.99]); return m; }
+function leafPileMesh() { const m = Mesh(); const cols = [[0.52,0.46,0.26],[0.46,0.4,0.22],[0.58,0.5,0.3],[0.5,0.44,0.24]];
+  for (let i = 0; i < 10; i++) { const a = i/10*6.283, r = 0.05 + (i%4)*0.07; mBox(m, Math.cos(a)*r, 0.04+(i%2)*0.03, Math.sin(a)*r, 0.11, 0.03, 0.11, cols[i%4]); } return m; }
+function stickMesh() { const m = Mesh(); mBox(m,0,0.04,0,0.38,0.03,0.035,[0.45,0.34,0.22]); mBox(m,0.03,0.08,0.02,0.33,0.03,0.035,[0.4,0.3,0.2]); mBox(m,-0.02,0.06,-0.03,0.3,0.028,0.03,[0.48,0.36,0.24]); return m; }
+// fallen trunk: a log lying along +X from x=0 (base) to x=1 (unit, scaled by length)
+function fallenTrunkMesh() { const m = Mesh(); const c = BROWN;
+  mBox(m, 0.5, 0.17, 0, 0.5, 0.15, 0.15, c);
+  mergeMesh(m, discMesh(0.17, 0.15, 7, 0.0, [0.58,0.48,0.36]));              // base-end rings (approx)
+  return m; }
+function fallenCrownMesh() { const m = Mesh(); const g = [0.33, 0.48, 0.26];
+  for (let i = 0; i < 6; i++) { const a = i/6*6.283; mBox(m, Math.cos(a)*0.5, 0.42 + Math.sin(i)*0.18, Math.sin(a)*0.5, 0.42, 0.42, 0.42, [g[0]*(0.85+0.15*(i%2)), g[1], g[2]]); } mBox(m, 0, 0.5, 0, 0.5, 0.5, 0.5, g); return m; }
+// one short trunk section lying along +X (centered), drawn per fallen-tree segment
+function logSectionMesh() { const m = Mesh(); mBox(m, 0, 0.3, 0, 0.72, 0.3, 0.3, BROWN); mBox(m, 0.72, 0.3, 0, 0.03, 0.26, 0.26, [0.62,0.52,0.4]); mBox(m, -0.72, 0.3, 0, 0.03, 0.26, 0.26, [0.62,0.52,0.4]); return m; }
 
 // --- registries: mesh, palette, scale, how many may draw, behaviour ---
 const CREATURES = {
@@ -2291,6 +2321,8 @@ const FINDS = {
   coconut:  { mesh: () => coconutMesh(),             base: 0.5, max: 30,  label: "Coconut", desc: "A palm seed — plant it on sand.", rare: 1 },
   pinecone: { mesh: () => coneMesh2(),               base: 0.4, max: 30,  label: "Pine Cone", desc: "A conifer seed — plant it on soil or grass.", rare: 1 },
   salt:     { mesh: () => saltMesh(),                base: 0.45,max: 40,  label: "Sea Salt", desc: "Coarse crystals scraped from a dried pool rim. Goats love it.", rare: 1 },
+  leaves:   { mesh: () => leafPileMesh(),            base: 0.6, max: 60,  label: "Leaves", desc: "A handful of dry leaves. Compost for saplings, or a treat for goats.", rare: 0 },
+  stick:    { mesh: () => stickMesh(),               base: 0.5, max: 60,  label: "Sticks", desc: "Snapped twigs from a tree's crown.", rare: 0 },
 };
 
 // build dynamic draw objects
@@ -2503,6 +2535,8 @@ digItem("stone", "Stone", "material", "common", "A heavy chunk of rock.", () => 
 digItem("coconut", "Coconut", "seed", "common", "A palm seed — plant it on sand.", () => coconutMesh(), [0.5,0.38,0.26]);
 digItem("pinecone", "Pine Cone", "seed", "common", "A conifer seed — plant it on soil or grass.", () => coneMesh2(), [0.44,0.32,0.2]);
 digItem("salt", "Sea Salt", "consumable", "uncommon", "Coarse crystals. Hold it to coax wild goats.", () => saltMesh(), [0.93,0.95,0.97]);
+digItem("leaves", "Leaves", "material", "common", "Dry leaves. Compost for saplings, or a goat treat.", () => leafPileMesh(), [0.55,0.5,0.3]);
+digItem("stick", "Sticks", "material", "common", "Snapped twigs from a crown.", () => stickMesh(), [0.45,0.34,0.22]);
 // dug finds (collected from holes)
 function digItem(id, name, cat, rar, desc, meshFn, tint) { ITEMS[id] = { id, name, category: cat, rarity: rar, stackable: cat !== "relic", maxStack: cat === "relic" ? 1 : 99, desc, model: meshFn, tint: tint || [1,1,1] }; }
 digItem("clam", "Clam", "find", "common", "A plump clam, still closed.", () => clamMesh(), [0.85,0.8,0.72]);
@@ -3366,18 +3400,22 @@ const SEED_TREE = { coconut: "palm", pinecone: "pine" };
 const GROW_DAYS = 3, SPROUT_DAYS = 2;             // seed→mature, stump→sapling (in in-game days)
 const MATURE = { palm: 9, pine: 10 };
 
-let treeObjs = [], rockObjs = [], stumps = [], planted = [], looseRocks = [];
-let palmType, pineType, rockType, pendingTool = null;
+let treeObjs = [], rockObjs = [], stumps = [], planted = [], looseRocks = [], fallenTrees = [], leafPiles = [];
+const leafParticles = [];
+let leafTrunkDyn, leafCrownDyn, leafPileDyn, leafParticleDyn;
+let palmType, pineType, broadleafType, rockType, pendingTool = null;
 let palmDyn, pineDyn, stumpDyn, rockDyn;
 
 function initWorldObjs() {
   palmType = propTypes.find(t => t.kind === "palm");
   pineType = propTypes.find(t => t.kind === "pine");
+  broadleafType = propTypes.find(t => t.kind === "broadleaf");
   rockType = propTypes.find(t => t.kind === "rock");
   treeObjs = []; rockObjs = [];
+  const typeOf = (sp) => sp === "palm" ? palmType : sp === "broadleaf" ? broadleafType : pineType;
   for (const c of colliders) {
     if (c.kind === "tree") {
-      const t = c.species === "palm" ? palmType : pineType, o = c.ii*10, d = t.inst.data;
+      const t = typeOf(c.species), o = c.ii*10, d = t.inst.data;
       const hp = c.species === "palm" ? 4 : 5;
       treeObjs.push({ species: c.species, t, i: c.ii, x: c.x, z: c.z, hp, maxhp: hp,
         baseLean: d[o+5], scale: d[o+3], origY: surfaceAt(c.x, c.z).h,
@@ -3415,16 +3453,17 @@ function setRockInstance(o) {
 /* ---- chopping ---- */
 function chopAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "axe") return;
-  const o = nearestObj(treeObjs, x, z, 4.5); if (!o) return;
-  if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 0.8) return;
-  if (stamina <= 0.04) { shovelSwing = 0.4; return; }
-  if (o.falling) return;
-  shovelSwing = 1; camNudge = 0.04; spendStamina(0.07);
-  if (onDig) onDig("chop");
-  o.shake = 1;
-  spawnLeaves(o);
-  o.hp--;
-  if (o.hp <= 0) startFall(o);
+  const o = nearestObj(treeObjs, x, z, 4.5);
+  if (o && !o.falling && Math.hypot(o.x - player.x, o.z - player.z) <= REACH + 0.8) {
+    if (stamina <= 0.04) { shovelSwing = 0.4; return; }
+    shovelSwing = 1; camNudge = 0.04; spendStamina(0.07);
+    if (onDig) onDig("chop");
+    o.shake = 1; spawnLeaves(o); o.hp--;
+    if (o.hp <= 0) startFall(o);
+    return;
+  }
+  // no standing tree in reach → chop a fallen trunk (crown first, then sections → logs)
+  const ft = nearestFallen(x, z, REACH + 1.2); if (ft) chopFallen(ft);
 }
 function spawnLeaves(o) {
   const top = surfaceAt(o.x, o.z).h + o.scale * 0.9, col = o.species === "palm" ? [0.3,0.42,0.25] : [0.2,0.33,0.2];
@@ -3438,12 +3477,59 @@ function startFall(o) {
 }
 function finishFall(o) {
   o.gone = true; o.scale = 0; setTreeInstance(o);
-  if (o.coll) { o.coll.r = 0; rebuildCollHash(); }             // trunk no longer blocks
-  const n = 2 + (rng()*3|0);
-  for (let i = 0; i < n; i++) spawnFind("log", o.x + (rng()-0.5)*2.5, o.z + (rng()-0.5)*2.5);
-  if (rng() < 0.6) spawnFind(o.species === "palm" ? "coconut" : "pinecone", o.x + (rng()-0.5)*2, o.z + (rng()-0.5)*2);
-  stumps.push({ x: o.x, z: o.z, species: o.species, sproutAt: clock.t + SPROUT_DAYS*DAY_PERIOD });
+  if (o.coll) { o.coll.r = 0; rebuildCollHash(); }             // standing trunk no longer blocks
+  // the tree now lies on the ground as a full trunk + crown to be chopped apart
+  const ft = { x: o.x, z: o.z, ang: o.leanDir + Math.PI/2, species: o.species,
+    sections: o.species === "palm" ? 2 : 2 + (rng()*2|0), sectionHp: 3,
+    crown: o.species !== "palm", crownHp: 2, leafy: o.species === "broadleaf",
+    bornT: clock.t, sink: 0, brown: 0, dead: false };
+  if (o.species === "palm" && rng() < 0.6) spawnFind("coconut", o.x + (rng()-0.5)*2, o.z + (rng()-0.5)*2);
+  if (o.species === "pine" && rng() < 0.5) spawnFind("pinecone", o.x + (rng()-0.5)*2, o.z + (rng()-0.5)*2);
+  fallenTrees.push(ft);
   saveWorld();
+}
+const FT_SEG = 1.4;                                            // length of one trunk section
+function fallenLen(ft) { return 0.3 + ft.sections * FT_SEG + (ft.crown ? 1.3 : 0); }
+function fallenPointAt(ft, rel) { return [ft.x + Math.cos(ft.ang)*rel, ft.z + Math.sin(ft.ang)*rel]; }
+function nearestFallen(x, z, maxd) {
+  let best = null, bd = maxd;
+  for (const ft of fallenTrees) { if (ft.dead) continue;
+    const dx = Math.cos(ft.ang), dz = Math.sin(ft.ang), len = fallenLen(ft);
+    let rel = (x-ft.x)*dx + (z-ft.z)*dz; rel = Math.max(0, Math.min(len, rel));
+    const d = Math.hypot(x - (ft.x+dx*rel), z - (ft.z+dz*rel));
+    if (d < bd) { bd = d; best = ft; }
+  }
+  return best;
+}
+// Height of a fallen trunk's top at (x,z), or -inf — lets you jump/walk/rest on it.
+function trunkHeightAt(x, z) {
+  let h = -1e9;
+  for (const ft of fallenTrees) { if (ft.dead || ft.sink > 1) continue;
+    const dx = Math.cos(ft.ang), dz = Math.sin(ft.ang), len = 0.3 + ft.sections * FT_SEG;
+    const rel = (x-ft.x)*dx + (z-ft.z)*dz; if (rel < -0.2 || rel > len) continue;
+    if (Math.abs(-(x-ft.x)*dz + (z-ft.z)*dx) > 0.5) continue;
+    h = Math.max(h, surfaceAt(ft.x+dx*rel, ft.z+dz*rel).h + 0.6 - ft.sink);
+  }
+  return h;
+}
+function chopFallen(ft) {
+  if (stamina <= 0.04) { shovelSwing = 0.4; return; }
+  shovelSwing = 1; camNudge = 0.04; spendStamina(0.07); if (onDig) onDig("chop");
+  if (ft.crown) {
+    ft.crownHp--; const [cx, cz] = fallenPointAt(ft, 0.3 + ft.sections*FT_SEG + 0.6);
+    spawnLeafBurst(cx, cz, ft.leafy ? [0.3,0.46,0.24] : [0.2,0.33,0.2]);
+    if (ft.crownHp <= 0) { ft.crown = false;
+      for (let i = 0; i < 2; i++) spawnFind("stick", cx + (rng()-0.5), cz + (rng()-0.5));
+      if (ft.leafy) addLeafPile(cx, cz, 2.2);                  // the crown's leaves become a pile
+    }
+    return;
+  }
+  ft.sectionHp--;
+  if (ft.sectionHp <= 0) { ft.sectionHp = 3; ft.sections--;
+    const [lx, lz] = fallenPointAt(ft, 0.3 + ft.sections*FT_SEG);
+    spawnFind("log", lx + (rng()-0.5), lz + (rng()-0.5));
+    if (ft.sections <= 0) { ft.dead = true; stumps.push({ x: ft.x, z: ft.z, species: ft.species, sproutAt: clock.t + SPROUT_DAYS*DAY_PERIOD }); saveWorld(); }
+  }
 }
 // digging the ground out from under a tree makes it topple
 function checkUndermine(x, z) {
@@ -3522,6 +3608,82 @@ function updateTools(dt, gdt) {
   // occasional new rock node appears on a rocky outcrop (small rockfall)
   rockfallT += gdt;
   if (rockfallT > 90 && rockObjs.length < 220) { rockfallT = 0; spawnRockNode(); }
+  updateLeavesFallen(dt, gdt);
+}
+/* ---- leaves & fallen trees ---- */
+let pileFormT = 0;
+function addLeafPile(x, z, amt) {
+  let best = null, bd = 2.6; for (const lp of leafPiles) { const d = Math.hypot(lp.x-x, lp.z-z); if (d < bd) { bd = d; best = lp; } }
+  if (best) best.amt = Math.min(3.5, best.amt + amt);
+  else if (leafPiles.length < 70) leafPiles.push({ x, z, amt: Math.min(3.5, amt), bornT: clock.t });
+}
+function gatherLeafPile(lp) {
+  const n = Math.max(1, Math.round(lp.amt * 2)); Inv.add("leaves", n); Inv.autoHotbar("leaves");
+  const first = !discovered.has("f_leaves"); discovered.add("f_leaves"); notify("leaves", n, first);
+  const i = leafPiles.indexOf(lp); if (i >= 0) leafPiles.splice(i, 1);
+}
+function spawnLeafBurst(x, z, col) {
+  const y = surfaceAt(x, z).h + 1.5;
+  for (let i = 0; i < 8 && leafParticles.length < 60; i++) { const a = rng()*6.283, s = 0.4 + rng();
+    leafParticles.push({ x: x+(rng()-0.5), y, z: z+(rng()-0.5), vx: Math.cos(a)*s, vz: Math.sin(a)*s, sway: rng()*6.28, t: 0, col }); }
+}
+function useLeavesAt(x, z) {
+  if (!Inv.has("leaves")) return;
+  let best = null, bd = REACH + 1; for (const pl of planted) { if (plantStage(pl) >= 1) continue; const d = Math.hypot(pl.x-x, pl.z-z); if (d < bd) { bd = d; best = pl; } }
+  if (best) { Inv.remove("leaves", 1); best.plantedAt -= GROW_DAYS * DAY_PERIOD * 0.3; sparkle(best.x, surfaceAt(best.x, best.z).h + 0.6, best.z, [0.5, 0.82, 0.42], 7); saveWorld(); }
+}
+function updateLeavesFallen(dt, gdt) {
+  const bl = treeObjs.filter(o => !o.gone && o.species === "broadleaf" && Math.hypot(o.x-player.x, o.z-player.z) < 30);
+  // ambient leaves fluttering down from nearby broadleaf trees
+  if (bl.length && leafParticles.length < 42 && rng() < dt * 2.5) {
+    const t = bl[(rng()*bl.length)|0], top = surfaceAt(t.x, t.z).h + t.scale * 0.85;
+    leafParticles.push({ x: t.x + (rng()-0.5)*t.scale*0.4, y: top, z: t.z + (rng()-0.5)*t.scale*0.4, vx: (rng()-0.5)*0.6, vz: (rng()-0.5)*0.6, sway: rng()*6.28, t: 0, col: [0.34,0.5,0.27] });
+  }
+  for (let i = leafParticles.length-1; i >= 0; i--) { const p = leafParticles[i]; p.t += dt; p.sway += dt*2.5;
+    p.y -= 0.9*dt; p.x += (p.vx + Math.sin(p.sway)*0.5)*dt; p.z += (p.vz + Math.cos(p.sway)*0.5)*dt;
+    if (p.y <= surfaceAt(p.x, p.z).h + 0.05) { addLeafPile(p.x, p.z, 0.12); leafParticles.splice(i, 1); }
+    else if (p.t > 14) leafParticles.splice(i, 1);
+  }
+  // piles slowly build under broadleaf trees, and slowly decay
+  pileFormT += gdt; if (pileFormT > 20 && bl.length) { pileFormT = 0; const t = bl[(rng()*bl.length)|0]; addLeafPile(t.x+(rng()-0.5)*3, t.z+(rng()-0.5)*3, 0.5); }
+  for (let i = leafPiles.length-1; i >= 0; i--) { leafPiles[i].amt -= 0.02 * healMul * gdt / 60; if (leafPiles[i].amt <= 0.08) leafPiles.splice(i, 1); }
+  // fallen trees weather over a few in-game days: crown browns & drops, trunk sinks and vanishes
+  for (let k = fallenTrees.length-1; k >= 0; k--) { const ft = fallenTrees[k]; if (ft.dead) { fallenTrees.splice(k, 1); continue; }
+    const age = clock.t - ft.bornT; ft.brown = Math.min(1, age / (GROW_DAYS*DAY_PERIOD));
+    if (ft.crown && age > SPROUT_DAYS*DAY_PERIOD*1.4) { ft.crown = false; if (ft.leafy) { const [cx,cz] = fallenPointAt(ft, 0.3+ft.sections*FT_SEG+0.6); addLeafPile(cx, cz, 1.6); } saveWorld(); }
+    if (!ft.crown && age > GROW_DAYS*DAY_PERIOD*1.6) { ft.sink += 0.015 * healMul * gdt / 60; if (ft.sink > 1.3) { ft.dead = true; stumps.push({ x: ft.x, z: ft.z, species: ft.species, sproutAt: clock.t + SPROUT_DAYS*DAY_PERIOD }); saveWorld(); } }
+  }
+}
+const FALLEN_MAX = 24, leafSc = new Float32Array(FALLEN_MAX*8*10), crownSc = new Float32Array(FALLEN_MAX*10), pileSc = new Float32Array(72*10), lpartSc = new Float32Array(64*10);
+function drawLeavesFallen(view) {
+  if (!leafTrunkDyn) {
+    leafTrunkDyn = makeDynamic(logSectionMesh(), FALLEN_MAX*8);
+    leafCrownDyn = makeDynamic(fallenCrownMesh(), FALLEN_MAX);
+    leafPileDyn = makeDynamic(leafPileMesh(), 72);
+    leafParticleDyn = makeDynamic((function(){ const m = Mesh(); mBox(m,0,0,0,0.5,0.06,0.5,[1,1,1]); return m; })(), 64);
+  }
+  propUniforms(view);
+  // fallen trunk sections
+  let ns = 0, nc = 0;
+  for (const ft of fallenTrees) { if (ft.dead) continue;
+    const dx = Math.cos(ft.ang), dz = Math.sin(ft.ang), bark = [0.9 - ft.brown*0.25, 0.85 - ft.brown*0.3, 0.8 - ft.brown*0.35];
+    for (let i = 0; i < ft.sections && ns < leafSc.length/10; i++) { const rel = 0.3 + i*FT_SEG + FT_SEG*0.5, [sx, sz] = fallenPointAt(ft, rel), y = surfaceAt(sx, sz).h + 0.33 - ft.sink, o = ns*10;
+      leafSc[o]=sx; leafSc[o+1]=y; leafSc[o+2]=sz; leafSc[o+3]=1; leafSc[o+4]=ft.ang; leafSc[o+5]=0; leafSc[o+6]=0; leafSc[o+7]=bark[0]; leafSc[o+8]=bark[1]; leafSc[o+9]=bark[2]; ns++; }
+    if (ft.crown && nc < FALLEN_MAX) { const rel = 0.3 + ft.sections*FT_SEG + 0.6, [cx, cz] = fallenPointAt(ft, rel), y = surfaceAt(cx, cz).h - ft.sink, o = nc*10;
+      const br = 1 - ft.brown*0.4, tint = ft.leafy ? [br, br*0.95, br*0.6] : [br*0.8, br, br*0.8];
+      crownSc[o]=cx; crownSc[o+1]=y; crownSc[o+2]=cz; crownSc[o+3]=1; crownSc[o+4]=ft.ang; crownSc[o+5]=0; crownSc[o+6]=0; crownSc[o+7]=tint[0]; crownSc[o+8]=tint[1]; crownSc[o+9]=tint[2]; nc++; }
+  }
+  if (ns) leafTrunkDyn.draw(leafSc, ns);
+  if (nc) leafCrownDyn.draw(crownSc, nc);
+  // leaf piles
+  let npl = 0; for (const lp of leafPiles) { if (npl >= 72) break; const d = Math.hypot(lp.x-player.x, lp.z-player.z); if (d > 50) continue;
+    const y = surfaceAt(lp.x, lp.z).h + 0.02, sc = 0.7 + lp.amt*0.35, o = npl*10;
+    pileSc[o]=lp.x; pileSc[o+1]=y; pileSc[o+2]=lp.z; pileSc[o+3]=sc; pileSc[o+4]=lp.x; pileSc[o+5]=0; pileSc[o+6]=0; pileSc[o+7]=1; pileSc[o+8]=1; pileSc[o+9]=1; npl++; }
+  if (npl) leafPileDyn.draw(pileSc, npl);
+  // fluttering leaf particles
+  let npa = 0; for (const p of leafParticles) { if (npa >= 64) break; const o = npa*10;
+    lpartSc[o]=p.x; lpartSc[o+1]=p.y; lpartSc[o+2]=p.z; lpartSc[o+3]=0.5; lpartSc[o+4]=p.sway; lpartSc[o+5]=0.6; lpartSc[o+6]=p.sway; lpartSc[o+7]=p.col[0]; lpartSc[o+8]=p.col[1]; lpartSc[o+9]=p.col[2]; npa++; }
+  if (npa) leafParticleDyn.draw(lpartSc, npa);
 }
 function spawnRockNode() {
   for (let tries = 0; tries < 20; tries++) {
@@ -3563,6 +3725,7 @@ function saveWorld() {
     planted: planted.map(p => [p.species, +p.x.toFixed(1), +p.z.toFixed(1), p.plantedAt]),
     stumps: stumps.map(s => [s.species, +s.x.toFixed(1), +s.z.toFixed(1), s.sproutAt]),
     chopped: treeObjs.filter(o => o.gone).map(o => o.i + ":" + o.species),
+    fallen: fallenTrees.filter(f => !f.dead).map(f => [f.species, +f.x.toFixed(1), +f.z.toFixed(1), +f.ang.toFixed(2), f.sections, f.crown ? 1 : 0, +(clock.t - f.bornT).toFixed(0)]),
   })); } catch (e) {}
 }
 function loadWorld() {
@@ -3572,6 +3735,7 @@ function loadWorld() {
     for (const o of treeObjs) if (chop.has(o.i + ":" + o.species)) { o.gone = true; o.scale = 0; setTreeInstance(o); if (o.coll) o.coll.r = 0; }
     for (const p of (w.planted||[])) { planted.push({ species: p[0], x: p[1], z: p[2], plantedAt: p[3] }); colliders.push({ x: p[1], z: p[2], r: 0.4, kind: "planted" }); }
     for (const s of (w.stumps||[])) stumps.push({ species: s[0], x: s[1], z: s[2], sproutAt: s[3] });
+    for (const f of (w.fallen||[])) fallenTrees.push({ species: f[0], x: f[1], z: f[2], ang: f[3], sections: f[4], sectionHp: 3, crown: !!f[5], crownHp: 2, leafy: f[0] === "broadleaf", bornT: clock.t - (f[6]||0), sink: 0, brown: 0, dead: false });
     rebuildCollHash();
   } catch (e) {}
 }
@@ -3653,6 +3817,7 @@ function goatAltTarget(g) {    // pick a new improbable high perch near home (or
 }
 function updateGoats(dt) {
   const px = player.x, pz = player.z, holdingSalt = selectedTool() === "salt";
+  const holdingLeaves = selectedTool() === "leaves" && Inv.has("leaves");
   const playerFast = player.sprinting;
   for (const g of goats) {
     g.chew += dt * (6 + Math.sin(clock.t + g.homeX));
@@ -3667,14 +3832,15 @@ function updateGoats(dt) {
 
     let speed = 3.2, tx = g.tx, tz = g.tz;
     if (g.tamed) {
-      if (g.follow && dToP > 7) { tx = px; tz = pz; speed = 6.5; }         // follow at a distance
+      if (holdingLeaves && dToP < 12 && dToP > 1.6) { tx = px; tz = pz; speed = 5; if (rng() < dt*0.5) { Inv.remove("leaves", 1); if (onGoat) onGoat("bleat"); sparkle(g.x, surfaceAt(g.x,g.z).h+0.8, g.z, [0.5,0.8,0.4], 4); } }  // comes to eat a leaf treat
+      else if (g.follow && dToP > 7) { tx = px; tz = pz; speed = 6.5; }         // follow at a distance
       else if (g.follow && dToP < 5) { tx = g.x - (px-g.x); tz = g.z - (pz-g.z); speed = 2; }
       else { // idle near player; paw at a buried thing sometimes
         if (g.pawT <= 0 && rng() < dt*0.4) { const s = nearestSpot(g.x, g.z, 7); if (s) { g.pawT = 2.5; s.goatTell = clock.t + 8; if (onGoat) onGoat("paw"); } }
       }
     } else {
-      // skittish: flee unless the player comes slowly holding salt
-      const spooked = dToP < 9 && !(holdingSalt && !playerFast);
+      // skittish: flee unless the player comes slowly holding salt (or leaves — they get curious)
+      const spooked = dToP < 9 && !((holdingSalt || holdingLeaves) && !playerFast);
       if (spooked) { const a = Math.atan2(g.z - pz, g.x - px); tx = g.x + Math.cos(a)*14; tz = g.z + Math.sin(a)*14; speed = 7.5; g.state = "flee"; g.timer = 0.6; }
       else {
         g.timer -= dt;
@@ -3912,7 +4078,8 @@ function frame(now) {
     const freq = player.scramble > 0.3 ? 1.7 : 2.6;             // heavier when scrambling
     const bob = Math.sin(player.bob * freq) * amp;
     const sit = resting ? -0.8 : 0;                          // sit down to rest
-    const target = g.h + EYE + bob + sit;
+    const standH = Math.max(g.h, trunkHeightAt(player.x, player.z));   // stand on a fallen trunk
+    const target = standH + EYE + bob + sit;
     player.eyeY += (target - player.eyeY) * Math.min(1, dt * 14);
     // jump arc: gravity, land back onto the terrain surface
     if (player.air > 0.0001 || player.vy !== 0) {
@@ -3981,6 +4148,7 @@ function frame(now) {
   // props & points of interest (instanced), before the transparent water
   drawProps(view);
   drawTools(view);
+  drawLeavesFallen(view);
   drawGoats(view);
   drawSalt(view);
   drawLife(view);
