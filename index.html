@@ -2288,6 +2288,11 @@ function saltMesh() { const m = Mesh(); for (let i = 0; i < 6; i++) { const a = 
 function leafPileMesh() { const m = Mesh(); const cols = [[0.52,0.46,0.26],[0.46,0.4,0.22],[0.58,0.5,0.3],[0.5,0.44,0.24]];
   for (let i = 0; i < 10; i++) { const a = i/10*6.283, r = 0.05 + (i%4)*0.07; mBox(m, Math.cos(a)*r, 0.04+(i%2)*0.03, Math.sin(a)*r, 0.11, 0.03, 0.11, cols[i%4]); } return m; }
 function stickMesh() { const m = Mesh(); mBox(m,0,0.04,0,0.38,0.03,0.035,[0.45,0.34,0.22]); mBox(m,0.03,0.08,0.02,0.33,0.03,0.035,[0.4,0.3,0.2]); mBox(m,-0.02,0.06,-0.03,0.3,0.028,0.03,[0.48,0.36,0.24]); return m; }
+// --- inland raw-material meshes (§5) ---
+function wormMesh() { const m = Mesh(); for (let i = 0; i < 6; i++) { const a = i*0.55; mBox(m, Math.sin(a)*0.11, 0.05, i*0.05-0.15, 0.055, 0.05, 0.05, [0.8-i*0.02,0.46,0.46]); } return m; }
+function rootMesh() { const m = Mesh(); const c = [0.6,0.45,0.3]; mCyl(m,-0.02,0.3,0.05,0.02,6,c); mCyl(m,0.0,0.22,0.035,0.015,6,[0.55,0.4,0.26]); mBox(m,0.08,0.12,0.03,0.12,0.025,0.025,[0.5,0.38,0.24]); mBox(m,-0.06,0.08,-0.04,0.1,0.022,0.022,[0.52,0.4,0.26]); return m; }
+function flintMesh() { const m = Mesh(); mRock(m, mulberry32(0x5f11 ^ SEED_INT), [0.26, 0.27, 0.31]); return m; }
+function driftwoodMesh() { const m = Mesh(); const g = [0.62,0.6,0.56]; mCyl(m,-0.4,0.4,0.1,0.08,6,g); mergeMesh(m, discMesh(0.4,0.08,6,0.02,[0.66,0.64,0.6])); mergeMesh(m, discMesh(-0.4,0.1,6,-0.02,[0.58,0.56,0.52])); return m; }
 // fallen trunk: a log lying along +X from x=0 (base) to x=1 (unit, scaled by length)
 function fallenTrunkMesh() { const m = Mesh(); const c = BROWN;
   mBox(m, 0.5, 0.17, 0, 0.5, 0.15, 0.15, c);
@@ -2336,6 +2341,11 @@ const FINDS = {
   salt:     { mesh: () => saltMesh(),                base: 0.45,max: 40,  label: "Sea Salt", desc: "Coarse crystals scraped from a dried pool rim. Goats love it.", rare: 1 },
   leaves:   { mesh: () => leafPileMesh(),            base: 0.6, max: 60,  label: "Leaves", desc: "A handful of dry leaves. Compost for saplings, or a treat for goats.", rare: 0 },
   stick:    { mesh: () => stickMesh(),               base: 0.5, max: 60,  label: "Sticks", desc: "Snapped twigs from a tree's crown.", rare: 0 },
+  // --- inland raw materials (dug from grass / dirt / forest) ---
+  worm:     { mesh: () => wormMesh(),                base: 0.4, max: 80,  label: "Earthworm", desc: "A fat worm from the dark soil. Good bait.", rare: 0 },
+  root:     { mesh: () => rootMesh(),                base: 0.45,max: 70,  label: "Root", desc: "A knotty taproot, prised from the dirt.", rare: 0 },
+  flint:    { mesh: () => flintMesh(),               base: 0.4, max: 70,  label: "Flint", desc: "A dark, sharp-edged nodule.", rare: 0 },
+  driftwood:{ mesh: () => driftwoodMesh(),           base: 0.6, max: 50,  label: "Driftwood", desc: "Grey, sea-worn and sun-bleached.", rare: 0 },
 };
 
 // build dynamic draw objects
@@ -3256,6 +3266,19 @@ function surfaceKind(x, z) {
   if (surfaceAt(x, z).h < wetLevel + 0.3) return "wet";     // wetness tracks the live surface + tide
   return "dry";
 }
+// Loot biome (§5): marine wet sand, dry sand/dune, or inland grass/dirt/forest.
+const BEACH_MAX_H = 6.5;         // tells and marine loot live at or below this height
+function digBiome(x, z) {
+  if (surfaceAt(x, z).h < wetLevel + 0.3) return "wet";     // intertidal / wet sand → marine
+  if (heightAt(x, z) < BEACH_MAX_H) return "sand";          // dry sand / dunes
+  return "inland";                                          // grass / dirt / forest
+}
+// What a blind strike (or a goat's paw) turns up per biome: mostly raw material, a find only rarely.
+const BLIND_LOOT = {
+  wet:    { rawChance: 0.5,  raw: ["cockle", "shell"],               find: ["seaglass", "clam", "bottle"] },
+  sand:   { rawChance: 0.55, raw: ["driftwood", "shell", "cockle"],  find: ["bottle", "coin", "ceramic"] },
+  inland: { rawChance: 0.85, raw: ["worm", "root", "flint", "stone"],find: ["bone", "ceramic", "coin"] },
+};
 
 // apply a strike's displacement to the offset layer, then push updates
 function applyDig(x, z, amount, holeAng) {
@@ -3314,11 +3337,11 @@ function pick(a) { return a[(rng() * a.length) | 0]; }
 function seedDigSpots() {
   digSpots = [];
   if (!ODDITY_ITEM) { ODDITY_ITEM = pick(["bell", "tin", "fossil"]); ODDITY_NAME = latinName(); }
-  const n = 50 + (rng() * 40 | 0);
+  const n = 200 + (rng() * 100 | 0);   // many attempts; most land off the beach and are skipped
   for (let k = 0; k < n; k++) {
-    const a = rng() * 6.283, r = HALF * (0.22 + rng() * 0.6), x = Math.sin(a) * r, z = -Math.cos(a) * r;
+    const a = rng() * 6.283, r = HALF * (0.3 + rng() * 0.64), x = Math.sin(a) * r, z = -Math.cos(a) * r;
     const h = heightAt(x, z), s = surfaceAt(x, z).slope, ci = cellIndex(x, z);
-    if (h < 0.5 || h > 18 || s > 0.4 || bigPropBlocking(x, z, 1.5)) continue;   // never bury loot where roots block digging
+    if (h < 0.5 || h > BEACH_MAX_H || s > 0.4 || bigPropBlocking(x, z, 1.5)) continue;   // tells live on the beach only; never where roots block
     if (ci >= 0 && filled[ci] - heightmap[ci] > KNEE) continue;                 // never at the bottom of a permanently-deep pool
     const roll = rng();
     let item, band, tell, needed;
@@ -3333,7 +3356,7 @@ function seedDigSpots() {
     for (let t = 0; t < 24; t++) {
       const a = rng() * 6.283, r = HALF * (0.25 + rng() * 0.5), x = Math.sin(a) * r, z = -Math.cos(a) * r;
       const h = heightAt(x, z);
-      if (h > 1 && h < 16 && surfaceAt(x, z).slope < 0.4 && !bigPropBlocking(x, z, 1.5)) {
+      if (h > 1 && h < BEACH_MAX_H && surfaceAt(x, z).slope < 0.4 && !bigPropBlocking(x, z, 1.5)) {
         digSpots.push({ x, z, item: ODDITY_ITEM, band: 3, needed: 6, tell: "dry", strikes: 0, revealed: false, razor: false, lastStrike: -99, special: true });
         break;
       }
@@ -3341,6 +3364,17 @@ function seedDigSpots() {
   }
 }
 function nearestSpot(x, z, maxd) { let best = null, bd = maxd; for (const s of digSpots) { if (s.revealed) continue; const d = Math.hypot(s.x - x, s.z - z); if (d < bd) { bd = d; best = s; } } return best; }
+// A tamed goat paws the ground. On the beach it exposes an existing buried spot;
+// inland (where there are no tells) it sniffs out a fresh one from the LOCAL biome.
+function goatPaw(g) {
+  g.pawT = 2.5; if (onGoat) onGoat("paw");
+  const s = nearestSpot(g.x, g.z, 7); if (s) { s.goatTell = clock.t + 8; return; }
+  if (digSpots.filter((d) => d.goat && !d.revealed).length >= 6) return;    // cap pending goat spots
+  const T = BLIND_LOOT[digBiome(g.x, g.z)]; if (!T) return;
+  const item = pick(rng() < 0.6 ? T.find : T.raw);
+  digSpots.push({ x: g.x, z: g.z, item, band: 1, needed: 2, tell: "show", strikes: 0, revealed: false,
+                  razor: false, lastStrike: -99, pecked: 0, goat: true, goatTell: clock.t + 12 });
+}
 
 // the dig action
 let shovelSwing = 0, camNudge = 0;
@@ -3367,10 +3401,12 @@ function revealSpot(x, z, sift) {
     blindDig(x, z);                 // no tell here: mostly raw material, a find only rarely
   }
 }
-// Blind digging: almost always just raw material for the ground you're on; a real find is rare.
+// Blind digging: almost always just the raw material of the biome you're on; a real find is rare.
 function blindDig(x, z) {
-  if (rng() < BLIND_FIND_CHANCE) spawnFind(pick(["shell", "seaglass", "molt"]), x + (rng()-0.5), z + (rng()-0.5));
-  // (raw-material yield per biome is wired in §5)
+  const T = BLIND_LOOT[digBiome(x, z)]; if (!T) return;
+  const jx = x + (rng()-0.5), jz = z + (rng()-0.5);
+  if (T.find.length && rng() < BLIND_FIND_CHANCE) spawnFind(pick(T.find), jx, jz);   // rare: a real find
+  else if (rng() < T.rawChance) spawnFind(pick(T.raw), jx, jz);                       // common: raw material
 }
 function digAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "shovel") return;
@@ -3945,7 +3981,7 @@ function updateGoats(dt) {
       else if (g.follow && dToP > 7) { tx = px; tz = pz; speed = 6.5; }         // follow at a distance
       else if (g.follow && dToP < 5) { tx = g.x - (px-g.x); tz = g.z - (pz-g.z); speed = 2; }
       else { // idle near player; paw at a buried thing sometimes
-        if (g.pawT <= 0 && rng() < dt*0.4) { const s = nearestSpot(g.x, g.z, 7); if (s) { g.pawT = 2.5; s.goatTell = clock.t + 8; if (onGoat) onGoat("paw"); } }
+        if (g.pawT <= 0 && rng() < dt*0.4) goatPaw(g);
       }
     } else {
       // skittish: flee unless the player comes slowly holding salt (or leaves — they get curious)
