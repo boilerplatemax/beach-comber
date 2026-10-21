@@ -163,6 +163,8 @@
   #bagBtn { position: fixed; z-index: 9; right: 14px; bottom: 74px; width: 54px; height: 54px; display: none;
     border-radius: 50%; border: 2px solid #6e4a2a; background: rgba(60,40,22,.8); color:#f0d9b0; font-size: 22px;
     align-items: center; justify-content: center; pointer-events: auto; }
+  #bucketpanel { position: fixed; z-index: 12; right: 16px; top: 50%; transform: translateY(-50%); display: none;
+    image-rendering: auto; filter: drop-shadow(0 3px 10px rgba(0,0,0,.5)); }
   #dragGhost { position: fixed; z-index: 30; width: 48px; height: 48px; pointer-events: none; display: none;
     image-rendering: pixelated; filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)); transform: translate(-50%,-50%); }
   #dragGhost span { position: absolute; right: 2px; bottom: 0; font-size: 12px; font-weight: 700; text-shadow: 0 1px 2px #000; }
@@ -213,6 +215,7 @@
 <div id="hotbar"></div>
 <div id="journal"></div>
 <div id="invpanel"></div>
+<canvas id="bucketpanel" width="132" height="152"></canvas>
 <div id="ctxmenu"></div>
 <button id="bagBtn">🎒</button>
 <div id="dragGhost"></div>
@@ -1861,7 +1864,9 @@ function crosshairAction() {
     const k = curTarget.kind;
     if (k === "find") return { id: isFood(curTarget.obj.t) ? "eat" : "hand" };
     if (k === "rubble" || k === "goat" || k === "salt") return { id: "hand" };
-    if (k === "creature") return { id: tool === "bucket" ? "scoop" : "look" };
+    if (k === "creature") return tool === "bucket"
+      ? { id: "scoop", cant: !bucket.water || bucket.creatures.length >= BUCKET_CAP || !BUCKETABLE[curTarget.obj.t] }
+      : { id: "look" };
     if (k === "tree" || k === "fallentree") return tool === "axe" ? { id: "chop" } : { id: toolIcon(tool) || "chop", cant: true };
     if (k === "rock") return tool === "pickaxe" ? { id: "mine" } : { id: toolIcon(tool) || "mine", cant: true };
     if (k === "stump") return (tool === "shovel" || tool === "axe") ? { id: tool === "shovel" ? "dig" : "chop" } : { id: toolIcon(tool) || "dig", cant: true };
@@ -1873,7 +1878,9 @@ function crosshairAction() {
   if (tool === "pickaxe") return { id: "mine", cant: !nearestObj(rockObjs, pt[0], pt[1], 4.5) && !(cellIndex(pt[0],pt[1])>=0 && built[cellIndex(pt[0],pt[1])] > 0.05) };
   if (tool === "axe") return { id: "chop", cant: !nearestObj(treeObjs, pt[0], pt[1], REACH+1.2) && !nearestFallen(pt[0], pt[1], REACH+1.4) && !nearestStump(pt[0], pt[1], REACH+1.2) };
   if (MAT_ITEM[tool] !== undefined) return { id: "place", cant: !canPlaceAt(pt[0], pt[1]) };
-  if (tool === "bucket") return { id: "scoop" };
+  if (tool === "bucket") { const atWater = waterDepthAt(pt[0], pt[1]) > 0.08;
+    if (!bucket.water && bucket.creatures.length === 0) return { id: "scoop", cant: !atWater };   // empty: fill only at water
+    return { id: "scoop" }; }                                                                      // full: pour anywhere
   if (SEED_TREE[tool]) return { id: "place", cant: !canPlant(SEED_TREE[tool], pt[0], pt[1]) };
   if (tool === "leaves") return { id: "hand" };
   return null;
@@ -2674,6 +2681,12 @@ function pickaxeMesh() { const m = Mesh(); mBox(m,0,0,0,0.035,0.62,0.035,[0.45,0
   const steel=[0.55,0.57,0.62]; mBox(m,0,-0.6,0,0.05,0.05,0.05,[0.4,0.4,0.43]);
   mBox(m,0,-0.62,0,0.34,0.03,0.03,steel);                                                   // horizontal pick bar
   mTri(m,[0.34,-0.59,0],[0.34,-0.65,0],[0.46,-0.62,0],steel); mTri(m,[-0.34,-0.59,0],[-0.34,-0.65,0],[-0.46,-0.62,0],steel); return m; }
+function bucketItemMesh() { const m = Mesh(); const tin = [0.62,0.66,0.7], dk = [0.42,0.45,0.5];
+  mCyl(m, -0.3, 0.3, 0.26, 0.34, 10, tin); mergeMesh(m, discMesh(-0.3, 0.26, 10, -0.03, dk));   // tapered pail + base
+  mergeMesh(m, discMesh(0.3, 0.34, 10, 0.0, [0.3,0.5,0.62]));                                     // water surface
+  for (let i = 0; i < 10; i++) { const a = i/10*6.283; mBox(m, Math.cos(a)*0.32, 0.3, Math.sin(a)*0.32, 0.04, 0.05, 0.04, dk); }  // rim
+  mBox(m, 0, 0.5, 0, 0.36, 0.03, 0.03, dk);                                                       // handle
+  return m; }
 function stumpMesh() { const m = Mesh(); mCyl(m,0,0.4,0.32,0.28,7,BARK); mergeMesh(m, discMesh(0.4,0.28,7,0.03,[0.72,0.6,0.42])); return m; }
 function logMesh() { const m = Mesh(); mCyl(m,-0.45,0.45,0.15,0.15,7,BROWN); mergeMesh(m, discMesh(0.45,0.15,7,0.02,[0.66,0.56,0.42])); mergeMesh(m, discMesh(-0.45,0.15,7,-0.02,[0.66,0.56,0.42])); return m; }
 function coconutMesh() { const m = Mesh(); mCyl(m,-0.17,0.17,0.2,0.2,7,[0.5,0.38,0.26]); mergeMesh(m, discMesh(0.17,0.2,7,0.07,[0.52,0.4,0.28])); mergeMesh(m, discMesh(-0.17,0.2,7,-0.07,[0.46,0.35,0.23])); return m; }
@@ -2946,6 +2959,10 @@ function updateLife(dt, tSec) {
 }
 function behave(e, dt, d, dx, dz) {
   const g = heightAt(e.x, e.z);
+  if (e.returning) {                                           // poured onto dry land → head for the nearest water
+    if (waterDepthAt(e.x, e.z) > 0.12) { e.returning = false; e.hx = e.x; e.hz = e.z; return; }
+    const grad = groundGradient(e.x, e.z); e.x += grad.dx*dt*2.4; e.z += grad.dz*dt*2.4; e.yaw = Math.atan2(grad.dz, grad.dx) + 1.57; return;
+  }
   if (e.t === "crab") {
     if (e.state === "burrow") { e.closed = Math.min(1, e.closed + dt*2); if (e.closed >= 1) { const a=rng()*6.283; e.x=e.hx+Math.sin(a)*e.hr; e.z=e.hz-Math.cos(a)*e.hr; e.state="wander"; } return; }
     if (d < 2.6) { e.state = "burrow"; return; }
@@ -3056,6 +3073,8 @@ ITEMS.axe = { id: "axe", name: "Axe", category: "tool", rarity: "tool", stackabl
               desc: "A felling axe. Chop trees for logs — and sometimes seeds.", model: () => axeMesh(), tint: [1,1,1] };
 ITEMS.pickaxe = { id: "pickaxe", name: "Pickaxe", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
                   desc: "A miner's pick. Break boulders into stone.", model: () => pickaxeMesh(), tint: [1,1,1] };
+ITEMS.bucket = { id: "bucket", name: "Bucket", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
+                 desc: "A tin pail. Fill it at the water, scoop up small creatures, and pour it into a pond.", model: () => bucketItemMesh(), tint: [1,1,1] };
 // materials & seeds (Phase 6; building comes later)
 digItem("log", "Log", "material", "common", "A length of trunk, fresh-cut.", () => logMesh(), [0.5,0.4,0.28]);
 digItem("stone", "Stone", "material", "common", "A heavy chunk of rock. Place it to build; only a pickaxe removes placed stone.", () => stoneMesh(), [0.52,0.5,0.47]);
@@ -3148,7 +3167,8 @@ function invDrop(idx, one) {
 
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
-  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued })); } catch (e) {}
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued,
+    bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim })) } })); } catch (e) {}
 }
 function loadState() {
   try {
@@ -3157,6 +3177,7 @@ function loadState() {
       if (Array.isArray(s.main)) { Inv.main = padArr(s.main, INV_SLOTS); Inv.hotbar = padArr((s.hotbar || []).map(normCell), HOTBAR_SLOTS); }
       Inv.selected = Math.min(HOTBAR_SLOTS - 1, s.sel || 0); (s.disc || []).forEach((d) => discovered.add(d));
       starsRescued = s.rescued || 0;
+      if (s.bucket) { bucket.water = !!s.bucket.water; bucket.creatures = Array.isArray(s.bucket.creatures) ? s.bucket.creatures : []; }
     }
   } catch (e) {}
 }
@@ -3698,7 +3719,8 @@ function useToolOnTarget(t) {
   if (!t) return false;
   const tool = selectedTool();
   switch (t.kind) {
-    case "find": case "creature": interactWith(t.obj); return true;
+    case "creature": if (tool === "bucket" && bucketScoop(t.obj)) return true; interactWith(t.obj); return true;
+    case "find": interactWith(t.obj); return true;
     case "rubble": pickRubble(t.obj); return true;
     case "goat": offerSaltTo(t.obj); return true;
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
@@ -3724,6 +3746,7 @@ function clickAt(ndcx, ndcy) {
   if (tool === "shovel") digAt(pt[0], pt[1]);
   else if (tool === "axe") { if (!chopAt(pt[0], pt[1])) failStrike(false, pt[0], gy, pt[1]); }   // axe bit nothing → thud
   else if (tool === "pickaxe") { if (!mineAt(pt[0], pt[1]) && !removeBuiltAt(pt[0], pt[1])) failStrike(true, pt[0], gy, pt[1]); }   // pick hit bare ground → clink
+  else if (tool === "bucket") useBucket(pt[0], pt[1]);
   else if (MAT_ITEM[tool] !== undefined) placeMaterial(pt[0], pt[1]);
   else if (SEED_TREE[tool]) plantAt(pt[0], pt[1]);
   else if (tool === "leaves") useLeavesAt(pt[0], pt[1]);
@@ -3826,8 +3849,10 @@ function spawnInflow(x, z) {
 }
 
 // Live water surface at a point (sea level or an isolated pool's rim), and depth above ground.
+const ponded = new Map();          // §10.4: cell index → standing-water level (a hole you poured a bucket into)
 function waterSurfaceAt(x, z) {
   const i = cellIndex(x, z); if (i < 0) return waterLevel;
+  if (ponded.has(i)) return Math.max(waterLevel, ponded.get(i));   // a filled pond holds its own water
   const inBasin = filled[i] > heightmap[i] + 0.1;
   const rim = (dig[i] < -0.05 && !inBasin) ? -1000 : filled[i];
   return Math.max(waterLevel, rim);
@@ -3847,7 +3872,7 @@ function updateHeightTex(x0, z0, x1, z1) {
   const fb = new Float32Array(w * h); p = 0;
   for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
     const i = z * GRID + x, inBasin = filled[i] > heightmap[i] + 0.1;
-    fb[p++] = (dig[i] < -0.05 && !inBasin) ? -1000 : filled[i];
+    fb[p++] = ponded.has(i) ? ponded.get(i) : ((dig[i] < -0.05 && !inBasin) ? -1000 : filled[i]);
   }
   gl.bindTexture(gl.TEXTURE_2D, filledTex);
   gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, z0, w, h, gl.RED, gl.FLOAT, fb);
@@ -4199,6 +4224,91 @@ function removeBuiltAt(x, z) {
   Inv.add(give, 1); if (onDig) onDig("mine"); spawnSand(x, surfaceAt(x,z).h + 0.2, z, 6, [0.5,0.5,0.52]);
   saveWorld(); return true;
 }
+/* ===================================================================== *
+ * § BUCKET  (Phase 10 Part 4): fill it, scoop small creatures, pour it out
+ * ===================================================================== */
+const bucket = { water: false, creatures: [] };
+const BUCKET_CAP = 5;
+const BUCKETABLE = { crab: 1, fish: 1, star: 1, hermit: 1, anemone: 1 };
+function bucketScoop(e) {                                       // bucket used on a creature
+  if (!bucket.water) { showCard("Empty bucket", "Fill it at the water's edge first."); return true; }
+  if (bucket.creatures.length >= BUCKET_CAP) { showCard("Bucket full", `It holds ${BUCKET_CAP} creatures.`); return true; }
+  if (!BUCKETABLE[e.t]) return false;                          // not scoopable → let the normal inspect happen
+  bucket.creatures.push({ t: e.t, scale: e.scale, tint: e.tint || [1,1,1], special: !!e.special, name: e.name, poolRim: e.poolRim });
+  const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
+  discovered.add(e.t); if (onDig) onDig("splash"); saveState(); return true;
+}
+function spawnFromBucket(c, x, z, extra) { const e = spawnCreature(c.t, x, z, extra || {}); e.scale = c.scale; e.tint = c.tint; e.special = c.special; e.name = c.name; return e; }
+function useBucket(x, z) {
+  if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;
+  const depth = waterDepthAt(x, z), atWater = depth > 0.08;
+  const i = cellIndex(x, z), inHole = i >= 0 && dig[i] < -0.3 && !atWater;
+  const sy = surfaceAt(x, z).h;
+  if (!bucket.water && bucket.creatures.length === 0) {         // empty → fill
+    if (atWater) { bucket.water = true; if (onDig) onDig("splash"); spawnSand(x, sy + 0.1, z, 10, [0.72, 0.86, 0.96]); saveState(); }
+    else failStrike(false, x, sy + 0.3, z);                     // nothing to scoop water from
+    return;
+  }
+  // has contents → pour / release
+  if (atWater) {                                               // tip the creatures into this water — they live here now
+    const cx = x, cz = z;
+    for (const c of bucket.creatures) spawnFromBucket(c, cx + (rng()-0.5)*1.5, cz + (rng()-0.5)*1.5, { hx: cx, hz: cz, hr: 8, poolRim: c.poolRim });
+    if (bucket.creatures.length) sparkle(x, waterSurfaceAt(x, z) + 0.2, z, [0.6, 0.85, 0.95], 8);
+    bucket.creatures = []; bucket.water = false; if (onDig) onDig("splash"); saveState();
+  } else if (inHole) { pourIntoHole(x, z); }
+  else { pourOnGround(x, z); }
+}
+// Pour water into a dug hole → a little standing pond (crop-watering hook: onWaterGround).
+function pourIntoHole(x, z) {
+  const i = cellIndex(x, z); if (i < 0) return;
+  const floor = heightmap[i] + dig[i] + built[i], level = floor + Math.min(0.9, -dig[i]);
+  const r = 2, gcx = (x+HALF)/CELL, gcz = (z+HALF)/CELL;
+  for (let gz = Math.floor(gcz-r); gz <= Math.ceil(gcz+r); gz++) for (let gx = Math.floor(gcx-r); gx <= Math.ceil(gcx+r); gx++) {
+    const j = gz*GRID+gx; if (j < 0 || j >= GRID*GRID) continue;
+    if (dig[j] < -0.15 && Math.hypot(gx-gcx, gz-gcz) < r) ponded.set(j, level);
+  }
+  updateHeightTex(Math.floor(gcx-r-1), Math.floor(gcz-r-1), Math.ceil(gcx+r+1), Math.ceil(gcz+r+1));
+  for (const c of bucket.creatures) spawnFromBucket(c, x + (rng()-0.5), z + (rng()-0.5), { hx: x, hz: z, hr: 2.5, poolRim: level });
+  bucket.creatures = []; bucket.water = false; if (onDig) onDig("splash");
+  spawnSand(x, floor + 0.1, z, 10, [0.72, 0.86, 0.96]);
+  if (typeof onWaterGround === "function") onWaterGround(x, z);   // hook for watering crops later
+  saveState();
+}
+// Pour out onto dry ground: creatures are stranded and make for the nearest water.
+function pourOnGround(x, z) {
+  for (const c of bucket.creatures) { const e = spawnFromBucket(c, x + (rng()-0.5)*1.2, z + (rng()-0.5)*1.2, { hr: 6 }); e.returning = true; }
+  if (bucket.creatures.length) { if (onDig) onDig("splash"); spawnSand(x, surfaceAt(x,z).h + 0.1, z, 10, [0.72, 0.86, 0.96]); }
+  bucket.creatures = []; bucket.water = false; saveState();
+}
+// A small top-down window into the bucket: the water, with the creatures swimming in it.
+const BUCKET_COL = { crab: [200,90,70], fish: [120,160,205], star: [222,132,70], hermit: [182,160,120], anemone: [212,110,132] };
+let bucketPanelEl = null, bucketCtx = null;
+function updateBucketPanel() {
+  if (!bucketPanelEl) { bucketPanelEl = document.getElementById("bucketpanel"); bucketCtx = bucketPanelEl.getContext("2d"); }
+  const show = mode === "walk" && selectedTool() === "bucket" && (bucket.water || bucket.creatures.length);
+  bucketPanelEl.style.display = show ? "block" : "none"; if (!show) return;
+  const W = bucketPanelEl.width, H = bucketPanelEl.height, c = bucketCtx, t = performance.now() * 0.001;
+  const cx = W/2, cyTop = 36, rx = W/2 - 12, ry = 19;
+  c.clearRect(0, 0, W, H);
+  c.fillStyle = "#484d54"; c.beginPath(); c.moveTo(cx-rx, cyTop); c.lineTo(cx-rx*0.72, H-16); c.lineTo(cx+rx*0.72, H-16); c.lineTo(cx+rx, cyTop); c.closePath(); c.fill();
+  c.fillStyle = "#3a3e44"; c.beginPath(); c.ellipse(cx, H-16, rx*0.72, 7, 0, 0, 6.283); c.fill();
+  if (bucket.water) { c.fillStyle = "#2f6f8a"; c.beginPath(); c.ellipse(cx, cyTop, rx-3, ry-2, 0, 0, 6.283); c.fill();
+    c.strokeStyle = "rgba(205,238,248,.28)"; c.lineWidth = 1;
+    for (let k = 0; k < 2; k++) { c.beginPath(); c.ellipse(cx, cyTop, (rx-7)*(0.45+0.3*k+0.06*Math.sin(t*2+k)), (ry-4)*(0.45+0.3*k), 0, 0, 6.283); c.stroke(); } }
+  bucket.creatures.forEach((cr, i) => { if (cr.ph === undefined) cr.ph = Math.random()*6.283;
+    const ang = cr.ph + t * (0.5 + 0.25*(i%3)), rr = 0.25 + 0.5*((i%3)/2);
+    const px = cx + Math.cos(ang) * (rx-8) * rr, py = cyTop + Math.sin(ang) * (ry-5) * rr;
+    const col = BUCKET_COL[cr.t] || [200,120,100];
+    c.save(); c.translate(px, py); c.rotate(ang + 1.57);
+    c.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`; c.beginPath(); c.ellipse(0, 0, 4.5, 2.6, 0, 0, 6.283); c.fill();
+    c.fillRect(-1, 2, 2, 3); c.restore();
+  });
+  c.strokeStyle = "#8b9099"; c.lineWidth = 3; c.beginPath(); c.ellipse(cx, cyTop, rx, ry, 0, 0, 6.283); c.stroke();
+  c.strokeStyle = "#6b7077"; c.lineWidth = 3; c.beginPath(); c.arc(cx, cyTop - ry*0.4, rx, Math.PI*1.08, -Math.PI*0.08, false); c.stroke();
+  c.fillStyle = "#e4eef2"; c.font = "11px ui-monospace, monospace"; c.textAlign = "center";
+  c.fillText(`${bucket.creatures.length}/${BUCKET_CAP}`, cx, H-3);
+}
+
 // Placed material in the wash zone slowly erodes; everywhere else it's permanent.
 let erosionT = 0;
 function updateErosion(gdt) {
@@ -4886,9 +4996,10 @@ const fsTri = buildFsTri();
 buildIcons();
 buildPanels();
 loadState();
-if (!Inv.hotbarHasId("shovel")) Inv.hotbar[0] = { id: "shovel", qty: 1 };   // slots 1-3: shovel, axe, pickaxe
+if (!Inv.hotbarHasId("shovel")) Inv.hotbar[0] = { id: "shovel", qty: 1 };   // slots 1-4: shovel, axe, pickaxe, bucket
 if (!Inv.hotbarHasId("axe")) Inv.hotbar[1] = { id: "axe", qty: 1 };
 if (!Inv.hotbarHasId("pickaxe")) Inv.hotbar[2] = { id: "pickaxe", qty: 1 };
+if (!Inv.hotbarHasId("bucket")) Inv.hotbar[3] = { id: "bucket", qty: 1 };
 renderHotbar();
 syncDebugPanel();
 seedDigSpots();
@@ -5241,6 +5352,7 @@ function frame(now) {
     `${clock.speed > 1 ? `  (${clock.speed}×)` : ""}${clock.paused ? "  (paused)" : ""}\n` +
     `mode ${mode}  ·  POIs ${POIS.map((p) => p.type).join(", ")}`;
   if (mode === "walk") drawTideCurve();
+  updateBucketPanel();
 
   if (debugOn) {
     dbgEl.style.display = "block";
