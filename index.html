@@ -1200,24 +1200,37 @@ const WALK_SPEED = 9.5;      // units / second (vast map, so not too slow)
 const SPRINT = 1.8;          // sprint multiplier
 const SLOPE_LIMIT = 40 * Math.PI / 180;   // can't climb steeper than this
 const WADE_DEPTH = 1.0;      // can wade up to this depth, then it blocks
-const player = { x: 0, z: 0, bob: 0, eyeY: EYE, sprinting: false, scramble: 0, air: 0, vy: 0 };
-function tryJump() {
-  if (mode !== "walk" || resting) return;
-  if (player.air > 0.02 || player.vy !== 0) return;           // already airborne
-  if (digCommit > 0 || exhausted) return;                     // rooted mid-strike / exhausted
-  if (stamina <= 0.08) return;                                // too tired
-  const s = surfaceAt(player.x, player.z);
-  if (waterLevel - s.h > KNEE) return;                        // no jumping in deep water
-  player.vy = 9.2; spendStamina(0.08);
+// Jump feel (§6): a snappy rise under lighter gravity, a faster, heavier fall.
+const JUMP_V = 8.4, GRAVITY_UP = 24, GRAVITY_DOWN = 42, COYOTE_TIME = 0.1, JUMP_BUFFER = 0.11;
+const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, sprinting: false, scramble: 0, vy: 0, airborne: false, coyote: 0, landStun: 0 };
+let jumpBufferT = 0;
+function queueJump() { if (mode === "walk") jumpBufferT = JUMP_BUFFER; }    // buffered: fires on landing if pressed just early
+function canJumpNow() {
+  if (mode !== "walk" || resting || digCommit > 0 || exhausted) return false;
+  if (stamina <= 0.08) return false;
+  if (player.airborne && player.coyote <= 0) return false;                  // airborne beyond coyote window
+  if (waterLevel - surfaceAt(player.x, player.z).h > KNEE) return false;    // no jumping in deep water
+  return true;
 }
-function landJump(g) {
-  // bigger shows burst on wet sand (Phase 7: stomp → jump landing)
-  if (typeof surfaceKind === "function" && surfaceKind(player.x, player.z) === "wet") {
-    if (typeof spawnSand === "function") spawnSand(player.x, g.h + 0.1, player.z, 10, [0.6, 0.62, 0.66]);
+function doJump() {
+  const standH = Math.max(surfaceAt(player.x, player.z).h, trunkHeightAt(player.x, player.z));
+  player.feetY = standH; player.vy = JUMP_V; player.airborne = true;
+  player.coyote = 0; jumpBufferT = 0; spendStamina(0.08);
+}
+function tryJump() { queueJump(); }                                         // Space → buffered jump request
+function landJump(g, fall) {
+  fall = fall || 0;
+  // dust/sand puff scaled by impact; a bigger splash on wet sand (stomp → jump landing)
+  const puff = Math.min(18, 6 + fall * 1.2);
+  if (typeof spawnSand === "function") spawnSand(player.x, g.h + 0.1, player.z, puff | 0,
+    surfaceKind(player.x, player.z) === "wet" ? [0.6, 0.62, 0.66] : [0.82, 0.74, 0.56]);
+  if (surfaceKind(player.x, player.z) === "wet") {
     for (const sp of (typeof digSpots !== "undefined" ? digSpots : [])) { if (sp.revealed) continue;
       if (Math.hypot(sp.x - player.x, sp.z - player.z) < 10 && surfaceKind(sp.x, sp.z) === "wet") { sp.react = 1.3; } }
   }
-  camNudge = Math.max(camNudge, 0.05);
+  camNudge = Math.max(camNudge, Math.min(0.2, 0.04 + fall * 0.02));          // camera dip scaled by fall speed
+  if (onFootstep) onFootstep(surfaceType(g.h, g.slope), Math.min(1, 0.4 + fall * 0.08));   // landing thud
+  if (fall > 9) player.landStun = Math.min(0.5, (fall - 9) * 0.06);          // big drop: a brief slowdown
   // landing on a too-steep slope slides you back to safe ground
   if (g.slope > SLOPE_LIMIT && lastSafe) { player.x = lastSafe.x; player.z = lastSafe.z; }
 }
@@ -1244,6 +1257,7 @@ function enterWalk() {
   spawnPoint = spawnPoint || { x: s.x, z: s.z, yaw: s.yaw };
   player.x = s.x; player.z = s.z; player.bob = 0;
   player.eyeY = surfaceAt(s.x, s.z).h + EYE;
+  player.feetY = surfaceAt(s.x, s.z).h; player.vy = 0; player.airborne = false; player.landStun = 0; jumpBufferT = 0;
   lastSafe.x = s.x; lastSafe.z = s.z;
   cam.yaw = s.yaw; cam.pitch = -0.04;
   mode = "walk";
@@ -1303,6 +1317,7 @@ function safetyCheck(dt) {
   if (bad) {                                                   // teleport to safety
     player.x = lastSafe.x; player.z = lastSafe.z;
     player.eyeY = surfaceAt(lastSafe.x, lastSafe.z).h + EYE;
+    player.feetY = surfaceAt(lastSafe.x, lastSafe.z).h; player.vy = 0; player.airborne = false;
     cam.pos = [lastSafe.x, player.eyeY, lastSafe.z];
     if (mode === "free") cam.pos[1] += 20;
   }
@@ -1380,7 +1395,7 @@ addEventListener("keydown", (e) => {
   if (e.code === "KeyG") ditherOn = !ditherOn;
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE") interact();                  // pick up / inspect
-  if (e.code === "Space" && mode === "walk") { e.preventDefault(); tryJump(); }
+  if (e.code === "Space" && mode === "walk") { e.preventDefault(); queueJump(); }
   if (e.code === "KeyR" && mode === "walk") { resting = !resting; if (resting) { analog.x = analog.y = 0; } }
   if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
   if (e.code === "KeyI") toggleInventory();           // inventory panel
@@ -3412,7 +3427,7 @@ function digAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "shovel") return;
   if (resting) resting = false;
   if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;          // out of reach: no action
-  if (player.sprinting || player.air > 0.02 || player.vy !== 0) return;      // no digging mid-sprint or mid-air
+  if (player.sprinting || player.airborne) return;                            // no digging mid-sprint or mid-air
   if (!canHeavyAction()) { shovelSwing = 0.4; return; }                       // tired / exhausted / still committed
   // a stump in reach? the shovel can also lever it out (several strikes)
   const stp = nearestStump(x, z, REACH + 1.0);
@@ -3743,7 +3758,7 @@ function mineAt(x, z) {
 function mineObj(o) {                                           // one pickaxe strike on a rock
   if (!o || o.gone) return;
   if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 1.4) return;
-  if (player.sprinting || player.air > 0.02 || player.vy !== 0) return;       // no mining mid-sprint or mid-air
+  if (player.sprinting || player.airborne) return;                            // no mining mid-sprint or mid-air
   if (!canHeavyAction()) { shovelSwing = 0.4; return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST); rootPlayer();
   if (onDig) onDig("mine");
@@ -4193,7 +4208,7 @@ function frame(now) {
       let surfMul = 1;
       if (depth > 0.05) surfMul = Math.max(0.25, 1 - depth * 0.45); // deeper wading, slower
       else if (here.h < 12) surfMul = 0.9;                          // soft sand
-      const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * sm * surfMul;
+      const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * sm * surfMul * (player.landStun > 0 ? 0.5 : 1);
       const dist = speed * dt;
       const maxClimb = Math.tan(SLOPE_LIMIT) * Math.max(dist, 0.05);
       const canStep = (nx, nz) => {
@@ -4218,21 +4233,35 @@ function frame(now) {
     }
 
     player.scramble += (scrambleTarget - player.scramble) * Math.min(1, dt * 4);
+    if (player.landStun > 0) player.landStun = Math.max(0, player.landStun - dt);
     const g = surfaceAt(player.x, player.z);
-    const moving = wl > 0.01 ? 1 : 0;
-    const amp = (0.06 + (player.sprinting ? 0.05 : 0) + player.scramble * 0.07) * moving;
-    const freq = player.scramble > 0.3 ? 1.7 : 2.6;             // heavier when scrambling
-    const bob = Math.sin(player.bob * freq) * amp;
-    const sit = resting ? -0.8 : 0;                          // sit down to rest
-    const standH = Math.max(g.h, trunkHeightAt(player.x, player.z));   // stand on a fallen trunk
-    const target = standH + EYE + bob + sit;
-    player.eyeY += (target - player.eyeY) * Math.min(1, dt * 14);
-    // jump arc: gravity, land back onto the terrain surface
-    if (player.air > 0.0001 || player.vy !== 0) {
-      player.air += player.vy * dt; player.vy -= 28 * dt;
-      if (player.air <= 0) { player.air = 0; player.vy = 0; landJump(g); }
+    const standH = Math.max(g.h, trunkHeightAt(player.x, player.z));   // stand on a fallen trunk (or terrain)
+    // coyote window + buffered jump
+    player.coyote = player.airborne ? Math.max(0, player.coyote - dt) : COYOTE_TIME;
+    if (jumpBufferT > 0) jumpBufferT -= dt;
+    if (jumpBufferT > 0 && canJumpNow()) doJump();
+    if (player.airborne) {
+      // real world-space vertical integration — no lerp, land exactly at ground contact
+      player.vy -= (player.vy > 0 ? GRAVITY_UP : GRAVITY_DOWN) * dt;
+      player.feetY += player.vy * dt;
+      if (player.vy <= 0 && player.feetY <= standH) {           // actual ground contact
+        const fall = -player.vy;
+        player.feetY = standH; player.vy = 0; player.airborne = false; player.coyote = COYOTE_TIME;
+        player.eyeY = standH + EYE; landJump(g, fall);
+      } else {
+        player.eyeY = player.feetY + EYE;                       // exact height in the air
+      }
+    } else {
+      const moving = wl > 0.01 ? 1 : 0;
+      const amp = (0.06 + (player.sprinting ? 0.05 : 0) + player.scramble * 0.07) * moving;
+      const freq = player.scramble > 0.3 ? 1.7 : 2.6;           // heavier when scrambling
+      const bob = Math.sin(player.bob * freq) * amp;
+      const sit = resting ? -0.8 : 0;                           // sit down to rest
+      const target = standH + EYE + bob + sit;
+      player.eyeY += (target - player.eyeY) * Math.min(1, dt * 14);
+      player.feetY = standH;                                    // stay synced with the ground
     }
-    cam.pos[0] = player.x; cam.pos[1] = player.eyeY + player.air; cam.pos[2] = player.z;
+    cam.pos[0] = player.x; cam.pos[1] = player.eyeY; cam.pos[2] = player.z;
   }
 
   safetyCheck(dt);
