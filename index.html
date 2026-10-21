@@ -1198,8 +1198,27 @@ function camForward() {
 const EYE = 1.7;             // eye height above the ground
 const WALK_SPEED = 9.5;      // units / second (vast map, so not too slow)
 const SPRINT = 1.8;          // sprint multiplier
-const SLOPE_LIMIT = 40 * Math.PI / 180;   // can't climb steeper than this
+const SLOPE_LIMIT = 40 * Math.PI / 180;   // auxiliary limit (walkable checks, landing slide)
+const SLOPE_IMPASS = 42 * Math.PI / 180;  // §7: uphill past this is impassable — you slide back
 const WADE_DEPTH = 1.0;      // can wade up to this depth, then it blocks
+// The ONE place slope governs walking speed (§7). `grade` is the signed incline
+// (radians) in the travel direction: + uphill, − downhill. Returns a 0–1 multiplier.
+function slopeSpeedMul(grade) {
+  if (grade <= 0) return 1 - Math.min(0.4, -grade * 0.45);   // downhill: steeper = a bit slower (and slips)
+  const deg = grade * 180 / Math.PI;
+  if (deg <= 15) return 1;                                   // easy
+  if (deg >= 42) return 0;                                   // impassable → slide back
+  if (deg <= 25) return 1 + (deg - 15) * (0.6 - 1) / 10;     // 15°→25°:  100% → 60%
+  if (deg <= 35) return 0.6 + (deg - 25) * (0.3 - 0.6) / 10; // 25°→35°:   60% → 30% (heavy scramble)
+  return 0.3 + (deg - 35) * (0.0 - 0.3) / 7;                 // 35°→42°:   30% →  0%
+}
+// Downhill unit direction + slope magnitude at a point (for slide-back on steep ground).
+function groundGradient(x, z) {
+  const e = 1.2, hL = surfaceAt(x - e, z).h, hR = surfaceAt(x + e, z).h, hD = surfaceAt(x, z - e).h, hU = surfaceAt(x, z + e).h;
+  let gx = (hR - hL) / (2 * e), gz = (hU - hD) / (2 * e);     // uphill gradient
+  const m = Math.hypot(gx, gz) || 1e-6;
+  return { dx: -gx / m, dz: -gz / m, slope: Math.atan(m) };   // dx,dz point downhill
+}
 // Jump feel (§6): a snappy rise under lighter gravity, a faster, heavier fall.
 const JUMP_V = 8.4, GRAVITY_UP = 24, GRAVITY_DOWN = 42, COYOTE_TIME = 0.1, JUMP_BUFFER = 0.11;
 const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, sprinting: false, scramble: 0, vy: 0, airborne: false, coyote: 0, landStun: 0 };
@@ -4193,17 +4212,13 @@ function frame(now) {
 
     if (wl > 0.01) {
       wx /= wl; wz /= wl;
-      // slope in the direction of travel → speed curve
+      // slope in the direction of travel → the single speed curve (§7)
       const ahead = surfaceAt(player.x + wx*1.6, player.z + wz*1.6);
       const grade = Math.atan2(ahead.h - here.h, 1.6);
-      let sm;
-      if (grade <= 0) sm = 1 - Math.min(0.25, -grade * 0.35);       // careful downhill
-      else if (grade < 0.26) sm = 1 - grade * 0.5;                  // <15°: easy
-      else if (grade < 0.61) sm = 0.87 - (grade - 0.26) * 1.4;      // 15–35°: harder
-      else if (grade < 0.785) sm = 0.38 - (grade - 0.61) * 1.7;     // 35–45°: scramble
-      else sm = 0;                                                  // >45°: impassable
-      sm = Math.max(0, sm);
-      if (grade > 0.5) scrambleTarget = Math.min(1, (grade - 0.5) / 0.28);
+      let sm = slopeSpeedMul(grade);
+      if (grade > 0.44) scrambleTarget = Math.min(1, (grade - 0.44) / 0.29);   // ~25°+ = scrambling
+      // scrambling burns stamina; with none left you can't push up a steep pitch
+      if (scrambleTarget > 0.35 && (exhausted || stamina < 0.03)) sm = 0;
       const depth = waterLevel - here.h;
       let surfMul = 1;
       if (depth > 0.05) surfMul = Math.max(0.25, 1 - depth * 0.45); // deeper wading, slower
@@ -4232,6 +4247,13 @@ function frame(now) {
       }
     }
 
+    // §7: ground too steep to hold → slide back down (even with no input)
+    const gh = groundGradient(player.x, player.z);
+    if (gh.slope > SLOPE_IMPASS && !player.airborne) {
+      const slide = Math.min(1, (gh.slope - SLOPE_IMPASS) / 0.2) * 6 * dt;
+      const sx = player.x + gh.dx * slide, sz = player.z + gh.dz * slide;
+      if (waterLevel - surfaceAt(sx, sz).h <= WADE_DEPTH) { player.x = sx; player.z = sz; }
+    }
     player.scramble += (scrambleTarget - player.scramble) * Math.min(1, dt * 4);
     if (player.landStun > 0) player.landStun = Math.max(0, player.landStun - dt);
     const g = surfaceAt(player.x, player.z);
