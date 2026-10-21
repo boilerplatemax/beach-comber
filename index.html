@@ -111,35 +111,58 @@
   .toast.new span { color: #ffe6b0; }
   .toast i { opacity: .6; font-size: 12px; }
   /* hotbar (bottom-center) */
-  #hotbar { position: fixed; left: 50%; bottom: 14px; transform: translateX(-50%);
-    z-index: 8; display: flex; gap: 8px; pointer-events: auto; }
-  .hslot { position: relative; width: 50px; height: 50px; border-radius: 8px;
-    border: 1px solid rgba(255,255,255,.2); background: rgba(10,18,22,.55); cursor: pointer; }
-  .hslot.sel { border-color: #ffe6b0; box-shadow: 0 0 8px rgba(255,220,150,.5); }
+  /* tool belt (hotbar): leather loops along the bottom */
+  #hotbar { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
+    z-index: 8; display: flex; gap: 6px; pointer-events: auto; padding: 7px 10px 9px;
+    background: linear-gradient(#5a3c23, #3f2817); border: 1px solid #2a1a0e;
+    border-radius: 10px; box-shadow: 0 3px 10px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,220,170,.15); }
+  .hslot { position: relative; width: 50px; height: 50px; border-radius: 7px;
+    border: 2px solid #6e4a2a; background: rgba(28,18,10,.6); cursor: pointer;
+    box-shadow: inset 0 0 6px rgba(0,0,0,.5); }
+  .hslot.sel { border-color: #ffe6b0; box-shadow: 0 0 9px rgba(255,220,150,.55), inset 0 0 6px rgba(0,0,0,.4); }
   .hslot img { width: 100%; height: 100%; image-rendering: pixelated; }
-  .hslot b { position: absolute; left: 3px; top: 1px; font-size: 10px; opacity: .55; }
+  .hslot b { position: absolute; left: 3px; top: 0; font-size: 10px; opacity: .6; color:#f0d9b0; }
   .hslot span { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 2px #000; }
-  /* inventory & debug panels */
-  #invpanel, #debugpanel {
-    position: fixed; z-index: 13; display: none; background: rgba(10,16,20,.95);
-    border: 1px solid rgba(255,255,255,.15); border-radius: 12px; padding: 18px 20px;
-  }
-  #invpanel { left: 50%; top: 50%; transform: translate(-50%,-50%); width: 384px; max-width: 94vw; text-align: center; touch-action: none; }
-  #invpanel h2 { font-size: 20px; margin-bottom: 4px; }
-  #invpanel .ihead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+  /* the satchel */
+  #debugpanel { position: fixed; z-index: 13; display: none; background: rgba(10,16,20,.95);
+    border: 1px solid rgba(255,255,255,.15); border-radius: 12px; padding: 18px 20px; }
+  #invpanel { position: fixed; z-index: 13; display: none; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    width: 420px; max-width: 95vw; max-height: 90vh; overflow-y: auto; text-align: center; touch-action: none;
+    border-radius: 14px; padding: 16px 18px 14px; color: #f3e9d6;
+    border: 3px solid #4a3118; box-shadow: 0 8px 30px rgba(0,0,0,.6), inset 0 0 40px rgba(40,24,10,.5);
+    background-color: #7a5a38; background-size: cover; }
+  #invpanel .ihead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  #invpanel h2 { font-size: 19px; margin: 0; color: #fbeccd; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
   #invpanel .ihead button { font-size: 12px; padding: 4px 10px; }
+  .compartment { margin: 8px 0 4px; }
+  .clabel { display: flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+    color: #e6d2a6; opacity: .85; margin: 0 2px 5px; text-shadow: 0 1px 1px rgba(0,0,0,.5); }
+  .clabel:before, .clabel:after { content:""; flex:1; height:1px; background: repeating-linear-gradient(90deg,#c8a86e 0 4px,transparent 4px 8px); opacity:.5; }
   .igrid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px; }
-  .igrid.hot { margin-top: 10px; grid-template-columns: repeat(8, 1fr); }
-  .islot { aspect-ratio: 1; border-radius: 6px; border: 1px solid rgba(255,255,255,.1);
-    background: rgba(255,255,255,.03); position: relative; cursor: grab; touch-action: none; user-select: none; }
-  .igrid.hot .islot { border-color: rgba(255,255,255,.22); background: rgba(10,18,22,.5); }
-  .islot.full { background: rgba(255,255,255,.08); }
+  .igrid.hot { margin-top: 8px; grid-template-columns: repeat(8, 1fr); }
+  .islot { aspect-ratio: 1; border-radius: 6px; border: 1px solid rgba(30,18,8,.55);
+    background: rgba(32,20,10,.32); box-shadow: inset 0 1px 3px rgba(0,0,0,.4);
+    position: relative; cursor: grab; touch-action: none; user-select: none; overflow: hidden; }
+  .islot.full { background: rgba(60,42,24,.5); }
   .islot.sel { border-color: #ffe6b0; box-shadow: 0 0 6px rgba(255,220,150,.4); }
-  .islot.dragover { border-color: #9fe3ef; background: rgba(120,200,220,.18); }
+  .islot.dragover { border-color: #9fe3ef; background: rgba(120,200,220,.22); }
   .islot img { width: 100%; height: 100%; image-rendering: pixelated; pointer-events: none; }
   .islot span { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 2px #000; pointer-events: none; }
   .islot .hk { position: absolute; left: 3px; top: 1px; font-size: 9px; opacity: .5; pointer-events: none; }
-  #invpanel .ihint { font-size: 11px; opacity: .5; margin-top: 10px; }
+  .islot.shimmer:after { content:""; position:absolute; inset:0; pointer-events:none;
+    background: linear-gradient(115deg, transparent 35%, rgba(255,245,210,.55) 50%, transparent 65%);
+    background-size: 250% 250%; animation: shim 2.6s linear infinite; }
+  @keyframes shim { 0%{background-position: 120% 0} 100%{background-position: -40% 0} }
+  #invpanel.shake { animation: bagshake .35s ease; }
+  @keyframes bagshake { 0%,100%{transform:translate(-50%,-50%)} 25%{transform:translate(-52%,-50%)} 75%{transform:translate(-48%,-50%)} }
+  #invpanel .ihint { font-size: 11px; opacity: .6; margin-top: 8px; }
+  #ctxmenu { position: fixed; z-index: 32; display: none; min-width: 110px; padding: 4px;
+    background: rgba(18,12,6,.97); border: 1px solid #6e4a2a; border-radius: 8px; box-shadow: 0 4px 14px rgba(0,0,0,.6); }
+  #ctxmenu div { padding: 7px 12px; font-size: 13px; border-radius: 5px; cursor: pointer; color: #f0e4cc; text-align: left; }
+  #ctxmenu div:hover { background: rgba(255,230,180,.16); }
+  #bagBtn { position: fixed; z-index: 9; right: 14px; bottom: 74px; width: 54px; height: 54px; display: none;
+    border-radius: 50%; border: 2px solid #6e4a2a; background: rgba(60,40,22,.8); color:#f0d9b0; font-size: 22px;
+    align-items: center; justify-content: center; pointer-events: auto; }
   #dragGhost { position: fixed; z-index: 30; width: 48px; height: 48px; pointer-events: none; display: none;
     image-rendering: pixelated; filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)); transform: translate(-50%,-50%); }
   #dragGhost span { position: absolute; right: 2px; bottom: 0; font-size: 12px; font-weight: 700; text-shadow: 0 1px 2px #000; }
@@ -190,6 +213,8 @@
 <div id="hotbar"></div>
 <div id="journal"></div>
 <div id="invpanel"></div>
+<div id="ctxmenu"></div>
+<button id="bagBtn">🎒</button>
 <div id="dragGhost"></div>
 <div id="itip"></div>
 <div id="debugpanel"></div>
@@ -3245,43 +3270,112 @@ function buildIcons() {
 function buildPanels() {
   Inv.onChange(() => { renderHotbar(); if (invOpen) renderInventory(); });
   renderHotbar();
+  applyBagTexture();
   const panel = document.getElementById("invpanel");
   panel.addEventListener("pointerdown", invPointerDown);
   document.addEventListener("pointermove", invPointerMove);
   document.addEventListener("pointerup", invPointerUp);
-  panel.addEventListener("contextmenu", (e) => { e.preventDefault(); const s = e.target.closest(".islot"); if (s) invDrop(+s.dataset.idx, true); });
+  panel.addEventListener("contextmenu", (e) => { e.preventDefault(); const s = e.target.closest(".islot"); if (s && s.dataset.idx !== undefined && Inv.cell(+s.dataset.idx)) showContextMenu(+s.dataset.idx, e.clientX, e.clientY); });
+  document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#ctxmenu")) hideContextMenu(); }, true);
+  const bag = document.getElementById("bagBtn");
+  if (IS_TOUCH) bag.style.display = "flex";
+  bag.addEventListener("click", (e) => { e.preventDefault(); toggleInventory(); });
+}
+// procedural canvas-bag texture (noise weave + dashed stitched seam), matching the palette
+function applyBagTexture() {
+  const N = 220, cv = document.createElement("canvas"); cv.width = N; cv.height = N; const c = cv.getContext("2d");
+  c.fillStyle = "#7a5a38"; c.fillRect(0, 0, N, N);
+  for (let i = 0; i < 7000; i++) { const x = Math.random()*N|0, y = Math.random()*N|0, dark = Math.random() < 0.5;
+    c.fillStyle = "rgba(" + (dark ? "54,38,20" : "158,126,84") + "," + (0.04 + Math.random()*0.07).toFixed(2) + ")"; c.fillRect(x, y, 1, 1 + (Math.random()*2|0)); }
+  c.strokeStyle = "rgba(42,26,12,.55)"; c.setLineDash([5, 4]); c.lineWidth = 2; c.strokeRect(10, 10, N-20, N-20);
+  document.getElementById("invpanel").style.backgroundImage = "url(" + cv.toDataURL() + ")";
 }
 function renderHotbar() {
   const el = document.getElementById("hotbar");
   el.innerHTML = Inv.hotbar.map((c, i) => {
     const it = c ? ITEMS[c.id] : null, ic = it && it.icon ? `<img src="${it.icon}">` : "";
-    return `<div class="hslot${i === Inv.selected ? " sel" : ""}" data-h="${i}">${ic}${c && c.qty > 1 ? `<span>${c.qty}</span>` : ""}<b>${i + 1}</b></div>`;
+    const shim = it && (it.rarity === "uncommon" || it.rarity === "rare" || it.rarity === "legendary") ? " shimmer" : "";
+    return `<div class="hslot${i === Inv.selected ? " sel" : ""}${shim}" data-h="${i}">${ic}${c && c.qty > 1 ? `<span>${c.qty}</span>` : ""}<b>${i + 1}</b></div>`;
   }).join("");
   el.querySelectorAll(".hslot").forEach((s) => {
     const pick = (e) => { e.preventDefault(); e.stopPropagation(); selectHotbar(+s.dataset.h); };
     s.onclick = pick;
-    s.addEventListener("touchstart", pick, { passive: false });   // mobile: tap a slot to switch tool
+    s.addEventListener("touchstart", pick, { passive: false });   // mobile: tap a loop to switch tool
   });
 }
 function slotHTML(cell, idx, hk) {
   const key = hk !== undefined ? `<i class="hk">${hk}</i>` : "";
   if (!cell) return `<div class="islot" data-idx="${idx}">${key}</div>`;
   const it = ITEMS[cell.id], ic = it && it.icon ? `<img src="${it.icon}">` : "";
-  return `<div class="islot full" data-idx="${idx}">${key}${ic}${cell.qty > 1 ? `<span>${cell.qty}</span>` : ""}</div>`;
+  const shim = (it && (it.rarity === "uncommon" || it.rarity === "rare" || it.rarity === "legendary")) ? " shimmer" : "";
+  return `<div class="islot full${shim}" data-idx="${idx}">${key}${ic}${cell.qty > 1 ? `<span>${cell.qty}</span>` : ""}</div>`;
 }
+// Which compartment an item sorts into (§10.3).
+const COMPARTMENTS = ["Finds", "Food", "Materials", "Misc"];
+function itemCompartment(id) { const it = ITEMS[id]; if (!it) return "Misc";
+  if (isFood(id)) return "Food";
+  if (it.category === "material" || it.category === "seed") return "Materials";
+  if (it.category === "find" || it.category === "relic") return "Finds";
+  return "Misc"; }
 let invOpen = false;
-function toggleInventory() { invOpen = !invOpen; document.getElementById("invpanel").style.display = invOpen ? "block" : "none"; if (invOpen) renderInventory(); else hideTip(); }
+function toggleInventory() {
+  invOpen = !invOpen; document.getElementById("invpanel").style.display = invOpen ? "block" : "none";
+  if (invOpen) { renderInventory(); if (document.pointerLockElement === canvas) document.exitPointerLock(); }   // free the cursor for the bag
+  else { hideTip(); hideContextMenu(); }
+}
 function renderInventory() {
   if (!invOpen) return;
-  const main = Inv.main.map((c, i) => slotHTML(c, i)).join("");
+  const groups = { Finds: [], Food: [], Materials: [], Misc: [] };
+  for (let i = 0; i < INV_SLOTS; i++) { const c = Inv.main[i]; if (c) groups[itemCompartment(c.id)].push(i); }
+  let html = `<div class="ihead"><h2>Satchel</h2><button id="sortBtn">Tidy ▾</button></div>`;
+  for (const cat of COMPARTMENTS) {
+    const idxs = groups[cat], cells = Math.max(6, Math.ceil((idxs.length + 1) / 6) * 6);   // a little room to grow
+    let grid = "";
+    for (let j = 0; j < cells; j++) grid += idxs[j] !== undefined ? slotHTML(Inv.main[idxs[j]], idxs[j]) : `<div class="islot"></div>`;
+    html += `<div class="compartment"><div class="clabel">${cat}</div><div class="igrid">${grid}</div></div>`;
+  }
   const hot = Inv.hotbar.map((c, i) => slotHTML(c, INV_SLOTS + i, i + 1)).join("");
-  const p = document.getElementById("invpanel");
-  p.innerHTML = `<div class="ihead"><h2>Inventory</h2><button id="sortBtn">Sort ▾</button></div>
-    <div class="igrid main">${main}</div>
-    <div class="igrid hot">${hot}</div>
-    <div class="ihint">${IS_TOUCH ? "drag to move · long-press to split · drag out to drop" : "drag to move/assign · shift-click split · right-click drop one · drag out to drop"} · I to close</div>`;
+  html += `<div class="compartment"><div class="clabel">Tool belt</div><div class="igrid hot">${hot}</div></div>`;
+  html += `<div class="ihint">${IS_TOUCH ? "tap use · long-press menu · drag to the belt" : "click use · shift-click → belt · right-click menu · drag to move · drag out to drop"} · I to close</div>`;
+  const p = document.getElementById("invpanel"); p.innerHTML = html;
   p.querySelector("#sortBtn").onclick = () => Inv.sort();
 }
+/* ---- item actions (§10.3) ---- */
+function equipToBelt(idx) {
+  if (idx >= INV_SLOTS) { Inv.selected = idx - INV_SLOTS; Inv.emit(); return; }
+  let slot = Inv.hotbar.indexOf(null); if (slot < 0) slot = Inv.selected;
+  invMove(idx, INV_SLOTS + slot); Inv.selected = slot; Inv.emit();
+}
+function showInspect(id) { const it = ITEMS[id]; showCard(it.name, (it.desc || "") + (Inv.count(id) > 1 ? "  ×" + Inv.count(id) : "")); }
+function eatItem(idx) {
+  const c = Inv.cell(idx); if (!c || !isFood(c.id)) return; const id = c.id;
+  c.qty--; if (c.qty <= 0) Inv.setCell(idx, null); Inv.emit();
+  if (typeof feedPlayer === "function") feedPlayer(id); else { if (onDig) onDig("eat"); showCard("Ate " + ITEMS[id].name, ""); }
+}
+function itemPrimary(idx) {
+  const c = Inv.cell(idx); if (!c) return; const it = ITEMS[c.id];
+  if (idx >= INV_SLOTS) { Inv.selected = idx - INV_SLOTS; renderHotbar(); return; }     // belt tile → select
+  if (isFood(c.id)) { eatItem(idx); return; }
+  if (it.category === "tool" || it.category === "material" || it.category === "seed" || c.id === "leaves" || c.id === "bucket" || c.id === "salt") { equipToBelt(idx); return; }
+  showInspect(c.id);                                                                    // a find → inspect
+}
+function quickMove(idx) {   // shift-click: bag ↔ belt
+  if (idx >= INV_SLOTS) { const m = Inv.main.indexOf(null); if (m >= 0) invMove(idx, m); }
+  else { const h = Inv.hotbar.indexOf(null); if (h >= 0) invMove(idx, INV_SLOTS + h); }
+}
+function showContextMenu(idx, x, y) {
+  const c = Inv.cell(idx); if (!c) return; const it = ITEMS[c.id], opts = [];
+  if (isFood(c.id)) opts.push(["Eat", () => eatItem(idx)]);
+  if (it.category !== "find" && it.category !== "relic") opts.push([idx >= INV_SLOTS ? "Select" : "Equip", () => equipToBelt(idx)]);
+  opts.push(["Inspect", () => showInspect(c.id)]);
+  if (FINDS[c.id]) { opts.push(["Drop one", () => invDrop(idx, true)]); if (c.qty > 1) opts.push(["Drop all", () => invDrop(idx, false)]); }
+  const m = document.getElementById("ctxmenu");
+  m.innerHTML = opts.map((o, i) => `<div data-i="${i}">${o[0]}</div>`).join("");
+  m.querySelectorAll("div").forEach((d, i) => d.onclick = () => { opts[i][1](); hideContextMenu(); if (invOpen) renderInventory(); });
+  m.style.display = "block"; m.style.left = Math.min(innerWidth - 124, x) + "px"; m.style.top = Math.min(innerHeight - 8 - opts.length*34, y) + "px";
+}
+function hideContextMenu() { document.getElementById("ctxmenu").style.display = "none"; }
+function bagShake() { const p = document.getElementById("invpanel"); if (!invOpen) return; p.classList.remove("shake"); void p.offsetWidth; p.classList.add("shake"); }
 /* pointer drag / tooltip */
 let drag = null;
 function showGhost(cell, x, y) { const g = document.getElementById("dragGhost"), it = ITEMS[cell.id];
@@ -3293,19 +3387,19 @@ function showTip(idx, x, y) { const c = Inv.cell(idx); if (!c) { hideTip(); retu
   t.style.display = "block"; t.style.left = Math.min(innerWidth - 210, x + 16) + "px"; t.style.top = (y + 16) + "px"; }
 function hideTip() { document.getElementById("itip").style.display = "none"; }
 function invPointerDown(e) {
-  const slot = e.target.closest(".islot"); if (!slot) return;
+  const slot = e.target.closest(".islot"); if (!slot || slot.dataset.idx === undefined) return;
   const idx = +slot.dataset.idx, cell = Inv.cell(idx); if (!cell) return;
-  e.preventDefault(); hideTip();
-  if (e.shiftKey) { invSplit(idx); return; }                  // shift-click → split in half
-  drag = { from: idx, moved: false, x: e.clientX, y: e.clientY };
-  drag.lp = setTimeout(() => { if (drag && !drag.moved) { invSplit(idx); drag = null; hideGhost(); } }, 480);  // long-press → split
+  e.preventDefault(); hideTip(); hideContextMenu();
+  if (e.shiftKey) { quickMove(idx); return; }                 // shift-click → quick-move bag↔belt
+  drag = { from: idx, moved: false, x: e.clientX, y: e.clientY, t0: performance.now() };
+  drag.lp = setTimeout(() => { if (drag && !drag.moved) { showContextMenu(idx, drag.x, drag.y); drag = null; hideGhost(); } }, 480);  // long-press → menu
   showGhost(cell, e.clientX, e.clientY);
 }
 function invPointerMove(e) {
   if (!drag) {
     if (!invOpen) return;
     const slot = e.target.closest && e.target.closest(".islot");
-    if (slot && Inv.cell(+slot.dataset.idx)) showTip(+slot.dataset.idx, e.clientX, e.clientY); else hideTip();
+    if (slot && slot.dataset.idx !== undefined && Inv.cell(+slot.dataset.idx)) showTip(+slot.dataset.idx, e.clientX, e.clientY); else hideTip();
     return;
   }
   if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) > 6) drag.moved = true;
@@ -3315,13 +3409,14 @@ function invPointerMove(e) {
 }
 function invPointerUp(e) {
   if (!drag) return; clearTimeout(drag.lp); hideGhost();
-  if (drag.moved) {
-    const panel = document.getElementById("invpanel");
-    const t = document.elementFromPoint(e.clientX, e.clientY), ts = t && t.closest && t.closest(".islot");
-    if (ts) invMove(drag.from, +ts.dataset.idx);
-    else if (!panel.contains(t)) invDrop(drag.from, false);    // released outside the panel → drop the stack
-  }
-  drag = null; document.querySelectorAll(".islot.dragover").forEach((s) => s.classList.remove("dragover"));
+  const from = drag.from, moved = drag.moved; drag = null;
+  document.querySelectorAll(".islot.dragover").forEach((s) => s.classList.remove("dragover"));
+  if (!moved) { itemPrimary(from); if (invOpen) renderInventory(); return; }   // a click = main action
+  const panel = document.getElementById("invpanel");
+  const t = document.elementFromPoint(e.clientX, e.clientY), ts = t && t.closest && t.closest(".islot");
+  if (ts && ts.dataset.idx !== undefined) invMove(from, +ts.dataset.idx);
+  else if (panel.contains(t)) { const m = Inv.main.indexOf(null); if (m >= 0) invMove(from, m); }   // dropped in the bag → first free pocket
+  else invDrop(from, false);                                  // released outside → drop the stack
   if (invOpen) renderInventory();
 }
 
@@ -3636,7 +3731,7 @@ function clickAt(ndcx, ndcy) {
 function interactWith(e) {
   if (e.kind === "find") {
     const added = Inv.add(e.t, 1);
-    if (added <= 0) { showCard("Pack full", "Drop something to make room."); return; }
+    if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
     const first = !discovered.has("f_" + e.t);
     discovered.add("f_" + e.t);
     notify(e.t, 1, first);
@@ -4471,7 +4566,7 @@ function mineObj(o) {                                           // one pickaxe s
 function dropRubble(x, z, sc) { if (looseRocks.length < 240) looseRocks.push({ x, z, sc, bornT: clock.t }); }
 function pickRubble(lr) {
   const added = Inv.add("stone", 1);
-  if (added <= 0) { showCard("Pack full", "Drop something to make room."); return; }
+  if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
   const first = !discovered.has("f_stone"); discovered.add("f_stone"); notify("stone", 1, first);
   const i = looseRocks.indexOf(lr); if (i >= 0) looseRocks.splice(i, 1);
   sparkle(lr.x, surfaceAt(lr.x, lr.z).h + 0.2, lr.z, [0.7, 0.68, 0.64], 5);
