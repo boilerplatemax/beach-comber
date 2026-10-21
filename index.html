@@ -3446,7 +3446,7 @@ function syncDebugPanel() {
     <h3>Shovel / stamina</h3>
     ${TUNABLES.map((t) => `<label>${t.k} <b class="tv" data-k="${t.k}">${(+DBG_GET(t.k)).toFixed(t.step < 0.01 ? 3 : 2)}</b>
       <input class="dbgtune" data-k="${t.k}" type="range" min="${t.min}" max="${t.max}" step="${t.step}" value="${DBG_GET(t.k)}"></label>`).join("")}
-    <div class="jhint">full ring ≈ ${Math.round(1/DIG_COST)} digs · Ctrl+Shift+D to close</div>`;
+    <div class="jhint">full ring ≈ ${Math.round(1/DIG_COST)} sand digs · ${Math.round(1/DIRT_COST)} grass/dirt · ${(1/CHOP_COST).toFixed(1)} chops · Ctrl+Shift+D</div>`;
   p.querySelector("#dbgPause").onclick = () => { clock.paused = !clock.paused; syncDebugPanel(); };
   p.querySelectorAll(".dbgspd").forEach((b) => b.onclick = () => { clock.speed = +b.dataset.s; clock.paused = false; syncDebugPanel(); });
   p.querySelector("#dbgTime").oninput = (e) => { timeOfDay = +e.target.value; updateSun(); };
@@ -3468,20 +3468,23 @@ function syncDebugPanel() {
 }
 // Live-tunable shovel/stamina values exposed in the debug panel (§4).
 const TUNABLES = [
-  { k: "DIG_COST", min: 0.04, max: 0.2, step: 0.005 }, { k: "MINE_COST", min: 0.04, max: 0.2, step: 0.005 },
-  { k: "CHOP_COST", min: 0.04, max: 0.2, step: 0.005 }, { k: "SIFT_COST", min: 0.02, max: 0.15, step: 0.005 },
+  { k: "DIG_COST", min: 0.04, max: 0.6, step: 0.01 }, { k: "DIRT_COST", min: 0.1, max: 0.8, step: 0.01 },
+  { k: "GRAVEL_COST", min: 0.08, max: 0.7, step: 0.01 }, { k: "MINE_COST", min: 0.08, max: 0.9, step: 0.01 },
+  { k: "CHOP_COST", min: 0.08, max: 0.8, step: 0.01 }, { k: "SIFT_COST", min: 0.02, max: 0.15, step: 0.005 },
   { k: "COMMIT_TIME", min: 0.1, max: 1.0, step: 0.05 }, { k: "EXHAUST_RECOVER", min: 0.1, max: 0.8, step: 0.02 },
   { k: "REGEN_IDLE", min: 0.02, max: 0.4, step: 0.01 }, { k: "REGEN_REST", min: 0.05, max: 0.6, step: 0.02 },
   { k: "SPRINT_DRAIN", min: 0.0, max: 0.3, step: 0.01 }, { k: "SCRAMBLE_DRAIN", min: 0.0, max: 0.4, step: 0.01 },
   { k: "BLIND_FIND_CHANCE", min: 0.0, max: 0.3, step: 0.005 },
 ];
 function DBG_GET(k) { switch (k) {
-  case "DIG_COST": return DIG_COST; case "MINE_COST": return MINE_COST; case "CHOP_COST": return CHOP_COST;
+  case "DIG_COST": return DIG_COST; case "DIRT_COST": return DIRT_COST; case "GRAVEL_COST": return GRAVEL_COST;
+  case "MINE_COST": return MINE_COST; case "CHOP_COST": return CHOP_COST;
   case "SIFT_COST": return SIFT_COST; case "COMMIT_TIME": return COMMIT_TIME; case "EXHAUST_RECOVER": return EXHAUST_RECOVER;
   case "REGEN_IDLE": return REGEN_IDLE; case "REGEN_REST": return REGEN_REST; case "SPRINT_DRAIN": return SPRINT_DRAIN;
   case "SCRAMBLE_DRAIN": return SCRAMBLE_DRAIN; case "BLIND_FIND_CHANCE": return BLIND_FIND_CHANCE; } return 0; }
 function DBG_SET(k, v) { switch (k) {
-  case "DIG_COST": DIG_COST = v; break; case "MINE_COST": MINE_COST = v; break; case "CHOP_COST": CHOP_COST = v; break;
+  case "DIG_COST": DIG_COST = v; break; case "DIRT_COST": DIRT_COST = v; break; case "GRAVEL_COST": GRAVEL_COST = v; break;
+  case "MINE_COST": MINE_COST = v; break; case "CHOP_COST": CHOP_COST = v; break;
   case "SIFT_COST": SIFT_COST = v; break; case "COMMIT_TIME": COMMIT_TIME = v; break; case "EXHAUST_RECOVER": EXHAUST_RECOVER = v; break;
   case "REGEN_IDLE": REGEN_IDLE = v; break; case "REGEN_REST": REGEN_REST = v; break; case "SPRINT_DRAIN": SPRINT_DRAIN = v; break;
   case "SCRAMBLE_DRAIN": SCRAMBLE_DRAIN = v; break; case "BLIND_FIND_CHANCE": BLIND_FIND_CHANCE = v; break; } }
@@ -3810,7 +3813,16 @@ let healMul = 1.0;                // debug-tunable restoration-rate multiplier
 /* ---- stamina & action commit (Phase 8 §4; costs/rates tunable in debug) ---- */
 let stamina = 1, resting = false, exhausted = false, digCommit = 0;
 // A full ring is ~10 strikes; empty → exhausted until you recover ~1/3.
-let DIG_COST = 0.1, CHOP_COST = 0.09, MINE_COST = 0.1, SIFT_COST = 0.06, SALT_COST = 0.045;
+// §11.5 stamina costs, relative to the old 0.1 reference dig:
+//   sand 2×, dirt/grass 4×, chop = dirt, mine ≈ 1.5× chop, gravel/mud between sand and dirt.
+let DIG_COST = 0.2, DIRT_COST = 0.4, GRAVEL_COST = 0.3, CHOP_COST = 0.4, MINE_COST = 0.6, SIFT_COST = 0.06, SALT_COST = 0.045;
+// Per-material dig cost from the resolved surface material (NATURAL already resolves to grass/sand/… by height).
+function digCostFor(x, z) {
+  const m = Terrain.materialAt(x, z);
+  if (m === MAT.GRASS || m === MAT.DIRT) return DIRT_COST;
+  if (m === MAT.GRAVEL || m === MAT.MUD) return GRAVEL_COST;
+  return DIG_COST;                                            // wet / dry sand (and anything else)
+}
 let SPRINT_DRAIN = 0.08, SCRAMBLE_DRAIN = 0.13, REGEN_ACTIVE = 0.05, REGEN_IDLE = 0.11, REGEN_REST = 0.26, EXHAUST_RECOVER = 0.33, COMMIT_TIME = 0.5;
 let BLIND_FIND_CHANCE = 0.05;    // blind digging (no tell) rarely turns up a find; mostly raw material
 /* ---- hunger (§10.5): drains slowly, worse tiers pinch stamina & speed; never fatal ---- */
@@ -4187,7 +4199,7 @@ function digAt(x, z) {
   const ci = cellIndex(x, z);
   if (ci >= 0 && dig[ci] > 0.3 && holeNear(x, z)) { spendStamina(DIG_COST*0.4); fillHole(x, z); spawnSand(x, sy + 0.2, z, 8, [0.7, 0.62, 0.5]); return; }   // push spoil back in
 
-  spendStamina(DIG_COST, true);
+  spendStamina(digCostFor(x, z), true);
   const weak = stamina < 0.22 ? 0.6 : 1;                     // weaker, heavier strokes when tired
   const amt = (kind === "wet" ? 1.5 : kind === "dry" ? 1.1 : 0.7) * weak;
   const holeAng = Math.atan2(player.z - z, player.x - x);
@@ -4539,12 +4551,12 @@ function initWorldObjs() {
   for (const c of colliders) {
     if (c.kind === "tree") {
       const t = typeOf(c.species), o = c.ii*10, d = t.inst.data;
-      const hp = c.species === "palm" ? 4 : 5;
+      const hp = 3;                                          // §11.5 ~1.2 full rings to fell at the new chop cost
       treeObjs.push({ species: c.species, t, i: c.ii, x: c.x, z: c.z, hp, maxhp: hp,
         baseLean: d[o+5], scale: d[o+3], origY: surfaceAt(c.x, c.z).h,
         shake: 0, leanAdd: 0, leanDir: d[o+6], falling: false, fall: 0, gone: false, coll: c });
     } else if (c.kind === "rock") {
-      const o = c.ii*10, d = rockType.inst.data, hp = Math.max(3, Math.round(c.sc * 1.4));
+      const o = c.ii*10, d = rockType.inst.data, hp = Math.max(3, Math.min(4, Math.round(c.sc)));   // §11.5 ~1.8–2.4 rings to break
       rockObjs.push({ i: c.ii, x: c.x, z: c.z, sc: c.sc, hp, maxhp: hp, scale: d[o+3],
         baseTint: [d[o+7], d[o+8], d[o+9]], split: false, gone: false, coll: c });
     }
@@ -4806,7 +4818,7 @@ function spawnRockNode() {
     const a = rng()*6.283, r = HALF*(0.2+rng()*0.6), x = Math.sin(a)*r, z = -Math.cos(a)*r;
     const su = surfaceAt(x, z); if (su.h < 30 && su.slope < 0.5) continue;      // only rocky high ground
     if (su.slope > 0.9 || nearPOI(x, z, 3)) continue;
-    const sc = 0.9 + rng()*1.4, hp = Math.max(3, Math.round(sc*1.4));
+    const sc = 0.9 + rng()*1.4, hp = Math.max(3, Math.min(4, Math.round(sc)));   // §11.5
     rockObjs.push({ dyn: true, x, z, sc, hp, maxhp: hp, scale: sc, baseTint: [1,1,1], split: false, gone: false, coll: null });
     return;
   }
