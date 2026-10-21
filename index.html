@@ -3802,6 +3802,7 @@ function propUniforms(view) {
 let onDig = null;                 // sound hook: onDig(surfaceKind | "clang" | "clink" | "sift" | "splash")
 const DIG_R = 6.0;                // dig radius (world units; a few terrain cells)
 const dugCells = new Set();       // grid indices with a non-zero offset (for healing)
+const digScar = new Map();        // §11.4 cells whose surface a dig painted over (idx → original material); restored as the island heals
 const digScratch = new Float32Array(400 * 10);
 const ANKLE = 0.45, KNEE = 1.0;   // water-depth thresholds: dig < ANKLE < sift < KNEE < nothing
 let healMul = 1.0;                // debug-tunable restoration-rate multiplier
@@ -3998,7 +3999,7 @@ function fillHole(x, z) {
   const minz = Math.max(0, Math.floor(gcz - r*2.4)), maxz = Math.min(GRID-1, Math.ceil(gcz + r*2.4));
   for (let gz = minz; gz <= maxz; gz++) for (let gx = minx; gx <= maxx; gx++) {
     const i = gz*GRID+gx; if (Math.hypot(gx-gcx, gz-gcz) > r*2.3 || Math.abs(dig[i]) < 0.01) continue;
-    dig[i] *= 0.45; if (Math.abs(dig[i]) < 0.02) { dig[i] = 0; dugCells.delete(i); } else dugCells.add(i);
+    dig[i] *= 0.45; if (Math.abs(dig[i]) < 0.02) dig[i] = 0; dugCells.add(i);   // keep healing until fresh fades (and any grass scar restores)
     fresh[i] = Math.max(fresh[i], 0.6);
   }
   rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz);
@@ -4016,7 +4017,9 @@ function healDig(gdt) {
     const rate = (submerged ? 0.6 : heightmap[i] > 12 ? 0.006 : 0.02) * healMul;
     dig[i] *= Math.max(0, 1 - rate * gdt);
     fresh[i] = Math.max(0, fresh[i] - (submerged ? 0.09 : 0.03) * healMul * gdt);
-    if (Math.abs(dig[i]) < 0.02 && fresh[i] < 0.02) { dig[i] = 0; fresh[i] = 0; dugCells.delete(i); }
+    if (Math.abs(dig[i]) < 0.02 && fresh[i] < 0.02) { dig[i] = 0; fresh[i] = 0; dugCells.delete(i);
+      if (digScar.has(i)) { material[i] = digScar.get(i) === MAT.NATURAL ? MAT.NATURAL : MAT.GRASS; digScar.delete(i); }   // surface has healed: the grass is back
+    }
     any = true; if (gx < minx) minx = gx; if (gx > maxx) maxx = gx; if (gz < minz) minz = gz; if (gz > maxz) maxz = gz;
   }
   if (any) { rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz); }
@@ -4190,7 +4193,7 @@ function digAt(x, z) {
   const holeAng = Math.atan2(player.z - z, player.x - x);
   const wasAbove = waterSurfaceAt(x, z) < surfaceAt(x, z).h - 0.02;
   const matItem = digMaterialItem(x, z);                     // what you dig out (grass → dirt)
-  paintCells(x, z, DIG_R * 0.55, MAT_ITEM[matItem]);         // the floor of the hole shows the exposed material
+  paintCells(x, z, DIG_R * 0.55, MAT_ITEM[matItem], true);   // the floor of the hole shows the exposed material (grass regrows on heal)
   applyDig(x, z, amt, holeAng);
   Inv.add(matItem, 1);                                       // ~1 material per strike
   removeFoliageAround(x, z, DIG_R);                          // clear grass/seaweed with a burst
@@ -4392,13 +4395,16 @@ function digMaterialItem(x, z) {
 }
 // Per-material walking multiplier (§C walking feel): mud is slow, reef/cobble a touch slower.
 function matSpeedMul(m) { return m === MAT.MUD ? 0.6 : m === MAT.STONE ? 0.85 : m === MAT.GRAVEL ? 0.92 : 1.0; }
-function paintCells(x, z, radius, mat) {
+function paintCells(x, z, radius, mat, scar) {
   if (mat === undefined) return;
   const gcx = (x + HALF) / CELL, gcz = (z + HALF) / CELL, r = radius / CELL;
   const minx = Math.max(0, Math.floor(gcx-r)), maxx = Math.min(GRID-1, Math.ceil(gcx+r));
   const minz = Math.max(0, Math.floor(gcz-r)), maxz = Math.min(GRID-1, Math.ceil(gcz+r));
   for (let gz = minz; gz <= maxz; gz++) for (let gx = minx; gx <= maxx; gx++)
-    if (Math.hypot(gx-gcx, gz-gcz) <= r) material[gz*GRID+gx] = mat;
+    if (Math.hypot(gx-gcx, gz-gcz) <= r) { const i = gz*GRID+gx;
+      // §11.4 digging grass/dirt exposes dirt now but remembers the living surface so it can regrow
+      if (scar && built[i] <= 0.02 && !digScar.has(i)) { const orig = material[i] || defaultMat(i); if (orig === MAT.GRASS || orig === MAT.NATURAL) digScar.set(i, orig); }
+      material[i] = mat; }
 }
 let pendingDig = null;
 
