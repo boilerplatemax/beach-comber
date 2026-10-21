@@ -1456,13 +1456,19 @@ let lastAction = null, hintT = 0, hintText = "";
 const HINT_VERB = { hand: "pick up", look: "inspect", shovel: "dig", axe: "chop", pick: "mine", seed: "plant", leaves: "use leaves" };
 // What the crosshair is on right now → which action icon to show.
 function crosshairAction() {
-  if (curTarget) return curTarget.kind === "creature" ? "look" : "hand";
   const tool = selectedTool();
+  if (curTarget) {
+    const k = curTarget.kind;
+    if (k === "find") return "hand";
+    if (k === "creature") return "look";
+    if (k === "goat" || k === "salt") return "hand";
+    if (k === "tree" || k === "fallentree") return tool === "axe" ? "axe" : null;
+    if (k === "rock") return tool === "pickaxe" ? "pick" : null;
+    if (k === "stump") return tool === "shovel" ? "shovel" : tool === "axe" ? "axe" : null;
+  }
   const pt = rayGround(0, 0); if (!pt) return null;
   if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return null;
   if (tool === "shovel") return "shovel";
-  if (tool === "axe") return nearestObj(treeObjs, pt[0], pt[1], REACH + 0.8) ? "axe" : null;
-  if (tool === "pickaxe") return nearestObj(rockObjs, pt[0], pt[1], REACH + 0.8) ? "pick" : null;
   if (SEED_TREE[tool]) return "seed";
   if (tool === "leaves") return "leaves";
   return null;
@@ -1499,6 +1505,9 @@ function drawBounds(view) {
   for (const e of life) { if (!lifeVisible(e) || !near(e.x, e.z)) continue; add(e.x, e.z, entityRadius(e), curTarget && curTarget.obj === e); }
   for (const g of goats) if (near(g.x, g.z)) add(g.x, g.z, 1.1, curTarget && curTarget.obj === g);
   for (const s of saltSpots) if (s.amt > 0 && near(s.x, s.z)) add(s.x, s.z, 0.75, curTarget && curTarget.obj === s);
+  for (const o of treeObjs) { if (o.gone || o.falling || !near(o.x, o.z)) continue; add(o.x, o.z, o.fallen ? 0.9 : 0.8 + o.scale*0.05, curTarget && curTarget.obj === o); }
+  for (const o of rockObjs) { if (o.gone || !near(o.x, o.z)) continue; add(o.x, o.z, 0.5 + o.sc*0.45, curTarget && curTarget.obj === o); }
+  for (const s of stumps) if (near(s.x, s.z)) add(s.x, s.z, 1.0, curTarget && curTarget.obj === s);
   if (n) { propUniforms(view); boundsDyn.draw(arr, n); }
 }
 
@@ -2976,36 +2985,93 @@ function raySphere(o, d, cx, cy, cz, rad) {
   if (c > 0 && b > 0) return -1; const disc = b*b - c; if (disc < 0) return -1;
   const t = -b - Math.sqrt(disc); return t < 0 ? 0 : t;
 }
+// Thickened ray-vs-segment (a capsule): closest approach between the ray [o, o+maxT·d]
+// and segment A–B; returns that distance t along the ray if within `rad`, else -1.
+// Lets big objects use a fat volume (a vertical trunk, a lying trunk) instead of a point.
+function rayCapsule(o, d, ax, ay, az, bx, by, bz, rad, maxT) {
+  const ex=bx-ax, ey=by-ay, ez=bz-az;                 // B - A
+  const rx=o[0]-ax, ry=o[1]-ay, rz=o[2]-az;           // o - A
+  const E=ex*ex+ey*ey+ez*ez, C=d[0]*rx+d[1]*ry+d[2]*rz, F=ex*rx+ey*ry+ez*rz;
+  let s, u;
+  if (E <= 1e-8) { u = 0; s = -C; }                   // segment is a point
+  else {
+    const B=d[0]*ex+d[1]*ey+d[2]*ez, denom=E-B*B;     // A=|d|²=1
+    s = denom>1e-8 ? (B*F-C*E)/denom : 0;
+    u = (B*s+F)/E;
+    if (u<0){ u=0; s=-C; } else if (u>1){ u=1; s=B-C; }
+  }
+  s = Math.max(0, Math.min(maxT, s));
+  const px=o[0]+d[0]*s, py=o[1]+d[1]*s, pz=o[2]+d[2]*s;
+  const qx=ax+ex*u, qy=ay+ey*u, qz=az+ez*u;
+  const dx=px-qx, dy=py-qy, dz=pz-qz;
+  return (dx*dx+dy*dy+dz*dz) <= rad*rad ? s : -1;
+}
 // A real obstacle (hill/ledge) well above the ray between you and the target — not
 // the gentle approach to a ground item. Sampled before the target, with a tall margin.
 function terrainBlocks(r, t) { if (t < 2) return false; for (const f of [0.35, 0.6]) { const x=r.o[0]+r.d[0]*t*f, y=r.o[1]+r.d[1]*t*f, z=r.o[2]+r.d[2]*t*f; if (surfaceAt(x,z).h > y + 0.6) return true; } return false; }
 function entityRadius(e) { return Math.max(0.6, (e.scale||0.5)*0.75); }
 function entityCY(e) { return e.kind === "find" ? 0.25 : (e.scale||0.5)*0.4 + 0.15; }
 // The one interaction target under a ray: rendered-only, within reach, in line of sight.
-function targetAlongRay(r) {
+// Small things (finds, goats, salt) use spheres; trees/rocks/stumps/fallen trunks use
+// generous fat volumes so you don't have to aim precisely. `sticky` is last frame's target:
+// once locked, it is kept while the crosshair stays within a wider cone (less flicker).
+const STICK_WIDEN = 1.4, STICK_REACH = REACH + 1.0, STICK_MARGIN = 1.2;
+function targetAlongRay(r, sticky) {
   if (!r) return null;
-  let best = null, bestT = REACH + 0.4;
-  const hit = (obj, kind, cx, cz, cyOff, rad) => {
-    const gy = surfaceAt(cx, cz).h, t = raySphere(r.o, r.d, cx, gy+cyOff, cz, rad);
+  let best = null, bestT = REACH + 0.4, stick = null, stickT = 1e9;
+  // `tf(widen)` → ray-t using the hit volume scaled by `widen`; consider() keeps best + sticky.
+  const consider = (obj, kind, cx, cz, tf) => {
+    const t = tf(1);
     if (t >= 0 && t <= REACH && t < bestT && !terrainBlocks(r, t)) { bestT = t; best = { kind, obj, x: cx, z: cz }; }
+    if (sticky && sticky.obj === obj) { const ts = tf(STICK_WIDEN);
+      if (ts >= 0 && ts <= STICK_REACH && !terrainBlocks(r, ts)) { stick = { kind, obj, x: cx, z: cz }; stickT = ts; } }
   };
-  for (const e of life) { if (!lifeVisible(e)) continue; hit(e, e.kind, e.x, e.z, entityCY(e), entityRadius(e)); }
-  for (const g of goats) hit(g, "goat", g.x, g.z, 0.7, 1.1);
-  for (const s of saltSpots) if (s.amt > 0) hit(s, "salt", s.x, s.z, 0.2, 0.75);
+  const sphere = (obj, kind, cx, cz, cyOff, rad) => { const gy = surfaceAt(cx, cz).h;
+    consider(obj, kind, cx, cz, (w) => raySphere(r.o, r.d, cx, gy+cyOff, cz, rad*w)); };
+  const capsule = (obj, kind, cx, cz, ax, ay, az, bx, by, bz, rad) =>
+    consider(obj, kind, cx, cz, (w) => rayCapsule(r.o, r.d, ax, ay, az, bx, by, bz, rad*w, STICK_REACH));
+
+  for (const e of life) { if (!lifeVisible(e)) continue; sphere(e, e.kind, e.x, e.z, entityCY(e), entityRadius(e)); }
+  for (const g of goats) sphere(g, "goat", g.x, g.z, 0.7, 1.1);
+  for (const s of saltSpots) if (s.amt > 0) sphere(s, "salt", s.x, s.z, 0.2, 0.75);
+  // big objects: a fat vertical capsule (trunk + lower canopy) / lying trunk / sphere
+  for (const o of treeObjs) { if (o.gone || o.falling) continue; const gy = surfaceAt(o.x, o.z).h;
+    if (o.fallen) { const [cx, cz] = fallenCrownPos(o);
+      capsule(o, "fallentree", (o.x+cx)/2, (o.z+cz)/2, o.x, gy+0.3, o.z, cx, surfaceAt(cx, cz).h+0.3, cz, 0.9); }
+    else capsule(o, "tree", o.x, o.z, o.x, gy-0.2, o.z, o.x, gy+o.scale*0.62, o.z, 0.8 + o.scale*0.05); }
+  for (const o of rockObjs) { if (o.gone) continue; const gy = surfaceAt(o.x, o.z).h;
+    capsule(o, "rock", o.x, o.z, o.x, gy, o.z, o.x, gy+o.sc*0.5, o.z, 0.5 + o.sc*0.45); }
+  for (const s of stumps) { const gy = surfaceAt(s.x, s.z).h; capsule(s, "stump", s.x, s.z, s.x, gy, s.z, s.x, gy+0.8, s.z, 1.0); }
+
+  // stickiness: keep the locked target unless another is clearly closer
+  if (stick && (!best || best.obj !== stick.obj) && (!best || bestT > stickT - STICK_MARGIN)) return stick;
   return best;
 }
 let curTarget = null;    // recomputed each frame from the crosshair (desktop)
-function interactTarget(t) {
-  if (!t) return;
-  if (t.kind === "find" || t.kind === "creature") interactWith(t.obj);
-  else if (t.kind === "goat") offerSaltTo(t.obj);
-  else if (t.kind === "salt") harvestSaltAt(t.obj.x, t.obj.z);
+// Act on a crosshair target. Pickups/creatures/goats/salt act with any tool;
+// trees/rocks/stumps only respond to the matching tool. Returns true if it did
+// something (so a click can fall through to a ground tool-use otherwise).
+function useToolOnTarget(t) {
+  if (!t) return false;
+  const tool = selectedTool();
+  switch (t.kind) {
+    case "find": case "creature": interactWith(t.obj); return true;
+    case "goat": offerSaltTo(t.obj); return true;
+    case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
+    case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
+    case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
+    case "rock": if (tool === "pickaxe") { mineObj(t.obj); return true; } return false;
+    case "stump": if (tool === "shovel") { stumpStrike(t.obj); return true; }
+                  if (tool === "axe") { chopStump(t.obj); return true; } return false;
+  }
+  return false;
 }
+function interactTarget(t) { useToolOnTarget(t); }   // the bare interact key (E)
 function clickAt(ndcx, ndcy) {
   if (mode !== "walk") return;
   const r = rayFromNDC(ndcx, ndcy);
-  const tgt = targetAlongRay(r);
-  if (tgt) { interactTarget(tgt); return; }
+  const tgt = (ndcx === 0 && ndcy === 0) ? (curTarget || targetAlongRay(r, curTarget)) : targetAlongRay(r);
+  if (useToolOnTarget(tgt)) return;
   // otherwise use the equipped tool on the ground / object under the crosshair, within reach
   const pt = rayGround(ndcx, ndcy); if (!pt) return;
   if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return;   // too far: do nothing
@@ -3461,17 +3527,18 @@ function setRockInstance(o) {
 }
 
 /* ---- chopping ---- */
+function chopStanding(o) {                                     // one axe strike on a standing tree
+  if (!o || o.gone || o.falling || o.fallen) return;
+  if (!canHeavyAction()) { shovelSwing = 0.4; return; }
+  shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST); rootPlayer();
+  if (onDig) onDig("chop");
+  o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species)); o.hp--;
+  if (o.hp <= 0) startFall(o);
+}
 function chopAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "axe") return;
   const o = nearestObj(treeObjs, x, z, REACH + 1.2);
-  if (o && !o.falling && !o.fallen && Math.hypot(o.x - player.x, o.z - player.z) <= REACH + 1.4) {
-    if (!canHeavyAction()) { shovelSwing = 0.4; return; }
-    shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST); rootPlayer();
-    if (onDig) onDig("chop");
-    o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species)); o.hp--;
-    if (o.hp <= 0) startFall(o);
-    return;
-  }
+  if (o && !o.falling && !o.fallen && Math.hypot(o.x - player.x, o.z - player.z) <= REACH + 1.4) { chopStanding(o); return; }
   // a fallen trunk? (crown end first → Sticks + Leaves, then trunk → Logs)
   const ft = nearestFallen(x, z, REACH + 1.4); if (ft) { chopFallen(ft); return; }
   // a stump? chop it out for a little wood (leaves a healing hole)
@@ -3598,7 +3665,11 @@ function plantStage(pl) { return Math.max(0, Math.min(1, (clock.t - pl.plantedAt
 function mineAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "pickaxe") return;
   const o = nearestObj(rockObjs, x, z, 4.5); if (!o) return;
-  if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 0.8) return;
+  mineObj(o);
+}
+function mineObj(o) {                                           // one pickaxe strike on a rock
+  if (!o || o.gone) return;
+  if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 1.4) return;
   if (stamina <= 0.04) { shovelSwing = 0.4; return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(0.08);
   if (onDig) onDig("mine");
@@ -4206,7 +4277,7 @@ function frame(now) {
   document.getElementById("hotbar").style.display = (mode === "walk") ? "flex" : "none";
   // targeting: recompute the crosshair target, show its action icon + a glint; no constant text
   if (mode === "walk") {
-    curTarget = targetAlongRay(rayFromNDC(0, 0));
+    curTarget = targetAlongRay(rayFromNDC(0, 0), curTarget);
     const action = crosshairAction();
     if (action) {
       actionIconEl.innerHTML = ACTION_ICONS[action] || "";
