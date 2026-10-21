@@ -1204,6 +1204,7 @@ const player = { x: 0, z: 0, bob: 0, eyeY: EYE, sprinting: false, scramble: 0, a
 function tryJump() {
   if (mode !== "walk" || resting) return;
   if (player.air > 0.02 || player.vy !== 0) return;           // already airborne
+  if (digCommit > 0 || exhausted) return;                     // rooted mid-strike / exhausted
   if (stamina <= 0.08) return;                                // too tired
   const s = surfaceAt(player.x, player.z);
   if (waterLevel - s.h > KNEE) return;                        // no jumping in deep water
@@ -2823,7 +2824,10 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgCreat">${forceSpawn ? "Hide all" : "Spawn all"}</button><button id="dbgPerf">${debugOn ? "Hide FPS" : "Show FPS"}</button></div>
     <div class="dbgrow"><button id="dbgBounds">${showBounds ? "Hide hitboxes" : "Show hitboxes"}</button><button id="dbgAudit">Run audit</button></div>
     <div class="dbgrow"><button id="dbgHints">${hintsOn ? "Hints: on" : "Hints: off"}</button><button id="dbgResetHints">Reset hints</button></div>
-    <div class="jhint">Ctrl+Shift+D to close</div>`;
+    <h3>Shovel / stamina</h3>
+    ${TUNABLES.map((t) => `<label>${t.k} <b class="tv" data-k="${t.k}">${(+DBG_GET(t.k)).toFixed(t.step < 0.01 ? 3 : 2)}</b>
+      <input class="dbgtune" data-k="${t.k}" type="range" min="${t.min}" max="${t.max}" step="${t.step}" value="${DBG_GET(t.k)}"></label>`).join("")}
+    <div class="jhint">full ring ≈ ${Math.round(1/DIG_COST)} digs · Ctrl+Shift+D to close</div>`;
   p.querySelector("#dbgPause").onclick = () => { clock.paused = !clock.paused; syncDebugPanel(); };
   p.querySelectorAll(".dbgspd").forEach((b) => b.onclick = () => { clock.speed = +b.dataset.s; clock.paused = false; syncDebugPanel(); });
   p.querySelector("#dbgTime").oninput = (e) => { timeOfDay = +e.target.value; updateSun(); };
@@ -2836,7 +2840,30 @@ function syncDebugPanel() {
   p.querySelector("#dbgAudit").onclick = () => auditRegistries();
   p.querySelector("#dbgHints").onclick = () => { hintsOn = !hintsOn; saveHints(); syncDebugPanel(); };
   p.querySelector("#dbgResetHints").onclick = () => { resetHints(); syncDebugPanel(); };
+  p.querySelectorAll(".dbgtune").forEach((el) => el.oninput = (e) => {
+    const k = el.dataset.k, v = +e.target.value; DBG_SET(k, v);
+    const b = p.querySelector(`.tv[data-k="${k}"]`); if (b) b.textContent = v.toFixed(v < 0.01 ? 3 : 2);
+  });
 }
+// Live-tunable shovel/stamina values exposed in the debug panel (§4).
+const TUNABLES = [
+  { k: "DIG_COST", min: 0.04, max: 0.2, step: 0.005 }, { k: "MINE_COST", min: 0.04, max: 0.2, step: 0.005 },
+  { k: "CHOP_COST", min: 0.04, max: 0.2, step: 0.005 }, { k: "SIFT_COST", min: 0.02, max: 0.15, step: 0.005 },
+  { k: "COMMIT_TIME", min: 0.1, max: 1.0, step: 0.05 }, { k: "EXHAUST_RECOVER", min: 0.1, max: 0.8, step: 0.02 },
+  { k: "REGEN_IDLE", min: 0.02, max: 0.4, step: 0.01 }, { k: "REGEN_REST", min: 0.05, max: 0.6, step: 0.02 },
+  { k: "SPRINT_DRAIN", min: 0.0, max: 0.3, step: 0.01 }, { k: "SCRAMBLE_DRAIN", min: 0.0, max: 0.4, step: 0.01 },
+  { k: "BLIND_FIND_CHANCE", min: 0.0, max: 0.3, step: 0.005 },
+];
+function DBG_GET(k) { switch (k) {
+  case "DIG_COST": return DIG_COST; case "MINE_COST": return MINE_COST; case "CHOP_COST": return CHOP_COST;
+  case "SIFT_COST": return SIFT_COST; case "COMMIT_TIME": return COMMIT_TIME; case "EXHAUST_RECOVER": return EXHAUST_RECOVER;
+  case "REGEN_IDLE": return REGEN_IDLE; case "REGEN_REST": return REGEN_REST; case "SPRINT_DRAIN": return SPRINT_DRAIN;
+  case "SCRAMBLE_DRAIN": return SCRAMBLE_DRAIN; case "BLIND_FIND_CHANCE": return BLIND_FIND_CHANCE; } return 0; }
+function DBG_SET(k, v) { switch (k) {
+  case "DIG_COST": DIG_COST = v; break; case "MINE_COST": MINE_COST = v; break; case "CHOP_COST": CHOP_COST = v; break;
+  case "SIFT_COST": SIFT_COST = v; break; case "COMMIT_TIME": COMMIT_TIME = v; break; case "EXHAUST_RECOVER": EXHAUST_RECOVER = v; break;
+  case "REGEN_IDLE": REGEN_IDLE = v; break; case "REGEN_REST": REGEN_REST = v; break; case "SPRINT_DRAIN": SPRINT_DRAIN = v; break;
+  case "SCRAMBLE_DRAIN": SCRAMBLE_DRAIN = v; break; case "BLIND_FIND_CHANCE": BLIND_FIND_CHANCE = v; break; } }
 
 /* ---- drop an item back onto the ground near the player ---- */
 
@@ -3141,6 +3168,7 @@ let stamina = 1, resting = false, exhausted = false, digCommit = 0;
 // A full ring is ~10 strikes; empty → exhausted until you recover ~1/3.
 let DIG_COST = 0.1, CHOP_COST = 0.09, MINE_COST = 0.1, SIFT_COST = 0.06, SALT_COST = 0.045;
 let SPRINT_DRAIN = 0.08, SCRAMBLE_DRAIN = 0.13, REGEN_ACTIVE = 0.05, REGEN_IDLE = 0.11, REGEN_REST = 0.26, EXHAUST_RECOVER = 0.33, COMMIT_TIME = 0.5;
+let BLIND_FIND_CHANCE = 0.05;    // blind digging (no tell) rarely turns up a find; mostly raw material
 function spendStamina(a) { stamina = Math.max(0, stamina - a); if (stamina <= 0.001) exhausted = true; }
 function canHeavyAction() { return !exhausted && stamina > 0.02 && digCommit <= 0; }
 function rootPlayer() { digCommit = COMMIT_TIME; }              // short wind-up: rooted ~0.5s per strike
@@ -3335,27 +3363,33 @@ function revealSpot(x, z, sift) {
       spawnFind(spot.item, spot.x, spot.z);
       const e = life[life.length - 1]; if (e) { e.dug = true; e.special = !!spot.special; if (spot.special) e.name = ODDITY_NAME; }
     }
-  } else if (rng() < 0.12) {
-    spawnFind(pick(["shell", "seaglass", "molt"]), x + (rng()-0.5), z + (rng()-0.5));
+  } else {
+    blindDig(x, z);                 // no tell here: mostly raw material, a find only rarely
   }
+}
+// Blind digging: almost always just raw material for the ground you're on; a real find is rare.
+function blindDig(x, z) {
+  if (rng() < BLIND_FIND_CHANCE) spawnFind(pick(["shell", "seaglass", "molt"]), x + (rng()-0.5), z + (rng()-0.5));
+  // (raw-material yield per biome is wired in §5)
 }
 function digAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "shovel") return;
   if (resting) resting = false;
   if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;          // out of reach: no action
-  if (stamina <= 0.04) { shovelSwing = 0.4; return; }                         // too tired (stamina ring shows it)
+  if (player.sprinting || player.air > 0.02 || player.vy !== 0) return;      // no digging mid-sprint or mid-air
+  if (!canHeavyAction()) { shovelSwing = 0.4; return; }                       // tired / exhausted / still committed
   // a stump in reach? the shovel can also lever it out (several strikes)
   const stp = nearestStump(x, z, REACH + 1.0);
   if (stp && Math.hypot(stp.x - player.x, stp.z - player.z) <= REACH + 1.2) { stumpStrike(stp); return; }
   const ci0 = cellIndex(x, z);
   const inBasin = ci0 >= 0 && filled[ci0] > heightmap[ci0] + 0.1;   // a tide pool / basin cell
   const sy = surfaceAt(x, z).h, depth = waterSurfaceAt(x, z) - sy;
-  shovelSwing = 1; camNudge = 0.05;
+  shovelSwing = 1; camNudge = 0.05; rootPlayer();            // every strike commits: short wind-up, rooted
 
   // Past knee depth in open water: no digging or sifting.
   if (!inBasin && depth > KNEE) { if (onDig) onDig("splash"); spawnSand(x, sy + 0.1, z, 8, [0.82, 0.86, 0.9]); return; }   // too deep
   // In a pool, or ankle–knee open water: the shovel sifts — no terrain change, a cloudy plume, top-layer finds.
-  if (inBasin || depth > ANKLE) { camNudge = 0.04; spendStamina(0.045); if (onDig) onDig("sift"); spawnSand(x, sy + 0.05, z, 16, [0.72, 0.68, 0.6]); revealSpot(x, z, true); return; }
+  if (inBasin || depth > ANKLE) { camNudge = 0.04; spendStamina(SIFT_COST); if (onDig) onDig("sift"); spawnSand(x, sy + 0.05, z, 16, [0.72, 0.68, 0.6]); revealSpot(x, z, true); return; }
   // Too many roots: can't dig under trees / boulders / POIs.
   if (bigPropBlocking(x, z, 1.0)) { camNudge = 0.03; if (onDig) onDig("clang"); spawnSand(x, sy + 0.2, z, 5, [0.5, 0.42, 0.3]); return; }   // roots/boulder block
 
@@ -3365,9 +3399,9 @@ function digAt(x, z) {
 
   // Clicking the spoil mound beside a hole shoves it back in.
   const ci = cellIndex(x, z);
-  if (ci >= 0 && dig[ci] > 0.3 && holeNear(x, z)) { spendStamina(0.03); fillHole(x, z); spawnSand(x, sy + 0.2, z, 8, [0.7, 0.62, 0.5]); return; }   // push spoil back in
+  if (ci >= 0 && dig[ci] > 0.3 && holeNear(x, z)) { spendStamina(DIG_COST*0.4); fillHole(x, z); spawnSand(x, sy + 0.2, z, 8, [0.7, 0.62, 0.5]); return; }   // push spoil back in
 
-  spendStamina(0.06);
+  spendStamina(DIG_COST);
   const weak = stamina < 0.22 ? 0.6 : 1;                     // weaker, heavier strokes when tired
   const amt = (kind === "wet" ? 1.5 : kind === "dry" ? 1.1 : 0.7) * weak;
   const holeAng = Math.atan2(player.z - z, player.x - x);
@@ -3673,8 +3707,9 @@ function mineAt(x, z) {
 function mineObj(o) {                                           // one pickaxe strike on a rock
   if (!o || o.gone) return;
   if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 1.4) return;
-  if (stamina <= 0.04) { shovelSwing = 0.4; return; }
-  shovelSwing = 1; camNudge = 0.04; spendStamina(0.08);
+  if (player.sprinting || player.air > 0.02 || player.vy !== 0) return;       // no mining mid-sprint or mid-air
+  if (!canHeavyAction()) { shovelSwing = 0.4; return; }
+  shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST); rootPlayer();
   if (onDig) onDig("mine");
   o.hp--;
   const sy = surfaceAt(o.x, o.z).h + o.sc*0.3;
@@ -4098,6 +4133,7 @@ function frame(now) {
     if (Math.abs(analog.x) + Math.abs(analog.y) > 0.01) { wx += right[0]*analog.x + hf[0]*analog.y; wz += right[2]*analog.x + hf[1]*analog.y; manual = true; }
     if (resting && (wx || wz)) { resting = false; }         // moving gets you up
     if (resting) { wx = 0; wz = 0; manual = false; }         // sitting: no movement
+    if (digCommit > 0) { wx = 0; wz = 0; manual = false; }   // rooted during a committed strike
 
     const wl = Math.hypot(wx, wz);
     player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01;
