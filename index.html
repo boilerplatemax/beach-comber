@@ -5199,11 +5199,12 @@ function drawShovel(view) {
     world[p++] = cam.pos[2] + rz*(ox+vx) + upz*(oy+vy) + f[2]*(oz+vz);
   }
   propUniforms(view);
+  gl.uniform1f(propU.uFogDensity, 0);                          // §13.1 no fog on the held tool
   gl.bindVertexArray(fp.vao);
   gl.bindBuffer(gl.ARRAY_BUFFER, fp.posBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, world, 0, fp.vc * 3);
-  gl.disable(gl.DEPTH_TEST);                                   // always on top
+  gl.clear(gl.DEPTH_BUFFER_BIT);                               // own pass: depth cleared so it sits over the world
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(true);               // but its own faces still sort correctly
   gl.drawArraysInstanced(gl.TRIANGLES, 0, fp.vc, 1);
-  gl.enable(gl.DEPTH_TEST);
   countDraw(fp.vc / 3);
 }
 
@@ -6634,7 +6635,6 @@ function frame(now) {
   drawPlaceGhost(view);
   drawParticles(view);
   drawBounds(view);
-  drawShovel(view);
 
   // water
   gl.enable(gl.BLEND);
@@ -6665,6 +6665,10 @@ function frame(now) {
   gl.drawElements(gl.TRIANGLES, water.count, gl.UNSIGNED_INT, 0);
   countDraw(water.count / 3);
   gl.disable(gl.BLEND);
+
+  // §13.1 held tool in its own pass AFTER the world + water, with depth cleared and no fog,
+  // so water, transparency and fog never blend into it (still goes through post → palette + dither)
+  drawShovel(view);
 
   // ============ PASS 2: post → screen ============
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
