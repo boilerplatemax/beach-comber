@@ -1333,6 +1333,7 @@ out vec4 frag;
 uniform vec3 uSunDir, uCamPos, uZenith, uHorizon, uWarm;
 uniform float uFogDensity, uFogNear, uWaterLevel, uWetLevel;
 uniform float uTime; uniform int uUnderwater;        // §14B animated seabed caustics
+uniform vec3 uLanternPos; uniform float uLanternI;   // §18 lantern light pool
 uniform sampler2D uFresh;
 uniform sampler2D uMaterial;
 ${SKY_GLSL}
@@ -1396,6 +1397,12 @@ void main() {
     col += col * caust * shallow * 0.6;
   }
 
+  // §18 lantern: a warm pool of light around the player, with a soft falloff
+  if (uLanternI > 0.001) {
+    float ld = length(vWorld - uLanternPos);
+    float latt = uLanternI / (1.0 + ld*ld*0.08) * (1.0 - smoothstep(7.0, 13.0, ld));
+    col += vec3(1.0, 0.72, 0.42) * latt;
+  }
   // Distance fog → the sky color for this fragment's own view direction.
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
@@ -2434,6 +2441,7 @@ addEventListener("keydown", (e) => {
   if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
   if (e.code === "KeyI") toggleInventory();           // inventory panel
   if (e.code === "KeyB" && mode === "walk" && !isPanelOpen() && ownsTool("bucket")) openBucketLook();   // §13.3 look inside the bucket
+  if (e.code === "KeyL" && mode === "walk" && !isPanelOpen()) toggleLantern();   // §18 raise / lower the lantern
   if (e.code === "KeyP" && mode === "walk") toggleAutoPickup();   // auto-pickup on/off
   if (/^Digit[1-8]$/.test(e.code)) selectHotbar(+e.code.slice(5) - 1);
   if (debugMode) {                                    // debug-only shortcuts
@@ -2855,6 +2863,7 @@ if (IS_TOUCH) (function mobileControls() {
        <div class="mBtn" data-act="swimup" data-hold="1">▲ Up</div>
        <div class="mBtn" data-act="swimdown" data-hold="1">▼ Down</div>
        <div class="mBtn" data-act="climb" data-hold="1">Climb</div>
+       <div class="mBtn" data-act="lantern">Lantern</div>
        <div class="mBtn" data-key="KeyI">Pack</div>
        <div class="mBtn" data-key="Tab">Journal</div>
        <div class="mBtn" data-act="pause">Pause</div>
@@ -2899,6 +2908,7 @@ if (IS_TOUCH) (function mobileControls() {
       else if (btn.dataset.act === "swimdown") { mobileSwimDown = true; btn.style.background = "rgba(60,120,130,.8)"; }
       else if (btn.dataset.act === "climb") { mobileClimb = true; tryGrabClimb(); btn.style.background = "rgba(60,120,130,.8)"; }   // §15 hold to climb
       else if (btn.dataset.act === "jump") tryJump();
+      else if (btn.dataset.act === "lantern") { toggleLantern(); btn.style.background = lanternLit() ? "rgba(200,150,60,.8)" : ""; }   // §18
       else if (btn.dataset.act === "brotate") rotateBuild();           // §16B mobile placement
       else if (btn.dataset.act === "bplace") placeBuildAtGhost();
       else if (btn.dataset.act === "bcancel") exitBuildMode();
@@ -3182,6 +3192,7 @@ uniform float uFogDensity, uFogNear;
 uniform float uWetLevel, uWaterLevel;               // §13.7 wet band near the waterline
 uniform int uWetBand;                               // 1 only for the world prop pass (rocks, trees)
 uniform float uGhost; uniform vec3 uGhostCol;       // §16B building-placement ghost
+uniform vec3 uLanternPos; uniform float uLanternI;  // §18 lantern light pool
 ${SKY_GLSL}
 void main() {
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
@@ -3194,6 +3205,10 @@ void main() {
     float band = (1.0 - smoothstep(uWetLevel - 0.2, uWetLevel + 1.0, vWorld.y)) * smoothstep(uWaterLevel - 0.6, uWaterLevel + 0.4, vWorld.y);
     float sp = fract(sin(dot(floor(vWorld.xz * 7.0), vec2(12.99, 78.23))) * 43758.5);  // barnacle speckle in the splash zone
     if (band > 0.3 && sp > 0.82) col = mix(col, vec3(0.82, 0.82, 0.78), 0.55);
+  }
+  if (uLanternI > 0.001) {   // §18 lantern pool on props
+    float ld = length(vWorld - uLanternPos);
+    col += vec3(1.0, 0.72, 0.42) * (uLanternI / (1.0 + ld*ld*0.08) * (1.0 - smoothstep(7.0, 13.0, ld)));
   }
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
@@ -3647,6 +3662,7 @@ function drawProps(view) {
   gl.useProgram(propProg);
   gl.uniformMatrix4fv(propU.uProj, false, proj);
   gl.uniformMatrix4fv(propU.uView, false, view);
+  setLanternUniform(propU);   // §18
   gl.uniform3fv(propU.uSunDir, SKY.sun);
   gl.uniform3fv(propU.uCamPos, cam.pos);
   gl.uniform3fv(propU.uZenith, SKY.zenith);
@@ -3986,6 +4002,13 @@ function seabeanMesh() { const m = Mesh(); mBox(m,0,0.06,0,0.14,0.08,0.1,[0.4,0.
 // §16 crafted goods
 function stakeMesh() { const m = Mesh(); mCyl(m,0,0.62,0.05,0.045,6,[0.52,0.4,0.26]); mCyl(m,0.6,0.86,0.045,0.0,6,[0.58,0.46,0.3]); return m; }
 function torchMesh() { const m = Mesh(); mCyl(m,0,0.56,0.035,0.03,6,[0.42,0.3,0.18]); mCyl(m,0.5,0.68,0.075,0.04,6,[0.28,0.24,0.2]); mergeMesh(m, discMesh(0.68,0.08,6,0.12,[0.98,0.62,0.22])); return m; }
+// §18 a little belt lantern — metal frame, warm glass
+function lanternMesh(){ const m=Mesh(); const mtl=[0.4,0.4,0.44], mtl2=[0.5,0.5,0.54], glass=[0.98,0.78,0.4];
+  mergeMesh(m, discMesh(0.0,0.14,6,-0.03,mtl)); mergeMesh(m, discMesh(0.42,0.14,6,0.03,mtl2));   // base + top caps
+  mCyl(m,0.06,0.38,0.11,0.11,6,glass);                                    // glowing glass body
+  for(let i=0;i<6;i++){ const a=i/6*6.283; mBox(m,Math.cos(a)*0.12,0.22,Math.sin(a)*0.12,0.012,0.17,0.012,mtl); }   // frame bars
+  mCyl(m,0.42,0.52,0.03,0.04,5,mtl2); mergeAt(m, (()=>{const d=Mesh(); for(let i=0;i<5;i++){const a=i/5*3.14; mBox(d,Math.sin(a)*0.07,Math.cos(a)*0.07,0,0.012,0.012,0.012,mtl2);} return d;})(), 0,0.52,0);   // ring handle
+  return m; }
 // §16 building pieces (placed in the world)
 function leantoMesh() { const m = Mesh(); const post=[0.46,0.36,0.24], leaf=[0.38,0.46,0.27], leaf2=[0.31,0.4,0.23];
   const bx=0.8, bt=1.15, ft=0.5, fz=0.8, bz=-0.5;
@@ -4606,6 +4629,7 @@ function drawLife(view) {
   gl.useProgram(propProg);
   gl.uniformMatrix4fv(propU.uProj, false, proj);
   gl.uniformMatrix4fv(propU.uView, false, view);
+  setLanternUniform(propU);   // §18 lantern lights creatures/finds too
   gl.uniform3fv(propU.uSunDir, SKY.sun);
   gl.uniform3fv(propU.uCamPos, cam.pos);
   gl.uniform3fv(propU.uZenith, SKY.zenith);
@@ -4685,6 +4709,8 @@ ITEMS.spear = { id: "spear", name: "Fishing Spear", category: "tool", rarity: "t
                 desc: "A sharpened wooden stake. Click to jab at a fish; hold and release to throw it. Only good against fish.", model: () => spearMesh(), tint: [1,1,1] };
 ITEMS.rawfish = { id: "rawfish", name: "Raw Fish", category: "find", rarity: "common", stackable: true, maxStack: 99,
                   desc: "A fresh-speared fish. Good food, and better cooked at a campfire.", model: () => fishMesh([0.7,0.72,0.66]), tint: [1,1,1] };
+ITEMS.lantern = { id: "lantern", name: "Lantern", category: "tool", rarity: "tool", stackable: false, maxStack: 1,   // §18
+                  desc: "A warm belt lantern. Hold it (select it) for a pool of light — shiny finds glint from farther at night, and creatures notice.", model: () => lanternMesh(), tint: [1,1,1] };
 // §13.2 one Tool Kit replaces the three tool slots; Auto picks the right tool as you aim.
 ITEMS.toolkit = { id: "toolkit", name: "Tool Kit", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
                   desc: "Shovel, axe and pickaxe in one. Auto mode picks the right one as you aim; press its slot again (or middle-click) to lock Shovel, Axe or Pickaxe.", model: () => shovelMesh(), tint: [1,1,1] };
@@ -4807,6 +4833,24 @@ const Inv = {
   },
 };
 function selectedItem() { const c = Inv.hotbar[Inv.selected]; return c ? c.id : null; }   // raw belt item id
+// §18 the lantern: lit while it's the held (selected) belt item; a warm flicker; held at the hip
+function lanternLit() { return mode === "walk" && !isPanelOpen() && selectedItem() === "lantern"; }
+function lanternPos() { return [player.x, player.eyeY - 0.55, player.z]; }
+function lanternFlicker() { const t = clock.t; return 0.84 + 0.12*Math.sin(t*18.0) + 0.06*Math.sin(t*7.3 + 1.0) + 0.04*Math.sin(t*33.0); }
+const LANTERN_I = 1.35;   // §18 lantern brightness (tunable)
+let _preLanternSlot = 0;
+function toggleLantern() {   // §18 L key / mobile button: hold up the lantern, or put it away
+  const li = Inv.hotbar.findIndex(s => s && s.id === "lantern");
+  if (li < 0) { showCard("No lantern", "You don't have a lantern on your belt."); return; }
+  if (Inv.selected === li) selectHotbar(_preLanternSlot);
+  else { _preLanternSlot = Inv.selected; selectHotbar(li); }
+}
+function setLanternUniform(U) {   // call after the program + its uniforms are bound
+  if (!U || U.uLanternI === undefined) return;
+  const on = lanternLit();
+  gl.uniform1f(U.uLanternI, on ? LANTERN_I * lanternFlicker() : 0);
+  if (on) { const p = lanternPos(); gl.uniform3f(U.uLanternPos, p[0], p[1], p[2]); }
+}
 // §13.2 the effective tool: the Tool Kit resolves to shovel/axe/pickaxe (by aim in Auto, or the locked mode)
 function selectedTool() { const c = Inv.hotbar[Inv.selected]; if (!c) return null;
   if (c.id === "toolkit") return toolkit.mode === "auto" ? toolkit.tool : toolkit.mode;
@@ -5007,6 +5051,7 @@ function buildMeshIcon(mesh, tint) {
   gl.uniform3fv(propU.uSunDir, [0.5, 0.8, 0.4]); gl.uniform3fv(propU.uCamPos, [2.2, 1.9, 2.4]);
   gl.uniform3fv(propU.uZenith, [1,1,1]); gl.uniform3fv(propU.uHorizon, [1,1,1]); gl.uniform3fv(propU.uWarm, [1,1,0.95]);
   gl.uniform1f(propU.uFogDensity, 0); gl.uniform1f(propU.uFogNear, 1e6);
+  if (propU.uLanternI !== undefined) gl.uniform1f(propU.uLanternI, 0);   // §18 icons aren't lantern-lit
   dyn.draw(new Float32Array([0, -0.1, 0, sc, 0.7, 0, 0, tint[0], tint[1], tint[2]]), 1);
   gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, _iconPx);
   const img = iconCtx.createImageData(64, 64);
@@ -5688,6 +5733,7 @@ function drawMarker(view) {
 function propUniforms(view) {
   gl.useProgram(propProg);
   gl.uniformMatrix4fv(propU.uProj, false, proj); gl.uniformMatrix4fv(propU.uView, false, view);
+  setLanternUniform(propU);   // §18
   gl.uniform3fv(propU.uSunDir, SKY.sun); gl.uniform3fv(propU.uCamPos, cam.pos);
   gl.uniform3fv(propU.uZenith, SKY.zenith); gl.uniform3fv(propU.uHorizon, SKY.horizon); gl.uniform3fv(propU.uWarm, SKY.warm);
   gl.uniform1f(propU.uFogDensity, FOG_DENSITY); gl.uniform1f(propU.uFogNear, FOG_NEAR);
@@ -6293,6 +6339,7 @@ function renderMini(fbo, eye, target, fovY, waterY, waterR, waterCol, drawScene,
   gl.uniform3fv(propU.uSunDir, [0.4, 0.85, 0.35]); gl.uniform3fv(propU.uCamPos, eye);
   gl.uniform3fv(propU.uZenith, [0.7,0.78,0.86]); gl.uniform3fv(propU.uHorizon, [0.82,0.82,0.8]); gl.uniform3fv(propU.uWarm, [1,0.95,0.85]);
   gl.uniform1f(propU.uFogDensity, 0); gl.uniform1f(propU.uFogNear, 1e6);
+  if (propU.uLanternI !== undefined) gl.uniform1f(propU.uLanternI, 0);   // §18 bucket/inspect scenes aren't lantern-lit
   drawScene(proj, view);
   if (waterR > 0) {
     gl.useProgram(miniWaterProg);
@@ -6838,6 +6885,27 @@ function doTrade(g, i) {
   g.greet = 0.9; if (onDig) onDig("clang");
   showCard("Traded!", `Got ${tr.get[1]} ${ITEMS[tr.get[0]].name}.`);
   renderTrade(g);
+}
+
+/* §18 shiny finds wink at you from far off when you carry a lit lantern at night */
+const GLINT_FINDS = { seaglass:1, agate:1, coin:1, bottle:1, float:1, glassfloat:1, jewelry:1, porcelain:1, compass:1, moonsnail:1, nautilus:1, ceramic:1, bell:1, tin:1, sanddollar:1 };
+const GLINT_R = 46;
+let glintDyn = null;
+function glintMesh(){ const m=Mesh(); const c=[1,1,1], r=0.12; for(const s of [1,-1]) for(let i=0;i<4;i++){ const a0=i/4*6.283,a1=(i+1)/4*6.283; mTri(m,[0,s*r,0],[Math.cos(a0)*r*0.5,0,Math.sin(a0)*r*0.5],[Math.cos(a1)*r*0.5,0,Math.sin(a1)*r*0.5],c); } return m; }
+function drawGlints(view) {
+  if (!lanternLit() || dayFactor() > 0.45) return;                      // only at night, lantern up
+  if (!glintDyn) glintDyn = makeDynamic(glintMesh(), 120);
+  propUniforms(view); gl.uniform1f(propU.uLanternI, 0);                 // glints are self-lit
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE); gl.depthMask(false);   // additive
+  const a = rockScratch; let n = 0; const px = cam.pos[0], pz = cam.pos[2];
+  for (const e of life) { if (e.kind !== "find" || !GLINT_FINDS[e.t]) continue;
+    const dx = e.x-px, dz = e.z-pz; if (dx*dx+dz*dz > GLINT_R*GLINT_R || n >= 120) continue;
+    if (!lifeVisible(e)) continue;
+    const g = heightAt(e.x, e.z), pulse = 0.4 + 0.6*Math.pow(0.5 + 0.5*Math.sin(clock.t*3.5 + e.phase*9), 2.0);
+    const o = n*10; a[o]=e.x;a[o+1]=g+0.35;a[o+2]=e.z;a[o+3]=0.3+pulse*0.35;a[o+4]=performance.now()*0.004;a[o+5]=0;a[o+6]=0;
+    a[o+7]=1.0*pulse;a[o+8]=0.95*pulse;a[o+9]=0.78*pulse; n++; }
+  if (n) glintDyn.draw(a, n);
+  gl.disable(gl.BLEND); gl.depthMask(true);
 }
 
 /* §14A drowned-item sacks — a little bundle with a glint, on the seabed or washed ashore */
@@ -8643,6 +8711,7 @@ for (let i = 0; i < Inv.main.length; i++) { const s = Inv.main[i]; if (s && (s.i
 if (!Inv.hotbarHasId("toolkit")) Inv.hotbar[0] = { id: "toolkit", qty: 1 };   // slots: tool kit, bucket, spear
 if (!Inv.hotbarHasId("bucket")) Inv.hotbar[1] = { id: "bucket", qty: 1 };
 if (!Inv.hotbarHasId("spear")) Inv.hotbar[2] = { id: "spear", qty: 1 };        // §14C the fishing spear (its own slot)
+if (!Inv.hotbarHasId("lantern")) { const li = Inv.hotbar.indexOf(null); if (li >= 0) Inv.hotbar[li] = { id: "lantern", qty: 1 }; }   // §18 start with a lantern on the belt
 renderHotbar();
 syncDebugPanel();
 seedDigSpots();
@@ -8950,6 +9019,7 @@ function frame(now) {
   gl.useProgram(terrainProg);
   gl.uniformMatrix4fv(terrainU.uProj, false, proj);
   gl.uniformMatrix4fv(terrainU.uView, false, view);
+  setLanternUniform(terrainU);   // §18
   gl.uniform3fv(terrainU.uSunDir, SKY.sun);
   gl.uniform3fv(terrainU.uCamPos, cam.pos);
   gl.uniform3fv(terrainU.uZenith, SKY.zenith);
@@ -8992,6 +9062,7 @@ function frame(now) {
   drawRipples(view);
   drawPlaceGhost(view);
   drawParticles(view);
+  drawGlints(view);     // §18 shiny finds wink in lantern light at night
   drawPlankton(view);   // §14B drifting marine snow / bioluminescence, underwater only
   drawDeepVisitor(view);   // §14B a large silhouette far off in the deep
   drawThrownSpears(view);  // §14C spears stuck in the ground / sinking
