@@ -2358,6 +2358,10 @@ addEventListener("keydown", (e) => {
     if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); pryStrike(); return; }
     if (e.code === "Escape") { cancelPry(); return; }
   }
+  if (buildMode) {                                              // §16B placement controls
+    if (e.code === "Escape") { exitBuildMode(); return; }
+    if (e.code === "KeyR") { rotateBuild(); return; }
+  }
   if (e.code === "KeyG") setGFXCustom("dither", !GFX.dither);   // §13.6 quick dither toggle (syncs graphics settings)
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE" && !e.repeat) { if (player.climbing) {} else if (!tryGrabClimb()) interact(); }   // §15 grab a face if facing one, else pick up / inspect
@@ -2381,6 +2385,7 @@ canvas.addEventListener("mousedown", (e) => {
   if (e.button === 1 && mode === "walk" && selectedItem() === "toolkit") { e.preventDefault(); cycleToolkit(); return; }   // §13.2 middle-click cycles the Tool Kit
   if (e.button !== 0) return;
   if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
+  if (mode === "walk" && buildMode) { placeBuildAtGhost(); return; }      // §16B click to place the ghost
   if (mode === "walk" && selectedTool() === "spear" && !isPanelOpen()) { spearPressStart(); return; }   // §14C charge → thrust/throw
   useHeld = true; clickAt(0, 0);                 // §13.2 hold to keep swinging at a work target
 });
@@ -2785,6 +2790,9 @@ if (IS_TOUCH) (function mobileControls() {
        <div class="mBtn" data-key="KeyI">Pack</div>
        <div class="mBtn" data-key="Tab">Journal</div>
        <div class="mBtn" data-act="pause">Pause</div>
+       <div class="mBtn mbuild" data-act="brotate" style="display:none">Rotate</div>
+       <div class="mBtn mbuild" data-act="bplace" style="display:none">Place</div>
+       <div class="mBtn mbuild" data-act="bcancel" style="display:none">Cancel</div>
      </div>`;
   document.body.appendChild(ui);
   const rotate = document.createElement("div");
@@ -2823,6 +2831,9 @@ if (IS_TOUCH) (function mobileControls() {
       else if (btn.dataset.act === "swimdown") { mobileSwimDown = true; btn.style.background = "rgba(60,120,130,.8)"; }
       else if (btn.dataset.act === "climb") { mobileClimb = true; tryGrabClimb(); btn.style.background = "rgba(60,120,130,.8)"; }   // §15 hold to climb
       else if (btn.dataset.act === "jump") tryJump();
+      else if (btn.dataset.act === "brotate") rotateBuild();           // §16B mobile placement
+      else if (btn.dataset.act === "bplace") placeBuildAtGhost();
+      else if (btn.dataset.act === "bcancel") exitBuildMode();
       else tapKey(btn.dataset.key);
     }, { passive: false });
     if (btn.dataset.hold) {   // §14A release hold-buttons (swim up/down)
@@ -3102,6 +3113,7 @@ uniform vec3 uSunDir, uCamPos, uZenith, uHorizon, uWarm;
 uniform float uFogDensity, uFogNear;
 uniform float uWetLevel, uWaterLevel;               // §13.7 wet band near the waterline
 uniform int uWetBand;                               // 1 only for the world prop pass (rocks, trees)
+uniform float uGhost; uniform vec3 uGhostCol;       // §16B building-placement ghost
 ${SKY_GLSL}
 void main() {
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
@@ -3121,6 +3133,7 @@ void main() {
   float fog = 1.0 - exp(-fd * fd);
   col = mix(col, skyColor(viewVec, uSunDir, uZenith, uHorizon, uWarm), fog);
   frag = vec4(col, 1.0);
+  if (uGhost > 0.5) frag = vec4(mix(col, uGhostCol, 0.6), 0.5);   // §16B translucent placement preview
 }`;
 
 const propProg = program(propVS, propFS);
@@ -3563,6 +3576,7 @@ function drawProps(view) {
   gl.uniform1i(propU.uWetBand, 1);                         // §13.7 wet band + barnacles near the waterline
   gl.uniform1f(propU.uWetLevel, wetLevel); gl.uniform1f(propU.uWaterLevel, waterLevel);
   gl.uniform1f(propU.uTime, clock.t);                                 // §14B sway clock
+  gl.uniform1f(propU.uGhost, 0);                                      // §16B normal props are never ghosted
   gl.uniform1f(propU.uClampY, waterLevel - 0.04);                     // §14B ceiling for ocean plants (just under the sea surface)
   for (const t of propTypes) {
     if (!t.inst.vao || t.inst.count === 0) continue;
@@ -3891,6 +3905,21 @@ function seabeanMesh() { const m = Mesh(); mBox(m,0,0.06,0,0.14,0.08,0.1,[0.4,0.
 // §16 crafted goods
 function stakeMesh() { const m = Mesh(); mCyl(m,0,0.62,0.05,0.045,6,[0.52,0.4,0.26]); mCyl(m,0.6,0.86,0.045,0.0,6,[0.58,0.46,0.3]); return m; }
 function torchMesh() { const m = Mesh(); mCyl(m,0,0.56,0.035,0.03,6,[0.42,0.3,0.18]); mCyl(m,0.5,0.68,0.075,0.04,6,[0.28,0.24,0.2]); mergeMesh(m, discMesh(0.68,0.08,6,0.12,[0.98,0.62,0.22])); return m; }
+// §16 building pieces (placed in the world)
+function leantoMesh() { const m = Mesh(); const post=[0.46,0.36,0.24], leaf=[0.38,0.46,0.27], leaf2=[0.31,0.4,0.23];
+  const bx=0.8, bt=1.15, ft=0.5, fz=0.8, bz=-0.5;
+  for (const sx of [-bx,bx]) { mBox(m,sx,bt/2,bz,0.05,bt/2,0.05,post); mBox(m,sx,ft/2,fz,0.05,ft/2,0.05,post); }
+  mBox(m,0,bt,bz,bx+0.05,0.05,0.05,post); mBox(m,0,ft,fz,bx+0.05,0.05,0.05,post);   // ridge + front pole
+  const bl=[-bx,bt,bz], br=[bx,bt,bz], fl=[-bx,ft,fz], fr=[bx,ft,fz];
+  mQuad(m, bl,br,fr,fl, leaf);                                                       // sloped roof
+  mQuad(m, [-bx,bt+0.05,bz-0.03],[bx,bt+0.05,bz-0.03],[bx,ft+0.05,fz-0.03],[-bx,ft+0.05,fz-0.03], leaf2);
+  mQuad(m, [-bx,0,bz],[bx,0,bz],br,bl, leaf2);                                        // back wall
+  return m; }
+function fenceSegMesh() { const m = Mesh(); const w=[0.5,0.38,0.24]; for (const sx of [-0.55,0.55]) mBox(m,sx,0.35,0,0.05,0.35,0.05,w); mBox(m,0,0.52,0,0.56,0.035,0.04,w); mBox(m,0,0.28,0,0.56,0.035,0.04,w); return m; }
+function gateMesh() { const m = Mesh(); const w=[0.52,0.4,0.26], r=[0.62,0.5,0.32]; for (const sx of [-0.55,0.55]) mBox(m,sx,0.42,0,0.055,0.42,0.055,w); mBox(m,0,0.56,0,0.5,0.04,0.045,r); mBox(m,0,0.3,0,0.5,0.04,0.045,r); mBox(m,-0.22,0.43,0,0.03,0.18,0.04,r); mBox(m,0.22,0.43,0,0.03,0.18,0.04,r); return m; }
+function dryRackMesh() { const m = Mesh(); const w=[0.5,0.38,0.24], f=[0.72,0.68,0.6]; for (const sx of [-0.6,0.6]) { mBox(m,sx,0.48,-0.3,0.05,0.48,0.05,w); mBox(m,sx,0.48,0.3,0.05,0.48,0.05,w); } for (const z of [-0.3,0.3]) { mBox(m,0,0.9,z,0.64,0.035,0.04,w); mBox(m,0,0.64,z,0.64,0.035,0.04,w); } for (const x of [-0.3,0,0.3]) mBox(m,x,0.78,0,0.09,0.06,0.02,f); return m; }
+function signMesh() { const m = Mesh(); const w=[0.5,0.38,0.24], b=[0.76,0.66,0.47]; mBox(m,0,0.45,0,0.05,0.45,0.05,w); mBox(m,0,0.82,0.03,0.3,0.17,0.03,b); mBox(m,0,0.82,0.01,0.3,0.03,0.04,[0.56,0.46,0.3]); return m; }
+function torchPostMesh() { const m = Mesh(); mCyl(m,0,1.0,0.06,0.05,6,[0.5,0.38,0.24]); mCyl(m,0.98,1.12,0.09,0.05,6,[0.3,0.26,0.22]); mergeMesh(m, discMesh(1.12,0.1,6,0.16,[0.98,0.62,0.22])); return m; }
 // generic storm flotsam (§11.1)
 function ropeMesh() { const m = Mesh(); const c = [0.66,0.56,0.36]; for (let i = 0; i < 6; i++) { const a = i*1.1; mCyl(m, Math.cos(a)*0.14, Math.cos(a)*0.14+0.06, 0.05, 0.05, 5, [c[0]-0.03*(i%2),c[1],c[2]]); } mergeMesh(m, discMesh(0.0,0.2,8,0.03,[0.6,0.5,0.32])); return m; }
 function crateMesh() { const m = Mesh(); const w = [0.5,0.37,0.24], e = [0.4,0.29,0.18]; mBox(m,0,0.2,0,0.22,0.2,0.22,w);
@@ -4665,6 +4694,7 @@ function buildIcons() {
   _iconProj = M4.perspective(0.6, 1, 0.1, 50); _iconView = M4.lookAt([2.2, 1.9, 2.4], [0, 0.05, 0], [0, 1, 0]);
   for (const k in ITEMS) buildOneIcon(ITEMS[k]);
   for (const k in CREATURES) CREATURES[k].icon = buildMeshIcon(CREATURES[k].mesh(), [1,1,1]);   // §13.5 journal creature cards
+  for (const k in BUILD_DEFS) BUILD_ICON[k] = buildMeshIcon(BUILD_DEFS[k].mesh(), [1,1,1]);      // §16B Make-tab build icons
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 }
 let _iconPx, _iconProj, _iconView;
@@ -4792,13 +4822,13 @@ function renderInventory() {
 function renderMakeHTML() {
   revealRecipes();
   const near = nearCampfire(player.x, player.z);
-  const cols = { Craft: [], "By the fire": [], Rebuild: [] };
+  const cols = { Craft: [], Build: [], "By the fire": [], Rebuild: [] };
   for (const r of RECIPES) { if (!knownRecipes.has(r.id)) continue;
-    const g = r.once ? "Rebuild" : (r.station === "campfire" ? "By the fire" : "Craft"); cols[g].push(r); }
+    const g = r.build ? "Build" : (r.once ? "Rebuild" : (r.station === "campfire" ? "By the fire" : "Craft")); cols[g].push(r); }
   let html = "";
   const anyKnown = RECIPES.some(r => knownRecipes.has(r.id));
   if (!anyKnown) return `<div class="makehint">Gather sticks, stone, kelp and logs, and recipes will appear here.</div>`;
-  for (const group of ["Craft", "By the fire", "Rebuild"]) {
+  for (const group of ["Craft", "Build", "By the fire", "Rebuild"]) {
     if (!cols[group].length) continue;
     const sub = group === "By the fire" && !near ? ` <span class="mkneed">(stand by a campfire)</span>` : "";
     html += `<div class="compartment"><div class="clabel">${group}${sub}</div><div class="mlist">`;
@@ -4808,6 +4838,7 @@ function renderMakeHTML() {
   return html;
 }
 function recipeIcon(r) {
+  if (r.build) return BUILD_ICON[r.build];
   if (r.out) return ITEMS[r.out] && ITEMS[r.out].icon;
   if (r.special === "harden") return ITEMS.spear && ITEMS.spear.icon;
   if (r.special === "cook") return ITEMS.cooked_rawfish && ITEMS.cooked_rawfish.icon;
@@ -4979,6 +5010,10 @@ function DBG_SET(k, v) { switch (k) {
 
 // E interacts with whatever the crosshair is on (same target as a click).
 function interact() { if (pry) { pryStrike(); return; }
+  if (mode === "walk" && buildMode) { placeBuildAtGhost(); return; }      // §16B E also places the ghost
+  if (mode === "walk" && !isPanelOpen()) { const b = buildInFront(); if (b) {   // §16B use a piece, or crouch+E to pick it up
+    const def = BUILD_DEFS[b.type], hasUse = def.storage || def.dry || def.shelter;
+    if (hasUse && !crouching) interactBuild(b); else pickUpBuild(b); return; } }
   if (mode === "walk" && selectedTool() === "spear" && !isPanelOpen()) { thrustSpear(); return; }   // §14C E / mobile Use = jab
   const t = curTarget || targetAlongRay(rayFromNDC(0, 0));
   if (t) { interactTarget(t); return; }
@@ -6340,6 +6375,20 @@ const RECIPES = [
     desc: "Temper a stake in the coals: harder, flatter, truer throws." },
   { id: "cook",     label: "Cook Food", special: "cook", cost: [], station: "campfire",
     desc: "Roast a raw fish, shellfish or egg for double the nourishment." },
+  { id: "b_leanto", label: "Lean-to Shelter", build: "leanto", cost: [["stick", 4], ["log", 2], ["leaves", 3]], station: "hand",
+    desc: "Sleep here at night to skip to morning and set it as your respawn." },
+  { id: "b_chest",  label: "Storage Chest", build: "chest", cost: [["log", 4]], station: "hand",
+    desc: "Stash finds and materials. All your chests share one store." },
+  { id: "b_fence",  label: "Fence Segment", build: "fence", cost: [["stake", 1], ["stick", 2]], station: "hand",
+    desc: "Pen goats and keep them off your ground. Place a run of them." },
+  { id: "b_gate",   label: "Gate", build: "gate", cost: [["log", 1], ["rope", 1]], station: "hand",
+    desc: "A gap in the fence you can walk through." },
+  { id: "b_rack",   label: "Drying Rack", build: "rack", cost: [["stick", 4], ["rope", 2]], station: "hand",
+    desc: "Hang raw fish or kelp to dry over a day into lasting food." },
+  { id: "b_sign",   label: "Signpost", build: "sign", cost: [["log", 1], ["stick", 1]], station: "hand",
+    desc: "Mark a spot worth remembering." },
+  { id: "b_torch",  label: "Torch on a Stake", build: "torchpost", cost: [["stake", 1], ["torch", 1]], station: "hand",
+    desc: "A standing light for the camp." },
   { id: "toolkit",  label: "Tool Kit", out: "toolkit", qty: 1, cost: [["stick", 3], ["stone", 2], ["log", 1]], station: "hand", once: "toolkit",
     desc: "Rebuild your shovel, axe and pickaxe if you ever lose the kit." },
   { id: "bucket",   label: "Bucket", out: "bucket", qty: 1, cost: [["log", 2], ["rope", 1]], station: "hand", once: "bucket",
@@ -6375,6 +6424,11 @@ function canCraft(r) {
 }
 function craftRecipe(id) {
   const r = RECIPE_BY_ID[id]; if (!r) return;
+  if (r.build) {                                        // §16B building: pick it up as a ghost, pay on placement
+    if (!affordableCost(r)) { showCard("Need materials", craftCostText(r)); return; }
+    if (invOpen) toggleInventory();
+    enterBuildMode(r.build, r.id); return;
+  }
   if (r.station === "campfire" && !nearCampfire(player.x, player.z)) { showCard("No campfire", "Stand next to a campfire to do this."); return; }
   if (r.once && (Inv.hotbarHasId(r.once) || Inv.has(r.once))) { showCard("Already have one", `You already carry a ${ITEMS[r.once].name}.`); return; }
   if (r.special === "campfire") { buildCampfire(); return; }
@@ -6397,6 +6451,137 @@ function craftRecipe(id) {
 }
 function craftCostText(r) { const parts = r.cost.map(([id, n]) => `${n} ${ITEMS[id].name}`); let t = parts.join(" + ");
   if (r.altCost) t += " (or " + r.altCost.map(([id, n]) => `${n} ${ITEMS[id].name}`).join(" + ") + ")"; return t; }
+
+/* ===================================================================== *
+ * § 16B  BUILDING — placeable pieces with a ghost preview
+ * ===================================================================== */
+// Each def: the recipe id that pays for it, its mesh, footprint radius, and behaviour flags.
+const BUILD_DEFS = {
+  leanto:    { recipe: "b_leanto", label: "Lean-to", mesh: leantoMesh,    r: 1.3, collide: 0.7, shelter: true },
+  chest:     { recipe: "b_chest",  label: "Storage Chest", mesh: () => chestMesh(false, false), r: 0.7, collide: 0.5, storage: true },
+  fence:     { recipe: "b_fence",  label: "Fence", mesh: fenceSegMesh,     r: 0.7, collide: 0.55, keep: true },
+  gate:      { recipe: "b_gate",   label: "Gate", mesh: gateMesh,          r: 0.7, keep: true },
+  rack:      { recipe: "b_rack",   label: "Drying Rack", mesh: dryRackMesh, r: 0.9, collide: 0.6, dry: true },
+  sign:      { recipe: "b_sign",   label: "Signpost", mesh: signMesh,      r: 0.4 },
+  torchpost: { recipe: "b_torch",  label: "Torch", mesh: torchPostMesh,    r: 0.3, light: true },
+};
+let builds = [];                 // { type, x, z, yaw, coll?, ... }
+let buildMode = null;            // the type currently being placed, or null
+let buildRecipeId = null, buildYaw = 0;
+const buildGhost = { x: 0, z: 0, y: 0, valid: false, show: false };
+const buildDyn = {};             // lazy makeDynamic per type
+const buildScratch = new Float32Array(160 * 10);
+const BUILD_ICON = {};           // recipe-tab icons, built with the item icons at startup
+
+function enterBuildMode(type, recipeId) {
+  buildMode = type; buildRecipeId = recipeId; buildYaw = cam.yaw; buildGhost.show = false;
+  showCard("Placing: " + BUILD_DEFS[type].label, IS_TOUCH ? "Aim, tap Rotate to turn, tap Place. Cancel to stop." : "Aim and click to place · R rotates · Esc cancels.");
+  if (IS_TOUCH) showBuildBar(true);
+}
+function exitBuildMode() { buildMode = null; buildRecipeId = null; buildGhost.show = false; if (IS_TOUCH) showBuildBar(false); }
+function showBuildBar(on) { document.querySelectorAll(".mbuild").forEach(b => b.style.display = on ? "flex" : "none"); }
+function rotateBuild() { if (buildMode) buildYaw += Math.PI / 8; }
+// where the piece would land: the ground point under the reticle, within reach
+function updateBuildGhost() {
+  if (!buildMode) { buildGhost.show = false; return; }
+  const pt = rayGround(0, 0);
+  if (!pt || Math.hypot(pt[0] - player.x, pt[1] - player.z) > REACH + 2.0) { buildGhost.show = false; return; }
+  buildGhost.x = pt[0]; buildGhost.z = pt[1]; buildGhost.y = surfaceAt(pt[0], pt[1]).h;
+  buildGhost.valid = buildValidAt(buildMode, pt[0], pt[1]); buildGhost.show = true;
+}
+function buildValidAt(type, x, z) {
+  const d = BUILD_DEFS[type], s = surfaceAt(x, z);
+  if (waterDepthAt(x, z) > 0.25) return false;             // not in the water
+  if (s.slope > 0.6) return false;                          // not on a cliff
+  if (bigPropBlocking(x, z, d.r * 0.6)) return false;       // not inside a boulder / POI
+  for (const p of POIS) if (Math.hypot(p.x - x, p.z - z) < p.radius + 0.5) return false;
+  for (const b of builds) if (b !== buildGhostSkip && Math.hypot(b.x - x, b.z - z) < (BUILD_DEFS[b.type].r + d.r) * 0.55) return false;
+  for (const c of campfires) if (Math.hypot(c.x - x, c.z - z) < 1.2) return false;
+  for (const sb of storageBoxes) if (Math.hypot(sb.x - x, sb.z - z) < 1.0) return false;
+  return true;
+}
+let buildGhostSkip = null;
+function placeBuildAtGhost() {
+  if (!buildMode) return false;
+  updateBuildGhost();
+  if (!buildGhost.show) { showCard("Aim lower", "Point at the ground within reach."); return true; }
+  if (!buildGhost.valid) { showCard("Can't build here", "Needs flat, dry, clear ground."); bagShake && bagShake(); return true; }
+  const r = RECIPE_BY_ID[buildRecipeId], cost = r && affordableCost(r);
+  if (!cost) { showCard("Need materials", craftCostText(r)); exitBuildMode(); return true; }
+  for (const [cid, n] of cost) Inv.remove(cid, n);
+  const type = buildMode, def = BUILD_DEFS[type];
+  const b = { type, x: buildGhost.x, z: buildGhost.z, yaw: buildYaw, cost };
+  if (def.dry) { b.load = null; b.dryAt = 0; }
+  builds.push(b);
+  if (def.collide) { const coll = { x: b.x, z: b.z, r: def.collide, kind: "build", build: b }; b.coll = coll; colliders.push(coll); rebuildCollHash(); }
+  if (onDig) onDig("plant");
+  saveWorld();
+  // keep placing fences/gates in a run; one-offs drop out of build mode
+  if (!def.keep || !affordableCost(r)) exitBuildMode();
+  return true;
+}
+// the placed piece you're looking at (to pick back up)
+function buildInFront() {
+  const f = camForward(); let best = null, bestd = 3.2;
+  for (const b of builds) { const dx = b.x - player.x, dz = b.z - player.z; const d = Math.hypot(dx, dz);
+    if (d > 3.2) continue; const dot = (dx * f[0] + dz * f[2]) / (d || 1); if (dot < 0.4) continue;
+    if (d < bestd) { bestd = d; best = b; } }
+  return best;
+}
+function pickUpBuild(b) {
+  const def = BUILD_DEFS[b.type];
+  // refund the exact materials paid (fall back to the recipe cost for older saves)
+  const refund = (b.cost && b.cost.length) ? b.cost : (RECIPE_BY_ID[def.recipe] ? RECIPE_BY_ID[def.recipe].cost : []);
+  for (const [cid, n] of refund) Inv.add(cid, n);
+  if (b.coll) { b.coll.r = 0; const k = colliders.indexOf(b.coll); if (k >= 0) colliders.splice(k, 1); rebuildCollHash(); }
+  const i = builds.indexOf(b); if (i >= 0) builds.splice(i, 1);
+  if (onDig) onDig("clang"); showCard("Picked up " + def.label, "Materials are back in your satchel."); saveWorld();
+}
+function interactBuild(b) {
+  const def = BUILD_DEFS[b.type];
+  if (def.storage) { openStash(0); return; }
+  if (def.dry) { tendRack(b); return; }
+  if (def.shelter) { trySleepShelter(b); return; }
+  showCard(def.label, def.sign && b.text ? b.text : "");
+}
+// drying rack: load a raw fish/kelp, it dries over a day into lasting food
+function tendRack(b) {
+  if (b.load) {
+    if (clock.t >= b.dryAt) { const out = b.load === "kelp" ? "kelp" : "rawfish"; Inv.add(out === "kelp" ? "kelp" : "cooked_rawfish", b.n || 1); showCard("Dried " + ITEMS[b.load].name, "Taken down, dried and lasting."); b.load = null; b.n = 0; saveWorld(); }
+    else { const left = Math.ceil((b.dryAt - clock.t) / 60); showCard("Still drying", `${ITEMS[b.load].name} needs about ${left} more minute${left===1?"":"s"}.`); }
+    return;
+  }
+  const raw = Inv.count("rawfish") > 0 ? "rawfish" : (Inv.count("kelp") > 0 ? "kelp" : null);
+  if (!raw) { showCard("Nothing to hang", "Carry a raw fish or kelp to dry."); return; }
+  Inv.remove(raw, 1); b.load = raw; b.n = 1; b.dryAt = clock.t + RACK_DRY_TIME; if (onDig) onDig("plant");
+  showCard("Hung to dry", `${ITEMS[raw].name} on the rack. Come back later.`);
+  saveWorld();
+}
+const RACK_DRY_TIME = 90;    // §16 seconds of real time to dry (tunable)
+function trySleepShelter(b) { showCard("Lean-to Shelter", "A dry place to rest."); }   // §16C fills this in
+function drawBuilds(view) {
+  if (buildMode) updateBuildGhost();
+  // placed pieces, grouped by type
+  const byType = {};
+  for (const b of builds) (byType[b.type] = byType[b.type] || []).push(b);
+  for (const type in byType) {
+    const list = byType[type]; if (!buildDyn[type]) buildDyn[type] = makeDynamic(BUILD_DEFS[type].mesh(), 160);
+    propUniforms(view); let n = 0; const a = buildScratch;
+    for (const b of list) { if (n >= 160) break; const dx = b.x - cam.pos[0], dz = b.z - cam.pos[2]; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
+      const o = n*10, y = surfaceAt(b.x, b.z).h; a[o]=b.x;a[o+1]=y;a[o+2]=b.z;a[o+3]=1;a[o+4]=b.yaw;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
+    if (n) buildDyn[type].draw(a, n);
+  }
+  // the ghost preview
+  if (buildGhost.show && buildMode) {
+    const type = buildMode; if (!buildDyn[type]) buildDyn[type] = makeDynamic(BUILD_DEFS[type].mesh(), 160);
+    propUniforms(view);
+    gl.uniform1f(propU.uGhost, 1); gl.uniform3fv(propU.uGhostCol, buildGhost.valid ? [0.4, 1.0, 0.5] : [1.0, 0.4, 0.4]);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+    const a = buildScratch; a[0]=buildGhost.x;a[1]=buildGhost.y;a[2]=buildGhost.z;a[3]=1;a[4]=buildYaw;a[5]=0;a[6]=0;a[7]=1;a[8]=1;a[9]=1;
+    buildDyn[type].draw(a, 1);
+    gl.disable(gl.BLEND); gl.depthMask(true); gl.uniform1f(propU.uGhost, 0);
+  }
+}
 
 // Placed material in the wash zone slowly erodes; everywhere else it's permanent.
 let erosionT = 0;
@@ -7018,6 +7203,8 @@ function saveWorld() {
     build: [...builtCells].map(i => [i, +built[i].toFixed(2), material[i]]),
     berries: berryBushes.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),   // 0 = ripe, else seconds left
     fires: campfires.map(c => [+c.x.toFixed(1), +c.z.toFixed(1)]),
+    builds: builds.map(b => ({ t: b.type, x: +b.x.toFixed(1), z: +b.z.toFixed(1), y: +b.yaw.toFixed(2), c: b.cost || [],
+      l: b.load || null, n: b.n || 0, d: b.load ? Math.max(0, +(b.dryAt - clock.t).toFixed(0)) : 0 })),   // §16B
   })); } catch (e) {}
 }
 function loadWorld() {
@@ -7046,6 +7233,11 @@ function loadWorld() {
     }
     if (Array.isArray(w.berries)) w.berries.forEach((v, i) => { if (berryBushes[i]) { if (v > 0) { berryBushes[i].ripe = false; berryBushes[i].regrowAt = clock.t + v; } else berryBushes[i].ripe = true; } });
     if (Array.isArray(w.fires)) campfires = w.fires.map(c => ({ x: c[0], z: c[1] }));
+    if (Array.isArray(w.builds)) { builds = []; for (const s of w.builds) { const def = BUILD_DEFS[s.t]; if (!def) continue;   // §16B
+      const b = { type: s.t, x: s.x, z: s.z, yaw: s.y, cost: s.c || [] };
+      if (def.dry && s.l) { b.load = s.l; b.n = s.n || 1; b.dryAt = clock.t + (s.d || 0); }
+      if (def.collide) { const coll = { x: b.x, z: b.z, r: def.collide, kind: "build", build: b }; b.coll = coll; colliders.push(coll); }
+      builds.push(b); } }
     rebuildCollHash();
   } catch (e) {}
 }
@@ -8152,6 +8344,7 @@ function frame(now) {
   drawNests(view);
   drawChests(view);
   drawStorage(view);
+  drawBuilds(view);        // §16B placed building pieces + the placement ghost
   drawSalt(view);
   drawLife(view);
   drawGulls(view);
@@ -8287,6 +8480,19 @@ function frame(now) {
       promptEl.style.color = "#ffbda6"; promptEl.style.opacity = Math.min(0.92, tooTiredT * 1.3).toFixed(2);
     } else if (hintT > 0) { promptEl.textContent = hintText; promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = ""; }
     else { promptEl.style.display = "none"; promptEl.style.color = ""; promptEl.style.opacity = ""; }
+    // §16B placement / pick-up prompt overrides the normal aim prompt
+    if (buildMode) {
+      promptEl.textContent = (!buildGhost.show ? "Aim at open ground" : buildGhost.valid ? "Place " + BUILD_DEFS[buildMode].label : "Can't build here")
+        + (IS_TOUCH ? "" : " · R turn · Esc cancel");
+      promptEl.style.display = "block"; promptEl.style.color = (buildGhost.show && !buildGhost.valid) ? "#ffbda6" : "#bfe6a6"; promptEl.style.opacity = "";
+      crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block"; crossEl.className = "";
+    } else if (tooTiredT <= 0 && hintT <= 0 && !info) {
+      const b = buildInFront();
+      if (b) { const def = BUILD_DEFS[b.type], hasUse = def.storage || def.dry || def.shelter;
+        promptEl.textContent = hasUse ? (IS_TOUCH ? "tap: use · crouch+tap: pick up" : "E use · crouch+E pick up") : (IS_TOUCH ? "tap to pick up" : "E to pick up");
+        promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
+        crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block"; }
+    }
   } else { promptEl.style.display = "none"; crossEl.className = ""; crossEl.style.display = "none"; curTarget = null; }
   const titleUp = (mode === "preview" || mode === "intro");       // hide in-world readouts behind the title
   hud.style.display = titleUp ? "none" : "block";
