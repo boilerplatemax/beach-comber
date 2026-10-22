@@ -394,8 +394,8 @@
 <div id="itip"></div>
 <div id="debugpanel"></div>
 <div id="help">
-  WASD move · Shift run · Space jump · click — use/interact · E — pick up<br>
-  1-8 hotbar · R rest · I pack · Tab journal · Esc pause
+  WASD move · Shift run · C crouch · Space jump · click — use/interact · E — pick up<br>
+  1-8 hotbar · B bucket · I pack · Tab journal · Esc pause
 </div>
 
 <script>
@@ -1700,7 +1700,12 @@ function groundGradient(x, z) {
 // Jump feel (§6): a snappy rise under lighter gravity, a faster, heavier fall.
 const JUMP_V = 8.4, GRAVITY_UP = 24, GRAVITY_DOWN = 42, COYOTE_TIME = 0.1, JUMP_BUFFER = 0.11;
 const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, sprinting: false, scramble: 0, vy: 0, airborne: false, coyote: 0, landStun: 0 };
-let crouching = false;   // §13.4 crouch (wired later); creatures are less skittish when true
+let crouching = false;   // §13.4 crouch: lowers the camera, slows you, and makes creatures less skittish
+let crouchStillT = 0;    // time held crouched and still → counts as resting (faster recovery)
+let crouchKey = "KeyC";  // rebindable; "ControlLeft" is the Ctrl option in settings
+try { const ck = localStorage.getItem("bc_crouchKey"); if (ck === "KeyC" || ck === "ControlLeft") crouchKey = ck; } catch (e) {}
+const CROUCH_SPEED = 0.5, CROUCH_DROP = 0.55, CROUCH_REST_TIME = 2;   // §13.4 tunables
+function setCrouch(on) { crouching = on; if (!on) { crouchStillT = 0; resting = false; } }
 let jumpBufferT = 0;
 function queueJump() { if (mode === "walk") jumpBufferT = JUMP_BUFFER; }    // buffered: fires on landing if pressed just early
 function canJumpNow() {
@@ -1901,7 +1906,7 @@ addEventListener("keydown", (e) => {
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE") interact();                  // pick up / inspect
   if (e.code === "Space" && mode === "walk") { e.preventDefault(); queueJump(); }
-  if (e.code === "KeyR" && mode === "walk") { resting = !resting; if (resting) { analog.x = analog.y = 0; } }
+  if (e.code === crouchKey && mode === "walk" && !isPanelOpen()) { e.preventDefault(); setCrouch(!crouching); }   // §13.4 toggle crouch
   if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
   if (e.code === "KeyI") toggleInventory();           // inventory panel
   if (e.code === "KeyB" && mode === "walk" && !isPanelOpen() && ownsTool("bucket")) openBucketLook();   // §13.3 look inside the bucket
@@ -2092,6 +2097,7 @@ function openSettings() {
     <div class="srow"><label>First-run hints</label><button data-k="hints">${onoff(hintsOn)}</button></div>
     <div class="srow"><label>Auto-pickup</label><button data-k="autopick">${onoff(autoPickup)}</button></div>
     <div class="srow"><label>Auto tool-switch</label><button data-k="autoswitch">${onoff(autoSwitch)}</button></div>
+    <div class="srow"><label>Crouch key</label><button data-k="crouchkey">${crouchKey === "ControlLeft" ? "Ctrl" : "C"}</button></div>
     <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
     <button class="closebtn primary">Close</button>`;
   p.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => {
@@ -2100,6 +2106,7 @@ function openSettings() {
     else if (k === "hints") { hintsOn = !hintsOn; saveHints(); }
     else if (k === "autopick") { autoPickup = !autoPickup; saveAutoPick(); }
     else if (k === "autoswitch") { autoSwitch = !autoSwitch; saveAutoSwitch(); }
+    else if (k === "crouchkey") { crouchKey = crouchKey === "KeyC" ? "ControlLeft" : "KeyC"; try { localStorage.setItem("bc_crouchKey", crouchKey); } catch (e) {} }
     openSettings();
   });
   const sens = p.querySelector("#setSens"); if (sens) sens.oninput = (e) => { lookSensMobile = +e.target.value; };
@@ -2283,7 +2290,7 @@ if (IS_TOUCH) (function mobileControls() {
        <div class="mBtn" data-act="jump">Jump</div>
        <div class="mBtn" data-act="run">Run</div>
        <div class="mBtn" data-key="KeyE">Use</div>
-       <div class="mBtn" data-key="KeyR">Rest</div>
+       <div class="mBtn" data-act="crouch">Crouch</div>
        <div class="mBtn" data-key="KeyI">Pack</div>
        <div class="mBtn" data-key="Tab">Journal</div>
        <div class="mBtn" data-act="pause">Pause</div>
@@ -2320,6 +2327,7 @@ if (IS_TOUCH) (function mobileControls() {
       unlockAudio();
       if (btn.dataset.act === "pause") overlay.classList.remove("hidden");
       else if (btn.dataset.act === "run") { mobileSprint = !mobileSprint; btn.style.background = mobileSprint ? "rgba(60,120,130,.8)" : ""; }
+      else if (btn.dataset.act === "crouch") { if (mode === "walk" && !isPanelOpen()) { setCrouch(!crouching); btn.style.background = crouching ? "rgba(60,120,130,.8)" : ""; } }   // §13.4 mobile crouch toggle
       else if (btn.dataset.act === "jump") tryJump();
       else tapKey(btn.dataset.key);
     }, { passive: false });
@@ -3443,7 +3451,7 @@ function behave(e, dt, d, dx, dz) {
     e.closed += ((d < 2.5 || exposed) ? 1 : 0 - e.closed) * 0; // simple target
     e.closed += (((d < 2.5 || exposed) ? 1 : 0) - e.closed) * Math.min(1, dt*4);
   } else if (e.t === "piper") {
-    if (d < 7) { const a = Math.atan2(-dz, -dx); e.x += Math.cos(a)*dt*7.5; e.z += Math.sin(a)*dt*7.5; e.yaw = a + 1.57; return; }  // flee footsteps
+    if (d < (crouching ? 3.5 : 7)) { const a = Math.atan2(-dz, -dx); e.x += Math.cos(a)*dt*7.5; e.z += Math.sin(a)*dt*7.5; e.yaw = a + 1.57; return; }  // §13.4 flee footsteps (closer when crouched)
     const gh = g, target = waterLevel + 0.2, grad = groundGradient(e.x, e.z);
     let mx = 0, mz = 0;
     if (gh > target + 0.3) { mx = grad.dx; mz = grad.dz; }          // too dry → follow the water down
@@ -3891,7 +3899,8 @@ function itemCompartment(id) { const it = ITEMS[id]; if (!it) return "Misc";
 let invOpen = false;
 function toggleInventory() {
   invOpen = !invOpen; document.getElementById("invpanel").style.display = invOpen ? "block" : "none";
-  if (invOpen) { renderInventory(); if (document.pointerLockElement === canvas) document.exitPointerLock(); }   // free the cursor for the bag
+  if (invOpen) { const j = document.getElementById("journal"); if (j.style.display === "block") j.style.display = "none";   // §13.4 one panel at a time
+    renderInventory(); if (document.pointerLockElement === canvas) document.exitPointerLock(); }   // free the cursor for the bag
   else { hideTip(); hideContextMenu(); requestLock(); }                                                        // §13.1 back to the game
 }
 function renderInventory() {
@@ -4078,6 +4087,7 @@ function treasureJournal() {   // §12C a page of chests found and what they hel
 function toggleJournal() {
   const j = document.getElementById("journal");
   if (j.style.display === "block") { j.style.display = "none"; requestLock(); return; }   // §13.1 back to the game
+  if (invOpen) { invOpen = false; document.getElementById("invpanel").style.display = "none"; hideTip(); hideContextMenu(); }   // §13.4 one panel at a time
   const row = (reg, prefix) => Object.keys(reg).map((k) => {
     const got = discovered.has(prefix + k);
     const cnt = prefix === "f_" ? (Inv.count(k) ? " ×" + Inv.count(k) : "") : "";
@@ -4436,7 +4446,7 @@ function rootPlayer() { digCommit = COMMIT_TIME; }              // short wind-up
 function updateHunger(gdt) { hunger = Math.max(0, hunger - HUNGER_DRAIN * gdt);      // passive drain (game-time)
   if (hungerTier() === "starving") { growlT -= gdt; if (growlT <= 0) { growlT = 9 + rng()*6; if (onDig) onDig("growl"); } } }
 function updateStamina(dt) {
-  if (mode !== "walk") { stamina = 1; resting = false; exhausted = false; digCommit = 0; return; }
+  if (mode !== "walk") { stamina = 1; resting = false; exhausted = false; digCommit = 0; crouching = false; crouchStillT = 0; return; }
   if (digCommit > 0) digCommit = Math.max(0, digCommit - dt);
   const moving = Math.abs(analog.x) + Math.abs(analog.y) > 0.01 || keys["KeyW"] || keys["KeyA"] || keys["KeyS"] || keys["KeyD"];
   if (moving) resting = false;
@@ -6049,7 +6059,7 @@ function updateGulls(dt) {
     const dp = Math.hypot(e.x - player.x, e.z - player.z);
     e.flap = (e.flap || 0) + dt * (e.gstate === "soar" || e.gstate === "approach" ? 5 : 11);
     // shooing: a sprint or a tool swing nearby scatters landed/approaching gulls
-    if ((e.gstate === "forage" || e.gstate === "approach") && (sprinting || swung) && dp < GULL.shooR) {
+    if ((e.gstate === "forage" || e.gstate === "approach") && (sprinting || swung) && dp < GULL.shooR * (crouching ? 0.5 : 1)) {   // §13.4 crouch → harder to scare
       e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call");
     }
     switch (e.gstate) {
@@ -6563,7 +6573,7 @@ function updateGoats(dt) {
       }
     } else {
       // skittish: flee unless the player comes slowly holding salt (or leaves — they get curious)
-      const spooked = dToP < 9 && !((holdingSalt || holdingLeaves) && !playerFast);
+      const spooked = dToP < (crouching ? 5 : 9) && !((holdingSalt || holdingLeaves) && !playerFast);   // §13.4 sneak closer when crouched
       if (spooked) { const a = Math.atan2(g.z - pz, g.x - px); tx = g.x + Math.cos(a)*14; tz = g.z + Math.sin(a)*14; speed = 7.5; g.state = "flee"; g.timer = 0.6; }
       else {
         g.timer -= dt;
@@ -6785,11 +6795,16 @@ function frame(now) {
     if (keys["KeyD"]) { wx += right[0]; wz += right[2]; manual = true; }
     if (keys["KeyA"]) { wx -= right[0]; wz -= right[2]; manual = true; }
     if (Math.abs(analog.x) + Math.abs(analog.y) > 0.01) { wx += right[0]*analog.x + hf[0]*analog.y; wz += right[2]*analog.x + hf[1]*analog.y; manual = true; }
+    if (isPanelOpen()) { wx = 0; wz = 0; manual = false; }   // §13.4 a panel is open → no movement (world keeps running)
     if (resting && (wx || wz)) { resting = false; }         // moving gets you up
     if (resting) { wx = 0; wz = 0; manual = false; }         // sitting: no movement
     if (digCommit > 0) { wx = 0; wz = 0; manual = false; }   // rooted during a committed strike
 
     const wl = Math.hypot(wx, wz);
+    // §13.4 crouched and still for a moment → rest (faster stamina recovery); any movement cancels it
+    if (crouching && wl < 0.01 && !player.airborne && digCommit <= 0 && !isPanelOpen()) {
+      crouchStillT += dt; if (crouchStillT > CROUCH_REST_TIME) resting = true;
+    } else if (crouching) { if (wl >= 0.01) { crouchStillT = 0; resting = false; } }
     const here = surfaceAt(player.x, player.z);
     const gg = groundGradient(player.x, player.z);   // §13.1 smoothed fall line + slope (stable on bumpy low-poly terrain)
     // signed grade in the travel direction: + uphill, − downhill (gradient projected onto travel)
@@ -6798,7 +6813,7 @@ function frame(now) {
     const uphillGrade = Math.max(0, fwdGrade);
     player.incline = uphillGrade;
     player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01 && hungerTier() !== "starving"
-                       && uphillGrade < SPRINT_SLOPE_MAX;              // §13.1 no sprint up a steep pitch
+                       && uphillGrade < SPRINT_SLOPE_MAX && !crouching;  // §13.1 no sprint up a steep pitch; §13.4 or while crouched
     let scrambleTarget = 0;
     _curSpeedMul = 1; _curSlopeDeg = gg.slope * 180 / Math.PI;
 
@@ -6812,7 +6827,7 @@ function frame(now) {
       let surfMul = 1;
       if (depth > 0.05) surfMul = Math.max(0.25, 1 - depth * 0.45); // deeper wading, slower
       else if (here.h < 12) surfMul = 0.9;                          // soft sand
-      const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * sm * surfMul * (player.landStun > 0 ? 0.5 : 1) * matSpeedMul(Terrain.materialAt(player.x, player.z));
+      const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * (crouching ? CROUCH_SPEED : 1) * sm * surfMul * (player.landStun > 0 ? 0.5 : 1) * matSpeedMul(Terrain.materialAt(player.x, player.z));
       const dist = speed * dt;
       // §13.1 substep so fast movement can't skip a cliff; block uphill onto a face past the slope limit,
       // checking BOTH the step rise and the triangle-normal slope at the target.
@@ -6875,7 +6890,7 @@ function frame(now) {
       const amp = (0.06 + (player.sprinting ? 0.05 : 0) + player.scramble * 0.07) * moving;
       const freq = player.scramble > 0.3 ? 1.7 : 2.6;           // heavier when scrambling
       const bob = Math.sin(player.bob * freq) * amp;
-      const sit = resting ? -0.8 : 0;                           // sit down to rest
+      const sit = resting ? -0.8 : (crouching ? -CROUCH_DROP : 0);   // §13.4 lower the camera when crouched (deeper when resting)
       const target = standH + EYE + bob + sit;
       player.eyeY += (target - player.eyeY) * Math.min(1, dt * 14);
       player.feetY = standH;                                    // stay synced with the ground
