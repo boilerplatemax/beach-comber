@@ -2487,6 +2487,7 @@ addEventListener("keydown", (e) => {
     if (e.code === "KeyF" && (mode === "walk" || mode === "free")) toggleFly();
     if (e.code === "KeyN") forceSpawn = !forceSpawn;   // (moved off B — B now opens the bucket)
     if (e.code === "KeyY") { dbgYGraph = !dbgYGraph; document.getElementById("ygraph").style.display = dbgYGraph ? "block" : "none"; }   // §P1 feet/cam Y graph
+    if (e.code === "KeyK") { crabLog = !crabLog; console.log("crab log " + (crabLog ? "ON" : "OFF")); }   // §1c crab lifecycle log
   }
 });
 addEventListener("keyup", (e) => { keys[e.code] = false; });
@@ -4352,8 +4353,8 @@ function latinName() { return ODD_GENUS[(rng()*ODD_GENUS.length)|0] + " " + ODD_
 function spawnCreature(t, x, z, extra) {
   const e = { kind: "creature", t, x, z, yaw: rng()*6.283, scale: CREATURES[t].base*(0.85+rng()*0.3),
               phase: rng()*6.283, state: "idle", timer: rng()*3, vx: 0, vz: 0, hx: x, hz: z, hr: extra?.hr||6,
-              closed: 0, special: false, name: CREATURES[t].label, tint: [1,1,1] };
-  Object.assign(e, extra); life.push(e); return e;
+              closed: 0, special: false, name: CREATURES[t].label, tint: [1,1,1], id: _critId++ };
+  Object.assign(e, extra); life.push(e); if (crabLog && t === "crab") console.log(`crab#${e.id} spawn at ${x.toFixed(1)},${z.toFixed(1)}`); return e;
 }
 function spawnFind(t, x, z) {
   life.push({ kind: "find", t, x, z, yaw: rng()*6.283, scale: FINDS[t].base*(0.85+rng()*0.3),
@@ -4510,6 +4511,17 @@ function washUp(initial) {
   if (finds.length > 500) life = life.filter((e) => e.kind !== "find").concat(finds.slice(-500));
 }
 
+// §1c crab lifecycle logging (toggle with K in debug mode) + a stable id per creature
+let _critId = 0, crabLog = false;
+// §1c a point on the wet sand band (just above the current waterline) near (cx,cz), or null
+function wetBandSpot(cx, cz) {
+  for (let t = 0; t < 22; t++) {
+    const a = rng()*6.283, r = 1.5 + rng()*8, x = cx + Math.cos(a)*r, z = cz + Math.sin(a)*r;
+    const b = waterLevel - heightAt(x, z);                 // negative = above the water
+    if (b < -0.1 && b > -3.2 && waterDepthAt(x, z) < 0.12) return [x, z];
+  }
+  return null;
+}
 // visibility: is this entity currently present given tide/time?
 function lifeVisible(e) {
   const g = heightAt(e.x, e.z);
@@ -4595,9 +4607,9 @@ function behave(e, dt, d, dx, dz) {
   if (e.t === "crab") {
     if (e.burrow === undefined) e.burrow = 0;
     const shy = crouching ? 1.2 : 2.4;                       // §13.4 less skittish when the player crouches
-    if (e.state === "sinking") {                             // §13.1 sink into the sand (animated), relocate only once hidden
+    if (e.state === "sinking") {                             // §13.1 sink into the sand (animated); relocate only once hidden
       e.burrow = Math.min(1, e.burrow + dt*1.8);
-      if (e.burrow >= 1) { const a = rng()*6.283, rr = e.hr*(0.45 + rng()*0.5); e.x = e.hx + Math.cos(a)*rr; e.z = e.hz + Math.sin(a)*rr; e.state = "emerging"; }
+      if (e.burrow >= 1) { const sp = wetBandSpot(e.hx, e.hz) || wetBandSpot(e.x, e.z); if (sp) { e.x = sp[0]; e.z = sp[1]; } e.state = "emerging"; if (crabLog) console.log(`crab#${e.id} buried → re-emerge ${e.x.toFixed(1)},${e.z.toFixed(1)}`); }
       return;
     }
     if (e.state === "emerging") {                            // rise back up elsewhere, but wait if the player is on top of it
@@ -4606,12 +4618,25 @@ function behave(e, dt, d, dx, dz) {
       if (e.burrow <= 0) { e.state = "wander"; spawnSand(e.x, heightAt(e.x,e.z)+0.1, e.z, 5, [0.82,0.76,0.58]); }
       return;
     }
-    if (d < shy && waterDepthAt(e.x, e.z) < 0.1) {           // cornered on dry sand → burrow with a sand puff
-      e.state = "sinking"; e.burrow = 0; spawnSand(e.x, heightAt(e.x,e.z)+0.1, e.z, 8, [0.82,0.76,0.58]); return;
+    // §1c keep crabs on the wet sand band as the tide shifts: outside the band, burrow (if on screen) or quietly reseat (if culled)
+    const band = waterLevel - heightAt(e.x, e.z);            // negative = above the water
+    if (band > 0.08 || band < -3.8) {
+      if (lifeVisible(e)) { e.state = "sinking"; e.burrow = 0; spawnSand(e.x, heightAt(e.x,e.z)+0.1, e.z, 8, [0.82,0.76,0.58]); if (crabLog) console.log(`crab#${e.id} out of band (visible) → burrow`); return; }
+      const sp = wetBandSpot(e.hx, e.hz); if (sp) { e.x = sp[0]; e.z = sp[1]; if (crabLog) console.log(`crab#${e.id} out of band (culled) → reseat`); } return;   // invisible: just move it, no pop
     }
-    if (d < 11) { const a = Math.atan2(-dz, -dx); e.x -= Math.cos(a)*dt*6; e.z -= Math.sin(a)*dt*6; e.yaw = a+1.57; return; }   // scuttle away, staying visible
+    if (d < shy && waterDepthAt(e.x, e.z) < 0.1) {           // cornered on dry sand → burrow with a sand puff
+      e.state = "sinking"; e.burrow = 0; spawnSand(e.x, heightAt(e.x,e.z)+0.1, e.z, 8, [0.82,0.76,0.58]); if (crabLog) console.log(`crab#${e.id} cornered → burrow`); return;
+    }
+    // band-follow bias: nudge toward the water if drifting dry, uphill if drifting wet — so it never leaves the visible band
+    const grad = groundGradient(e.x, e.z); let bx = 0, bz = 0;
+    if (band > -0.4) { bx = -grad.dx; bz = -grad.dz; } else if (band < -2.8) { bx = grad.dx; bz = grad.dz; }
+    if (d < 11) {                                            // flee, but curve ALONG the band rather than straight up the beach
+      const a = Math.atan2(-dz, -dx); let fx = Math.cos(a) + bx*1.6, fz = Math.sin(a) + bz*1.6; const m = Math.hypot(fx, fz) || 1;
+      e.x += fx/m*dt*6; e.z += fz/m*dt*6; e.yaw = Math.atan2(fz, fx)+1.57; return;
+    }
     e.timer -= dt; if (e.timer < 0) { e.timer = 0.6+rng()*1.4; e.vx = (rng()-0.5); e.vz = (rng()-0.5); }
-    e.x += e.vx*dt*2.5; e.z += e.vz*dt*2.5; e.yaw = Math.atan2(e.vz, e.vx)+1.57;
+    const wx = e.vx + bx*1.2, wz = e.vz + bz*1.2;
+    e.x += wx*dt*2.5; e.z += wz*dt*2.5; e.yaw = Math.atan2(wz, wx)+1.57;
     if (Math.hypot(e.x-e.hx, e.z-e.hz) > e.hr) { e.vx = (e.hx-e.x)*0.1; e.vz = (e.hz-e.z)*0.1; }
   } else if (e.t === "fish") {
     const fast = d < 12 ? 7 : 2.5;
