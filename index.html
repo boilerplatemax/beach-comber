@@ -257,6 +257,12 @@
   #debugpanel label { display: block; margin: 10px 0; font-size: 12px; opacity: .8; }
   #debugpanel input[type=range] { width: 100%; }
   .dbgspd.on { background: #2b6f78; border-color: #3f9aa5; }
+  /* §13.1 minimal resume hint over the live game (never the title screen) */
+  #resumehint { position: fixed; inset: 0; z-index: 11; display: none; align-items: center; justify-content: center;
+    background: rgba(8,12,16,.28); cursor: pointer; }
+  #resumehint span { font-size: 15px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--ink);
+    text-shadow: 0 1px 3px var(--ink-shadow); padding: 12px 22px; background: var(--facet);
+    clip-path: polygon(10px 0,calc(100% - 10px) 0,100% 10px,100% calc(100% - 10px),calc(100% - 10px) 100%,10px 100%,0 calc(100% - 10px),0 10px); }
   /* §12C pry-open timing mini-game */
   #pryoverlay { position: fixed; left: 50%; bottom: 20%; transform: translateX(-50%); z-index: 9; display: none;
     flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
@@ -322,6 +328,7 @@
   </div>
 </div>
 <div id="settingspanel"></div>
+<div id="resumehint"><span>click to resume</span></div>
 <div id="pryoverlay"><canvas id="prycv" width="260" height="190"></canvas><div id="pryhint">Shovel the latch — strike the glowing arc</div></div>
 <div id="stashpanel"></div>
 
@@ -2061,9 +2068,25 @@ function openSettings() {
   p.querySelector(".closebtn").onclick = () => { p.style.display = "none"; };
   p.style.display = "block";
 }
+// §13.1 a panel is open (cursor intentionally freed) → closing it returns to the game, never the title
+function isPanelOpen() {
+  return (typeof invOpen !== "undefined" && invOpen)
+      || (typeof inspect !== "undefined" && inspect.open)
+      || (typeof stashOpen !== "undefined" && stashOpen >= 0)
+      || (typeof pry !== "undefined" && !!pry)
+      || document.getElementById("journal").style.display === "block"
+      || document.getElementById("settingspanel").style.display === "block";
+}
+function requestLock() {   // re-acquire pointer lock after a gesture (closing a panel); harmless if it fails
+  if (!IS_TOUCH && mode === "walk" && !isPanelOpen()) { try { canvas.requestPointerLock(); } catch (e) {} }
+}
 document.addEventListener("pointerlockchange", () => {
-  if (document.pointerLockElement !== canvas && mode === "walk") overlay.classList.remove("hidden");
+  const locked = document.pointerLockElement === canvas;
+  const hint = document.getElementById("resumehint");
+  // lost lock mid-game and no panel is responsible (e.g. after Esc) → a minimal resume hint, not the title
+  hint.style.display = (!locked && mode === "walk" && !isPanelOpen()) ? "flex" : "none";
 });
+document.getElementById("resumehint").addEventListener("click", () => { if (!IS_TOUCH) canvas.requestPointerLock(); });
 initTitle();
 const hud = document.getElementById("hud");
 const crossEl = document.getElementById("crosshair");
@@ -3752,7 +3775,7 @@ let invOpen = false;
 function toggleInventory() {
   invOpen = !invOpen; document.getElementById("invpanel").style.display = invOpen ? "block" : "none";
   if (invOpen) { renderInventory(); if (document.pointerLockElement === canvas) document.exitPointerLock(); }   // free the cursor for the bag
-  else { hideTip(); hideContextMenu(); }
+  else { hideTip(); hideContextMenu(); requestLock(); }                                                        // §13.1 back to the game
 }
 function renderInventory() {
   if (!invOpen) return;
@@ -3937,7 +3960,7 @@ function treasureJournal() {   // §12C a page of chests found and what they hel
 }
 function toggleJournal() {
   const j = document.getElementById("journal");
-  if (j.style.display === "block") { j.style.display = "none"; return; }
+  if (j.style.display === "block") { j.style.display = "none"; requestLock(); return; }   // §13.1 back to the game
   const row = (reg, prefix) => Object.keys(reg).map((k) => {
     const got = discovered.has(prefix + k);
     const cnt = prefix === "f_" ? (Inv.count(k) ? " ×" + Inv.count(k) : "") : "";
@@ -4955,7 +4978,7 @@ function openInspect(subject, kind) {
   if (document.pointerLockElement === canvas) document.exitPointerLock();
   renderInspectInfo(); inspect.el.style.display = "flex";
 }
-function closeInspect() { inspect.open = false; if (inspect.el) inspect.el.style.display = "none"; }
+function closeInspect() { inspect.open = false; if (inspect.el) inspect.el.style.display = "none"; if (typeof requestLock === "function") requestLock(); }
 function renderInspectInfo() {
   const nameEl = document.getElementById("inspName"), rEl = document.getElementById("inspRarity"),
     vEl = document.getElementById("inspVariant"), dEl = document.getElementById("inspDesc"),
@@ -6224,7 +6247,7 @@ function openStash(bi) {
   renderStash();
   document.getElementById("stashpanel").style.display = "block";
 }
-function closeStash() { stashOpen = -1; document.getElementById("stashpanel").style.display = "none"; }
+function closeStash() { stashOpen = -1; document.getElementById("stashpanel").style.display = "none"; if (typeof requestLock === "function") requestLock(); }
 function renderStash() {
   const p = document.getElementById("stashpanel"); if (stashOpen < 0) return;
   const cell = (c, where, idx) => { if (!c) return `<div class="islot"></div>`;
