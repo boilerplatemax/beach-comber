@@ -299,6 +299,21 @@
   #inspectview button:hover:not(:disabled) { filter: brightness(1.22); }
   #inspectview button:disabled { opacity: .4; cursor: default; }
   #inspRelease { background: linear-gradient(150deg, #3f9a86 0 46%, #2b7866 46% 100%); color: #eefaf4; }
+  /* §13.3 "Look inside" — a large top-down close-up of the bucket */
+  #bucketlook { position: fixed; inset: 0; z-index: 24; display: none; align-items: center; justify-content: center;
+    background: rgba(6,10,13,.72); backdrop-filter: blur(2px); }
+  #bucketlookbox { background: var(--facet); padding: 18px; box-shadow: 0 12px 40px rgba(0,0,0,.55); text-align: center;
+    clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); }
+  #bucketlookbox h2 { font-size: 20px; margin: 0 0 4px; letter-spacing: .03em; }
+  #bucketlookbox .bl-sub { font-size: 12px; opacity: .7; margin-bottom: 12px; }
+  #bucketlookcanvas { width: 340px; height: 340px; max-width: 80vw; max-height: 80vw; background: #0d1418; image-rendering: pixelated;
+    cursor: pointer; touch-action: manipulation;
+    clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px); }
+  #bucketlookbox .bl-hint { font-size: 12px; opacity: .6; margin-top: 10px; }
+  #bucketlookbox button { font: inherit; font-size: 13px; font-weight: 600; letter-spacing: .04em; padding: 8px 18px; margin-top: 12px; cursor: pointer;
+    border: none; background: var(--facet); color: var(--ink); text-shadow: 0 1px 1px var(--ink-shadow); filter: brightness(1.15);
+    clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px); }
+  #bucketlookbox button:hover { filter: brightness(1.35); }
   #help {
     position: fixed; right: 12px; bottom: 12px; z-index: 5; pointer-events: none;
     font-size: 12px; opacity: .55; text-align: right; line-height: 1.5;
@@ -348,6 +363,15 @@
 <div id="invpanel"></div>
 <canvas id="bucketpanel" width="125" height="145"></canvas>
 <div id="ctxmenu"></div>
+<div id="bucketlook">
+  <div id="bucketlookbox">
+    <h2>Inside the bucket</h2>
+    <div class="bl-sub" id="bucketlookcount"></div>
+    <canvas id="bucketlookcanvas" width="340" height="340"></canvas>
+    <div class="bl-hint">Tap a creature to inspect it</div>
+    <button id="bucketlookclose">Close</button>
+  </div>
+</div>
 <div id="inspectview">
   <div id="inspectbox">
     <canvas id="inspectcanvas" width="300" height="300"></canvas>
@@ -1868,6 +1892,7 @@ let mobileSprint = false;        // mobile "Run" toggle writes here
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (e.code === "Escape" && typeof inspect !== "undefined" && inspect.open) { closeInspect(); return; }   // close the close-up first
+  if (e.code === "Escape" && typeof bucketLook !== "undefined" && bucketLook.open) { closeBucketLook(); return; }
   if (typeof pry !== "undefined" && pry) {                                   // §12C mini-game captures space / esc
     if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); pryStrike(); return; }
     if (e.code === "Escape") { cancelPry(); return; }
@@ -1879,12 +1904,13 @@ addEventListener("keydown", (e) => {
   if (e.code === "KeyR" && mode === "walk") { resting = !resting; if (resting) { analog.x = analog.y = 0; } }
   if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
   if (e.code === "KeyI") toggleInventory();           // inventory panel
+  if (e.code === "KeyB" && mode === "walk" && !isPanelOpen() && ownsTool("bucket")) openBucketLook();   // §13.3 look inside the bucket
   if (e.code === "KeyP" && mode === "walk") toggleAutoPickup();   // auto-pickup on/off
   if (/^Digit[1-8]$/.test(e.code)) selectHotbar(+e.code.slice(5) - 1);
   if (debugMode) {                                    // debug-only shortcuts
     if (e.code === "Backquote") debugOn = !debugOn;
     if (e.code === "KeyF" && (mode === "walk" || mode === "free")) toggleFly();
-    if (e.code === "KeyB") forceSpawn = !forceSpawn;
+    if (e.code === "KeyN") forceSpawn = !forceSpawn;   // (moved off B — B now opens the bucket)
   }
 });
 addEventListener("keyup", (e) => { keys[e.code] = false; });
@@ -2086,6 +2112,7 @@ function isPanelOpen() {
       || (typeof inspect !== "undefined" && inspect.open)
       || (typeof stashOpen !== "undefined" && stashOpen >= 0)
       || (typeof pry !== "undefined" && !!pry)
+      || (typeof bucketLook !== "undefined" && bucketLook.open)
       || document.getElementById("journal").style.display === "block"
       || document.getElementById("settingspanel").style.display === "block";
 }
@@ -3009,6 +3036,8 @@ function shellMesh() { const m = Mesh(); mCyl(m,0,0.4,0.25,0,7,[0.9,0.85,0.78]);
 function glassMesh(col) { const m = Mesh(); mRock(m, mulberry32(7), col); return m; }
 function floatMesh() { const m = Mesh(); mRock(m, mulberry32(11), [0.4,0.6,0.55]); return m; }
 function cuttleMesh() { return discMesh(0.05,0.4,6,0.05,[0.92,0.9,0.85]); }
+// §13.3 a small curled, drab dried husk — the sun-dried remains of a soft shore creature
+function huskMesh() { const m = discMesh(0.0,0.26,6,0.17,[0.56,0.5,0.42]); mergeMesh(m, discMesh(0.0,0.24,6,-0.08,[0.47,0.42,0.35])); return m; }
 function eggMesh() { const m = Mesh(); mBox(m,0,0.1,0,0.35,0.1,0.22,[0.12,0.1,0.09]); for(const s of [-1,1]) mTri(m,[s*0.35,0.1,0.22],[s*0.6,0.3,0.3],[s*0.35,0.1,-0.22],[0.1,0.09,0.08]); return m; }
 function bottleMesh() { const m = Mesh(); mCyl(m,0,0.7,0.2,0.2,7,[0.35,0.5,0.4]); mCyl(m,0.7,1.0,0.2,0.09,7,[0.35,0.5,0.4]); mCyl(m,1.0,1.15,0.09,0.09,6,[0.3,0.25,0.2]); return m; }
 function boneMesh() { const m = Mesh(); mCyl(m,-0.6,0.6,0.16,0.16,6,[0.88,0.85,0.78]); mRock(m,mulberry32(3),[0.88,0.85,0.78]); return m; }
@@ -3208,6 +3237,9 @@ const FINDS = {
   gullegg:  { mesh: () => eggFoodMesh(),             base: 0.45,max: 60,  label: "Gull Egg", desc: "Speckled and still warm. Good food, and better cooked.", rare: 0 },
   rope:     { mesh: () => ropeMesh(),                base: 0.5, max: 60,  label: "Coiled Rope", desc: "A tangle of weathered rope, washed in on the surge.", rare: 0 },
   crate:    { mesh: () => crateMesh(),               base: 0.7, max: 40,  label: "Broken Crate", desc: "A salt-stained wooden crate, its boards sprung.", rare: 1 },
+  // §13.3 dried remains — what a scooped or stranded creature leaves behind when it dries out completely
+  driedstar:{ mesh: () => starMesh([0.64,0.57,0.47]), base: 0.8, max: 60, label: "Dried Sea Star", desc: "A sea star left too long in the air, stiff and curled.", rare: 1 },
+  husk:     { mesh: () => huskMesh(),                base: 0.45,max: 60,  label: "Dried Husk", desc: "The shrivelled remains of a small shore creature that dried out.", rare: 0 },
 };
 
 // build dynamic draw objects
@@ -3348,19 +3380,32 @@ function lifeVisible(e) {
 const UPDATE_R = 70, DRAW_R = 190;
 function updateLife(dt, tSec) {
   const px = cam.pos[0], pz = cam.pos[2];
-  for (const e of life) {
+  for (let i = life.length - 1; i >= 0; i--) {
+    const e = life[i];
     const dx = e.x - px, dz = e.z - pz, d2 = dx*dx + dz*dz;
     if (d2 > UPDATE_R*UPDATE_R) continue;                // sleep distant entities
     const d = Math.sqrt(d2);
     e.phase += dt;
     if (e.kind === "find") continue;
     behave(e, dt, d, dx, dz);
+    if (e.dead) life.splice(i, 1);                       // §13.3 dried out — removed, remains already dropped
   }
+}
+// §13.3 a stranded creature (poured/dropped on dry land, not in a natural pool/burrow) dries out and dies,
+// leaving its natural remains where it lay. Returns true if it died this frame.
+function creatureExposureDry(e, dt) {
+  if (waterDepthAt(e.x, e.z) > 0.08) { e.exposed = 0; return false; }   // reached water → safe
+  e.exposed = (e.exposed || 0) + dt;
+  if (e.exposed < DRY_OUT_TIME) return false;
+  const rem = DRIED_REMAINS[e.t] || "husk";
+  spawnFind(rem, e.x, e.z);                                             // its dried remains, left on the sand
+  e.dead = true; return true;
 }
 function behave(e, dt, d, dx, dz) {
   const g = heightAt(e.x, e.z);
   if (e.returning) {                                           // poured onto dry land → head for the nearest water
-    if (waterDepthAt(e.x, e.z) > 0.12) { e.returning = false; e.hx = e.x; e.hz = e.z; return; }
+    if (waterDepthAt(e.x, e.z) > 0.12) { e.returning = false; e.exposed = 0; e.hx = e.x; e.hz = e.z; return; }
+    if (creatureExposureDry(e, dt)) return;                    // §13.3 too slow → dries out and dies
     const grad = groundGradient(e.x, e.z); e.x += grad.dx*dt*2.4; e.z += grad.dz*dt*2.4; e.yaw = Math.atan2(grad.dz, grad.dx) + 1.57; return;
   }
   if (e.t === "crab") {
@@ -3615,7 +3660,7 @@ function invDrop(idx, one) {
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
   try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode,
-    bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, caught: c.caught })) } })); } catch (e) {}
+    bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, moist: c.moist, caught: c.caught })) } })); } catch (e) {}
 }
 function loadState() {
   try {
@@ -3626,7 +3671,8 @@ function loadState() {
       starsRescued = s.rescued || 0;
       if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
-      if (s.bucket) { bucket.water = !!s.bucket.water; bucket.creatures = Array.isArray(s.bucket.creatures) ? s.bucket.creatures : []; }
+      if (s.bucket) { bucket.water = !!s.bucket.water; bucket.creatures = Array.isArray(s.bucket.creatures) ? s.bucket.creatures : [];
+        for (const c of bucket.creatures) if (c.moist === undefined) c.moist = 1; }   // §13.3 older saves: start soaked
     }
   } catch (e) {}
 }
@@ -3824,6 +3870,8 @@ function renderHotbar() {
     s.addEventListener("touchstart", pick, { passive: false });   // mobile: tap a loop to switch tool
     s.addEventListener("auxclick", (e) => { if (e.button === 1) { e.preventDefault();   // §13.2 middle-click cycles the Tool Kit
       const c = Inv.hotbar[+s.dataset.h]; if (c && c.id === "toolkit") { Inv.selected = +s.dataset.h; cycleToolkit(); } } });
+    s.addEventListener("contextmenu", (e) => {   // §13.3 right-click the bucket on the belt → Look inside
+      const c = Inv.hotbar[+s.dataset.h]; if (c && c.id === "bucket") { e.preventDefault(); e.stopPropagation(); Inv.selected = +s.dataset.h; renderHotbar(); openBucketLook(); } });
   });
 }
 function slotHTML(cell, idx, hk) {
@@ -4811,6 +4859,12 @@ function removeBuiltAt(x, z) {
  * ===================================================================== */
 const bucket = { water: false, creatures: [] };
 const BUCKET_CAP = 5;
+// §13.3 moisture: a creature out of water dries out over DRY_OUT_TIME real-seconds (tunable, ~5 min).
+// A fresh scoop / a refill tops it back to 1; a dry bucket lets it fall to 0, where the creature dies.
+const DRY_OUT_TIME = 300;                        // seconds from soaked to dead when kept dry (tunable)
+// what each creature leaves behind once it dries out completely → a Find
+const DRIED_REMAINS = { crab: "molt", hermit: "shell", star: "driedstar", urchin: "sanddollar",
+                        fish: "husk", anemone: "husk", jelly: "husk", hopper: "husk", piper: "husk" };
 // where/when a creature was scooped, for the close-up inspect card (§11.7)
 function catchBiomeLabel(x, z) {
   if (waterDepthAt(x, z) > 0.05) return "the shallows";
@@ -4820,13 +4874,29 @@ function catchTideLabel() { return isMinusTideNow() ? "a minus tide" : (tideInfo
 // §13.1 every small shore/pool creature is scoopable (seals/gulls/herons are too big for a pail)
 const BUCKETABLE = { crab: 1, fish: 1, star: 1, hermit: 1, anemone: 1, urchin: 1, jelly: 1, hopper: 1, piper: 1 };
 function bucketScoop(e) {                                       // bucket used on a creature
-  if (!bucket.water) { showCard("Empty bucket", "Fill it at the water's edge first."); return true; }
   if (bucket.creatures.length >= BUCKET_CAP) { showCard("Bucket full", `It holds ${BUCKET_CAP} creatures.`); return true; }
   if (!BUCKETABLE[e.t]) return false;                          // not scoopable → let the normal inspect happen
+  // §13.3 creatures can always be scooped, with or without water; a fresh catch starts fully moist
   bucket.creatures.push({ t: e.t, scale: e.scale, tint: e.tint || [1,1,1], special: !!e.special, name: e.name, poolRim: e.poolRim,
-    caught: { biome: catchBiomeLabel(e.x, e.z), tide: catchTideLabel() } });
+    moist: 1, caught: { biome: catchBiomeLabel(e.x, e.z), tide: catchTideLabel() } });
   const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
-  discovered.add(e.t); if (onDig) onDig("splash"); saveState(); return true;
+  discovered.add(e.t); if (onDig) onDig(bucket.water ? "splash" : "sift"); saveState(); return true;
+}
+// §13.3 advance the drying clock for the bucket's contents; a creature that dries out dies → dried remains to Finds.
+function updateBucketMoisture(dt) {
+  if (bucket.water) { for (const c of bucket.creatures) c.moist = 1; return; }   // water keeps everything soaked
+  for (let i = bucket.creatures.length - 1; i >= 0; i--) {
+    const c = bucket.creatures[i];
+    if (c.moist === undefined) c.moist = 1;
+    c.moist = Math.max(0, c.moist - dt / DRY_OUT_TIME);
+    if (c.moist <= 0) {                                        // dried out → dies, leaves its natural remains
+      const rem = DRIED_REMAINS[c.t] || "husk";
+      Inv.add(rem, 1); const first = !discovered.has("f_" + rem); discovered.add("f_" + rem);
+      if (typeof notify === "function") notify(rem, 1, first);
+      showCard((CREATURES[c.t] ? CREATURES[c.t].label : c.t) + " dried out", "It didn't survive the dry bucket. " + (ITEMS[rem] ? ITEMS[rem].name : rem) + " added to your Finds.");
+      bucket.creatures.splice(i, 1); saveState();
+    }
+  }
 }
 function spawnFromBucket(c, x, z, extra) { const e = spawnCreature(c.t, x, z, extra || {}); e.scale = c.scale; e.tint = c.tint; e.special = c.special; e.name = c.name; return e; }
 function useBucket(x, z) {
@@ -4834,9 +4904,17 @@ function useBucket(x, z) {
   const depth = waterDepthAt(x, z), atWater = depth > 0.08;
   const i = cellIndex(x, z), inHole = i >= 0 && dig[i] < -0.3 && !atWater;
   const sy = surfaceAt(x, z).h;
-  if (!bucket.water && bucket.creatures.length === 0) {         // empty → fill
-    if (atWater) { bucket.water = true; if (onDig) onDig("splash"); spawnSand(x, sy + 0.1, z, 10, [0.72, 0.86, 0.96]); saveState(); }
-    else failStrike(false, x, sy + 0.3, z);                     // nothing to scoop water from
+  const wading = waterDepthAt(player.x, player.z) > 0.12;       // §13.3 standing in deep enough water
+  // §13.3 if the bucket isn't full of water yet, clicking water (or just wading) tops it up —
+  // creatures already inside stay in and get re-soaked. No need to empty it first.
+  if (!bucket.water && (atWater || wading)) {
+    bucket.water = true; for (const c of bucket.creatures) c.moist = 1;
+    if (onDig) onDig("splash"); spawnSand(x, sy + 0.1, z, 10, [0.72, 0.86, 0.96]); saveState();
+    showCard("Bucket filled", bucket.creatures.length ? "Fresh water — the creatures perk up." : "Full of clear seawater.");
+    return;
+  }
+  if (!bucket.water && bucket.creatures.length === 0) {         // dry, empty, and not aimed at water
+    failStrike(false, x, sy + 0.3, z);                          // nothing to scoop water from
     return;
   }
   // has contents → pour / release
@@ -4948,37 +5026,51 @@ const bucketRingMesh = makeDynamic((function () { const m = Mesh(); const c = [0
     mTri(m, [Math.cos(a0)*ri,0,Math.sin(a0)*ri], [Math.cos(a1)*ro,0,Math.sin(a1)*ro], [Math.cos(a1)*ri,0,Math.sin(a1)*ri], c); }
   return m; })(), 40);
 const CRAWLER = { crab:1, hermit:1, star:1, anemone:1, urchin:1, hopper:1 };    // live on the floor, not mid-water
-const BUCKET_SPEED = { fish:0.34, jelly:0.12, crab:0.20, hermit:0.14, star:0.05, hopper:0.22, piper:0.2, anemone:0, urchin:0 };
+const BOTTOM = { star:1, anemone:1, urchin:1 };                                 // §13.3 mostly stay put on the bottom
+// §13.3 calmer motion: gentle, capped speeds — nothing darts or spins in a pail
+const BUCKET_SPEED = { fish:0.14, jelly:0.06, crab:0.10, hermit:0.07, star:0.015, hopper:0.11, piper:0.10, anemone:0, urchin:0 };
 const BUCKET_WATER_COL = [0.16, 0.42, 0.52];
+const BUCKET_TURN = 1.1;                                                        // max heading change (rad/s) — no spinning
+// §13.3 moisture → a drab, dried-out look as a creature dries. 1 = soaked (true colour), 0 = bone dry.
+function moistTint(cr) {
+  const m = cr.moist === undefined ? 1 : cr.moist, t = cr.tint || [1,1,1];
+  if (m >= 0.999) return t;
+  const dry = [0.55,0.5,0.44], k = 1 - m;                                       // lerp toward a dull sandy grey
+  return [t[0]+(dry[0]-t[0])*k*0.8, t[1]+(dry[1]-t[1])*k*0.8, t[2]+(dry[2]-t[2])*k*0.8];
+}
 function stepBucketCreatures(dt) {
   if (!bucket._ripples) bucket._ripples = [];
-  const Rmax = 0.44;
+  const Rmax = 0.42;
   for (const cr of bucket.creatures) {
-    const spd = BUCKET_SPEED[cr.t] ?? 0.16, floor = !!CRAWLER[cr.t];
-    if (cr.bx === undefined) { const a = Math.random()*6.283, r = Math.random()*Rmax*0.7;
-      cr.bx = Math.cos(a)*r; cr.bz = Math.sin(a)*r; cr.bph = Math.random()*6.283;
-      const d = Math.random()*6.283; cr.bvx = Math.cos(d)*spd; cr.bvz = Math.sin(d)*spd; cr.byaw = d; }
+    const spd = (BUCKET_SPEED[cr.t] ?? 0.1) * (bucket.water ? 1 : 0.45), floor = !!CRAWLER[cr.t], bottom = !!BOTTOM[cr.t];
+    if (cr.bx === undefined) { const a = Math.random()*6.283, r = Math.random()*Rmax*0.6;
+      cr.bx = Math.cos(a)*r; cr.bz = Math.sin(a)*r; cr.bph = Math.random()*6.283; cr.bdir = Math.random()*6.283; }
     cr.bph += dt;
-    if (spd > 0) {
-      cr.bvx += (Math.random()-0.5)*0.09; cr.bvz += (Math.random()-0.5)*0.09;
-      const s = Math.hypot(cr.bvx, cr.bvz); if (s > 1e-4) { cr.bvx = cr.bvx/s*spd; cr.bvz = cr.bvz/s*spd; }
-      cr.bx += cr.bvx*dt; cr.bz += cr.bvz*dt;
+    if (spd > 0 && !bottom) {
+      // steer with a slowly-wandering heading, clamped turn rate (no spinning), then creep forward
+      cr.bdir += (Math.random()-0.5) * BUCKET_TURN * dt * 2;
       const r = Math.hypot(cr.bx, cr.bz);
-      if (r > Rmax) { const nx = cr.bx/r, nz = cr.bz/r, dot = cr.bvx*nx + cr.bvz*nz;  // bump off the wall
-        cr.bvx -= 2*dot*nx; cr.bvz -= 2*dot*nz; cr.bx = nx*Rmax; cr.bz = nz*Rmax;
-        if (bucket.water) bucket._ripples.push({ x: cr.bx, z: cr.bz, t: 0 }); }
-      cr.byaw = Math.atan2(cr.bvx, cr.bvz);
+      if (r > Rmax*0.9) {                                                       // near the wall → ease the heading back inward
+        const inward = Math.atan2(-cr.bz, -cr.bx);
+        let d = inward - cr.bdir; while (d > Math.PI) d -= 6.283; while (d < -Math.PI) d += 6.283;
+        cr.bdir += Math.max(-BUCKET_TURN*dt*2.5, Math.min(BUCKET_TURN*dt*2.5, d));
+      }
+      cr.bx += Math.cos(cr.bdir)*spd*dt; cr.bz += Math.sin(cr.bdir)*spd*dt;
+      const r2 = Math.hypot(cr.bx, cr.bz); if (r2 > Rmax) { cr.bx = cr.bx/r2*Rmax; cr.bz = cr.bz/r2*Rmax; }
+      cr.byaw = cr.bdir + 1.57;
+      if (bucket.water && Math.random() < dt*0.6) bucket._ripples.push({ x: cr.bx, z: cr.bz, t: 0 });
+    } else if (bottom) {
+      cr.byaw = (cr.byaw || 0) + dt*0.15;                                       // a slow, calm rotation in place
     }
-    cr.by = floor ? -0.54 + Math.sin(cr.bph*2)*0.01 : -0.22 + Math.sin(cr.bph*2.4)*0.07;
-    if (bucket.water && !floor && Math.random() < dt*1.1) bucket._ripples.push({ x: cr.bx, z: cr.bz, t: 0 });
+    cr.by = floor ? -0.54 + Math.sin(cr.bph*1.6)*0.008 : -0.22 + Math.sin(cr.bph*1.8)*0.05;
   }
   if (bucket._ripples) for (let i = bucket._ripples.length-1; i >= 0; i--) { bucket._ripples[i].t += dt; if (bucket._ripples[i].t > 1.1) bucket._ripples.splice(i, 1); }
 }
 function drawBucketScene() {
   bucketMesh.draw(miniInst(0, 0, 0, 1, 0, 0, 0, [1,1,1]), 1);
   for (const cr of bucket.creatures) { const reg = CREATURES[cr.t]; if (!reg) continue;
-    const sc = Math.min(0.22, (cr.scale || 0.5) * 0.24);
-    reg.dyn.draw(miniInst(cr.bx, cr.by, cr.bz, sc, cr.byaw || 0, 0, 0, cr.tint || [1,1,1]), 1); }
+    const sc = Math.min(0.2, (cr.scale || 0.5) * 0.22);
+    reg.dyn.draw(miniInst(cr.bx, cr.by, cr.bz, sc, cr.byaw || 0, 0, 0, moistTint(cr)), 1); }
 }
 function drawBucketRipples() {
   if (!bucket.water || !bucket._ripples) return;
@@ -4989,17 +5081,62 @@ function drawBucketRipples() {
 let bucketPanelEl = null, bucketCtx = null, _bucketT = 0;
 function updateBucketPanel() {
   if (!bucketPanelEl) { bucketPanelEl = document.getElementById("bucketpanel"); bucketCtx = bucketPanelEl.getContext("2d");
-    bucketPanelEl.addEventListener("click", () => { if (typeof openInspect === "function" && bucket.creatures.length) openInspect(bucket.creatures[0], "bucket"); }); }
-  const show = mode === "walk" && selectedTool() === "bucket" && (bucket.water || bucket.creatures.length);
+    // §13.3 tapping the HUD peek opens the full "Look inside" view (works on desktop and mobile)
+    bucketPanelEl.addEventListener("click", () => openBucketLook()); }
+  const show = mode === "walk" && selectedTool() === "bucket" && (bucket.water || bucket.creatures.length) && !bucketLook.open;
   bucketPanelEl.style.display = show ? "block" : "none"; if (!show) return;
   const now = performance.now() * 0.001, dt = Math.min(0.05, now - (_bucketT || now)); _bucketT = now;
   stepBucketCreatures(dt);
   const fbo = miniFBO(bucketPanelEl.width, bucketPanelEl.height);
-  renderMini(fbo, [0, 1.12, 1.24], [0, -0.12, 0], 0.86, 0.015, bucket.water ? 0.66 : 0, BUCKET_WATER_COL,
+  renderMini(fbo, [0, 1.5, 1.68], [0, -0.22, 0], 0.92, 0.015, bucket.water ? 0.66 : 0, BUCKET_WATER_COL,
     drawBucketScene, drawBucketRipples);
   blitMini(fbo, bucketCtx);
   bucketCtx.fillStyle = "#ecdfc4"; bucketCtx.font = "600 11px 'Chakra Petch', monospace"; bucketCtx.textAlign = "center";
   bucketCtx.fillText(`${bucket.creatures.length}/${BUCKET_CAP}`, bucketPanelEl.width/2, bucketPanelEl.height - 4);
+}
+// §13.3 "Look inside": a large top-down close-up; tap a creature to open its inspect card.
+const bucketLook = { open: false, el: null, ctx: null, cv: null, t: 0, vp: null };
+const BL_EYE = [0, 2.0, 1.0], BL_TGT = [0, -0.28, 0], BL_FOV = 0.82;
+function projectBL(x, y, z, W, H) {
+  if (!bucketLook.vp) return null; const vp = bucketLook.vp, o = [0,0,0,0];
+  for (let r = 0; r < 4; r++) o[r] = vp[r]*x + vp[4+r]*y + vp[8+r]*z + vp[12+r];
+  if (o[3] <= 0.01) return null;
+  return [(o[0]/o[3]*0.5+0.5)*W, (1-(o[1]/o[3]*0.5+0.5))*H];
+}
+function openBucketLook() {
+  if (!(bucket.water || bucket.creatures.length)) { showCard("Empty bucket", "Scoop a creature, or fill it with water first."); return; }
+  if (!bucketLook.el) {
+    bucketLook.el = document.getElementById("bucketlook");
+    bucketLook.cv = document.getElementById("bucketlookcanvas"); bucketLook.ctx = bucketLook.cv.getContext("2d");
+    document.getElementById("bucketlookclose").onclick = closeBucketLook;
+    bucketLook.el.addEventListener("pointerdown", (e) => { if (e.target === bucketLook.el) closeBucketLook(); });
+    bucketLook.cv.addEventListener("click", (e) => {
+      const r = bucketLook.cv.getBoundingClientRect();
+      const mx = (e.clientX - r.left)/r.width*bucketLook.cv.width, my = (e.clientY - r.top)/r.height*bucketLook.cv.height;
+      let best = null, bd = 48*48;
+      for (const cr of bucket.creatures) { const sp = projectBL(cr.bx, cr.by||0, cr.bz, bucketLook.cv.width, bucketLook.cv.height); if (!sp) continue;
+        const dd = (sp[0]-mx)*(sp[0]-mx) + (sp[1]-my)*(sp[1]-my); if (dd < bd) { bd = dd; best = cr; } }
+      if (best && typeof openInspect === "function") openInspect(best, "bucket");
+    });
+  }
+  bucketLook.open = true; bucketLook.el.style.display = "flex";
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+}
+function closeBucketLook() { bucketLook.open = false; if (bucketLook.el) bucketLook.el.style.display = "none";
+  if ((!inspect || !inspect.open) && typeof requestLock === "function") requestLock(); }
+function updateBucketLook() {
+  if (!bucketLook.open) return;
+  if (!(bucket.water || bucket.creatures.length)) { closeBucketLook(); return; }   // emptied out → close
+  const cv = bucketLook.cv;
+  const now = performance.now()*0.001, dt = Math.min(0.05, now-(bucketLook.t||now)); bucketLook.t = now;
+  stepBucketCreatures(dt);
+  const fbo = miniFBO(cv.width, cv.height);
+  const proj = M4.perspective(BL_FOV, 1, 0.05, 50), view = M4.lookAt(BL_EYE, BL_TGT, [0,1,0]);
+  bucketLook.vp = M4.multiply(proj, view);
+  renderMini(fbo, BL_EYE, BL_TGT, BL_FOV, 0.015, bucket.water ? 0.66 : 0, BUCKET_WATER_COL, drawBucketScene, drawBucketRipples);
+  blitMini(fbo, bucketLook.ctx);
+  const cEl = document.getElementById("bucketlookcount");
+  if (cEl) cEl.textContent = `${bucket.creatures.length}/${BUCKET_CAP}` + (bucket.creatures.length ? (bucket.water ? " · in fresh water" : " · drying out") : "");
 }
 
 /* ---------- §11.7 close-up inspect: a creature in a little pool, or an item on a turntable ---------- */
@@ -5105,7 +5242,7 @@ function drawInspectCreature() {
   const cr = inspect.subject, reg = CREATURES[cr.t]; if (!reg) return;
   const s = inspect._sim || { x: 0, z: 0, y: -0.2, yaw: 0 }, base = reg.base || cr.scale || 0.5;
   const sc = Math.max(0.3, Math.min(0.95, 0.55 * (cr.scale / base)));
-  reg.dyn.draw(miniInst(s.x, s.y, s.z, sc, s.yaw || 0, 0, 0, cr.tint || [1,1,1]), 1);
+  reg.dyn.draw(miniInst(s.x, s.y, s.z, sc, s.yaw || 0, 0, 0, inspect.kind === "bucket" ? moistTint(cr) : (cr.tint || [1,1,1])), 1);
 }
 function drawInspectRipples() {
   const s = inspect._sim; if (!s || !s.ripples) return;
@@ -6576,6 +6713,7 @@ function frame(now) {
     gdt -= s;
   }
   updateDigging(dt);
+  if (mode === "walk") updateBucketMoisture(dt);   // §13.3 creatures dry out in a dry bucket (real-time)
   // §13.2 hold the use button to keep swinging at a work target (no repeated clicks needed)
   if (useHeld && mode === "walk" && !pry && !invOpen && !isPanelOpen()) {
     const t = effectiveTarget();
@@ -6948,6 +7086,7 @@ function frame(now) {
     `mode ${mode}  ·  POIs ${POIS.map((p) => p.type).join(", ")}`;
   if (mode === "walk") drawTideCurve();
   updateBucketPanel();
+  updateBucketLook();
   updateInspectView();
 
   if (debugOn) {
