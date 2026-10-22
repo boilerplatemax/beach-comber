@@ -3887,6 +3887,72 @@ function drawContactShadows(view) {
   gl.bindVertexArray(null); gl.depthMask(true); gl.disable(gl.BLEND);
 }
 
+/* §3 GULL SHADOWS — soft, elongated, oriented along flight; shrink & fade with height,
+   vanish above a set altitude and at night. A blended decal (darker-than-ground, never a flat black blob). */
+const GULL_SHADOW = { maxAlt: 16, baseR: 0.72, stretch: 1.85, strength: 0.33, offsetK: 0.16 };
+const gshProg = program(`#version 300 es
+precision highp float;
+uniform mat4 uProj, uView;
+in vec2 aPos;               // unit disc, |aPos| <= 1
+in vec4 iA;                 // cx, cy, cz, rx (long radius)
+in vec4 iB;                 // rz (short radius), cos, sin, strength
+out float vR; out float vStr;
+void main(){ vR = length(aPos); vStr = iB.w;
+  vec2 p = aPos * vec2(iA.w, iB.x);                                   // stretch to the ellipse
+  vec2 r = vec2(p.x*iB.y - p.y*iB.z, p.x*iB.z + p.y*iB.y);            // rotate into the flight direction
+  gl_Position = uProj * uView * vec4(iA.x + r.x, iA.y, iA.z + r.y, 1.0); }`,
+`#version 300 es
+precision highp float;
+in float vR; in float vStr; out vec4 frag;
+void main(){ float a = clamp(1.0 - vR, 0.0, 1.0); frag = vec4(0.0, 0.0, 0.0, a*a*vStr); }`);
+const gshU = uniforms(gshProg);
+const GSH_MAX = 24;
+let gshIB = null, gshVAO = null, gshVerts = 0;
+const _gshArr = new Float32Array(GSH_MAX * 8);
+(function initGullShadow(){
+  const aPos = gl.getAttribLocation(gshProg, "aPos"), iA = gl.getAttribLocation(gshProg, "iA"), iB = gl.getAttribLocation(gshProg, "iB");
+  const seg = 16, arr = [];
+  for (let i = 0; i < seg; i++) { const a0 = i/seg*6.283, a1 = (i+1)/seg*6.283;
+    arr.push(0,0, Math.cos(a0),Math.sin(a0), Math.cos(a1),Math.sin(a1)); }
+  gshVerts = arr.length / 2;
+  gshVAO = gl.createVertexArray(); gl.bindVertexArray(gshVAO);
+  const pb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, pb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+  gshIB = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, gshIB); gl.bufferData(gl.ARRAY_BUFFER, GSH_MAX*32, gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(iA); gl.vertexAttribPointer(iA, 4, gl.FLOAT, false, 32, 0);  gl.vertexAttribDivisor(iA, 1);
+  gl.enableVertexAttribArray(iB); gl.vertexAttribPointer(iB, 4, gl.FLOAT, false, 32, 16); gl.vertexAttribDivisor(iB, 1);
+  gl.bindVertexArray(null);
+})();
+function drawGullShadows(view) {
+  const df = dayFactor(); if (df < 0.18) return;                       // no shadows at night — nothing bright enough to cast them
+  const px = cam.pos[0], pz = cam.pos[2], A = _gshArr, R2 = 110*110;
+  const sunUp = SKY.sun[1] > 0.02, sl = Math.hypot(SKY.sun[0], SKY.sun[2]) || 1, ox = -SKY.sun[0]/sl, oz = -SKY.sun[2]/sl;
+  let n = 0;
+  for (const e of life) {
+    if (e.t !== "gull" || e.gstate === undefined) continue;
+    const alt = Math.max(0, e.alt || 0); if (alt >= GULL_SHADOW.maxAlt) continue;   // too high → no shadow on the ground
+    if ((e.x-px)*(e.x-px) + (e.z-pz)*(e.z-pz) > R2 || n >= GSH_MAX) continue;
+    const t = alt / GULL_SHADOW.maxAlt;                                 // 0 on the ground … 1 at the cutoff height
+    const rad = GULL_SHADOW.baseR * (0.9 + 0.5*t) * (e.gtrait ? e.gtrait.size : 1);  // spreads a little as it rises
+    const head = (e.yaw || 0) - 1.57;                                   // flight heading (yaw is heading + 90°)
+    const off = alt * GULL_SHADOW.offsetK;                              // the shadow lags toward the anti-sun point as it climbs
+    const cx = e.x + (sunUp ? ox*off : 0), cz = e.z + (sunUp ? oz*off : 0);
+    const o = n*8;
+    A[o]   = cx; A[o+1] = heightAt(cx, cz) + 0.05; A[o+2] = cz; A[o+3] = rad * GULL_SHADOW.stretch;   // long axis along flight
+    A[o+4] = rad; A[o+5] = Math.cos(head); A[o+6] = Math.sin(head);
+    A[o+7] = GULL_SHADOW.strength * df * (1 - 0.72*t);                  // fainter with height
+    n++;
+  }
+  if (n === 0) return;
+  gl.useProgram(gshProg);
+  gl.uniformMatrix4fv(gshU.uProj, false, proj); gl.uniformMatrix4fv(gshU.uView, false, view);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(false);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gshIB); gl.bufferSubData(gl.ARRAY_BUFFER, 0, A, 0, n*8);
+  gl.bindVertexArray(gshVAO); gl.drawArraysInstanced(gl.TRIANGLES, 0, gshVerts, n); countDraw((gshVerts/3)*n);
+  gl.bindVertexArray(null); gl.depthMask(true); gl.disable(gl.BLEND);
+}
+
 /* ===================================================================== *
  * § LIFE  (creatures & finds — instanced, animated, tide/time aware)
  * ===================================================================== */
@@ -4830,8 +4896,13 @@ function drawLife(view) {
           const baseY = (overW && lowAlt) ? waterSurfaceAt(e.x, e.z) : g;        // §17.6 float on the surface over water, don't sink to the seabed
           y = baseY + (e.alt || 0) + ((overW && lowAlt) ? 0.1 + Math.sin(e.phase*2)*0.05 : 0.3);
           const amp = (e.gstate === "soar" || e.gstate === "approach") ? 0.16 : (overW && lowAlt ? 0.12 : 0.42);  // bob gently when afloat
-          lean = Math.sin(e.flap || 0) * amp; ld = e.yaw;
-          sc = e.scale * 1.5; }                         // §13.7 read bigger against sky & sand (easy to spot)
+          // §3 combine the wing-beat flutter + bank (roll about heading) with pitch (nose up/down about the wing line) into one small tilt
+          const head = (e.yaw || 0) - 1.57;
+          const roll = Math.sin(e.flap || 0) * amp + (e.bank || 0);
+          const pit = e.pitch || 0;
+          const tx = roll*Math.cos(head) + pit*Math.cos(head + 1.5708), tz = roll*Math.sin(head) + pit*Math.sin(head + 1.5708);
+          lean = Math.hypot(tx, tz); ld = Math.atan2(tz, tx);
+          sc = e.scale * 1.5 * (e.gtrait ? e.gtrait.size : 1); }    // §13.7 read bigger against sky & sand, with a little per-bird size variety
         else if (e.t === "jelly") sc = e.scale * (0.9 + Math.sin(e.phase*2)*0.1);
         if (e.t === "crab") y = g - (e.burrow || 0) * 0.6;                      // §13.1 sink into the sand (no pop)
         else if (e.t === "anemone") sc = e.scale * (1 - 0.6*e.closed);
@@ -8159,11 +8230,19 @@ const GULL = {
   stealRange: 2.6, chaseDrop: 6, shooR: 7.5, nestDefendR: 11, divebombCd: 3.5,
   eggReplenishDays: 3, abandonDays: 2, lureLife: 14,
   maxForage: 6, forageSpread: 4.5,   // §17.4 cap how many land on one spot; spread them out so it reads as a flock, not a pile
+  // §3 flight feel: how fast a gull swings onto a new heading, and how hard it banks / pitches doing it
+  turnRate: 2.5, maxBank: 0.6, maxPitch: 0.42,
+  // §3 finding hint: chance per tide that the flock bothers to gather over a *buried* spot (otherwise they ignore what they can't see)
+  hintChance: 0.18,
 };
 // small finds & food a gull will scavenge or steal from the ground / a fresh hole
 const GULL_WANTS = { clam:1, cockle:1, mussel:1, shell:1, molt:1, berry:1, worm:1, coin:1, seaglass:1, gullegg:1 };
 let gullLure = null;                       // {x,z,t} a fresh dig or wash-up that pulls gulls in (also the dig tell)
 function lureGulls(x, z) { gullLure = { x, z, t: clock.t }; }
+// §3 gulls as a finding hint: most tides they ignore what's buried; only now and then (hintChance) does the
+// flock gather over a buried patch/spot. Rolled once per low tide.
+let gullHint = { active: false };
+function rollGullHint() { gullHint.active = rng() < GULL.hintChance; }
 
 /* §17.3 forage patches — rich ground the gulls flock to (worm-abundant soil, buried clusters).
    Looting a patch by digging depletes it, so the birds give up and move to the next-richest spot. */
@@ -8250,25 +8329,40 @@ function gullInterest() {
     const d = Math.hypot(e.x - player.x, e.z - player.z); if (d < bd) { bd = d; best = { x: e.x, z: e.z, kind: "find", ref: e }; } }
   if (best) return best;
   if (typeof chestGullPoint === "function") { const cp = chestGullPoint(); if (cp) return cp; }   // §12C open/near chests
-  // §17.3 the richest forage patch within range — worm soil or a buried cluster the birds gather over
-  const fp = nearestForagePatch(player.x, player.z, 110);
-  if (fp) return { x: fp.x, z: fp.z, kind: "patch", ref: fp };
-  // a persistent "gulls circling a buried spot" dig tell near the player
-  for (const s of (typeof digSpots !== "undefined" ? digSpots : [])) {
-    if (s.revealed || s.tell !== "gull") continue;
-    if (Math.hypot(s.x - player.x, s.z - player.z) < 70) return { x: s.x, z: s.z, kind: "tell" };
+  // §3 buried interest — worm soil, buried clusters, "gulls circling a spot" tells — only when THIS tide's hint is active;
+  // otherwise the flock can't see it and leaves it be (so a gathering actually means something)
+  if (gullHint.active) {
+    const fp = nearestForagePatch(player.x, player.z, 110);
+    if (fp) return { x: fp.x, z: fp.z, kind: "patch", ref: fp };
+    for (const s of (typeof digSpots !== "undefined" ? digSpots : [])) {
+      if (s.revealed || s.tell !== "gull") continue;
+      if (Math.hypot(s.x - player.x, s.z - player.z) < 70) return { x: s.x, z: s.z, kind: "tell" };
+    }
   }
   return null;
 }
+// §3 steer with a real turn rate (no instant snaps) and bank into the turn
 function steerGull(e, tx, tz, spd, dt) {
-  const a = Math.atan2(tz - e.z, tx - e.x);
-  e.x += Math.cos(a)*dt*spd; e.z += Math.sin(a)*dt*spd; e.yaw = a + 1.57;
+  spd *= (e.gtrait ? e.gtrait.spd : 1);
+  const want = Math.atan2(tz - e.z, tx - e.x);
+  const cur = (e.yaw !== undefined ? e.yaw : want + 1.57) - 1.57;
+  let dyaw = want - cur; while (dyaw > Math.PI) dyaw -= 6.283; while (dyaw < -Math.PI) dyaw += 6.283;
+  const maxTurn = dt * GULL.turnRate * (e.gtrait ? e.gtrait.agility : 1);
+  const step = Math.max(-maxTurn, Math.min(maxTurn, dyaw));
+  const nh = cur + step;
+  // bank into the turn: more roll the harder it's cranking over, eased so it looks like weight shifting
+  const bankTarget = -Math.max(-1, Math.min(1, dyaw / 0.9)) * GULL.maxBank;
+  e.bank = (e.bank || 0) + (bankTarget - (e.bank || 0)) * Math.min(1, dt * 5);
+  e.x += Math.cos(nh)*dt*spd; e.z += Math.sin(nh)*dt*spd; e.yaw = nh + 1.57;
 }
 function initGull(e) {
   if (e.gstate) return;
   e.gstate = "soar";
   e.home = { x: e.cxx !== undefined ? e.cxx : e.x, z: e.czz !== undefined ? e.czz : e.z };
   e.alt = e.alt !== undefined ? e.alt : 20; e.flap = rng()*6.283; e.sp = rng()*6.283; e.carry = null; e.nest = e.nest || null;
+  // §3 a little individuality: size, flight speed, agility, how bold it is near the player, how fidgety on the ground
+  e.gtrait = { size: 0.82 + rng()*0.42, spd: 0.85 + rng()*0.3, agility: 0.8 + rng()*0.5, bold: rng(), fidget: 0.6 + rng()*0.9 };
+  e.bank = 0; e.pitch = 0; e.palt = e.alt; e.idle = 0; e.hop = 0;
 }
 function gullDrop(e) {
   if (!e.carry) return;
@@ -8388,6 +8482,18 @@ function updateGulls(dt) {
         break;
       }
     }
+    // §3 pitch tracks climb/descent: nose up while gaining height, tucked down in a dive, eased so it isn't jittery
+    const vAlt = (e.alt - (e.palt !== undefined ? e.palt : e.alt)) / Math.max(1e-3, dt);
+    e.palt = e.alt;
+    const pitchTarget = Math.max(-GULL.maxPitch, Math.min(GULL.maxPitch, vAlt * 0.05));
+    e.pitch = (e.pitch || 0) + (pitchTarget - (e.pitch || 0)) * Math.min(1, dt * 4);
+    // §3 ground liveliness: a settled gull fidgets on its own clock — the odd little hop, with per-bird timing
+    if (e.gstate === "forage" || e.gstate === "float") {
+      e.idle = (e.idle || 0) - dt;
+      if (e.idle < 0) { e.idle = (1.2 + rng()*2.4) / (e.gtrait ? e.gtrait.fidget : 1);
+        if (e.gstate === "forage" && rng() < 0.4) { e.hop = 0.26; if (rng() < 0.3 && onGull) onGull("call"); } }
+      if (e.hop > 0) { e.hop = Math.max(0, e.hop - dt); e.alt += Math.sin((0.26 - e.hop) / 0.26 * Math.PI) * 0.12; }   // a brief bob
+    }
     e.y = heightAt(e.x, e.z) + e.alt;          // world height from live ground + altitude
   }
 }
@@ -8404,15 +8510,8 @@ function takeEgg(nest) {
   saveNests();
 }
 function drawGulls(view) {
-  // blob shadows on the ground under near gulls
-  propUniforms(view); let ns = 0;
-  for (const e of life) { if (e.t !== "gull" || e.gstate === undefined) continue;
-    const d = Math.hypot(e.x - player.x, e.z - player.z); if (d > 110 || ns >= 24) continue;
-    const alt = Math.max(0, e.alt || 0), sh = 0.6 + alt*0.03, fade = Math.max(0.12, 0.5 - alt*0.012);
-    const gy = heightAt(e.x, e.z) + 0.05, o = ns*10;
-    digScratch[o]=e.x;digScratch[o+1]=gy;digScratch[o+2]=e.z;digScratch[o+3]=sh;digScratch[o+4]=0;digScratch[o+5]=0;digScratch[o+6]=0;
-    digScratch[o+7]=fade;digScratch[o+8]=fade;digScratch[o+9]=fade; ns++; }
-  if (ns) gullShadowDyn.draw(digScratch, ns);
+  drawGullShadows(view);   // §3 soft, elongated, height-aware contact shadows (no night shadows)
+  propUniforms(view);
   // a tiny carried item under the beak of a thieving gull
   for (const e of life) { if (e.t !== "gull" || !e.carry) continue;
     const reg = FINDS[e.carry]; if (!reg || !reg.dyn) continue;
@@ -9000,7 +9099,7 @@ function frame(now) {
     updateHunger(s);
     updateLife(s, clock.t);
     healDig(s);
-    if (tideT > 0.73 && tideT < 0.78) { if (!washedThisLow) { currentEvent = nextEvent; washUp(false); seedDigSpots(); washedThisLow = true;
+    if (tideT > 0.73 && tideT < 0.78) { if (!washedThisLow) { currentEvent = nextEvent; washUp(false); seedDigSpots(); rollGullHint(); washedThisLow = true;
       if (currentEvent !== "calm") showCard(EVENT_LABEL[currentEvent], "The low tide has left something along the shore."); } }
     else if (tideT < 0.55) washedThisLow = false;
     gdt -= s;
