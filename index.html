@@ -170,7 +170,7 @@
     border-radius: 50%; border: 2px solid #6e4a2a; background: rgba(60,40,22,.8); color:#f0d9b0; font-size: 22px;
     align-items: center; justify-content: center; pointer-events: auto; }
   #bucketpanel { position: fixed; z-index: 12; right: 16px; top: 50%; transform: translateY(-50%); display: none;
-    image-rendering: auto; filter: drop-shadow(0 3px 10px rgba(0,0,0,.5)); }
+    width: 150px; height: 174px; image-rendering: pixelated; cursor: pointer; filter: drop-shadow(0 3px 10px rgba(0,0,0,.5)); }
   #dragGhost { position: fixed; z-index: 30; width: 48px; height: 48px; pointer-events: none; display: none;
     image-rendering: pixelated; filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)); transform: translate(-50%,-50%); }
   #dragGhost span { position: absolute; right: 2px; bottom: 0; font-size: 12px; font-weight: 700; text-shadow: 0 1px 2px #000; }
@@ -221,7 +221,7 @@
 <div id="hotbar"></div>
 <div id="journal"></div>
 <div id="invpanel"></div>
-<canvas id="bucketpanel" width="132" height="152"></canvas>
+<canvas id="bucketpanel" width="125" height="145"></canvas>
 <div id="ctxmenu"></div>
 <button id="bagBtn">🎒</button>
 <div id="dragGhost"></div>
@@ -2191,6 +2191,41 @@ const propLoc = {
   iOff: gl.getAttribLocation(propProg, "iOff"), iSRL: gl.getAttribLocation(propProg, "iSRL"),
   iTint: gl.getAttribLocation(propProg, "iTint"),
 };
+
+// §11.6 mini-view water surface: a rippling translucent disc, its own tiny program so it can blend.
+const miniWaterProg = program(`#version 300 es
+precision highp float;
+uniform mat4 uProj, uView; uniform float uTime, uScale, uWaterY;
+in vec3 aPos; out vec3 vW; out float vR;
+void main() {
+  float r = length(aPos.xz) * uScale; vR = r;
+  float w = sin(r*9.0 - uTime*3.0)*0.012 + sin(aPos.x*uScale*7.0 + uTime*2.0)*0.008;
+  vec3 p = vec3(aPos.x*uScale, uWaterY + w, aPos.z*uScale);
+  vW = p; gl_Position = uProj * uView * vec4(p, 1.0);
+}`, `#version 300 es
+precision highp float;
+in vec3 vW; in float vR; out vec4 frag; uniform float uTime; uniform vec3 uTop;
+void main() {
+  vec3 n = normalize(cross(dFdx(vW), dFdy(vW)));
+  float sh = 0.5 + 0.5*clamp(n.y, 0.0, 1.0);
+  float ring = smoothstep(0.42, 0.5, abs(fract(vR*6.0 - uTime*1.1) - 0.5));
+  vec3 col = mix(uTop*0.72, uTop*1.18, sh) + ring*0.05;
+  frag = vec4(col, 0.42);
+}`);
+const miniWaterU = uniforms(miniWaterProg);
+const miniWaterLoc = gl.getAttribLocation(miniWaterProg, "aPos");
+// a unit-radius water disc (fan expanded to triangles) with its own VAO
+const miniWaterVAO = (() => {
+  const seg = 28, v = [];
+  for (let i = 0; i < seg; i++) { const a0 = i/seg*6.283, a1 = (i+1)/seg*6.283;
+    v.push(0,0,0, Math.cos(a0),0,Math.sin(a0), Math.cos(a1),0,Math.sin(a1)); }
+  const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+  const vb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vb);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(v), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(miniWaterLoc); gl.vertexAttribPointer(miniWaterLoc, 3, gl.FLOAT, false, 0, 0);
+  gl.bindVertexArray(null);
+  return { vao, verts: v.length/3 };
+})();
 
 function makeInstanced(mesh, inst) {
   if (inst.length === 0) return { vao: null, vertCount: 0, count: 0, tris: 0 };
@@ -4299,33 +4334,136 @@ function pourOnGround(x, z) {
   if (bucket.creatures.length) { if (onDig) onDig("splash"); spawnSand(x, surfaceAt(x,z).h + 0.1, z, 10, [0.72, 0.86, 0.96]); }
   bucket.creatures = []; bucket.water = false; saveState();
 }
-// A small top-down window into the bucket: the water, with the creatures swimming in it.
-const BUCKET_COL = { crab: [200,90,70], fish: [120,160,205], star: [222,132,70], hermit: [182,160,120], anemone: [212,110,132] };
-let bucketPanelEl = null, bucketCtx = null;
+/* ===================================================================== *
+ * § 11.6  MINI 3D VIEWS — bucket overview & close-up inspect, drawn with
+ *   the game's own prop pipeline into a low-res FBO, then blitted (with a
+ *   light dither) to a 2D panel canvas. Rendered only while a panel is open.
+ * ===================================================================== */
+const miniFBOs = {};
+function miniFBO(W, H) {
+  const key = W + "x" + H; if (miniFBOs[key]) return miniFBOs[key];
+  const fb = gl.createFramebuffer(), tex = gl.createTexture(), rb = gl.createRenderbuffer();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, W, H, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.bindRenderbuffer(gl.RENDERBUFFER, rb); gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, W, H);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rb);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  return (miniFBOs[key] = { fb, tex, rb, W, H, px: new Uint8Array(W * H * 4) });
+}
+const _mini10 = new Float32Array(10);
+function miniInst(x, y, z, sc, yaw, lean, ld, tint) {
+  _mini10[0]=x; _mini10[1]=y; _mini10[2]=z; _mini10[3]=sc; _mini10[4]=yaw; _mini10[5]=lean; _mini10[6]=ld;
+  _mini10[7]=tint[0]; _mini10[8]=tint[1]; _mini10[9]=tint[2]; return _mini10;
+}
+// Set up the prop program for a mini scene (neutral soft light, no fog), draw the opaque scene,
+// lay a translucent rippling water disc over it, then any over-water marks (wakes).
+function renderMini(fbo, eye, target, fovY, waterY, waterR, waterCol, drawScene, drawOver) {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.fb);
+  gl.viewport(0, 0, fbo.W, fbo.H);
+  gl.clearColor(0, 0, 0, 0); gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.disable(gl.BLEND);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  const proj = M4.perspective(fovY, fbo.W / fbo.H, 0.05, 50), view = M4.lookAt(eye, target, [0, 1, 0]);
+  gl.useProgram(propProg);
+  gl.uniformMatrix4fv(propU.uProj, false, proj); gl.uniformMatrix4fv(propU.uView, false, view);
+  gl.uniform3fv(propU.uSunDir, [0.4, 0.85, 0.35]); gl.uniform3fv(propU.uCamPos, eye);
+  gl.uniform3fv(propU.uZenith, [0.7,0.78,0.86]); gl.uniform3fv(propU.uHorizon, [0.82,0.82,0.8]); gl.uniform3fv(propU.uWarm, [1,0.95,0.85]);
+  gl.uniform1f(propU.uFogDensity, 0); gl.uniform1f(propU.uFogNear, 1e6);
+  drawScene(proj, view);
+  if (waterR > 0) {
+    gl.useProgram(miniWaterProg);
+    gl.uniformMatrix4fv(miniWaterU.uProj, false, proj); gl.uniformMatrix4fv(miniWaterU.uView, false, view);
+    gl.uniform1f(miniWaterU.uTime, performance.now() * 0.001);
+    gl.uniform1f(miniWaterU.uScale, waterR); gl.uniform1f(miniWaterU.uWaterY, waterY); gl.uniform3fv(miniWaterU.uTop, waterCol);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+    gl.bindVertexArray(miniWaterVAO.vao); gl.drawArrays(gl.TRIANGLES, 0, miniWaterVAO.verts); countDraw(miniWaterVAO.verts / 3);
+    gl.disable(gl.BLEND); gl.depthMask(true); gl.bindVertexArray(null);
+  }
+  if (drawOver) { gl.useProgram(propProg); gl.depthMask(false); drawOver(proj, view); gl.depthMask(true); }
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+const _clamp8 = (v) => v < 0 ? 0 : v > 255 ? 255 : v;
+function blitMini(fbo, ctx) {
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.fb);
+  gl.readPixels(0, 0, fbo.W, fbo.H, gl.RGBA, gl.UNSIGNED_BYTE, fbo.px);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  const W = fbo.W, H = fbo.H, img = ctx.createImageData(W, H), d = img.data, px = fbo.px;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const s = ((H - 1 - y) * W + x) * 4, o = (y * W + x) * 4;         // flip Y
+    const dq = ((x & 1) ^ (y & 1)) ? 7 : -7;                          // 2×2 ordered dither
+    d[o]=_clamp8(px[s]+dq); d[o+1]=_clamp8(px[s+1]+dq); d[o+2]=_clamp8(px[s+2]+dq); d[o+3]=px[s+3];
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+// --- bucket overview scene ---
+const bucketMesh = makeDynamic((function () { const m = Mesh();
+  const wall = [0.30,0.33,0.37], rim = [0.37,0.40,0.44], floor = [0.23,0.26,0.29];
+  mCyl(m, -0.60, 0.06, 0.52, 0.70, 22, wall);                        // tapered staves
+  mCyl(m, 0.02, 0.08, 0.70, 0.72, 22, rim);                          // a lip
+  mergeMesh(m, discMesh(-0.60, 0.52, 22, 0, floor));                 // floor
+  return m; })(), 1);
+const bucketRingMesh = makeDynamic((function () { const m = Mesh(); const c = [0.85,0.93,0.98];
+  const seg = 20, ri = 0.80, ro = 1.0;
+  for (let i = 0; i < seg; i++) { const a0 = i/seg*6.283, a1 = (i+1)/seg*6.283;
+    mTri(m, [Math.cos(a0)*ri,0,Math.sin(a0)*ri], [Math.cos(a0)*ro,0,Math.sin(a0)*ro], [Math.cos(a1)*ro,0,Math.sin(a1)*ro], c);
+    mTri(m, [Math.cos(a0)*ri,0,Math.sin(a0)*ri], [Math.cos(a1)*ro,0,Math.sin(a1)*ro], [Math.cos(a1)*ri,0,Math.sin(a1)*ri], c); }
+  return m; })(), 40);
+const CRAWLER = { crab:1, hermit:1, star:1, anemone:1, urchin:1, hopper:1 };    // live on the floor, not mid-water
+const BUCKET_SPEED = { fish:0.34, jelly:0.12, crab:0.20, hermit:0.14, star:0.05, hopper:0.22, piper:0.2, anemone:0, urchin:0 };
+const BUCKET_WATER_COL = [0.16, 0.42, 0.52];
+function stepBucketCreatures(dt) {
+  if (!bucket._ripples) bucket._ripples = [];
+  const Rmax = 0.44;
+  for (const cr of bucket.creatures) {
+    const spd = BUCKET_SPEED[cr.t] ?? 0.16, floor = !!CRAWLER[cr.t];
+    if (cr.bx === undefined) { const a = Math.random()*6.283, r = Math.random()*Rmax*0.7;
+      cr.bx = Math.cos(a)*r; cr.bz = Math.sin(a)*r; cr.bph = Math.random()*6.283;
+      const d = Math.random()*6.283; cr.bvx = Math.cos(d)*spd; cr.bvz = Math.sin(d)*spd; cr.byaw = d; }
+    cr.bph += dt;
+    if (spd > 0) {
+      cr.bvx += (Math.random()-0.5)*0.09; cr.bvz += (Math.random()-0.5)*0.09;
+      const s = Math.hypot(cr.bvx, cr.bvz); if (s > 1e-4) { cr.bvx = cr.bvx/s*spd; cr.bvz = cr.bvz/s*spd; }
+      cr.bx += cr.bvx*dt; cr.bz += cr.bvz*dt;
+      const r = Math.hypot(cr.bx, cr.bz);
+      if (r > Rmax) { const nx = cr.bx/r, nz = cr.bz/r, dot = cr.bvx*nx + cr.bvz*nz;  // bump off the wall
+        cr.bvx -= 2*dot*nx; cr.bvz -= 2*dot*nz; cr.bx = nx*Rmax; cr.bz = nz*Rmax;
+        if (bucket.water) bucket._ripples.push({ x: cr.bx, z: cr.bz, t: 0 }); }
+      cr.byaw = Math.atan2(cr.bvx, cr.bvz);
+    }
+    cr.by = floor ? -0.54 + Math.sin(cr.bph*2)*0.01 : -0.22 + Math.sin(cr.bph*2.4)*0.07;
+    if (bucket.water && !floor && Math.random() < dt*1.1) bucket._ripples.push({ x: cr.bx, z: cr.bz, t: 0 });
+  }
+  if (bucket._ripples) for (let i = bucket._ripples.length-1; i >= 0; i--) { bucket._ripples[i].t += dt; if (bucket._ripples[i].t > 1.1) bucket._ripples.splice(i, 1); }
+}
+function drawBucketScene() {
+  bucketMesh.draw(miniInst(0, 0, 0, 1, 0, 0, 0, [1,1,1]), 1);
+  for (const cr of bucket.creatures) { const reg = CREATURES[cr.t]; if (!reg) continue;
+    const sc = Math.min(0.22, (cr.scale || 0.5) * 0.24);
+    reg.dyn.draw(miniInst(cr.bx, cr.by, cr.bz, sc, cr.byaw || 0, 0, 0, cr.tint || [1,1,1]), 1); }
+}
+function drawBucketRipples() {
+  if (!bucket.water || !bucket._ripples) return;
+  for (const rp of bucket._ripples) { const g = rp.t/1.1, sc = 0.04 + g*0.22;
+    const tint = [0.85 + (0.16-0.85)*g, 0.93 + (0.42-0.93)*g, 0.98 + (0.52-0.98)*g];   // fades into the water colour
+    bucketRingMesh.draw(miniInst(rp.x, 0.03, rp.z, sc, 0, 0, 0, tint), 1); }
+}
+let bucketPanelEl = null, bucketCtx = null, _bucketT = 0;
 function updateBucketPanel() {
-  if (!bucketPanelEl) { bucketPanelEl = document.getElementById("bucketpanel"); bucketCtx = bucketPanelEl.getContext("2d"); }
+  if (!bucketPanelEl) { bucketPanelEl = document.getElementById("bucketpanel"); bucketCtx = bucketPanelEl.getContext("2d");
+    bucketPanelEl.addEventListener("click", () => { if (typeof openInspect === "function" && bucket.creatures.length) openInspect(bucket.creatures[0], "bucket"); }); }
   const show = mode === "walk" && selectedTool() === "bucket" && (bucket.water || bucket.creatures.length);
   bucketPanelEl.style.display = show ? "block" : "none"; if (!show) return;
-  const W = bucketPanelEl.width, H = bucketPanelEl.height, c = bucketCtx, t = performance.now() * 0.001;
-  const cx = W/2, cyTop = 36, rx = W/2 - 12, ry = 19;
-  c.clearRect(0, 0, W, H);
-  c.fillStyle = "#484d54"; c.beginPath(); c.moveTo(cx-rx, cyTop); c.lineTo(cx-rx*0.72, H-16); c.lineTo(cx+rx*0.72, H-16); c.lineTo(cx+rx, cyTop); c.closePath(); c.fill();
-  c.fillStyle = "#3a3e44"; c.beginPath(); c.ellipse(cx, H-16, rx*0.72, 7, 0, 0, 6.283); c.fill();
-  if (bucket.water) { c.fillStyle = "#2f6f8a"; c.beginPath(); c.ellipse(cx, cyTop, rx-3, ry-2, 0, 0, 6.283); c.fill();
-    c.strokeStyle = "rgba(205,238,248,.28)"; c.lineWidth = 1;
-    for (let k = 0; k < 2; k++) { c.beginPath(); c.ellipse(cx, cyTop, (rx-7)*(0.45+0.3*k+0.06*Math.sin(t*2+k)), (ry-4)*(0.45+0.3*k), 0, 0, 6.283); c.stroke(); } }
-  bucket.creatures.forEach((cr, i) => { if (cr.ph === undefined) cr.ph = Math.random()*6.283;
-    const ang = cr.ph + t * (0.5 + 0.25*(i%3)), rr = 0.25 + 0.5*((i%3)/2);
-    const px = cx + Math.cos(ang) * (rx-8) * rr, py = cyTop + Math.sin(ang) * (ry-5) * rr;
-    const col = BUCKET_COL[cr.t] || [200,120,100];
-    c.save(); c.translate(px, py); c.rotate(ang + 1.57);
-    c.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`; c.beginPath(); c.ellipse(0, 0, 4.5, 2.6, 0, 0, 6.283); c.fill();
-    c.fillRect(-1, 2, 2, 3); c.restore();
-  });
-  c.strokeStyle = "#8b9099"; c.lineWidth = 3; c.beginPath(); c.ellipse(cx, cyTop, rx, ry, 0, 0, 6.283); c.stroke();
-  c.strokeStyle = "#6b7077"; c.lineWidth = 3; c.beginPath(); c.arc(cx, cyTop - ry*0.4, rx, Math.PI*1.08, -Math.PI*0.08, false); c.stroke();
-  c.fillStyle = "#e4eef2"; c.font = "11px ui-monospace, monospace"; c.textAlign = "center";
-  c.fillText(`${bucket.creatures.length}/${BUCKET_CAP}`, cx, H-3);
+  const now = performance.now() * 0.001, dt = Math.min(0.05, now - (_bucketT || now)); _bucketT = now;
+  stepBucketCreatures(dt);
+  const fbo = miniFBO(bucketPanelEl.width, bucketPanelEl.height);
+  renderMini(fbo, [0, 1.12, 1.24], [0, -0.12, 0], 0.86, 0.015, bucket.water ? 0.66 : 0, BUCKET_WATER_COL,
+    drawBucketScene, drawBucketRipples);
+  blitMini(fbo, bucketCtx);
+  bucketCtx.fillStyle = "#e4eef2"; bucketCtx.font = "11px ui-monospace, monospace"; bucketCtx.textAlign = "center";
+  bucketCtx.fillText(`${bucket.creatures.length}/${BUCKET_CAP}`, bucketPanelEl.width/2, bucketPanelEl.height - 4);
 }
 
 /* ---- berry bushes (§10.5): inland shrubs; regrow a few in-game days after picking ---- */
