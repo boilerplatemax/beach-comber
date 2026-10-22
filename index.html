@@ -144,6 +144,14 @@
     border-radius: 50%; z-index: 4; pointer-events: none; display: none; opacity: .9;
     -webkit-mask: radial-gradient(transparent 7px, #000 8px); mask: radial-gradient(transparent 7px, #000 8px);
   }
+  /* §14A breath: an arc outside the stamina ring, only while submerged */
+  #breathArc {
+    position: fixed; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px;
+    border-radius: 50%; z-index: 4; pointer-events: none; display: none; opacity: .92;
+    -webkit-mask: radial-gradient(transparent 20px, #000 21px); mask: radial-gradient(transparent 20px, #000 21px);
+  }
+  /* §14A fade-to-black on drowning */
+  #fadeblack { position: fixed; inset: 0; z-index: 28; background: #000; opacity: 0; display: none; pointer-events: none; }
   #prompt {
     position: fixed; left: 50%; top: calc(50% + 20px); transform: translateX(-50%);
     z-index: 5; pointer-events: none; display: none; font-size: 13px; opacity: .9;
@@ -378,7 +386,9 @@
 <div id="dbg"></div>
 <div id="stamina"></div>
 <div id="hungerArc"></div>
+<div id="breathArc"></div>
 <div id="crosshair"></div>
+<div id="fadeblack"></div>
 <div id="prompt"></div>
 <div id="card"></div>
 <div id="toasts"></div>
@@ -1623,6 +1633,8 @@ uniform vec2 uSceneSize;
 uniform int uDither;
 uniform int uQuantize;                          // §13.6 palette quantization on/off
 uniform float uHungerFx;                        // 0..1 starving: desaturate + darken edges
+uniform float uUnderwater;                      // §14A 0..1 submerged: blue-green tint + vignette
+uniform float uBreathLow;                       // §14A 0..1 running out of air: darker vignette
 const float bayer[16] = float[16](
   0.0, 8.0, 2.0, 10.0,  12.0, 4.0, 14.0, 6.0,
   3.0, 11.0, 1.0, 9.0,  15.0, 7.0, 13.0, 5.0);
@@ -1636,9 +1648,11 @@ void main() {
   if (uQuantize == 0)    q = c;                                              // §13.6 full colour (Ultra)
   else if (uDither == 1) q = floor(c * levels + bayer[idx] / 16.0) / levels;
   else                   q = floor(c * levels + 0.5) / levels;
-  // soft vignette for a little focus and moodiness (stronger when starving)
+  // §14A submerged: shift toward blue-green and dim (Part B adds the full underwater look)
+  if (uUnderwater > 0.001) q = mix(q, q * vec3(0.42, 0.72, 0.86), uUnderwater * 0.6);
+  // soft vignette for a little focus and moodiness (stronger when starving or low on air)
   vec2 d = vUv - 0.5;
-  q *= 1.0 - dot(d, d) * (0.5 + uHungerFx * 1.3);
+  q *= 1.0 - dot(d, d) * (0.5 + uHungerFx * 1.3 + uUnderwater * 0.6 + uBreathLow * 2.4);
   frag = vec4(q, 1.0);
 }`;
 
@@ -1721,6 +1735,23 @@ const SPRINT_SLOPE_MAX = 20 * Math.PI / 180;   // §13.1 no sprinting above this
 const MOVE_SUBSTEP = 0.25;                // §13.1 substep distance so fast moves can't skip the slope check
 let _curSlopeDeg = 0, _curSpeedMul = 1;   // debug readout
 const WADE_DEPTH = 1.0;      // can wade up to this depth, then it blocks
+// §14A Swimming — thresholds (hysteresis), breath and stamina
+const SWIM_START = 1.3, SWIM_STOP = 1.0;      // start swimming chest-deep, stop when feet touch near the shore
+const SWIM_SPEED = 6.5, SWIM_SPRINT = 1.7;    // slower than walking; sprint-swim costs a lot
+const BREATH_MAX = 40;                         // seconds of air underwater (tunable)
+const SWIM_DRAIN = 0.03, SWIM_SPRINT_DRAIN = 0.14;   // stamina / s while swimming
+const DROWN_LOSS = 0.3;                         // §14A fraction of non-tool items dropped in the sack on drowning
+const NEVER_LOST = { toolkit: 1, bucket: 1, spear: 1 };   // these (and bucket creatures) are never lost
+let infiniteBreath = false;                     // debug toggle
+let mobileSwimUp = false, mobileSwimDown = false;
+// Depth of OPEN sea water under (x,z) — excludes dug ponds and raised inland basins/pools, so only the
+// real ocean (or a big tidal body) lets you swim. 0 when it's shallow or not open sea.
+function openSeaDepth(x, z) {
+  const i = cellIndex(x, z); if (i < 0) return 0;
+  if (ponded.has(i)) return 0;                              // a hole someone filled with the bucket
+  if (filled[i] > waterLevel + 0.35) return 0;              // a raised inland basin / tide pool
+  return waterLevel - surfaceAt(x, z).h;
+}
 // The ONE place slope governs walking speed (§7). `grade` is the signed incline
 // (radians) in the travel direction: + uphill, − downhill. Returns a 0–1 multiplier.
 function slopeSpeedMul(grade) {
@@ -1741,7 +1772,8 @@ function groundGradient(x, z) {
 }
 // Jump feel (§6): a snappy rise under lighter gravity, a faster, heavier fall.
 const JUMP_V = 8.4, GRAVITY_UP = 24, GRAVITY_DOWN = 42, COYOTE_TIME = 0.1, JUMP_BUFFER = 0.11;
-const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, sprinting: false, scramble: 0, vy: 0, airborne: false, coyote: 0, landStun: 0 };
+const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, sprinting: false, scramble: 0, vy: 0, airborne: false, coyote: 0, landStun: 0,
+                 swimming: false, underwater: false, breath: 40 };   // §14A swimming/breath (BREATH_MAX)
 let crouching = false;   // §13.4 crouch: lowers the camera, slows you, and makes creatures less skittish
 let crouchStillT = 0;    // time held crouched and still → counts as resting (faster recovery)
 let crouchKey = "KeyC";  // rebindable; "ControlLeft" is the Ctrl option in settings
@@ -1808,6 +1840,145 @@ function enterWalk() {
   cam.yaw = s.yaw; cam.pitch = -0.04;
   mode = "walk";
   timeOfDay = MORNING_TIME; updateSun();   // §13.9 the game opens in the morning (then advances only if day/night is on)
+}
+
+/* ===================================================================== *
+ * § 14A  SWIMMING, BREATH & DROWNING
+ * ===================================================================== */
+let onSplash = null, onHeartbeat = null, onDrown = null;   // sound hooks (Phase 18)
+function startSwim() {
+  if (player.swimming) return;
+  player.swimming = true; player.vy = 0; player.airborne = false;
+  const surf = waterSurfaceAt(player.x, player.z);
+  player.eyeY = Math.min(player.eyeY, surf + 0.1);
+  spawnSand(player.x, surf + 0.1, player.z, 14, [0.72, 0.86, 0.96]); if (onSplash) onSplash();
+}
+function stopSwim() {
+  if (!player.swimming) return;
+  player.swimming = false; player.underwater = false;
+  const g = surfaceAt(player.x, player.z).h;
+  player.feetY = g; player.eyeY = g + EYE; player.vy = 0;
+  spawnSand(player.x, waterSurfaceAt(player.x, player.z) + 0.1, player.z, 8, [0.72, 0.86, 0.96]); if (onSplash) onSplash();
+}
+// Full-3D swim movement; run in place of the walk logic while player.swimming.
+function swimStep(dt, right) {
+  const camF = camForward();
+  let wx = 0, wy = 0, wz = 0, moving = false;
+  if (keys["KeyW"]) { wx += camF[0]; wy += camF[1]; wz += camF[2]; moving = true; }
+  if (keys["KeyS"]) { wx -= camF[0]; wy -= camF[1]; wz -= camF[2]; moving = true; }
+  if (keys["KeyD"]) { wx += right[0]; wz += right[2]; moving = true; }
+  if (keys["KeyA"]) { wx -= right[0]; wz -= right[2]; moving = true; }
+  if (Math.abs(analog.x) + Math.abs(analog.y) > 0.01) { wx += right[0]*analog.x + camF[0]*analog.y; wy += camF[1]*analog.y; wz += right[2]*analog.x + camF[2]*analog.y; moving = true; }
+  if (keys["Space"] || mobileSwimUp) { wy += 1; moving = true; }
+  if (keys[crouchKey] || mobileSwimDown) { wy -= 1; moving = true; }
+  const diving = keys[crouchKey] || mobileSwimDown || (moving && wy < -0.05);
+  const wl = Math.hypot(wx, wy, wz);
+  const tired = exhausted || stamina < 0.02;
+  player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01 && !tired && !isPanelOpen();
+  if (isPanelOpen()) { moving = false; }
+  let spd = SWIM_SPEED * (player.sprinting ? SWIM_SPRINT : 1) * (tired ? 0.45 : 1);
+  if (moving && wl > 0.01 && !isPanelOpen()) {
+    wx /= wl; wy /= wl; wz /= wl;
+    spendStamina((player.sprinting ? SWIM_SPRINT_DRAIN : SWIM_DRAIN) * dt, false);
+  } else { wx = wy = wz = 0; }
+  const dist = spd * dt;
+  // horizontal move, blocked from beaching onto dry land (keep at least ankle-deep sea)
+  let nx = player.x + wx*dist, nz = player.z + wz*dist;
+  [nx, nz] = slideCircles(nx, nz);
+  if (openSeaDepth(nx, nz) < 0.3) { const sx = openSeaDepth(nx, player.z) >= 0.3, sz = openSeaDepth(player.x, nz) >= 0.3;
+    nx = sx ? nx : player.x; nz = sz ? nz : player.z; }
+  player.x = nx; player.z = nz;
+  // vertical: input + gentle buoyancy toward the surface unless actively diving; tired players can't sink fast
+  const surf = waterSurfaceAt(player.x, player.z), floor = surfaceAt(player.x, player.z).h;
+  let ny = player.eyeY + wy*dist;
+  if (!diving) ny += (tired ? 0.9 : 0.5) * dt;                 // bob up to the surface
+  ny = Math.max(floor + 0.5, Math.min(surf + 0.12, ny));
+  if (ny >= surf - 0.04) ny = surf + Math.sin(clock.t*1.3 + player.x*0.1)*0.05;   // ride the surface with a bob
+  player.eyeY = ny; player.feetY = ny - 1.0;
+  player.underwater = player.eyeY < surf - 0.1;
+  player.bob += dist;
+  // bubbles while swimming underwater
+  if (player.underwater && moving && Math.random() < dt*6) bubbleParticle(player.x + (rng()-0.5)*0.6, player.eyeY + 0.2, player.z + (rng()-0.5)*0.6);
+  cam.pos[0] = player.x; cam.pos[1] = player.eyeY; cam.pos[2] = player.z;
+}
+function bubbleParticle(x, y, z) { if (particles.length >= 200) return;
+  particles.push({ x, y, z, vx: (rng()-0.5)*0.3, vy: 1.2 + rng()*0.8, vz: (rng()-0.5)*0.3, t: 0, life: 0.8 + rng()*0.6, col: [0.8, 0.9, 0.98], rise: true }); }
+// §14A breath: drains underwater, refills fast at the surface; zero → drown.
+let breathLow = 0;   // 0..1 how urgent (for vignette / heartbeat), smoothed
+function updateBreath(dt) {
+  if (player.swimming && player.underwater) {
+    if (!infiniteBreath) player.breath = Math.max(0, player.breath - dt);
+    if (player.breath <= 0 && !fade.active) drown();
+  } else {
+    player.breath = Math.min(BREATH_MAX, player.breath + dt*5);
+  }
+  const urgency = player.swimming && player.underwater ? Math.max(0, 1 - player.breath/12) : 0;
+  breathLow += (urgency - breathLow) * Math.min(1, dt*3);
+  if (breathLow > 0.25) { heartT -= dt; if (heartT <= 0) { heartT = 0.9 - breathLow*0.4; if (onHeartbeat) onHeartbeat(breathLow); } }
+}
+let heartT = 0;
+// §14A sacks of items dropped on drowning — recoverable, and wash ashore after a few days.
+let sacks = [];
+function makeDrownSack(x, z) {
+  const items = {};
+  const take = (cell) => { if (!cell) return 0; const it = ITEMS[cell.id];
+    if (!it || it.category === "tool" || NEVER_LOST[cell.id]) return 0;
+    const q = Math.round(cell.qty * DROWN_LOSS); if (q <= 0) return 0;
+    items[cell.id] = (items[cell.id] || 0) + q; cell.qty -= q; return q; };
+  for (let i = 0; i < INV_SLOTS; i++) { const c = Inv.main[i]; if (c) { take(c); if (c.qty <= 0) Inv.setCell(i, null); } }
+  for (let i = 0; i < Inv.hotbar.length; i++) { const c = Inv.hotbar[i]; if (c) { take(c); if (c.qty <= 0) Inv.hotbar[i] = null; } }
+  if (Object.keys(items).length) sacks.push({ x, z, items, washUpAt: clock.t + 3*DAY_PERIOD, onShore: false, bob: rng()*6.28 });
+  Inv.emit();
+}
+function updateSacks(dt) {
+  for (let i = sacks.length - 1; i >= 0; i--) { const s = sacks[i];
+    if (!s.onShore && clock.t >= s.washUpAt) {                 // wash it up onto the nearest beach
+      const a = Math.atan2(s.x, -s.z); for (let rr = HALF*0.95; rr > 4; rr -= 2) { const bx = Math.sin(a)*rr, bz = -Math.cos(a)*rr; if (heightAt(bx,bz) > 1.5 && heightAt(bx,bz) < 4) { s.x = bx; s.z = bz; break; } }
+      s.onShore = true;
+    }
+    if (Math.hypot(s.x - player.x, s.z - player.z) < 2.6) {     // walk / swim over it to recover
+      for (const id in s.items) Inv.add(id, s.items[id]);
+      showCard("Recovered your things", "Your lost sack is back in your satchel.");
+      if (onSplash) onSplash(); sacks.splice(i, 1); Inv.emit();
+    }
+  }
+}
+// §14A drowning: fade to black, drop a sack, wake on the nearest safe shore. Bucket creatures go free.
+function drown() {
+  startFade(() => {
+    makeDrownSack(player.x, player.z);
+    if (bucket.creatures.length) { bucket.creatures = []; bucket.water = true; }   // creatures released to the sea
+    const s = (lastSafe.x || lastSafe.z) ? { x: lastSafe.x, z: lastSafe.z } : findSpawn();
+    player.x = s.x; player.z = s.z;
+    stopSwim();
+    const g = surfaceAt(s.x, s.z).h; player.feetY = g; player.eyeY = g + EYE; player.vy = 0; player.airborne = false;
+    player.breath = BREATH_MAX; breathLow = 0;
+    stamina = Math.max(stamina, 0.5); exhausted = false;
+    cam.pitch = -0.04;
+  });
+  if (onDrown) onDrown();
+}
+// screen fade: to black, run mid() at the peak, then back
+const fade = { active: false, t: 0, dur: 1.4, mid: null, fired: false };
+function startFade(mid) { fade.active = true; fade.t = 0; fade.mid = mid; fade.fired = false; }
+function updateFade(dt) {
+  if (!fade.active) return;
+  fade.t += dt; const half = fade.dur/2;
+  let a; if (fade.t < half) a = fade.t/half; else a = Math.max(0, 1 - (fade.t-half)/half);
+  if (fade.t >= half && !fade.fired) { fade.fired = true; if (fade.mid) fade.mid(); }
+  const el = document.getElementById("fadeblack"); if (el) { el.style.opacity = a.toFixed(3); el.style.display = a > 0.001 ? "block" : "none"; }
+  if (fade.t >= fade.dur) { fade.active = false; if (el) { el.style.opacity = 0; el.style.display = "none"; } }
+}
+
+// debug: drop the player into the deepest open water we can find
+function teleportToDeepWater() {
+  let best = null, bd = 0;
+  for (let k = 0; k < 40000; k++) { const a = Math.random()*6.28, rr = HALF*(0.5 + Math.random()*0.45);
+    const x = Math.sin(a)*rr, z = -Math.cos(a)*rr, d = openSeaDepth(x, z);
+    if (d > bd) { bd = d; best = [x, z]; } if (bd > 5) break; }
+  if (best) { player.x = best[0]; player.z = best[1]; const surf = waterSurfaceAt(best[0], best[1]);
+    player.swimming = true; player.underwater = true; player.eyeY = surf - 1.6; player.feetY = surf - 2.6; player.vy = 0; player.airborne = false;
+    if (mode !== "walk") mode = "walk"; }
 }
 
 /* --------------------------------------------------------------------- *
@@ -1972,7 +2143,7 @@ addEventListener("keydown", (e) => {
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE") interact();                  // pick up / inspect
   if (e.code === "Space" && mode === "walk") { e.preventDefault(); queueJump(); }
-  if (e.code === crouchKey && mode === "walk" && !isPanelOpen()) { e.preventDefault(); setCrouch(!crouching); }   // §13.4 toggle crouch
+  if (e.code === crouchKey && mode === "walk" && !isPanelOpen() && !e.repeat) { e.preventDefault(); if (!player.swimming) setCrouch(!crouching); }   // §13.4 toggle crouch (held key = swim down)
   if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
   if (e.code === "KeyI") toggleInventory();           // inventory panel
   if (e.code === "KeyB" && mode === "walk" && !isPanelOpen() && ownsTool("bucket")) openBucketLook();   // §13.3 look inside the bucket
@@ -2388,6 +2559,8 @@ if (IS_TOUCH) (function mobileControls() {
        <div class="mBtn" data-act="run">Run</div>
        <div class="mBtn" data-key="KeyE">Use</div>
        <div class="mBtn" data-act="crouch">Crouch</div>
+       <div class="mBtn" data-act="swimup" data-hold="1">▲ Up</div>
+       <div class="mBtn" data-act="swimdown" data-hold="1">▼ Down</div>
        <div class="mBtn" data-key="KeyI">Pack</div>
        <div class="mBtn" data-key="Tab">Journal</div>
        <div class="mBtn" data-act="pause">Pause</div>
@@ -2425,9 +2598,18 @@ if (IS_TOUCH) (function mobileControls() {
       if (btn.dataset.act === "pause") overlay.classList.remove("hidden");
       else if (btn.dataset.act === "run") { mobileSprint = !mobileSprint; btn.style.background = mobileSprint ? "rgba(60,120,130,.8)" : ""; }
       else if (btn.dataset.act === "crouch") { if (mode === "walk" && !isPanelOpen()) { setCrouch(!crouching); btn.style.background = crouching ? "rgba(60,120,130,.8)" : ""; } }   // §13.4 mobile crouch toggle
+      else if (btn.dataset.act === "swimup") { mobileSwimUp = true; btn.style.background = "rgba(60,120,130,.8)"; }   // §14A hold to swim up
+      else if (btn.dataset.act === "swimdown") { mobileSwimDown = true; btn.style.background = "rgba(60,120,130,.8)"; }
       else if (btn.dataset.act === "jump") tryJump();
       else tapKey(btn.dataset.key);
     }, { passive: false });
+    if (btn.dataset.hold) {   // §14A release hold-buttons (swim up/down)
+      const rel = (e) => { e.preventDefault();
+        if (btn.dataset.act === "swimup") mobileSwimUp = false; else if (btn.dataset.act === "swimdown") mobileSwimDown = false;
+        btn.style.background = ""; };
+      btn.addEventListener("touchend", rel, { passive: false });
+      btn.addEventListener("touchcancel", rel, { passive: false });
+    }
   });
 
   // ---- joystick (left half) + look (right half), multi-touch ----
@@ -4249,7 +4431,8 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgBounds">${showBounds ? "Hide hitboxes" : "Show hitboxes"}</button><button id="dbgAudit">Run audit</button></div>
     <div class="dbgrow"><button id="dbgHints">${hintsOn ? "Hints: on" : "Hints: off"}</button><button id="dbgResetHints">Reset hints</button></div>
     <div class="dbgrow"><button id="dbgAutoPick">${autoPickup ? "Auto-pickup: on" : "Auto-pickup: off"}</button><button id="dbgAutoSwitch">${autoSwitch ? "Auto-switch: on" : "Auto-switch: off"}</button></div>
-    <div class="dbgrow"><button id="dbgHunger">${hungerEnabled ? "Hunger: on" : "Hunger: off"}</button></div>
+    <div class="dbgrow"><button id="dbgHunger">${hungerEnabled ? "Hunger: on" : "Hunger: off"}</button><button id="dbgBreath">${infiniteBreath ? "Breath: ∞" : "Breath: norm"}</button></div>
+    <div class="dbgrow"><button id="dbgDeep">To deep water</button></div>
     <h3>Shovel / stamina</h3>
     ${TUNABLES.map((t) => `<label>${t.k} <b class="tv" data-k="${t.k}">${(+DBG_GET(t.k)).toFixed(t.step < 0.01 ? 3 : 2)}</b>
       <input class="dbgtune" data-k="${t.k}" type="range" min="${t.min}" max="${t.max}" step="${t.step}" value="${DBG_GET(t.k)}"></label>`).join("")}
@@ -4269,6 +4452,8 @@ function syncDebugPanel() {
   p.querySelector("#dbgAutoPick").onclick = () => { autoPickup = !autoPickup; saveAutoPick(); syncDebugPanel(); };
   p.querySelector("#dbgAutoSwitch").onclick = () => { autoSwitch = !autoSwitch; saveAutoSwitch(); syncDebugPanel(); };
   p.querySelector("#dbgHunger").onclick = () => { setHungerEnabled(!hungerEnabled); syncDebugPanel(); };   // §13.8
+  p.querySelector("#dbgBreath").onclick = () => { infiniteBreath = !infiniteBreath; syncDebugPanel(); };   // §14A
+  p.querySelector("#dbgDeep").onclick = () => teleportToDeepWater();
   p.querySelectorAll(".dbgtune").forEach((el) => el.oninput = (e) => {
     const k = el.dataset.k, v = +e.target.value; DBG_SET(k, v);
     const b = p.querySelector(`.tv[data-k="${k}"]`); if (b) b.textContent = v.toFixed(v < 0.01 ? 3 : 2);
@@ -5586,6 +5771,23 @@ function drawBerryBushes(view) {
   }
 }
 
+/* §14A drowned-item sacks — a little bundle with a glint, on the seabed or washed ashore */
+let sackDyn = null;
+function sackMesh() { const m = Mesh(); const c = [0.46,0.39,0.28];
+  mBox(m, 0, 0.16, 0, 0.28, 0.2, 0.28, c); mBox(m, 0, 0.34, 0, 0.1, 0.12, 0.1, [0.32,0.26,0.18]);
+  for (const s of [-1,1]) mTri(m, [s*0.1,0.42,0], [s*0.22,0.58,0.06], [s*0.22,0.58,-0.06], [0.3,0.25,0.18]); return m; }
+function drawSacks(view) {
+  if (!sacks.length) return;
+  if (!sackDyn) sackDyn = makeDynamic(sackMesh(), 20);
+  propUniforms(view); const a = rockScratch; let n = 0;
+  for (const s of sacks) { if (n >= 20) break; const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    const y = surfaceAt(s.x, s.z).h + 0.1 + Math.sin(clock.t*1.5 + s.bob)*0.03;
+    const o = n*10; a[o]=s.x;a[o+1]=y;a[o+2]=s.z;a[o+3]=1;a[o+4]=s.bob;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++;
+    if (Math.random() < 0.05) sparkle(s.x, y+0.35, s.z, [0.95,0.9,0.65], 2);   // a glint so it's easy to find
+  }
+  if (n) sackDyn.draw(a, n);
+}
+
 /* ---- campfire (§10.5 stretch): built from Sticks + Stone; doubles shellfish value nearby ---- */
 let campfires = [], campfireDyn = null;
 const CAMPFIRE_COST = { stick: 3, stone: 3 }, CAMPFIRE_R = 4;
@@ -5650,7 +5852,9 @@ let pendingDig = null;
 const particles = [];
 const partDyn = makeDynamic((function () { const m = Mesh(); mBox(m, 0, 0, 0, 0.5, 0.5, 0.5, [1, 1, 1]); return m; })(), 220);
 function spawnSand(x, y, z, n, col) { for (let i = 0; i < n && particles.length < 200; i++) { const a = rng() * 6.283, s = 1 + rng() * 3; particles.push({ x, y, z, vx: Math.cos(a) * s, vy: 3 + rng() * 4, vz: Math.sin(a) * s, t: 0, life: 0.5 + rng() * 0.4, col }); } }
-function updateParticles(dt) { for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.t += dt; p.vy -= 20 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; if (p.t > p.life) particles.splice(i, 1); } }
+function updateParticles(dt) { for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.t += dt;
+  if (p.rise) { p.vy = Math.min(2.2, p.vy + 6*dt); p.vx *= 0.96; p.vz *= 0.96; } else p.vy -= 20 * dt;   // §14A bubbles rise
+  p.x += p.vx * dt; p.y += p.vy * dt; p.z += p.vz * dt; if (p.t > p.life) particles.splice(i, 1); } }
 function drawParticles(view) {
   if (!particles.length) return; let n = 0;
   for (const p of particles) { if (n >= 200) break; const o = n * 10, sc = 0.14 * (1 - p.t / p.life); digScratch[o]=p.x;digScratch[o+1]=p.y;digScratch[o+2]=p.z;digScratch[o+3]=sc;digScratch[o+4]=p.t*8;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=p.col[0];digScratch[o+8]=p.col[1];digScratch[o+9]=p.col[2]; n++; }
@@ -7071,6 +7275,13 @@ function frame(now) {
       cam.pos[0] += mx * step; cam.pos[1] += my * step; cam.pos[2] += mz * step;
     }
   } else {
+    // §14A decide swim vs walk, with hysteresis on the open-sea depth under the player
+    const seaDepth = openSeaDepth(player.x, player.z);
+    if (!player.swimming && seaDepth >= SWIM_START) startSwim();
+    else if (player.swimming && seaDepth < SWIM_STOP) stopSwim();
+   if (player.swimming) {
+     swimStep(dt, right);
+   } else {
     // ---- walk: wish-dir (manual or path), slope struggle, collide ----
     const hf = [fwd[0] / flen, fwd[2] / flen];   // forward on the ground plane
     let wx = 0, wz = 0, manual = false;
@@ -7117,10 +7328,11 @@ function frame(now) {
       // deep water or a near-vertical rise per frame (prevents climbing cliff faces without snagging on bumps).
       const h0 = here.h, maxRise = dist * 3 + 0.65;
       let nx = player.x, nz = player.z;
+      const WADE_INTO = SWIM_START + 0.7;   // §14A let wading carry you past the swim threshold so swimming kicks in
       const sX = surfaceAt(player.x + wx*dist, player.z);
-      if (waterLevel - sX.h <= WADE_DEPTH && sX.h - h0 <= maxRise) nx = player.x + wx*dist;
+      if (waterLevel - sX.h <= WADE_INTO && sX.h - h0 <= maxRise) nx = player.x + wx*dist;
       const sZ = surfaceAt(nx, player.z + wz*dist);
-      if (waterLevel - sZ.h <= WADE_DEPTH && sZ.h - h0 <= maxRise) nz = player.z + wz*dist;
+      if (waterLevel - sZ.h <= WADE_INTO && sZ.h - h0 <= maxRise) nz = player.z + wz*dist;
       [nx, nz] = slideCircles(nx, nz);
       player.x = nx; player.z = nz;
       player.bob += dist;
@@ -7160,8 +7372,11 @@ function frame(now) {
       player.feetY = standH;                                    // stay synced with the ground
     }
     cam.pos[0] = player.x; cam.pos[1] = player.eyeY + camYOff; cam.pos[2] = player.z;   // §13.1 landing give is camera-only
+   }
   }
 
+  if (mode === "walk") { updateBreath(dt); updateSacks(dt); }   // §14A
+  updateFade(dt);
   safetyCheck(dt);
 
   // ---- matrices ----
@@ -7233,6 +7448,7 @@ function frame(now) {
   drawDriftwood(view);
   drawSetPieces(view);
   drawBerryBushes(view);
+  drawSacks(view);
   drawCampfires(view);
   drawGoats(view);
   drawNests(view);
@@ -7295,6 +7511,8 @@ function frame(now) {
   gl.uniform1i(postU.uDither, ditherOn ? 1 : 0);
   gl.uniform1i(postU.uQuantize, GFX.quantize ? 1 : 0);   // §13.6 palette quantization toggle
   gl.uniform1f(postU.uHungerFx, mode === "walk" && hunger < H_HUNGRY ? Math.min(1, (H_HUNGRY - hunger) / H_HUNGRY) : 0);
+  gl.uniform1f(postU.uUnderwater, (mode === "walk" && player.underwater) ? 1 : 0);   // §14A
+  gl.uniform1f(postU.uBreathLow, (mode === "walk" && player.underwater) ? breathLow : 0);
   gl.bindVertexArray(fsTri);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   countDraw(1);
@@ -7320,6 +7538,17 @@ function frame(now) {
     hArc.style.display = "block"; hArc.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.07) ${deg}deg 360deg)`;
     hArc.style.opacity = hTier === "starving" ? (0.6 + 0.3 * Math.abs(Math.sin(performance.now() * 0.005))) : 0.9;
   } else hArc.style.display = "none";
+  // §14A breath arc — outside the stamina ring, only while submerged
+  const bArc = document.getElementById("breathArc");
+  if (mode === "walk" && player.underwater) {
+    const frac = Math.max(0, player.breath / BREATH_MAX), deg = frac * 360;
+    const col = frac < 0.3 ? "#e05a4a" : "#6fc4e0";
+    bArc.style.display = "block";
+    bArc.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.08) ${deg}deg 360deg)`;
+    bArc.style.opacity = frac < 0.3 ? (0.6 + 0.4 * Math.abs(Math.sin(performance.now() * 0.009))) : 0.92;
+  } else bArc.style.display = "none";
+  if (IS_TOUCH) { const sw = (mode === "walk" && player.swimming) ? "flex" : "none";   // §14A swim up/down buttons only while swimming
+    document.querySelectorAll('.mBtn[data-hold]').forEach(b => { if (b.style.display !== sw) b.style.display = sw; }); }
   document.getElementById("hotbar").style.display = (mode === "walk") ? "flex" : "none";
   // interaction indicator: a dot that becomes a soft-pulsing ring over anything in reach (§11.2)
   if (mode === "walk") {
