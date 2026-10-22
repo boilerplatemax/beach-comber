@@ -62,9 +62,15 @@
   .recitem.empty { justify-content: center; color: var(--ink-dim); cursor: default; }
   .recitem.empty:hover { filter: none; }
   #settingspanel { position: fixed; z-index: 14; display: none; left: 50%; top: 50%; transform: translate(-50%,-50%);
-    width: min(320px, 90vw); background: var(--facet); padding: 20px 22px; box-shadow: 0 10px 40px rgba(0,0,0,.6);
+    width: min(340px, 92vw); max-height: 86vh; overflow-y: auto; background: var(--facet); padding: 20px 22px; box-shadow: 0 10px 40px rgba(0,0,0,.6);
     clip-path: polygon(14px 0,calc(100% - 14px) 0,100% 14px,100% calc(100% - 14px),calc(100% - 14px) 100%,14px 100%,0 calc(100% - 14px),0 14px); }
   #settingspanel h3 { font-size: 18px; letter-spacing: .04em; margin-bottom: 14px; }
+  #settingspanel h4 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; opacity: .6; margin: 16px 0 8px; font-weight: 600; }
+  #settingspanel .spresets { display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 6px; }
+  #settingspanel .spreset { flex: 1; min-width: 52px; font-size: 11.5px; padding: 7px 4px; cursor: pointer; opacity: .7;
+    border: none; background: var(--panel-edge); color: var(--ink);
+    clip-path: polygon(6px 0,calc(100% - 6px) 0,100% 6px,100% calc(100% - 6px),calc(100% - 6px) 100%,6px 100%,0 calc(100% - 6px),0 6px); }
+  #settingspanel .spreset.on { opacity: 1; background: var(--facet); color: #ffe6b0; box-shadow: inset 0 0 0 1px rgba(255,220,150,.5); }
   #settingspanel .srow { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 11px 0; font-size: 13px; }
   #settingspanel .srow button { min-width: 64px; font-size: 12px; padding: 6px 12px; }
   #settingspanel label { font-size: 13px; letter-spacing: .02em; color: var(--ink); }
@@ -926,8 +932,9 @@ function buildFilledTexture() {
 const clock = { t: 0, speed: 1, paused: false };
 let timeOfDay = 0.28;                 // 0..1 across a day (0.3 ≈ afternoon)
 const DAY_PERIOD = 600;              // seconds per full day (~10 min)
-const FOG_DENSITY = 0.0016;           // see far across the big landscape, still hazy
-const FOG_NEAR = 50.0;                // clear band before fog ramps in
+const BASE_FOG_DENSITY = 0.0016, BASE_FOG_NEAR = 50.0;   // §13.6 base; graphics settings scale these live
+let FOG_DENSITY = BASE_FOG_DENSITY;   // see far across the big landscape, still hazy
+let FOG_NEAR = BASE_FOG_NEAR;         // clear band before fog ramps in
 
 // Day & night palettes; SKY is the blended current state (uploaded each frame).
 const SKY_DAY = { zenith: [0.42, 0.54, 0.63], horizon: [0.78, 0.77, 0.72], warm: [1.00, 0.92, 0.78] };
@@ -1430,6 +1437,7 @@ const waterVS = `#version 300 es
 precision highp float;
 uniform mat4 uProj, uView;
 uniform float uTime, uWaterLevel;
+uniform float uWaterQ;         // §13.6 water quality: scales wave height (0 = flat)
 uniform vec2 uCenter;          // grid follows the camera across the big map
 uniform sampler2D uHeight, uFilled;
 in vec2 aXZ;
@@ -1454,7 +1462,7 @@ void main() {
   float pool = (rim > uWaterLevel + 0.05 && rim > terr + 0.02) ? 1.0 : 0.0;
   float depth = local - terr;
   float damp = pool > 0.5 ? 0.05 : smoothstep(0.0, 2.0, max(0.0, depth)); // pools are still
-  float wy = waveH(xz, uTime) * damp;
+  float wy = waveH(xz, uTime) * damp * uWaterQ;
   vDepth = depth; vPool = pool;
   vWorld = vec3(xz.x, local + wy, xz.y);
   gl_Position = uProj * uView * vec4(vWorld, 1.0);
@@ -1467,7 +1475,7 @@ in float vDepth;
 in float vPool;
 out vec4 frag;
 uniform vec3 uCamPos, uSunDir, uZenith, uHorizon, uWarm;
-uniform float uTime, uFogDensity, uFogNear, uWaterLevel;
+uniform float uTime, uFogDensity, uFogNear, uWaterLevel, uWaterQ;
 uniform sampler2D uHeight, uFilled;
 ${SKY_GLSL}
 void main() {
@@ -1498,9 +1506,9 @@ void main() {
     vec3 refl = reflect(-v, n);
     col = mix(col, skyColor(refl, uSunDir, uZenith, uHorizon, uWarm), pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.5);
     col += uWarm * pow(max(dot(v, reflect(-normalize(uSunDir), n)), 0.0), 48.0) * 0.6;
-    // foam band that follows the shoreline as the tide moves
+    // foam band that follows the shoreline as the tide moves (dialled down at low water quality)
     float lap = sin(vWorld.x * 0.6 + uTime * 2.0) * sin(vWorld.z * 0.55 - uTime * 1.6);
-    float foam = clamp((1.0 - smoothstep(0.0, 1.3, depth)) * (0.5 + 0.5 * lap), 0.0, 1.0);
+    float foam = clamp((1.0 - smoothstep(0.0, 1.3, depth)) * (0.5 + 0.5 * lap), 0.0, 1.0) * smoothstep(0.1, 0.6, uWaterQ);
     col = mix(col, vec3(0.92, 0.95, 0.95), foam * 0.85);
     alpha = max(mix(0.4, 0.9, dmix), foam * 0.9);
   }
@@ -1607,6 +1615,7 @@ out vec4 frag;
 uniform sampler2D uScene;
 uniform vec2 uSceneSize;
 uniform int uDither;
+uniform int uQuantize;                          // §13.6 palette quantization on/off
 uniform float uHungerFx;                        // 0..1 starving: desaturate + darken edges
 const float bayer[16] = float[16](
   0.0, 8.0, 2.0, 10.0,  12.0, 4.0, 14.0, 6.0,
@@ -1618,8 +1627,9 @@ void main() {
   ivec2 p = ivec2(vUv * uSceneSize);            // low-res texel → chunky pattern
   int idx = (p.x & 3) * 4 + (p.y & 3);
   vec3 q;
-  if (uDither == 1) q = floor(c * levels + bayer[idx] / 16.0) / levels;
-  else              q = floor(c * levels + 0.5) / levels;
+  if (uQuantize == 0)    q = c;                                              // §13.6 full colour (Ultra)
+  else if (uDither == 1) q = floor(c * levels + bayer[idx] / 16.0) / levels;
+  else                   q = floor(c * levels + 0.5) / levels;
   // soft vignette for a little focus and moodiness (stronger when starving)
   vec2 d = vUv - 0.5;
   q *= 1.0 - dot(d, d) * (0.5 + uHungerFx * 1.3);
@@ -1633,10 +1643,14 @@ const postU = uniforms(postProg);
 const fbo = { w: 0, h: 0, fb: null, color: null, depth: null };
 function ensureFBO() {
   const aspect = canvas.width / canvas.height;
-  const w = IS_TOUCH ? 300 : 400;
+  // §13.6 resolution scale: a fraction of the native target width (chunky → crisp); AA supersamples past native.
+  const gfx = (typeof GFX !== "undefined") ? GFX : { resScale: IS_TOUCH ? 0.34 : 0.78, aa: false, ssaa: 1.4 };
+  let w = Math.round(canvas.width * (gfx.resScale || 0.5) * (gfx.aa ? (gfx.ssaa || 1.4) : 1));
+  w = Math.max(200, Math.min(2400, w));
   const h = Math.max(1, Math.round(w / aspect));
-  if (w === fbo.w && h === fbo.h) return;
-  fbo.w = w; fbo.h = h;
+  const filter = gfx.aa ? gl.LINEAR : gl.NEAREST;
+  if (w === fbo.w && h === fbo.h && filter === fbo.filter) return;
+  fbo.w = w; fbo.h = h; fbo.filter = filter;
   if (!fbo.fb) {
     fbo.fb = gl.createFramebuffer();
     fbo.color = gl.createTexture();
@@ -1644,8 +1658,8 @@ function ensureFBO() {
   }
   gl.bindTexture(gl.TEXTURE_2D, fbo.color);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, filter);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   gl.bindRenderbuffer(gl.RENDERBUFFER, fbo.depth);
@@ -1903,6 +1917,28 @@ function slideCircles(x, z) {
 
 const keys = Object.create(null);
 let ditherOn = true;
+/* ===================================================================== *
+ * § 13.6 GRAPHICS SETTINGS — presets + live custom knobs, saved to localStorage.
+ *   The flat-shaded low-poly style is kept at every level; higher settings
+ *   just make it crisper (resolution, AA), add shadows and show more world.
+ * ===================================================================== */
+// resScale is a fraction of the native target width → the low-res FBO width (the chunky↔crisp knob).
+const GFX_PRESETS = {
+  low:    { resScale: 0.34, dither: true,  quantize: true,  fog: 0.8, propDist: 0.7, foliage: 0.45, water: 0, shadows: false, aa: false, simRadius: 0.75, dprCap: 1, fpsCap: 30 },
+  medium: { resScale: 0.5,  dither: true,  quantize: true,  fog: 1.0, propDist: 1.0, foliage: 0.8,  water: 1, shadows: false, aa: false, simRadius: 1.0,  dprCap: 1.5, fpsCap: 60 },
+  high:   { resScale: 0.78, dither: true,  quantize: true,  fog: 1.15, propDist: 1.2, foliage: 1.0, water: 1, shadows: true,  aa: false, simRadius: 1.15, dprCap: 2, fpsCap: 60 },
+  ultra:  { resScale: 1.0,  dither: false, quantize: false, fog: 1.3, propDist: 1.4, foliage: 1.0,  water: 1, shadows: true,  aa: true,  simRadius: 1.35, dprCap: 2, fpsCap: 0 },
+};
+const GFX_CUSTOM_KEYS = ["resScale","dither","quantize","fog","propDist","foliage","water","shadows","aa","simRadius","dprCap","fpsCap"];
+// device-based default (computed here; IS_TOUCH's const is declared a little further down, so avoid its TDZ)
+const _gfxDefault = (matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0) ? "low" : "high";
+let GFX = { preset: _gfxDefault, ...GFX_PRESETS[_gfxDefault], ssaa: 1.4 };
+try { const s = JSON.parse(localStorage.getItem("bc_gfx") || "null");
+  if (s && s.preset) { GFX.preset = s.preset; if (s.preset === "custom") for (const k of GFX_CUSTOM_KEYS) { if (s[k] !== undefined) GFX[k] = s[k]; }
+    else Object.assign(GFX, GFX_PRESETS[s.preset] || {}); } } catch (e) {}
+function saveGFX() { try { const o = { preset: GFX.preset }; for (const k of GFX_CUSTOM_KEYS) o[k] = GFX[k]; localStorage.setItem("bc_gfx", JSON.stringify(o)); } catch (e) {} }
+function setGFXPreset(name) { GFX.preset = name; if (GFX_PRESETS[name]) Object.assign(GFX, GFX_PRESETS[name]); applyGFX(); saveGFX(); }
+function setGFXCustom(k, v) { GFX[k] = v; GFX.preset = "custom"; applyGFX(); saveGFX(); }
 let debugOn = false;             // ` toggles the perf overlay (within debug mode)
 let debugMode = new URLSearchParams(location.search).get("debug") === "1";  // hidden in normal play
 
@@ -1919,7 +1955,7 @@ addEventListener("keydown", (e) => {
     if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); pryStrike(); return; }
     if (e.code === "Escape") { cancelPry(); return; }
   }
-  if (e.code === "KeyG") ditherOn = !ditherOn;
+  if (e.code === "KeyG") setGFXCustom("dither", !GFX.dither);   // §13.6 quick dither toggle (syncs graphics settings)
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE") interact();                  // pick up / inspect
   if (e.code === "Space" && mode === "walk") { e.preventDefault(); queueJump(); }
@@ -2109,21 +2145,48 @@ document.getElementById("settingsBtn").addEventListener("click", () => openSetti
 function openSettings() {
   const p = document.getElementById("settingspanel");
   const onoff = (b) => b ? "On" : "Off";
+  const WATER_LBL = ["Off", "On"], FPS_LBL = { 0: "Uncapped", 30: "30", 60: "60", 120: "120" };
+  const slider = (k, lbl, min, max, step, val) => `<div class="srow"><label>${lbl}</label><input data-gs="${k}" type="range" min="${min}" max="${max}" step="${step}" value="${val}"></div>`;
+  const toggle = (k, lbl, v) => `<div class="srow"><label>${lbl}</label><button data-gt="${k}">${onoff(v)}</button></div>`;
   p.innerHTML = `<h3>Settings</h3>
-    <div class="srow"><label>Dithered look</label><button data-k="dither">${onoff(ditherOn)}</button></div>
     <div class="srow"><label>First-run hints</label><button data-k="hints">${onoff(hintsOn)}</button></div>
     <div class="srow"><label>Auto-pickup</label><button data-k="autopick">${onoff(autoPickup)}</button></div>
     <div class="srow"><label>Auto tool-switch</label><button data-k="autoswitch">${onoff(autoSwitch)}</button></div>
     <div class="srow"><label>Crouch key</label><button data-k="crouchkey">${crouchKey === "ControlLeft" ? "Ctrl" : "C"}</button></div>
     <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
+    <h4>Graphics</h4>
+    <div class="spresets">${["low","medium","high","ultra","custom"].map(n =>
+      `<button class="spreset${GFX.preset===n?" on":""}" data-gp="${n}">${n[0].toUpperCase()+n.slice(1)}</button>`).join("")}</div>
+    ${slider("resScale","Resolution", 0.25, 1, 0.01, GFX.resScale)}
+    ${toggle("dither","Dithering", GFX.dither)}
+    ${toggle("quantize","Palette quantize", GFX.quantize)}
+    ${slider("fog","Fog distance", 0.5, 1.6, 0.05, GFX.fog)}
+    ${slider("propDist","Prop distance", 0.5, 1.5, 0.05, GFX.propDist)}
+    ${slider("foliage","Foliage density", 0, 1, 0.05, GFX.foliage)}
+    <div class="srow"><label>Water quality</label><button data-gc="water">${WATER_LBL[GFX.water>0?1:0]}</button></div>
+    ${toggle("shadows","Sun shadows", GFX.shadows)}
+    ${toggle("aa","Anti-aliasing", GFX.aa)}
+    ${slider("simRadius","Creature radius", 0.6, 1.4, 0.05, GFX.simRadius)}
+    <div class="srow"><label>Pixel-ratio cap</label><button data-gc="dprCap">${GFX.dprCap}×</button></div>
+    <div class="srow"><label>FPS cap</label><button data-gc="fpsCap">${FPS_LBL[GFX.fpsCap]||GFX.fpsCap}</button></div>
     <button class="closebtn primary">Close</button>`;
   p.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => {
     const k = b.dataset.k;
-    if (k === "dither") ditherOn = !ditherOn;
-    else if (k === "hints") { hintsOn = !hintsOn; saveHints(); }
+    if (k === "hints") { hintsOn = !hintsOn; saveHints(); }
     else if (k === "autopick") { autoPickup = !autoPickup; saveAutoPick(); }
     else if (k === "autoswitch") { autoSwitch = !autoSwitch; saveAutoSwitch(); }
     else if (k === "crouchkey") { crouchKey = crouchKey === "KeyC" ? "ControlLeft" : "KeyC"; try { localStorage.setItem("bc_crouchKey", crouchKey); } catch (e) {} }
+    openSettings();
+  });
+  p.querySelectorAll("button[data-gp]").forEach(b => b.onclick = () => { setGFXPreset(b.dataset.gp); openSettings(); });
+  p.querySelectorAll("button[data-gt]").forEach(b => b.onclick = () => { setGFXCustom(b.dataset.gt, !GFX[b.dataset.gt]); openSettings(); });
+  p.querySelectorAll("input[data-gs]").forEach(inp => inp.oninput = (e) => setGFXCustom(inp.dataset.gs, +e.target.value));
+  p.querySelectorAll("input[data-gs]").forEach(inp => inp.onchange = () => openSettings());
+  p.querySelectorAll("button[data-gc]").forEach(b => b.onclick = () => {
+    const k = b.dataset.gc;
+    if (k === "water") setGFXCustom("water", GFX.water > 0 ? 0 : 1);
+    else if (k === "dprCap") setGFXCustom("dprCap", GFX.dprCap >= 2 ? 1 : GFX.dprCap + 0.5);
+    else if (k === "fpsCap") { const seq = [0, 30, 60, 120], i = seq.indexOf(GFX.fpsCap); setGFXCustom("fpsCap", seq[(i+1)%seq.length]); }
     openSettings();
   });
   const sens = p.querySelector("#setSens"); if (sens) sens.oninput = (e) => { lookSensMobile = +e.target.value; };
@@ -2979,10 +3042,71 @@ function drawProps(view) {
   gl.uniform1f(propU.uFogNear, FOG_NEAR);
   for (const t of propTypes) {
     if (!t.inst.vao || t.inst.count === 0) continue;
+    // §13.6 foliage density: draw only a leading fraction of foliage instances (scatter order is random)
+    const cnt = t.foliage ? Math.max(0, Math.round(t.inst.count * GFX.foliage)) : t.inst.count;
+    if (cnt === 0) continue;
     gl.bindVertexArray(t.inst.vao);
-    gl.drawArraysInstanced(gl.TRIANGLES, 0, t.inst.vertCount, t.inst.count);
-    countDraw(t.inst.tris);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, t.inst.vertCount, cnt);
+    countDraw(Math.round(t.inst.tris * cnt / t.inst.count));
   }
+}
+
+/* §13.6 SUN SHADOWS — soft contact shadows grounded under props & creatures (High/Ultra).
+   Flat dark discs hugging the terrain, offset opposite the sun; keeps the flat-shaded look. */
+const shadowProg = program(`#version 300 es
+precision highp float;
+uniform mat4 uProj, uView;
+in vec2 aPos;             // unit-disc local coords, |aPos| <= 1
+in vec4 iInst;            // x, y, z, radius
+out float vR;
+void main(){ vR = length(aPos);
+  vec3 w = vec3(iInst.x + aPos.x*iInst.w, iInst.y, iInst.z + aPos.y*iInst.w);
+  gl_Position = uProj * uView * vec4(w, 1.0); }`,
+`#version 300 es
+precision highp float;
+in float vR; out vec4 frag; uniform float uStrength;
+void main(){ float a = clamp(1.0 - vR, 0.0, 1.0); frag = vec4(0.0, 0.0, 0.0, a*a*uStrength); }`);
+const shadowU = uniforms(shadowProg);
+const SHADOW_MAX = 700;
+let shadowIB = null, shadowVAO = null, shadowVerts = 0;
+const _shadowArr = new Float32Array(SHADOW_MAX * 4);
+(function initShadowDisc(){
+  const aPos = gl.getAttribLocation(shadowProg, "aPos"), aInst = gl.getAttribLocation(shadowProg, "iInst");
+  const seg = 14, arr = [];
+  for (let i = 0; i < seg; i++) { const a0 = i/seg*6.283, a1 = (i+1)/seg*6.283;
+    arr.push(0,0, Math.cos(a0),Math.sin(a0), Math.cos(a1),Math.sin(a1)); }
+  shadowVerts = arr.length / 2;
+  shadowVAO = gl.createVertexArray(); gl.bindVertexArray(shadowVAO);
+  const pb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, pb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
+  shadowIB = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, shadowIB); gl.bufferData(gl.ARRAY_BUFFER, SHADOW_MAX*16, gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(aInst); gl.vertexAttribPointer(aInst, 4, gl.FLOAT, false, 16, 0); gl.vertexAttribDivisor(aInst, 1);
+  gl.bindVertexArray(null);
+})();
+function drawContactShadows(view) {
+  if (!GFX.shadows) return;
+  const px = cam.pos[0], pz = cam.pos[2], R2 = 92*92, A = _shadowArr;
+  const sx = SKY.sun[0], sz = SKY.sun[2], sl = Math.hypot(sx, sz) || 1, ox = -sx/sl, oz = -sz/sl;
+  let n = 0;
+  const add = (x, z, rad) => { if (n >= SHADOW_MAX) return;
+    if ((x-px)*(x-px) + (z-pz)*(z-pz) > R2) return;
+    const g = surfaceAt(x, z).h, off = rad*0.22, o = n*4;
+    A[o] = x + ox*off; A[o+1] = g + 0.04; A[o+2] = z + oz*off; A[o+3] = rad; n++; };
+  for (const o of treeObjs) if (!o.gone && !o.falling) add(o.x, o.z, (o.fallen?0.8:1.3)*(0.8+(o.scale||1)*0.3));
+  for (const o of rockObjs) if (!o.gone) add(o.x, o.z, 0.9 + (o.sc||1)*0.7);
+  for (const o of fallenTrees) if (!o.gone) add(o.x, o.z, 1.0);
+  for (const o of driftObjs) if (!o.gone) add(o.x, o.z, 0.5*(o.scale||1));
+  for (const e of life) if (e.kind === "creature" && !e.airborne && e.t !== "gull" && e.t !== "seal" && e.t !== "heron") {
+    if ((e.burrow || 0) > 0.5) continue; add(e.x, e.z, Math.max(0.25, (e.scale||0.4)*0.6)); }
+  if (n === 0) return;
+  gl.useProgram(shadowProg);
+  gl.uniformMatrix4fv(shadowU.uProj, false, proj); gl.uniformMatrix4fv(shadowU.uView, false, view);
+  gl.uniform1f(shadowU.uStrength, 0.3);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(false);
+  gl.bindBuffer(gl.ARRAY_BUFFER, shadowIB); gl.bufferSubData(gl.ARRAY_BUFFER, 0, A, 0, n*4);
+  gl.bindVertexArray(shadowVAO); gl.drawArraysInstanced(gl.TRIANGLES, 0, shadowVerts, n); countDraw((shadowVerts/3)*n);
+  gl.bindVertexArray(null); gl.depthMask(true); gl.disable(gl.BLEND);
 }
 
 /* ===================================================================== *
@@ -3402,7 +3526,8 @@ function lifeVisible(e) {
   return true;
 }
 
-const UPDATE_R = 70, DRAW_R = 190;
+const BASE_UPDATE_R = 70, BASE_DRAW_R = 190;   // §13.6 base radii; graphics settings scale these live
+let UPDATE_R = BASE_UPDATE_R, DRAW_R = BASE_DRAW_R;
 function updateLife(dt, tSec) {
   const px = cam.pos[0], pz = cam.pos[2];
   for (let i = life.length - 1; i >= 0; i--) {
@@ -6734,20 +6859,33 @@ if (debugMode) auditRegistries();
 
 let proj = new Float32Array(16);
 function resize() {
-  const dpr = Math.min(devicePixelRatio || 1, IS_TOUCH ? 1 : 2);
+  const dpr = Math.min(devicePixelRatio || 1, (typeof GFX !== "undefined" ? GFX.dprCap : (IS_TOUCH ? 1 : 2)) || 2);
   const w = Math.floor(innerWidth * dpr);
   const h = Math.floor(innerHeight * dpr);
   if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
   proj = M4.perspective(Math.PI / 3, canvas.width / canvas.height, 0.1, 3200);
   ensureFBO();
 }
+// §13.6 apply the current graphics settings to the live engine knobs (no reload needed).
+function applyGFX() {
+  ditherOn = GFX.dither;
+  FOG_DENSITY = BASE_FOG_DENSITY / Math.max(0.3, GFX.fog);   // higher "fog distance" = thinner fog, see farther
+  FOG_NEAR = BASE_FOG_NEAR * GFX.fog;
+  DRAW_R = BASE_DRAW_R * GFX.propDist;
+  UPDATE_R = BASE_UPDATE_R * GFX.simRadius;
+  resize();                                                  // picks up dprCap; forces the FBO to the new resolution/filter
+}
 addEventListener("resize", resize);
 resize();
+applyGFX();
 
 let last = performance.now();
 let fpsSmooth = 60, washedThisLow = false;
 const dbgEl = document.getElementById("dbg");
+let _fpsGate = 0;
 function frame(now) {
+  // §13.6 FPS cap: skip drawing until the frame budget has elapsed (0 = uncapped)
+  if (GFX.fpsCap > 0) { const budget = 1000 / GFX.fpsCap - 1.5; if (now - _fpsGate < budget) { requestAnimationFrame(frame); return; } _fpsGate = now; }
   const raw = (now - last) / 1000;
   const dt = Math.min(0.05, raw);
   last = now;
@@ -7008,6 +7146,7 @@ function frame(now) {
   gl.bindTexture(gl.TEXTURE_2D, materialTex);
   gl.uniform1i(terrainU.uMaterial, 1);
   drawTerrainChunks();
+  drawContactShadows(view);   // §13.6 sun shadows on the ground, under the props (High/Ultra)
 
   // props & points of interest (instanced), before the transparent water
   drawProps(view);
@@ -7044,6 +7183,7 @@ function frame(now) {
   gl.uniform1f(waterU.uFogDensity, FOG_DENSITY);
   gl.uniform1f(waterU.uFogNear, FOG_NEAR);
   gl.uniform1f(waterU.uWaterLevel, waterLevel);
+  gl.uniform1f(waterU.uWaterQ, GFX.water <= 0 ? 0.2 : 1);   // §13.6 flatter, foam-free water at low quality
   // snap the water sheet to the camera so wave detail stays nearby
   const wsnap = (WATER_HALF * 2) / 256;
   gl.uniform2f(waterU.uCenter, Math.round(cam.pos[0] / wsnap) * wsnap,
@@ -7074,6 +7214,7 @@ function frame(now) {
   gl.uniform1i(postU.uScene, 0);
   gl.uniform2f(postU.uSceneSize, fbo.w, fbo.h);
   gl.uniform1i(postU.uDither, ditherOn ? 1 : 0);
+  gl.uniform1i(postU.uQuantize, GFX.quantize ? 1 : 0);   // §13.6 palette quantization toggle
   gl.uniform1f(postU.uHungerFx, mode === "walk" && hunger < H_HUNGRY ? Math.min(1, (H_HUNGRY - hunger) / H_HUNGRY) : 0);
   gl.bindVertexArray(fsTri);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
