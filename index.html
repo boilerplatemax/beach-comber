@@ -956,6 +956,9 @@ let FOG_NEAR = BASE_FOG_NEAR;         // clear band before fog ramps in
 const SKY_DAY = { zenith: [0.42, 0.54, 0.63], horizon: [0.78, 0.77, 0.72], warm: [1.00, 0.92, 0.78] };
 const SKY_NIGHT = { zenith: [0.05, 0.07, 0.13], horizon: [0.10, 0.12, 0.18], warm: [0.35, 0.40, 0.55] };
 const SKY = { zenith: [0,0,0], horizon: [0,0,0], warm: [0,0,0], sun: [0,0,0] };
+// §14B underwater palette — the fog/haze everything fades into when the camera is submerged
+const SKY_UW = { zenith: [0.14, 0.42, 0.5], horizon: [0.1, 0.34, 0.44], warm: [0.45, 0.72, 0.72] };
+let camUnderwaterNow = false;   // §14B set each frame for the underwater-only draws (plankton etc.)
 
 function dayFactor() { return smoothstep(-0.32, 0.5, Math.cos((timeOfDay - 0.3) * 6.2831853)); }
 let booted = false;              // true once init finishes (gates runtime-only telegraphs in updateSun)
@@ -1274,6 +1277,7 @@ in vec3 vWorld;
 out vec4 frag;
 uniform vec3 uSunDir, uCamPos, uZenith, uHorizon, uWarm;
 uniform float uFogDensity, uFogNear, uWaterLevel, uWetLevel;
+uniform float uTime; uniform int uUnderwater;        // §14B animated seabed caustics
 uniform sampler2D uFresh;
 uniform sampler2D uMaterial;
 ${SKY_GLSL}
@@ -1327,6 +1331,15 @@ void main() {
   float diff = max(dot(n, normalize(uSunDir)), 0.0);
   col *= (0.55 + 0.55 * diff);
   col *= mix(vec3(0.88, 0.91, 0.99), uWarm, diff);
+
+  // §14B animated caustics on the seabed (strongest in the shallows)
+  if (uUnderwater == 1 && h < uWaterLevel - 0.1) {
+    float shallow = clamp(1.0 - (uWaterLevel - h) / 12.0, 0.0, 1.0);
+    vec2 cp = vWorld.xz * 0.33;
+    float c = sin(cp.x + uTime*0.9) * sin(cp.y - uTime*0.7) + sin((cp.x + cp.y)*0.6 + uTime*1.1) * 0.6;
+    float caust = smoothstep(0.35, 1.0, c*0.5 + 0.5);
+    col += col * caust * shallow * 0.6;
+  }
 
   // Distance fog → the sky color for this fragment's own view direction.
   vec3 viewVec = vWorld - uCamPos;
@@ -1888,6 +1901,9 @@ function swimStep(dt, right) {
   if (openSeaDepth(nx, nz) < 0.3) { const sx = openSeaDepth(nx, player.z) >= 0.3, sz = openSeaDepth(player.x, nz) >= 0.3;
     nx = sx ? nx : player.x; nz = sz ? nz : player.z; }
   player.x = nx; player.z = nz;
+  // §14B world-edge current: a gentle push back toward the island past the shelf
+  const cd = Math.hypot(player.x, player.z), edge = HALF * 0.88;
+  if (cd > edge) { const k = Math.min(1, (cd - edge) / (HALF*0.12)); player.x -= (player.x/cd) * k * 5 * dt; player.z -= (player.z/cd) * k * 5 * dt; }
   // vertical: input + gentle buoyancy toward the surface unless actively diving; tired players can't sink fast
   const surf = waterSurfaceAt(player.x, player.z), floor = surfaceAt(player.x, player.z).h;
   let ny = player.eyeY + wy*dist;
@@ -5860,6 +5876,29 @@ function drawParticles(view) {
   for (const p of particles) { if (n >= 200) break; const o = n * 10, sc = 0.14 * (1 - p.t / p.life); digScratch[o]=p.x;digScratch[o+1]=p.y;digScratch[o+2]=p.z;digScratch[o+3]=sc;digScratch[o+4]=p.t*8;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=p.col[0];digScratch[o+8]=p.col[1];digScratch[o+9]=p.col[2]; n++; }
   propUniforms(view); partDyn.draw(digScratch, n);
 }
+// §14B drifting plankton / marine snow — a persistent field of motes around the camera, only underwater
+const MOTE_N = 70, MOTE_R = 11, _moteArr = new Float32Array(MOTE_N * 10);
+let motes = null;
+function drawPlankton(view) {
+  if (!camUnderwaterNow) return;
+  if (!motes) { motes = []; for (let i = 0; i < MOTE_N; i++) motes.push({ x:(Math.random()-0.5)*2*MOTE_R, y:(Math.random()-0.5)*2*MOTE_R, z:(Math.random()-0.5)*2*MOTE_R, ph:Math.random()*6.28 }); }
+  const night = dayNightEnabled && dayFactor() < 0.3;          // bioluminescence at night (§14B)
+  let n = 0;
+  for (const m of motes) {
+    m.x += Math.sin(clock.t*0.3 + m.ph)*0.004; m.z += Math.cos(clock.t*0.25 + m.ph)*0.004; m.y += Math.sin(clock.t*0.2 + m.ph)*0.003;
+    if (m.x >  MOTE_R) m.x -= 2*MOTE_R; else if (m.x < -MOTE_R) m.x += 2*MOTE_R;
+    if (m.y >  MOTE_R) m.y -= 2*MOTE_R; else if (m.y < -MOTE_R) m.y += 2*MOTE_R;
+    if (m.z >  MOTE_R) m.z -= 2*MOTE_R; else if (m.z < -MOTE_R) m.z += 2*MOTE_R;
+    const wx = cam.pos[0]+m.x, wy = cam.pos[1]+m.y, wz = cam.pos[2]+m.z;
+    if (wy > waterSurfaceAt(wx, wz) - 0.1 || wy < surfaceAt(wx, wz).h) continue;   // keep them in the water column
+    const o = n*10, tw = 0.7 + 0.3*Math.sin(clock.t*2 + m.ph);
+    _moteArr[o]=wx; _moteArr[o+1]=wy; _moteArr[o+2]=wz; _moteArr[o+3]=0.045; _moteArr[o+4]=0; _moteArr[o+5]=0; _moteArr[o+6]=0;
+    if (night) { _moteArr[o+7]=0.4*tw; _moteArr[o+8]=0.9*tw; _moteArr[o+9]=1.0*tw; }   // glowing blue-cyan
+    else { _moteArr[o+7]=0.78*tw; _moteArr[o+8]=0.86*tw; _moteArr[o+9]=0.8*tw; }
+    n++;
+  }
+  if (n) { propUniforms(view); partDyn.draw(_moteArr, n); }
+}
 
 /* ---- tell markers (dimples / dry patches) drawn as flat discs ---- */
 const dimpleDyn = makeDynamic((function () { const m = discMesh(0, 0.5, 8, 0.0, [1, 1, 1]); return m; })(), 60);
@@ -7396,6 +7435,22 @@ function frame(now) {
   const invVP = M4.invert(lastVP);
   lastInvVP = invVP;
 
+  // §14B underwater view: deepen & blue-shift the fog so visibility shortens with depth, and swap the
+  // sky/fog colour to the undersea palette. Reds fade into blue-green, darker the deeper you go.
+  const camSurf = waterSurfaceAt(cam.pos[0], cam.pos[2]);
+  const camUnderwater = mode === "walk" && cam.pos[1] < camSurf - 0.05;
+  camUnderwaterNow = camUnderwater;
+  let _uwFogD, _uwFogN, _uwSky;
+  if (camUnderwater) {
+    const depthBelow = Math.max(0, camSurf - cam.pos[1]);
+    const murk = Math.min(1, depthBelow / 22);                 // deeper → murkier
+    _uwFogD = FOG_DENSITY; _uwFogN = FOG_NEAR;
+    FOG_DENSITY = 0.028 + murk * 0.03; FOG_NEAR = 6.0;         // shorter visibility than on land, but still see the seabed
+    _uwSky = { z: SKY.zenith, h: SKY.horizon, w: SKY.warm };
+    const dk = 1 - murk * 0.4;                                  // gently darker with depth
+    SKY.zenith = SKY_UW.zenith.map(v => v*dk); SKY.horizon = SKY_UW.horizon.map(v => v*dk); SKY.warm = SKY_UW.warm.map(v => v*dk);
+  }
+
   // ============ PASS 1: scene → low-res FBO ============
   ensureFBO();
   gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.fb);
@@ -7433,6 +7488,7 @@ function frame(now) {
   gl.uniform1f(terrainU.uFogNear, FOG_NEAR);
   gl.uniform1f(terrainU.uWaterLevel, waterLevel);
   gl.uniform1f(terrainU.uWetLevel, wetLevel);
+  gl.uniform1f(terrainU.uTime, t); gl.uniform1i(terrainU.uUnderwater, camUnderwater ? 1 : 0);   // §14B caustics
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, freshTex);
   gl.uniform1i(terrainU.uFresh, 0);
@@ -7461,6 +7517,7 @@ function frame(now) {
   drawRipples(view);
   drawPlaceGhost(view);
   drawParticles(view);
+  drawPlankton(view);   // §14B drifting marine snow / bioluminescence, underwater only
   drawBounds(view);
 
   // water
@@ -7511,13 +7568,14 @@ function frame(now) {
   gl.uniform1i(postU.uDither, ditherOn ? 1 : 0);
   gl.uniform1i(postU.uQuantize, GFX.quantize ? 1 : 0);   // §13.6 palette quantization toggle
   gl.uniform1f(postU.uHungerFx, mode === "walk" && hunger < H_HUNGRY ? Math.min(1, (H_HUNGRY - hunger) / H_HUNGRY) : 0);
-  gl.uniform1f(postU.uUnderwater, (mode === "walk" && player.underwater) ? 1 : 0);   // §14A
-  gl.uniform1f(postU.uBreathLow, (mode === "walk" && player.underwater) ? breathLow : 0);
+  gl.uniform1f(postU.uUnderwater, camUnderwater ? 1 : 0);   // §14A/B
+  gl.uniform1f(postU.uBreathLow, camUnderwater ? breathLow : 0);
   gl.bindVertexArray(fsTri);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   countDraw(1);
 
   gl.bindVertexArray(null);
+  if (camUnderwater) { FOG_DENSITY = _uwFogD; FOG_NEAR = _uwFogN; SKY.zenith = _uwSky.z; SKY.horizon = _uwSky.h; SKY.warm = _uwSky.w; }   // §14B restore
 
   // ---- hud ----
   // stamina ring near the crosshair — only visible while it isn't full (or flashing a "too tired" refusal, §13.2)
