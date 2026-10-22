@@ -62,7 +62,8 @@
   .recitem.empty { justify-content: center; color: var(--ink-dim); cursor: default; }
   .recitem.empty:hover { filter: none; }
   #settingspanel { position: fixed; z-index: 14; display: none; left: 50%; top: 50%; transform: translate(-50%,-50%);
-    width: min(340px, 92vw); max-height: 86vh; overflow-y: auto; background: var(--facet); padding: 20px 22px; box-shadow: 0 10px 40px rgba(0,0,0,.6);
+    width: min(340px, 92vw); max-height: 85vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    touch-action: pan-y; overscroll-behavior: contain; background: var(--facet); padding: 20px 22px; box-shadow: 0 10px 40px rgba(0,0,0,.6);
     clip-path: polygon(14px 0,calc(100% - 14px) 0,100% 14px,100% calc(100% - 14px),calc(100% - 14px) 100%,14px 100%,0 calc(100% - 14px),0 14px); }
   #settingspanel h3 { font-size: 18px; letter-spacing: .04em; margin-bottom: 14px; }
   #settingspanel h4 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; opacity: .6; margin: 16px 0 8px; font-weight: 600; }
@@ -930,8 +931,13 @@ function buildFilledTexture() {
 
 // ONE shared game clock drives tides, day/night, creatures and spawns.
 const clock = { t: 0, speed: 1, paused: false };
-let timeOfDay = 0.28;                 // 0..1 across a day (0.3 ≈ afternoon)
+const MORNING_TIME = 0.15;           // §13.9 mid-morning (0.05 sunrise · 0.3 noon · 0.55 sunset)
+let timeOfDay = MORNING_TIME;        // 0..1 across a day; the game opens in the morning
 const DAY_PERIOD = 600;              // seconds per full day (~10 min)
+// §13.9 day/night cycle off by default (sun frozen at morning); toggle in settings.
+let dayNightEnabled = false;
+try { dayNightEnabled = localStorage.getItem("bc_daynight") === "1"; } catch (e) {}
+function setDayNight(on) { dayNightEnabled = on; if (!on) { timeOfDay = MORNING_TIME; updateSun(); } try { localStorage.setItem("bc_daynight", on ? "1" : "0"); } catch (e) {} }
 const BASE_FOG_DENSITY = 0.0016, BASE_FOG_NEAR = 50.0;   // §13.6 base; graphics settings scale these live
 let FOG_DENSITY = BASE_FOG_DENSITY;   // see far across the big landscape, still hazy
 let FOG_NEAR = BASE_FOG_NEAR;         // clear band before fog ramps in
@@ -1005,7 +1011,7 @@ function updateTide(gdt) {       // gdt = game-time seconds (already clock-scale
   tideT = (tideT + gdt / TIDE_PERIOD) % 1;
   if (tideT < 0) tideT += 1;
   tideDay += gdt / DAY_PERIOD;
-  timeOfDay = (timeOfDay + gdt / DAY_PERIOD) % 1;
+  if (dayNightEnabled) timeOfDay = (timeOfDay + gdt / DAY_PERIOD) % 1;   // §13.9 frozen at morning when disabled
   updateSun();
   waterLevel = levelAt(tideT, tideDay);
   if (waterLevel >= wetLevel) wetLevel = waterLevel;          // instantly wet
@@ -1643,9 +1649,14 @@ const postU = uniforms(postProg);
 const fbo = { w: 0, h: 0, fb: null, color: null, depth: null };
 function ensureFBO() {
   const aspect = canvas.width / canvas.height;
-  // §13.6 resolution scale: a fraction of the native target width (chunky → crisp); AA supersamples past native.
-  const gfx = (typeof GFX !== "undefined") ? GFX : { resScale: IS_TOUCH ? 0.34 : 0.78, aa: false, ssaa: 1.4 };
-  let w = Math.round(canvas.width * (gfx.resScale || 0.5) * (gfx.aa ? (gfx.ssaa || 1.4) : 1));
+  // §13.6 resolution scale: an absolute width that ramps from a chunky low-res floor up to native.
+  // resScale 0.25 → the floor (the classic 400px chunky-dithered look); 1.0 → native; AA supersamples past it.
+  const gfx = (typeof GFX !== "undefined") ? GFX : { resScale: 0.25, aa: false, ssaa: 1.4 };
+  const native = canvas.width, floor = IS_TOUCH ? 300 : 400;
+  let w;
+  if (gfx.aa) w = Math.round(native * (gfx.ssaa || 1.4));
+  else { const tt = Math.max(0, Math.min(1, ((gfx.resScale || 0.25) - 0.25) / 0.75));   // 0 at the floor, 1 at native
+    w = Math.round(floor * Math.pow(Math.max(floor, native) / floor, tt)); }
   w = Math.max(200, Math.min(2400, w));
   const h = Math.max(1, Math.round(w / aspect));
   const filter = gfx.aa ? gl.LINEAR : gl.NEAREST;
@@ -1796,6 +1807,7 @@ function enterWalk() {
   lastSafe.x = s.x; lastSafe.z = s.z;
   cam.yaw = s.yaw; cam.pitch = -0.04;
   mode = "walk";
+  timeOfDay = MORNING_TIME; updateSun();   // §13.9 the game opens in the morning (then advances only if day/night is on)
 }
 
 /* --------------------------------------------------------------------- *
@@ -1923,15 +1935,16 @@ let ditherOn = true;
  *   just make it crisper (resolution, AA), add shadows and show more world.
  * ===================================================================== */
 // resScale is a fraction of the native target width → the low-res FBO width (the chunky↔crisp knob).
+// "Low" is the classic chunky, dithered look (the default); higher presets just make it crisper.
 const GFX_PRESETS = {
-  low:    { resScale: 0.34, dither: true,  quantize: true,  fog: 0.8, propDist: 0.7, foliage: 0.45, water: 0, shadows: false, aa: false, simRadius: 0.75, dprCap: 1, fpsCap: 30 },
-  medium: { resScale: 0.5,  dither: true,  quantize: true,  fog: 1.0, propDist: 1.0, foliage: 0.8,  water: 1, shadows: false, aa: false, simRadius: 1.0,  dprCap: 1.5, fpsCap: 60 },
-  high:   { resScale: 0.78, dither: true,  quantize: true,  fog: 1.15, propDist: 1.2, foliage: 1.0, water: 1, shadows: true,  aa: false, simRadius: 1.15, dprCap: 2, fpsCap: 60 },
+  low:    { resScale: 0.25, dither: true,  quantize: true,  fog: 1.0, propDist: 0.85, foliage: 0.6, water: 1, shadows: false, aa: false, simRadius: 0.9,  dprCap: 2, fpsCap: 0 },
+  medium: { resScale: 0.45, dither: true,  quantize: true,  fog: 1.0, propDist: 1.0, foliage: 0.85, water: 1, shadows: false, aa: false, simRadius: 1.0,  dprCap: 2, fpsCap: 0 },
+  high:   { resScale: 0.7,  dither: true,  quantize: true,  fog: 1.15, propDist: 1.2, foliage: 1.0, water: 1, shadows: true,  aa: false, simRadius: 1.15, dprCap: 2, fpsCap: 0 },
   ultra:  { resScale: 1.0,  dither: false, quantize: false, fog: 1.3, propDist: 1.4, foliage: 1.0,  water: 1, shadows: true,  aa: true,  simRadius: 1.35, dprCap: 2, fpsCap: 0 },
 };
 const GFX_CUSTOM_KEYS = ["resScale","dither","quantize","fog","propDist","foliage","water","shadows","aa","simRadius","dprCap","fpsCap"];
-// device-based default (computed here; IS_TOUCH's const is declared a little further down, so avoid its TDZ)
-const _gfxDefault = (matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0) ? "low" : "high";
+// §13.6 default to the classic low-res dithered look on every device (crisper presets are opt-in)
+const _gfxDefault = "low";
 let GFX = { preset: _gfxDefault, ...GFX_PRESETS[_gfxDefault], ssaa: 1.4 };
 try { const s = JSON.parse(localStorage.getItem("bc_gfx") || "null");
   if (s && s.preset) { GFX.preset = s.preset; if (s.preset === "custom") for (const k of GFX_CUSTOM_KEYS) { if (s[k] !== undefined) GFX[k] = s[k]; }
@@ -2153,6 +2166,7 @@ function openSettings() {
     <div class="srow"><label>Auto-pickup</label><button data-k="autopick">${onoff(autoPickup)}</button></div>
     <div class="srow"><label>Auto tool-switch</label><button data-k="autoswitch">${onoff(autoSwitch)}</button></div>
     <div class="srow"><label>Hunger</label><button data-k="hunger">${onoff(hungerEnabled)}</button></div>
+    <div class="srow"><label>Day/night cycle</label><button data-k="daynight">${onoff(dayNightEnabled)}</button></div>
     <div class="srow"><label>Crouch key</label><button data-k="crouchkey">${crouchKey === "ControlLeft" ? "Ctrl" : "C"}</button></div>
     <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
     <h4>Graphics</h4>
@@ -2177,6 +2191,7 @@ function openSettings() {
     else if (k === "autopick") { autoPickup = !autoPickup; saveAutoPick(); }
     else if (k === "autoswitch") { autoSwitch = !autoSwitch; saveAutoSwitch(); }
     else if (k === "hunger") { setHungerEnabled(!hungerEnabled); }   // §13.8
+    else if (k === "daynight") { setDayNight(!dayNightEnabled); }     // §13.9
     else if (k === "crouchkey") { crouchKey = crouchKey === "KeyC" ? "ControlLeft" : "KeyC"; try { localStorage.setItem("bc_crouchKey", crouchKey); } catch (e) {} }
     openSettings();
   });
@@ -2477,7 +2492,11 @@ if (IS_TOUCH) (function mobileControls() {
   layer.addEventListener("touchcancel", endTouch);
 
   // ---- block page scroll / pull-to-refresh / pinch-zoom / long-press menu ----
-  document.addEventListener("touchmove", (e) => e.preventDefault(), { passive: false });
+  // block page scroll/bounce, but let scrollable panels (settings, satchel, journal…) scroll natively
+  document.addEventListener("touchmove", (e) => {
+    if (e.target.closest && e.target.closest("#settingspanel, #invpanel, #stashpanel, #journal, #bucketlook")) return;
+    e.preventDefault();
+  }, { passive: false });
   document.addEventListener("gesturestart", (e) => e.preventDefault());
   document.addEventListener("contextmenu", (e) => e.preventDefault());
 
@@ -7094,42 +7113,22 @@ function frame(now) {
       else if (here.h < 12) surfMul = 0.9;                          // soft sand
       const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * (crouching ? CROUCH_SPEED : 1) * sm * surfMul * (player.landStun > 0 ? 0.5 : 1) * matSpeedMul(Terrain.materialAt(player.x, player.z));
       const dist = speed * dt;
-      // §13.1 substep so fast movement can't skip a cliff; block uphill onto a face past the slope limit,
-      // checking BOTH the step rise and the triangle-normal slope at the target.
-      const nsub = Math.max(1, Math.ceil(dist / MOVE_SUBSTEP)), sub = dist / nsub;
-      let px = player.x, pz = player.z;
-      for (let s = 0; s < nsub; s++) {
-        const h0 = surfaceAt(px, pz).h;
-        // try X and Z independently so you can slide along a wall
-        const cand = [[px + wx*sub, pz], [px, pz + wz*sub]];
-        let moved = false;
-        for (const [tx, tz] of cand) {
-          if (tx === px && tz === pz) continue;
-          const st = surfaceAt(tx, tz);
-          if (waterLevel - st.h > WADE_DEPTH) continue;             // deep water
-          const stepGrade = Math.atan2(st.h - h0, sub);
-          if (stepGrade > 0.02 && Math.max(stepGrade, st.slope) > SLOPE_IMPASS) continue;   // uphill onto too-steep → blocked
-          px = tx; pz = tz; moved = true;
-        }
-        if (!moved) break;
-      }
-      [px, pz] = slideCircles(px, pz);
-      player.x = px; player.z = pz;
+      // Simple, robust movement: slide X and Z independently (so you glide along walls), blocking only
+      // deep water or a near-vertical rise per frame (prevents climbing cliff faces without snagging on bumps).
+      const h0 = here.h, maxRise = dist * 3 + 0.65;
+      let nx = player.x, nz = player.z;
+      const sX = surfaceAt(player.x + wx*dist, player.z);
+      if (waterLevel - sX.h <= WADE_DEPTH && sX.h - h0 <= maxRise) nx = player.x + wx*dist;
+      const sZ = surfaceAt(nx, player.z + wz*dist);
+      if (waterLevel - sZ.h <= WADE_DEPTH && sZ.h - h0 <= maxRise) nz = player.z + wz*dist;
+      [nx, nz] = slideCircles(nx, nz);
+      player.x = nx; player.z = nz;
       player.bob += dist;
-      if (fwdGrade < -0.55 && rng() < dt * 2.5) { player.x += wx * 0.25; player.z += wz * 0.25; } // downhill slips
       const stepLen = scrambleTarget > 0.5 ? 1.5 : 1.15;
       if (player.bob - _stepPhase >= stepLen) {
         _stepPhase = player.bob;
         if (onFootstep) onFootstep(surfaceType(here.h, here.slope), scrambleTarget > 0.5 ? 1 : (player.sprinting ? 0.85 : 0.55));
       }
-    }
-
-    // §13.1 ground too steep to hold → slide back down (even with no input)
-    const gh = groundGradient(player.x, player.z);
-    if (gh.slope > SLOPE_IMPASS && !player.airborne) {
-      const slide = Math.min(1, (gh.slope - SLOPE_IMPASS) / 0.2) * 6 * dt;
-      const sx = player.x + gh.dx * slide, sz = player.z + gh.dz * slide;
-      if (waterLevel - surfaceAt(sx, sz).h <= WADE_DEPTH) { player.x = sx; player.z = sz; }
     }
     player.scramble += (scrambleTarget - player.scramble) * Math.min(1, dt * 4);
     if (player.landStun > 0) player.landStun = Math.max(0, player.landStun - dt);
