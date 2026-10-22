@@ -4527,6 +4527,7 @@ function lifeVisible(e) {
   const g = heightAt(e.x, e.z);
   if (e.kind === "find") return waterLevel < g + 1.6 || g < -1;        // exposed/shallow, or resting on the seabed (§14B)
   if (e.t === "crab") { const d = waterLevel - g; return d < 0.1 && d > -4; }  // wet sand
+  if (e.t === "flounder") return waterDepthAt(e.x, e.z) > 0.12;        // §1e only while submerged — never beached
   if (e.t === "jelly") return waterLevel < g + 0.2;                    // stranded low tide
   if (e.t === "seal") return waterLevel < g + 0.6 && e.state !== "gone";
   if (e.t === "gull") return true;
@@ -4590,11 +4591,17 @@ function behaveFish(e, dt, d, dx, dz) {
     const slow = e.t === "flounder" ? 0.08 : (e.t === "lingcod" ? 0.4 : 0.9);
     e.x += (e.vx||0)*dt*slow; e.z += (e.vz||0)*dt*slow;
     if (Math.hypot(e.x-e.hx, e.z-e.hz) > (e.hr||7)) { e.vx = (e.hx-e.x)*0.3; e.vz = (e.hz-e.z)*0.3; }
+    // §1e flounder tracks the tide: if its sand is drying out, it eases down the slope into deeper water so it's never beached
+    if (e.t === "flounder") {
+      const depth = waterDepthAt(e.x, e.z);
+      if (depth < 0.6) { const grad = groundGradient(e.x, e.z); const push = (0.6 - depth) * 2.2; e.x += grad.dx*dt*push; e.z += grad.dz*dt*push; e.hx = e.x; e.hz = e.z; }
+    }
     e.yaw = Math.atan2(e.vz||0.01, e.vx||0.01) + 1.57;
-    const ty = e.t === "flounder" ? floor+0.15 : floor + (e.t === "lingcod" ? 0.9 : 1.6) + Math.sin(e.phase*0.8)*0.3;
+    const ty = e.t === "flounder" ? floor+0.12 : floor + (e.t === "lingcod" ? 0.9 : 1.6) + Math.sin(e.phase*0.8)*0.3;
     e.y += (ty - e.y) * Math.min(1, dt*1.5);
   }
-  e.y = Math.max(floor+0.1, Math.min(surf-0.3, e.y));
+  // keep every fish under the surface; the flounder rests just above the seabed, partly buried
+  e.y = Math.max(floor+0.08, Math.min(surf - (e.t === "flounder" ? 0.12 : 0.3), e.y));
 }
 function behave(e, dt, d, dx, dz) {
   const g = heightAt(e.x, e.z);
@@ -4717,7 +4724,8 @@ function drawLife(view) {
       let y = g, sc = e.scale, lean = 0, ld = 0;
       if (e.kind === "creature") {
         if (FISH[e.t]) { y = (e.y !== undefined) ? e.y : g + 1.0;   // §14C huntable fish hover in the water column
-          lean = e.t === "flounder" ? 1.5 : Math.sin(e.phase*3)*0.06; ld = e.yaw; }   // flounder lies flat
+          // §1e flounder lies FLAT on the sand (its mesh is a flat oval, so no tilt) with a gentle edge-to-edge ripple; others sway upright
+          lean = e.t === "flounder" ? Math.sin(e.phase*2.2) * (0.05 + 0.1*(e.fleeT>0?1:0)) : Math.sin(e.phase*3)*0.06; ld = e.yaw; }
         else if (e.t === "fish") y = (e.poolRim !== undefined ? Math.max(waterLevel, e.poolRim) : waterLevel) - 0.3 + Math.sin(e.phase*4)*0.05;
         else if (e.t === "gull") {                      // §12B flap-and-glide
           const overW = waterDepthAt(e.x, e.z) > 0.4, lowAlt = (e.alt || 0) < 1.5;
