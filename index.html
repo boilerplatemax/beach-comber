@@ -189,6 +189,33 @@
   #debugpanel label { display: block; margin: 10px 0; font-size: 12px; opacity: .8; }
   #debugpanel input[type=range] { width: 100%; }
   .dbgspd.on { background: #2b6f78; border-color: #3f9aa5; }
+  /* §11.7 close-up inspect overlay */
+  #inspectview { position: fixed; inset: 0; z-index: 25; display: none; align-items: center; justify-content: center;
+    background: rgba(6,10,13,.72); backdrop-filter: blur(2px); }
+  #inspectbox { display: flex; gap: 18px; align-items: stretch; flex-wrap: wrap; justify-content: center;
+    background: rgba(12,18,22,.96); border: 1px solid rgba(255,255,255,.16); border-radius: 14px; padding: 18px; max-width: 92vw;
+    box-shadow: 0 12px 40px rgba(0,0,0,.55); }
+  #inspectcanvas { width: 300px; height: 300px; border-radius: 10px; background: #10171c; image-rendering: pixelated;
+    touch-action: none; cursor: grab; }
+  #inspectcanvas:active { cursor: grabbing; }
+  #inspectinfo { width: 240px; text-align: left; display: flex; flex-direction: column; }
+  #inspName { font-size: 21px; margin: 2px 0 6px; }
+  #inspRarity { font-size: 11px; text-transform: uppercase; letter-spacing: .12em; opacity: .85; margin-bottom: 8px; }
+  #inspVariant { font-size: 12.5px; color: #ffd98a; margin-bottom: 8px; min-height: 0; }
+  #inspVariant:empty { display: none; }
+  #inspDesc { font-size: 13.5px; opacity: .88; line-height: 1.5; margin-bottom: 10px; }
+  #inspCaught { font-size: 12px; opacity: .7; margin-bottom: 12px; }
+  #inspCaught:empty { display: none; }
+  #inspNav { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; font-size: 12px; opacity: .8; }
+  #inspNav:empty { display: none; }
+  #inspNav button { width: 30px; }
+  #inspBtns { margin-top: auto; display: flex; gap: 10px; }
+  #inspectview button {
+    font: inherit; font-size: 13px; padding: 7px 16px; border-radius: 8px; cursor: pointer;
+    border: 1px solid rgba(255,255,255,.25); background: rgba(255,255,255,.09); color: #eaf2f5; }
+  #inspectview button:hover:not(:disabled) { background: rgba(255,255,255,.18); }
+  #inspectview button:disabled { opacity: .4; cursor: default; }
+  #inspRelease { background: rgba(80,170,150,.22); border-color: rgba(120,210,180,.4); }
   #help {
     position: fixed; right: 12px; bottom: 12px; z-index: 5; pointer-events: none;
     font-size: 12px; opacity: .55; text-align: right; line-height: 1.5;
@@ -223,6 +250,23 @@
 <div id="invpanel"></div>
 <canvas id="bucketpanel" width="125" height="145"></canvas>
 <div id="ctxmenu"></div>
+<div id="inspectview">
+  <div id="inspectbox">
+    <canvas id="inspectcanvas" width="300" height="300"></canvas>
+    <div id="inspectinfo">
+      <h2 id="inspName">—</h2>
+      <div id="inspRarity" class="r"></div>
+      <div id="inspVariant"></div>
+      <p id="inspDesc"></p>
+      <div id="inspCaught"></div>
+      <div id="inspNav"></div>
+      <div id="inspBtns">
+        <button id="inspRelease">Release</button>
+        <button id="inspBack">Back</button>
+      </div>
+    </div>
+  </div>
+</div>
 <button id="bagBtn">🎒</button>
 <div id="dragGhost"></div>
 <div id="itip"></div>
@@ -1713,6 +1757,7 @@ const analog = { x: 0, y: 0 };   // x = strafe, y = forward, each -1..1
 let mobileSprint = false;        // mobile "Run" toggle writes here
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
+  if (e.code === "Escape" && typeof inspect !== "undefined" && inspect.open) { closeInspect(); return; }   // close the close-up first
   if (e.code === "KeyG") ditherOn = !ditherOn;
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE") interact();                  // pick up / inspect
@@ -3155,7 +3200,7 @@ function invDrop(idx, one) {
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
   try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger,
-    bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim })) } })); } catch (e) {}
+    bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, caught: c.caught })) } })); } catch (e) {}
 }
 function loadState() {
   try {
@@ -3388,7 +3433,7 @@ function equipToBelt(idx) {
   let slot = Inv.hotbar.indexOf(null); if (slot < 0) slot = Inv.selected;
   invMove(idx, INV_SLOTS + slot); Inv.selected = slot; Inv.emit();
 }
-function showInspect(id) { const it = ITEMS[id]; showCard(it.name, (it.desc || "") + (Inv.count(id) > 1 ? "  ×" + Inv.count(id) : "")); }
+function showInspect(id) { if (typeof openInspect === "function") openInspect(id, "item"); else { const it = ITEMS[id]; showCard(it.name, it.desc || ""); } }
 function eatItem(idx) {
   const c = Inv.cell(idx); if (!c || !isFood(c.id)) return; const id = c.id;
   c.qty--; if (c.qty <= 0) Inv.setCell(idx, null); Inv.emit();
@@ -4283,12 +4328,19 @@ function removeBuiltAt(x, z) {
  * ===================================================================== */
 const bucket = { water: false, creatures: [] };
 const BUCKET_CAP = 5;
+// where/when a creature was scooped, for the close-up inspect card (§11.7)
+function catchBiomeLabel(x, z) {
+  if (waterDepthAt(x, z) > 0.05) return "the shallows";
+  const bi = digBiome(x, z); return bi === "wet" ? "the wet sand" : bi === "sand" ? "the dry beach" : "a tide pool";
+}
+function catchTideLabel() { return isMinusTideNow() ? "a minus tide" : (tideInfo().rising ? "a rising tide" : "an ebbing tide"); }
 const BUCKETABLE = { crab: 1, fish: 1, star: 1, hermit: 1, anemone: 1 };
 function bucketScoop(e) {                                       // bucket used on a creature
   if (!bucket.water) { showCard("Empty bucket", "Fill it at the water's edge first."); return true; }
   if (bucket.creatures.length >= BUCKET_CAP) { showCard("Bucket full", `It holds ${BUCKET_CAP} creatures.`); return true; }
   if (!BUCKETABLE[e.t]) return false;                          // not scoopable → let the normal inspect happen
-  bucket.creatures.push({ t: e.t, scale: e.scale, tint: e.tint || [1,1,1], special: !!e.special, name: e.name, poolRim: e.poolRim });
+  bucket.creatures.push({ t: e.t, scale: e.scale, tint: e.tint || [1,1,1], special: !!e.special, name: e.name, poolRim: e.poolRim,
+    caught: { biome: catchBiomeLabel(e.x, e.z), tide: catchTideLabel() } });
   const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
   discovered.add(e.t); if (onDig) onDig("splash"); saveState(); return true;
 }
@@ -4464,6 +4516,136 @@ function updateBucketPanel() {
   blitMini(fbo, bucketCtx);
   bucketCtx.fillStyle = "#e4eef2"; bucketCtx.font = "11px ui-monospace, monospace"; bucketCtx.textAlign = "center";
   bucketCtx.fillText(`${bucket.creatures.length}/${BUCKET_CAP}`, bucketPanelEl.width/2, bucketPanelEl.height - 4);
+}
+
+/* ---------- §11.7 close-up inspect: a creature in a little pool, or an item on a turntable ---------- */
+const inspect = { open: false, kind: null, subject: null, yaw: 0.7, pitch: 0.5, dist: 2.4, spin: 0, t: 0, _sim: null, el: null };
+let inspectCtx = null;
+const inspectPool = makeDynamic((function () { const m = Mesh(); const sand = [0.72,0.64,0.5], rock = [0.40,0.40,0.43];
+  mergeMesh(m, discMesh(-0.46, 0.9, 28, 0, sand));                    // sandy floor
+  mCyl(m, -0.46, -0.02, 0.9, 0.99, 28, rock);                        // shallow rock rim
+  return m; })(), 1);
+const inspectPedestal = makeDynamic((function () { const m = Mesh(); const side = [0.28,0.30,0.34], top = [0.37,0.39,0.43];
+  mCyl(m, -0.22, 0, 0.5, 0.6, 22, side); mergeMesh(m, discMesh(0, 0.5, 22, 0, top)); return m; })(), 1);
+const _itemDyn = {};
+function itemDyn(id) { if (_itemDyn[id]) return _itemDyn[id]; const it = ITEMS[id]; if (!it) return null;
+  const mesh = it.model(); let maxr = 0.001;
+  for (let i = 0; i < mesh.pos.length; i += 3) { const r = Math.hypot(mesh.pos[i], mesh.pos[i+1], mesh.pos[i+2]); if (r > maxr) maxr = r; }
+  return (_itemDyn[id] = { dyn: makeDynamic(mesh, 1), fit: 1 / maxr, tint: it.tint || [1,1,1] });
+}
+function creatureRarity(t) { const m = (CREATURES[t] && CREATURES[t].max) || 100; return m >= 140 ? "common" : m >= 70 ? "uncommon" : "rare"; }
+function creatureVariant(cr) {
+  const parts = [], base = (CREATURES[cr.t] && CREATURES[cr.t].base) || cr.scale || 0.5, tint = cr.tint || [1,1,1];
+  if (Math.abs(tint[0]-1) + Math.abs(tint[1]-1) + Math.abs(tint[2]-1) > 0.12) parts.push("a colour morph");
+  if (cr.scale > base*1.15) parts.push("larger than most"); else if (cr.scale < base*0.85) parts.push("a small one");
+  if (cr.special) parts.push("one of a kind");
+  return parts.join(" · ");
+}
+function nearWater(x, z) { for (let a = 0; a < 6.283; a += 0.785) if (waterDepthAt(x + Math.cos(a)*1.3, z + Math.sin(a)*1.3) > 0.05) return true; return false; }
+function initInspectDOM() {
+  inspect.el = document.getElementById("inspectview");
+  const cv = document.getElementById("inspectcanvas");
+  document.getElementById("inspBack").onclick = closeInspect;
+  document.getElementById("inspRelease").onclick = () => { if (!document.getElementById("inspRelease").disabled) releaseInspected(); };
+  inspect.el.addEventListener("pointerdown", (e) => { if (e.target === inspect.el) closeInspect(); });   // click the backdrop to close
+  const pts = new Map(); let active = null, pinch0 = 0, dist0 = 0;
+  cv.addEventListener("pointerdown", (e) => { cv.setPointerCapture(e.pointerId); pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pts.size === 1) active = [e.clientX, e.clientY];
+    else if (pts.size === 2) { const p = [...pts.values()]; pinch0 = Math.hypot(p[0][0]-p[1][0], p[0][1]-p[1][1]); dist0 = inspect.dist; } });
+  cv.addEventListener("pointermove", (e) => { if (!pts.has(e.pointerId)) return; pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pts.size >= 2) { const p = [...pts.values()], d = Math.hypot(p[0][0]-p[1][0], p[0][1]-p[1][1]); if (pinch0 > 0) inspect.dist = Math.max(1.2, Math.min(5, dist0 * pinch0 / Math.max(1, d))); return; }
+    if (active) { inspect.yaw -= (e.clientX - active[0]) * 0.01; inspect.pitch = Math.max(-0.2, Math.min(1.35, inspect.pitch + (e.clientY - active[1]) * 0.008)); active = [e.clientX, e.clientY]; } });
+  const up = (e) => { pts.delete(e.pointerId); if (pts.size < 2) pinch0 = 0; if (pts.size === 0) active = null; };
+  cv.addEventListener("pointerup", up); cv.addEventListener("pointercancel", up);
+  cv.addEventListener("wheel", (e) => { e.preventDefault(); inspect.dist = Math.max(1.2, Math.min(5, inspect.dist + Math.sign(e.deltaY) * 0.25)); }, { passive: false });
+}
+function openInspect(subject, kind) {
+  if (!inspect.el) initInspectDOM();
+  inspect.open = true; inspect.kind = kind; inspect.subject = subject; inspect._sim = null; inspect.spin = 0;
+  inspect.yaw = 0.7; inspect.pitch = kind === "item" ? 0.3 : 0.5; inspect.dist = kind === "item" ? 2.7 : 2.5;
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  renderInspectInfo(); inspect.el.style.display = "flex";
+}
+function closeInspect() { inspect.open = false; if (inspect.el) inspect.el.style.display = "none"; }
+function renderInspectInfo() {
+  const nameEl = document.getElementById("inspName"), rEl = document.getElementById("inspRarity"),
+    vEl = document.getElementById("inspVariant"), dEl = document.getElementById("inspDesc"),
+    cEl = document.getElementById("inspCaught"), navEl = document.getElementById("inspNav"), relBtn = document.getElementById("inspRelease");
+  if (inspect.kind === "bucket") {
+    const cr = inspect.subject, reg = CREATURES[cr.t], list = bucket.creatures, idx = list.indexOf(cr);
+    nameEl.textContent = cr.special && cr.name ? cr.name : (reg ? reg.label : cr.t);
+    const rar = creatureRarity(cr.t); rEl.textContent = rar; rEl.className = "r " + rar;
+    vEl.textContent = creatureVariant(cr); dEl.textContent = reg ? reg.desc : "";
+    cEl.textContent = cr.caught ? `Caught in ${cr.caught.biome}, on ${cr.caught.tide}.` : "";
+    navEl.innerHTML = list.length > 1 ? `<button id="inspPrev">‹</button><span>${idx+1} / ${list.length}</span><button id="inspNext">›</button>` : "";
+    if (list.length > 1) {
+      document.getElementById("inspPrev").onclick = () => { const i = (list.indexOf(inspect.subject)-1+list.length)%list.length; inspect.subject = list[i]; inspect._sim = null; renderInspectInfo(); };
+      document.getElementById("inspNext").onclick = () => { const i = (list.indexOf(inspect.subject)+1)%list.length; inspect.subject = list[i]; inspect._sim = null; renderInspectInfo(); };
+    }
+    const canRel = waterDepthAt(player.x, player.z) > 0.05 || nearWater(player.x, player.z);
+    relBtn.style.display = ""; relBtn.disabled = !canRel;
+    relBtn.textContent = canRel ? "Release" : "Release — near water"; relBtn.title = canRel ? "" : "Stand in or beside water to release.";
+  } else {
+    const id = inspect.subject, it = ITEMS[id];
+    nameEl.textContent = it ? it.name : id; rEl.textContent = it ? it.rarity : ""; rEl.className = "r " + (it ? it.rarity : "");
+    vEl.textContent = ""; dEl.textContent = (it && it.desc) || ""; cEl.textContent = Inv.count(id) > 1 ? `You are carrying ${Inv.count(id)}.` : "";
+    navEl.innerHTML = ""; relBtn.style.display = "none";
+  }
+}
+function releaseInspected() {
+  const cr = inspect.subject, list = bucket.creatures, idx = list.indexOf(cr); if (idx < 0) return;
+  let wx = player.x, wz = player.z;
+  if (waterDepthAt(wx, wz) <= 0.05) for (let a = 0; a < 6.283; a += 0.5) { const tx = player.x + Math.cos(a)*1.3, tz = player.z + Math.sin(a)*1.3; if (waterDepthAt(tx, tz) > 0.05) { wx = tx; wz = tz; break; } }
+  spawnFromBucket(cr, wx + (rng()-0.5), wz + (rng()-0.5), { hr: 4 });
+  list.splice(idx, 1);
+  if (onDig) onDig("splash"); sparkle(wx, waterSurfaceAt(wx, wz) + 0.2, wz, [0.6, 0.85, 0.95], 8); saveState();
+  if (list.length === 0) closeInspect(); else { inspect.subject = list[Math.min(idx, list.length-1)]; inspect._sim = null; renderInspectInfo(); }
+}
+function stepInspectCreature(dt) {
+  const cr = inspect.subject; if (!cr) return;
+  if (!inspect._sim || inspect._sim.for !== cr) inspect._sim = { for: cr, x: 0, z: 0, vx: (Math.random()-0.5)*0.2, vz: (Math.random()-0.5)*0.2, yaw: 0, ph: Math.random()*6.283, ripples: [] };
+  const s = inspect._sim, floor = !!CRAWLER[cr.t], spd = (BUCKET_SPEED[cr.t] ?? 0.14) * 0.85, Rmax = 0.5;
+  s.ph += dt;
+  if (spd > 0) {
+    s.vx += (Math.random()-0.5)*0.06; s.vz += (Math.random()-0.5)*0.06; const m = Math.hypot(s.vx, s.vz) || 1; s.vx = s.vx/m*spd; s.vz = s.vz/m*spd;
+    s.x += s.vx*dt; s.z += s.vz*dt; const r = Math.hypot(s.x, s.z);
+    if (r > Rmax) { const nx = s.x/r, nz = s.z/r, d = s.vx*nx + s.vz*nz; s.vx -= 2*d*nx; s.vz -= 2*d*nz; s.x = nx*Rmax; s.z = nz*Rmax; s.ripples.push({ x: s.x, z: s.z, t: 0 }); }
+    s.yaw = Math.atan2(s.vx, s.vz);
+  }
+  s.y = floor ? -0.42 : -0.12 + Math.sin(s.ph*2)*0.05;
+  if (!floor && Math.random() < dt*0.9) s.ripples.push({ x: s.x, z: s.z, t: 0 });
+  for (let i = s.ripples.length-1; i >= 0; i--) { s.ripples[i].t += dt; if (s.ripples[i].t > 1.2) s.ripples.splice(i, 1); }
+}
+function drawInspectCreature() {
+  inspectPool.draw(miniInst(0, 0, 0, 1, 0, 0, 0, [1,1,1]), 1);
+  const cr = inspect.subject, reg = CREATURES[cr.t]; if (!reg) return;
+  const s = inspect._sim || { x: 0, z: 0, y: -0.2, yaw: 0 }, base = reg.base || cr.scale || 0.5;
+  const sc = Math.max(0.3, Math.min(0.95, 0.55 * (cr.scale / base)));
+  reg.dyn.draw(miniInst(s.x, s.y, s.z, sc, s.yaw || 0, 0, 0, cr.tint || [1,1,1]), 1);
+}
+function drawInspectRipples() {
+  const s = inspect._sim; if (!s || !s.ripples) return;
+  for (const rp of s.ripples) { const g = rp.t/1.2, scp = 0.06 + g*0.4, tint = [0.85+(0.16-0.85)*g, 0.93+(0.42-0.93)*g, 0.98+(0.52-0.98)*g];
+    bucketRingMesh.draw(miniInst(rp.x, 0.0, rp.z, scp, 0, 0, 0, tint), 1); }
+}
+function drawInspectItem() {
+  const d = itemDyn(inspect.subject); if (!d) return;
+  inspectPedestal.draw(miniInst(0, -0.55, 0, 1, 0, 0, 0, [1,1,1]), 1);
+  d.dyn.draw(miniInst(0, 0.02, 0, d.fit * 0.7, inspect.spin, 0, 0, d.tint), 1);
+}
+function updateInspectView() {
+  if (!inspect.open) return;
+  const el = document.getElementById("inspectcanvas"); if (!inspectCtx) inspectCtx = el.getContext("2d");
+  const now = performance.now()*0.001, dt = Math.min(0.05, now - (inspect.t || now)); inspect.t = now;
+  const cy = Math.cos(inspect.yaw), sy = Math.sin(inspect.yaw), cp = Math.cos(inspect.pitch), sp = Math.sin(inspect.pitch);
+  const tgt = [0, inspect.kind === "item" ? 0 : -0.05, 0];
+  const eye = [tgt[0] + inspect.dist*cp*sy, tgt[1] + inspect.dist*sp, tgt[2] + inspect.dist*cp*cy];
+  const fbo = miniFBO(el.width, el.height);
+  if (inspect.kind === "bucket") { stepInspectCreature(dt);
+    renderMini(fbo, eye, tgt, 0.72, -0.02, 0.9, BUCKET_WATER_COL, drawInspectCreature, drawInspectRipples); }
+  else { inspect.spin += dt*0.6;
+    renderMini(fbo, eye, tgt, 0.7, 0, 0, BUCKET_WATER_COL, drawInspectItem, null); }
+  blitMini(fbo, inspectCtx);
 }
 
 /* ---- berry bushes (§10.5): inland shrubs; regrow a few in-game days after picking ---- */
@@ -5580,6 +5762,7 @@ function frame(now) {
     `mode ${mode}  ·  POIs ${POIS.map((p) => p.type).join(", ")}`;
   if (mode === "walk") drawTideCurve();
   updateBucketPanel();
+  updateInspectView();
 
   if (debugOn) {
     dbgEl.style.display = "block";
