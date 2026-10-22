@@ -1889,14 +1889,20 @@ addEventListener("keydown", (e) => {
 });
 addEventListener("keyup", (e) => { keys[e.code] = false; });
 
-canvas.addEventListener("click", () => {
-  if (IS_TOUCH) return;   // no pointer lock on touch devices
-  if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
-  else clickAt(0, 0);     // crosshair → walk to the point under it
+canvas.addEventListener("mousedown", (e) => {
+  if (IS_TOUCH) return;
+  if (e.button === 1 && mode === "walk" && selectedItem() === "toolkit") { e.preventDefault(); cycleToolkit(); return; }   // §13.2 middle-click cycles the Tool Kit
+  if (e.button !== 0) return;
+  if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
+  useHeld = true; clickAt(0, 0);                 // §13.2 hold to keep swinging at a work target
 });
-canvas.addEventListener("mousedown", (e) => {   // §13.2 middle-click cycles the Tool Kit in-game
-  if (e.button === 1 && mode === "walk" && selectedItem() === "toolkit") { e.preventDefault(); cycleToolkit(); }
-});
+addEventListener("mouseup", (e) => { if (e.button === 0) useHeld = false; });
+// §13.2 scroll wheel cycles belt slots (skips empties)
+addEventListener("wheel", (e) => {
+  if (mode !== "walk" || isPanelOpen()) return;
+  const dir = e.deltaY > 0 ? 1 : -1; let i = Inv.selected;
+  for (let k = 0; k < HOTBAR_SLOTS; k++) { i = (i + dir + HOTBAR_SLOTS) % HOTBAR_SLOTS; if (Inv.hotbar[i]) { selectHotbar(i); break; } }
+}, { passive: true });
 canvas.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
 document.addEventListener("mousemove", (e) => {
   if (document.pointerLockElement !== canvas) return;
@@ -2088,6 +2094,7 @@ function requestLock() {   // re-acquire pointer lock after a gesture (closing a
 }
 document.addEventListener("pointerlockchange", () => {
   const locked = document.pointerLockElement === canvas;
+  if (!locked) useHeld = false;                   // §13.2 stop auto-swinging when the cursor is freed
   const hint = document.getElementById("resumehint");
   // lost lock mid-game and no panel is responsible (e.g. after Esc) → a minimal resume hint, not the title
   hint.style.display = (!locked && mode === "walk" && !isPanelOpen()) ? "flex" : "none";
@@ -3487,9 +3494,25 @@ ITEMS.toolkit = { id: "toolkit", name: "Tool Kit", category: "tool", rarity: "to
 const TOOLKIT_MODES = ["auto", "shovel", "axe", "pickaxe"];
 const toolkit = { mode: "auto", tool: "shovel" };   // tool = current effective tool in auto mode
 // §13.2 work lock: after hitting an entity, keep acting on it (and keep its tool) even if aim drifts
-let workLock = null;   // { obj, tool, until, x, z }
+let workLock = null;   // { obj, kind, tool, until }
+let lastEntityHitT = -99, useHeld = false;
+// §13.2 "Too tired": a gentle refusal when stamina is too low — no swing, no screen shake.
+// A short message by the crosshair + a stamina-ring flash + a heavy-breath sound, throttled so it never nags.
+let tooTiredT = 0, lastTooTiredShown = -99, staminaFlash = 0;
+function tooTired() {
+  if (clock.t - lastTooTiredShown > 2.6) { lastTooTiredShown = clock.t; tooTiredT = 1.1; if (onBreath) onBreath(); }
+  staminaFlash = Math.max(staminaFlash, 0.9);   // flash the ring on every blocked attempt, even inside the throttle window
+}
 const WORK_LOCK_TIME = 1.5;
-function workLockActive() { return !!(workLock && clock.t < workLock.until && workLock.obj && !workLock.obj.gone); }
+const WORK_KINDS = { tree: 1, fallentree: 1, rock: 1, stump: 1, fence: 1, chest: 1 };   // multi-strike targets
+function workLockActive() { return !!(workLock && clock.t < workLock.until && workLock.obj && !workLock.obj.gone && !(workLock.kind === "fence" && workLock.obj.r <= 0)); }
+function setWorkLock(t) { if (!t || !WORK_KINDS[t.kind]) return; workLock = { obj: t.obj, kind: t.kind, tool: selectedTool(), until: clock.t + WORK_LOCK_TIME }; lastEntityHitT = clock.t; }
+function workLockReach() { const o = workLock.obj; return Math.hypot(o.x - player.x, o.z - player.z) <= REACH + 2; }
+// the target to act on: the locked entity while the lock holds (even if aim drifts), else the crosshair target
+function effectiveTarget() {
+  if (workLockActive() && workLockReach()) { const o = workLock.obj; return { kind: workLock.kind, obj: o, x: o.x, z: o.z }; }
+  return curTarget || targetAlongRay(rayFromNDC(0, 0), curTarget);
+}
 function cycleToolkit() { const i = TOOLKIT_MODES.indexOf(toolkit.mode); toolkit.mode = TOOLKIT_MODES[(i+1) % TOOLKIT_MODES.length];
   renderHotbar(); const lbl = toolkit.mode === "auto" ? "Auto" : toolkit.mode[0].toUpperCase()+toolkit.mode.slice(1);
   showCard("Tool Kit: " + lbl, toolkit.mode === "auto" ? "Picks the right tool as you aim." : "Locked to the " + toolkit.mode + "."); }
@@ -4174,6 +4197,7 @@ function entityCY(e) { return e.kind === "find" ? 0.25 : (e.scale||0.5)*0.4 + 0.
 // generous fat volumes so you don't have to aim precisely. `sticky` is last frame's target:
 // once locked, it is kept while the crosshair stays within a wider cone (less flicker).
 const STICK_WIDEN = 1.4, STICK_REACH = REACH + 1.0, STICK_MARGIN = 1.2;
+const TARGET_FORGIVE = 1.35;   // §13.2 forgiving targeting cone: entities read this much wider than their shape
 function targetAlongRay(r, sticky) {
   if (!r) return null;
   let best = null, bestT = REACH + 0.4, stick = null, stickT = 1e9;
@@ -4184,10 +4208,11 @@ function targetAlongRay(r, sticky) {
     if (sticky && sticky.obj === obj) { const ts = tf(STICK_WIDEN);
       if (ts >= 0 && ts <= STICK_REACH && !terrainBlocks(r, ts)) { stick = { kind, obj, x: cx, z: cz }; stickT = ts; } }
   };
+  // §13.2 a forgiving cone: entities read a little wider than their exact shape so near-misses still grab them (never dig by mistake)
   const sphere = (obj, kind, cx, cz, cyOff, rad) => { const gy = surfaceAt(cx, cz).h;
-    consider(obj, kind, cx, cz, (w) => raySphere(r.o, r.d, cx, gy+cyOff, cz, rad*w)); };
+    consider(obj, kind, cx, cz, (w) => raySphere(r.o, r.d, cx, gy+cyOff, cz, rad*Math.max(w, TARGET_FORGIVE))); };
   const capsule = (obj, kind, cx, cz, ax, ay, az, bx, by, bz, rad) =>
-    consider(obj, kind, cx, cz, (w) => rayCapsule(r.o, r.d, ax, ay, az, bx, by, bz, rad*w, STICK_REACH));
+    consider(obj, kind, cx, cz, (w) => rayCapsule(r.o, r.d, ax, ay, az, bx, by, bz, rad*Math.max(w, TARGET_FORGIVE), STICK_REACH));
 
   for (const e of life) { if (!lifeVisible(e)) continue; sphere(e, e.kind, e.x, e.z, entityCY(e), entityRadius(e)); }
   for (const g of goats) sphere(g, "goat", g.x, g.z, 0.7, 1.1);
@@ -4243,14 +4268,14 @@ function useToolOnTarget(t) {
   }
   return false;
 }
-function interactTarget(t) { if (!t) return; if (reachForTool(t) === "fail") return; useToolOnTarget(t); }   // the bare interact key (E)
+function interactTarget(t) { if (!t) return; if (reachForTool(t) === "fail") return; if (useToolOnTarget(t)) setWorkLock(t); }   // the bare interact key (E)
 function clickAt(ndcx, ndcy) {
   if (mode !== "walk") return;
   if (pry) { pryStrike(); return; }                 // §12C a click is a pry strike while the mini-game is up
   const r = rayFromNDC(ndcx, ndcy);
-  const tgt = (ndcx === 0 && ndcy === 0) ? (curTarget || targetAlongRay(r, curTarget)) : targetAlongRay(r);
+  const tgt = (ndcx === 0 && ndcy === 0) ? effectiveTarget() : targetAlongRay(r);   // §13.2 work lock keeps the locked entity
   if (tgt && reachForTool(tgt) === "fail") return;   // §11.3 reach for the right tool (or react if we own none)
-  if (useToolOnTarget(tgt)) return;
+  if (useToolOnTarget(tgt)) { setWorkLock(tgt); return; }
   // otherwise use the equipped tool on the ground / object under the crosshair, within reach
   const pt = rayGround(ndcx, ndcy); if (!pt) return;
   if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return;   // too far: do nothing
@@ -4325,6 +4350,7 @@ function propUniforms(view) {
  * ===================================================================== */
 
 let onDig = null;                 // sound hook: onDig(surfaceKind | "clang" | "clink" | "sift" | "splash")
+let onBreath = null;              // §13.2 sound hook: a heavy, tired exhale when an action is refused for low stamina
 const DIG_R = 6.0;                // dig radius (world units; a few terrain cells)
 const dugCells = new Set();       // grid indices with a non-zero offset (for healing)
 const digScar = new Map();        // §11.4 cells whose surface a dig painted over (idx → original material); restored as the island heals
@@ -4710,7 +4736,7 @@ function digAt(x, z) {
   if (resting) resting = false;
   if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;          // out of reach: no action
   if (player.sprinting || player.airborne) return;                            // no digging mid-sprint or mid-air
-  if (!canHeavyAction()) { failStrike(false, x, surfaceAt(x,z).h + 0.3, z); return; }   // too tired: a weak, staggering miss
+  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §13.2 too tired: gentle refusal, no swing
   // a stump in reach? the shovel can also lever it out (several strikes)
   const stp = nearestStump(x, z, REACH + 1.0);
   if (stp && Math.hypot(stp.x - player.x, stp.z - player.z) <= REACH + 1.2) { stumpStrike(stp); return; }
@@ -5376,7 +5402,7 @@ function setRockInstance(o) {
 /* ---- chopping ---- */
 function chopStanding(o) {                                     // one axe strike on a standing tree
   if (!o || o.gone || o.falling || o.fallen) return;
-  if (!canHeavyAction()) { failStrike(false, o.x, surfaceAt(o.x,o.z).h + 1.0, o.z); return; }
+  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST, true); rootPlayer();
   if (onDig) onDig("chop");
   o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species)); o.hp--;
@@ -5443,7 +5469,7 @@ function trunkHeightAt(x, z) {
 }
 function removeFallen(o) { o.gone = true; o.scale = 0; setTreeInstance(o); const i = fallenTrees.indexOf(o); if (i >= 0) fallenTrees.splice(i, 1); }
 function chopFallen(o) {
-  if (!canHeavyAction()) { failStrike(false, o.x, surfaceAt(o.x,o.z).h + 0.6, o.z); return; }
+  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
   const [cx, cz] = fallenCrownPos(o), top = surfaceAt(cx, cz).h + 0.6;
   if (o.crownChops > 0) {                                      // crown end first → Sticks + Leaves
@@ -5473,7 +5499,7 @@ function stumpStrike(st) {
     saveWorld();
   }
 }
-function chopStump(st) { if (!canHeavyAction()) { failStrike(false, st.x, surfaceAt(st.x,st.z).h + 0.4, st.z); return; } stumpStrike(st); }
+function chopStump(st) { if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; } stumpStrike(st); }
 // digging the ground out from under a tree makes it topple
 function checkUndermine(x, z) {
   for (const o of treeObjs) {
@@ -5520,7 +5546,7 @@ function mineObj(o) {                                           // one pickaxe s
   if (!o || o.gone) return;
   if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 1.4) return;
   if (player.sprinting || player.airborne) return;                            // no mining mid-sprint or mid-air
-  if (!canHeavyAction()) { failStrike(true, o.x, surfaceAt(o.x,o.z).h + o.sc*0.3, o.z); return; }   // too tired: pick bounces off
+  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §13.2 too tired: gentle refusal, no swing
   shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST, true); rootPlayer();
   if (onDig) onDig("mine");
   o.hp--;
@@ -5626,7 +5652,7 @@ function breakDriftwood(d) {
   if (d.big) {                                   // a whole log → chop it into sticks (needs an axe)
     if (selectedTool() !== "axe") { if (autoSwitch && autoSwitchTo("axe")) {} else { tooTiredOrCant(d.x, d.z, false); return true; } }
     if (selectedTool() !== "axe") return true;
-    if (!canHeavyAction()) { failStrike(false, d.x, surfaceAt(d.x,d.z).h + 0.4, d.z); return true; }
+    if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
     shovelSwing = 1; spendStamina(CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
     d.gone = true; const nSticks = 2 + (rng()*3|0); Inv.add("stick", nSticks); discovered.add("f_stick");
     spawnSand(d.x, surfaceAt(d.x,d.z).h + 0.2, d.z, 8, [0.6,0.5,0.4]);
@@ -5647,7 +5673,7 @@ function chopFence(c) {
   if (!c || c.r <= 0) return true;
   if (selectedTool() !== "axe") { if (autoSwitch && autoSwitchTo("axe")) {} else { tooTiredOrCant(c.x, c.z, false); return true; } }
   if (selectedTool() !== "axe") return true;
-  if (!canHeavyAction()) { failStrike(false, c.x, surfaceAt(c.x,c.z).h + 0.5, c.z); return true; }
+  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
   shovelSwing = 1; spendStamina(CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
   hideFenceInstance(c); c.r = 0;
   const n = 1 + (rng()*2|0); Inv.add("stick", n); discovered.add("f_stick");
@@ -6132,7 +6158,7 @@ function openChestAction(c) {
   showCard("Locked chest", "Open it with its key, pry it with a shovel, or smash it with a pickaxe.");
 }
 function smashChest(c) {
-  if (!canHeavyAction()) { failStrike(true, c.x, surfaceAt(c.x,c.z).h+0.5, c.z); return; }
+  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
   spendStamina(MINE_COST, true); rootPlayer(); camShake = Math.max(camShake, 0.4); if (onDig) onDig("clang");
   c.smashHits++; c.open = Math.min(0.8, c.smashHits / CHEST_TUNE.smashNeed * 0.8);
   sparkle(c.x, surfaceAt(c.x,c.z).h+0.6, c.z, [0.6,0.5,0.35], 8);
@@ -6550,6 +6576,11 @@ function frame(now) {
     gdt -= s;
   }
   updateDigging(dt);
+  // §13.2 hold the use button to keep swinging at a work target (no repeated clicks needed)
+  if (useHeld && mode === "walk" && !pry && !invOpen && !isPanelOpen()) {
+    const t = effectiveTarget();
+    if (t && WORK_KINDS[t.kind] && canHeavyAction() && shovelSwing < 0.15) clickAt(0, 0);
+  }
   updateTools(dt, gdtTotal);
   updateGoats(dt);
   updateGulls(dt);
@@ -6851,12 +6882,17 @@ function frame(now) {
   gl.bindVertexArray(null);
 
   // ---- hud ----
-  // stamina ring near the crosshair — only visible while it isn't full
-  if (mode === "walk" && stamina < 0.995) {
-    const deg = Math.max(0, stamina) * 360, col = stamina < 0.25 ? "#d9694e" : resting ? "#8fd0a0" : "#79bcc6";
+  // stamina ring near the crosshair — only visible while it isn't full (or flashing a "too tired" refusal, §13.2)
+  if (staminaFlash > 0) staminaFlash = Math.max(0, staminaFlash - dt * 2.4);
+  if (mode === "walk" && (stamina < 0.995 || staminaFlash > 0)) {
+    const deg = Math.max(0, stamina) * 360;
+    let col = stamina < 0.25 ? "#d9694e" : resting ? "#8fd0a0" : "#79bcc6";
+    if (staminaFlash > 0) col = "#ff8a6b";
     staminaEl.style.display = "block";
     staminaEl.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.1) ${deg}deg 360deg)`;
-  } else staminaEl.style.display = "none";
+    staminaEl.style.transform = staminaFlash > 0 ? `scale(${(1 + staminaFlash * 0.45).toFixed(3)})` : "";
+    staminaEl.style.opacity = staminaFlash > 0 ? "1" : "";
+  } else { staminaEl.style.display = "none"; staminaEl.style.transform = ""; staminaEl.style.opacity = ""; }
   // hunger arc — a smaller concentric arc, only at Hungry or worse
   const hTier = hungerTier(), hShow = mode === "walk" && (hTier === "hungry" || hTier === "starving");
   const hArc = document.getElementById("hungerArc");
@@ -6872,7 +6908,9 @@ function frame(now) {
     // §13.2 Tool Kit Auto: pick the right tool from what we're aiming at, before any click
     if (selectedItem() === "toolkit" && toolkit.mode === "auto" && !workLockActive()) {
       const need = info && (info.need === "axe" || info.need === "pickaxe" || info.need === "shovel") ? info.need : null;
-      if (need && need !== toolkit.tool) { toolkit.tool = need; renderHotbar(); }
+      // never drop back to the shovel during or just after working an entity (§13.2)
+      const blockShovel = need === "shovel" && clock.t - lastEntityHitT < 1;
+      if (need && need !== toolkit.tool && !blockShovel) { toolkit.tool = need; renderHotbar(); }
     }
     if (info) {
       const dim = !aimAffordable(info);
@@ -6889,8 +6927,13 @@ function frame(now) {
       if (IS_TOUCH) crossEl.style.display = "none";
       else { crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = "block"; }
     }
-    if (hintT > 0) { hintT -= dt; promptEl.textContent = hintText; promptEl.style.display = "block"; }
-    else promptEl.style.display = "none";
+    if (tooTiredT > 0) tooTiredT -= dt;
+    if (hintT > 0) hintT -= dt;
+    if (tooTiredT > 0) {   // §13.2 "Too tired" takes the prompt line and fades out over ~1s
+      promptEl.textContent = "Too tired"; promptEl.style.display = "block";
+      promptEl.style.color = "#ffbda6"; promptEl.style.opacity = Math.min(0.92, tooTiredT * 1.3).toFixed(2);
+    } else if (hintT > 0) { promptEl.textContent = hintText; promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = ""; }
+    else { promptEl.style.display = "none"; promptEl.style.color = ""; promptEl.style.opacity = ""; }
   } else { promptEl.style.display = "none"; crossEl.className = ""; crossEl.style.display = "none"; curTarget = null; }
   const titleUp = (mode === "preview" || mode === "intro");       // hide in-world readouts behind the title
   hud.style.display = titleUp ? "none" : "block";
