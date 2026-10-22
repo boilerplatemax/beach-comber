@@ -1676,14 +1676,9 @@ const postU = uniforms(postProg);
 const fbo = { w: 0, h: 0, fb: null, color: null, depth: null };
 function ensureFBO() {
   const aspect = canvas.width / canvas.height;
-  // §13.6 resolution scale: an absolute width that ramps from a chunky low-res floor up to native.
-  // resScale 0.25 → the floor (the classic 400px chunky-dithered look); 1.0 → native; AA supersamples past it.
-  const gfx = (typeof GFX !== "undefined") ? GFX : { resScale: 0.25, aa: false, ssaa: 1.4 };
-  const native = canvas.width, floor = IS_TOUCH ? 300 : 400;
-  let w;
-  if (gfx.aa) w = Math.round(native * (gfx.ssaa || 1.4));
-  else { const tt = Math.max(0, Math.min(1, ((gfx.resScale || 0.25) - 0.25) / 0.75));   // 0 at the floor, 1 at native
-    w = Math.round(floor * Math.pow(Math.max(floor, native) / floor, tt)); }
+  // §13.6 resolution scale: a fraction of the native target width (chunky → crisp); AA supersamples past native.
+  const gfx = (typeof GFX !== "undefined") ? GFX : { resScale: IS_TOUCH ? 0.34 : 0.78, aa: false, ssaa: 1.4 };
+  let w = Math.round(canvas.width * (gfx.resScale || 0.5) * (gfx.aa ? (gfx.ssaa || 1.4) : 1));
   w = Math.max(200, Math.min(2400, w));
   const h = Math.max(1, Math.round(w / aspect));
   const filter = gfx.aa ? gl.LINEAR : gl.NEAREST;
@@ -2220,16 +2215,16 @@ let ditherOn = true;
  *   just make it crisper (resolution, AA), add shadows and show more world.
  * ===================================================================== */
 // resScale is a fraction of the native target width → the low-res FBO width (the chunky↔crisp knob).
-// "Low" is the classic chunky, dithered look (the default); higher presets just make it crisper.
+// The flat-shaded low-poly style stays at every level; higher presets just make it crisper.
 const GFX_PRESETS = {
-  low:    { resScale: 0.25, dither: true,  quantize: true,  fog: 1.0, propDist: 0.85, foliage: 0.6, water: 1, shadows: false, aa: false, simRadius: 0.9,  dprCap: 2, fpsCap: 0 },
-  medium: { resScale: 0.45, dither: true,  quantize: true,  fog: 1.0, propDist: 1.0, foliage: 0.85, water: 1, shadows: false, aa: false, simRadius: 1.0,  dprCap: 2, fpsCap: 0 },
-  high:   { resScale: 0.7,  dither: true,  quantize: true,  fog: 1.15, propDist: 1.2, foliage: 1.0, water: 1, shadows: true,  aa: false, simRadius: 1.15, dprCap: 2, fpsCap: 0 },
+  low:    { resScale: 0.34, dither: true,  quantize: true,  fog: 0.8, propDist: 0.7, foliage: 0.45, water: 0, shadows: false, aa: false, simRadius: 0.75, dprCap: 1, fpsCap: 30 },
+  medium: { resScale: 0.5,  dither: true,  quantize: true,  fog: 1.0, propDist: 1.0, foliage: 0.8,  water: 1, shadows: false, aa: false, simRadius: 1.0,  dprCap: 1.5, fpsCap: 60 },
+  high:   { resScale: 0.78, dither: true,  quantize: true,  fog: 1.15, propDist: 1.2, foliage: 1.0, water: 1, shadows: true,  aa: false, simRadius: 1.15, dprCap: 2, fpsCap: 60 },
   ultra:  { resScale: 1.0,  dither: false, quantize: false, fog: 1.3, propDist: 1.4, foliage: 1.0,  water: 1, shadows: true,  aa: true,  simRadius: 1.35, dprCap: 2, fpsCap: 0 },
 };
 const GFX_CUSTOM_KEYS = ["resScale","dither","quantize","fog","propDist","foliage","water","shadows","aa","simRadius","dprCap","fpsCap"];
-// §13.6 default to the classic low-res dithered look on every device (crisper presets are opt-in)
-const _gfxDefault = "low";
+// device-based default (computed here; IS_TOUCH's const is declared a little further down, so avoid its TDZ)
+const _gfxDefault = (matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0) ? "low" : "high";
 let GFX = { preset: _gfxDefault, ...GFX_PRESETS[_gfxDefault], ssaa: 1.4 };
 try { const s = JSON.parse(localStorage.getItem("bc_gfx") || "null");
   if (s && s.preset) { GFX.preset = s.preset; if (s.preset === "custom") for (const k of GFX_CUSTOM_KEYS) { if (s[k] !== undefined) GFX[k] = s[k]; }
