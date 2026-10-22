@@ -260,6 +260,8 @@
   .recipe .mk { flex: 0 0 auto; font-size: 12px; font-weight: 600; padding: 7px 14px; cursor: pointer; align-self: center; }
   .recipe .mk:disabled { opacity: .4; cursor: default; }
   .makehint { font-size: 12px; opacity: .7; padding: 18px 8px; text-align: center; line-height: 1.4; }
+  #ygraph { position: fixed; left: 10px; top: 120px; z-index: 20; display: none; background: rgba(8,12,16,.72);
+    border: 1px solid rgba(160,200,230,.3); border-radius: 4px; image-rendering: pixelated; }
   /* §17.5 goblin trade panel */
   #tradepanel { position: fixed; z-index: 13; display: none; left: 50%; top: 50%; transform: translate(-50%,-50%);
     width: 300px; max-width: 92vw; max-height: 82vh; overflow-y: auto; padding: 14px 16px 12px; color: #f3e9d6; text-align: center;
@@ -436,6 +438,7 @@
 <div id="journal"></div>
 <div id="invpanel"></div>
 <div id="tradepanel"></div>
+<canvas id="ygraph" width="260" height="96"></canvas>
 <canvas id="bucketpanel" width="125" height="145"></canvas>
 <div id="ctxmenu"></div>
 <div id="bucketlook">
@@ -986,8 +989,8 @@ const MORNING_TIME = 0.15;           // §13.9 mid-morning (0.05 sunrise · 0.3 
 let timeOfDay = MORNING_TIME;        // 0..1 across a day; the game opens in the morning
 const DAY_PERIOD = 600;              // seconds per full day (~10 min)
 // §13.9 day/night cycle off by default (sun frozen at morning); toggle in settings.
-let dayNightEnabled = false;
-try { dayNightEnabled = localStorage.getItem("bc_daynight") === "1"; } catch (e) {}
+let dayNightEnabled = true;   // §P1 on by default now (debug panel can still pause/scrub time)
+try { const v = localStorage.getItem("bc_daynight"); if (v !== null) dayNightEnabled = v === "1"; } catch (e) {}
 function setDayNight(on) { dayNightEnabled = on; if (!on) { timeOfDay = MORNING_TIME; updateSun(); } try { localStorage.setItem("bc_daynight", on ? "1" : "0"); } catch (e) {} }
 const BASE_FOG_DENSITY = 0.0016, BASE_FOG_NEAR = 50.0;   // §13.6 base; graphics settings scale these live
 let FOG_DENSITY = BASE_FOG_DENSITY;   // see far across the big landscape, still hazy
@@ -1865,7 +1868,13 @@ function groundGradient(x, z) {
 }
 // Jump feel (§6): a snappy rise under lighter gravity, a faster, heavier fall.
 const JUMP_V = 8.4, GRAVITY_UP = 24, GRAVITY_DOWN = 42, COYOTE_TIME = 0.1, JUMP_BUFFER = 0.11;
-const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, sprinting: false, scramble: 0, vy: 0, airborne: false, coyote: 0, landStun: 0,
+// §P1 vertical movement: ONE fixed-timestep simulation owns player.feetY; rendering interpolates between steps.
+const PHYS_STEP = 1 / 60;       // physics tick (s)
+const JUMP_COST = 0.08;         // stamina per jump
+const GROUND_TOL = 0.12;        // ground probe tolerance (m) — small bumps/slope changes don't count as airborne
+const LEDGE_DROP = 0.45;        // a drop bigger than this under your feet makes you fall (walk off a ledge)
+let physAcc = 0, camSit = 0;    // step accumulator; smoothed crouch/rest camera offset
+const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, prevFeetY: 0, sprinting: false, scramble: 0, vy: 0, airborne: false, coyote: 0, landStun: 0,
                  swimming: false, underwater: false, breath: 40,       // §14A swimming/breath (BREATH_MAX)
                  climbing: false, climbWet: false, climbIntoX: 0, climbIntoZ: 1, climbSway: 0, climbTrickle: 0 };   // §15 climbing
 let crouching = false;   // §13.4 crouch: lowers the camera, slows you, and makes creatures less skittish
@@ -1875,20 +1884,49 @@ try { const ck = localStorage.getItem("bc_crouchKey"); if (ck === "KeyC" || ck =
 const CROUCH_SPEED = 0.5, CROUCH_DROP = 0.55, CROUCH_REST_TIME = 2;   // §13.4 tunables
 function setCrouch(on) { crouching = on; if (!on) { crouchStillT = 0; resting = false; } }
 let jumpBufferT = 0;
-function queueJump() { if (mode === "walk") jumpBufferT = JUMP_BUFFER; }    // buffered: fires on landing if pressed just early
+// §P1 the player standing height here (terrain, or a fallen trunk you're on)
+function standHeightAt(x, z) { return Math.max(surfaceAt(x, z).h, trunkHeightAt(x, z)); }
+// §P1 grounded probe with a few cm of tolerance, so bumps and slope changes don't read as airborne
+function playerGrounded() {
+  if (!player.airborne) return true;
+  if (player.coyote > 0) return true;
+  return Math.abs(player.feetY - standHeightAt(player.x, player.z)) < GROUND_TOL;
+}
+function queueJump() {
+  if (mode !== "walk" || isPanelOpen()) return;
+  jumpBufferT = JUMP_BUFFER;   // buffered: fires on landing if pressed just early
+  // §P1 never fail silently: if you're grounded on walkable ground but out of stamina, say "Too tired"
+  if (playerGrounded() && surfaceAt(player.x, player.z).slope <= SLOPE_LIMIT && (exhausted || stamina <= JUMP_COST)) tooTired();
+}
 function canJumpNow() {
   if (mode !== "walk" || resting || digCommit > 0 || exhausted) return false;
-  if (stamina <= 0.08) return false;
-  if (player.airborne && player.coyote <= 0) return false;                  // airborne beyond coyote window
+  if (stamina <= JUMP_COST) return false;
+  if (!playerGrounded()) return false;                                     // §P1 grounded (incl. coyote + tolerance)
+  if (surfaceAt(player.x, player.z).slope > SLOPE_LIMIT) return false;      // not on a cliff face
   if (waterLevel - surfaceAt(player.x, player.z).h > KNEE) return false;    // no jumping in deep water
   return true;
 }
 function doJump() {
-  const standH = Math.max(surfaceAt(player.x, player.z).h, trunkHeightAt(player.x, player.z));
-  player.feetY = standH; player.vy = JUMP_V; player.airborne = true;
-  player.coyote = 0; jumpBufferT = 0; spendStamina(0.08);
+  player.feetY = standHeightAt(player.x, player.z); player.vy = JUMP_V; player.airborne = true;
+  player.coyote = 0; jumpBufferT = 0; spendStamina(JUMP_COST);
 }
 function tryJump() { queueJump(); }                                         // Space → buffered jump request
+// §P1 ONE fixed physics step — the only place gravity + ground contact write player.feetY.
+function stepVertical(standH, g) {
+  if (player.airborne) {
+    player.vy -= (player.vy > 0 ? GRAVITY_UP : GRAVITY_DOWN) * PHYS_STEP;
+    player.feetY += player.vy * PHYS_STEP;
+    if (player.vy <= 0 && player.feetY <= standH) {                        // ground contact
+      const fall = -player.vy;
+      player.feetY = standH; player.vy = 0; player.airborne = false; player.coyote = COYOTE_TIME;
+      landJump(g, fall);
+    }
+  } else if (standH < player.feetY - LEDGE_DROP) {                          // ground fell away under you → step off the ledge
+    player.airborne = true; player.vy = 0;
+  } else {
+    player.feetY = standH;                                                  // glued to the ground (small bumps/slopes)
+  }
+}
 function landJump(g, fall) {
   fall = fall || 0;
   // dust/sand puff scaled by impact; a bigger splash on wet sand (stomp → jump landing)
@@ -2448,6 +2486,7 @@ addEventListener("keydown", (e) => {
     if (e.code === "Backquote") debugOn = !debugOn;
     if (e.code === "KeyF" && (mode === "walk" || mode === "free")) toggleFly();
     if (e.code === "KeyN") forceSpawn = !forceSpawn;   // (moved off B — B now opens the bucket)
+    if (e.code === "KeyY") { dbgYGraph = !dbgYGraph; document.getElementById("ygraph").style.display = dbgYGraph ? "block" : "none"; }   // §P1 feet/cam Y graph
   }
 });
 addEventListener("keyup", (e) => { keys[e.code] = false; });
@@ -6072,6 +6111,22 @@ let shovelSwing = 0, camNudge = 0, toolRecoilT = 0, camShake = 0, lastFailT = -9
 // §13.1 landing: a critically-damped camera spring absorbs the impact velocity and
 // settles — a "knee-bend" that eases in AND out, and never touches the player's real position.
 let camYOff = 0, camYVel = 0;
+// §P1 debug feet/cam Y graph (toggle with Y in debug mode)
+let dbgYGraph = false; const yHist = []; const Y_HIST = 260;
+function recordY(feetY, camY, airborne) { yHist.push({ f: feetY, c: camY, a: airborne }); if (yHist.length > Y_HIST) yHist.shift(); }
+function drawYGraph() {
+  const cv = document.getElementById("ygraph"); if (!cv || !dbgYGraph || !yHist.length) return;
+  const ctx = cv.getContext("2d"); ctx.clearRect(0, 0, cv.width, cv.height);
+  let lo = 1e9, hi = -1e9; for (const p of yHist) { lo = Math.min(lo, p.f, p.c); hi = Math.max(hi, p.f, p.c); }
+  const pad = 0.3; lo -= pad; hi += pad; const rng = Math.max(0.4, hi - lo);
+  const yAt = v => cv.height - 6 - ((v - lo) / rng) * (cv.height - 12);
+  const line = (key, col) => { ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.beginPath();
+    for (let i = 0; i < yHist.length; i++) { const x = i / Y_HIST * cv.width, y = yAt(yHist[i][key]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); } ctx.stroke(); };
+  // airborne spans shaded
+  ctx.fillStyle = "rgba(230,140,60,.18)"; for (let i = 0; i < yHist.length; i++) if (yHist[i].a) ctx.fillRect(i / Y_HIST * cv.width, 0, cv.width / Y_HIST + 1, cv.height);
+  line("f", "#9fe3a0"); line("c", "#9fd0ef");
+  ctx.fillStyle = "#cfe"; ctx.font = "10px monospace"; ctx.fillText("feetY", 6, 12); ctx.fillStyle = "#9fd0ef"; ctx.fillText("camY", 50, 12);
+}
 const LAND_IMPACT_K = 0.028, LAND_IMPACT_CAP = 0.42, LAND_SPRING_K = 130, LAND_SPRING_C = 23;   // tunables
 function springCamY(dt) {
   let left = dt;
@@ -8925,28 +8980,22 @@ function frame(now) {
     player.coyote = player.airborne ? Math.max(0, player.coyote - dt) : COYOTE_TIME;
     if (jumpBufferT > 0) jumpBufferT -= dt;
     if (jumpBufferT > 0 && canJumpNow()) doJump();
-    if (player.airborne) {
-      // real world-space vertical integration — no lerp, land exactly at ground contact
-      player.vy -= (player.vy > 0 ? GRAVITY_UP : GRAVITY_DOWN) * dt;
-      player.feetY += player.vy * dt;
-      if (player.vy <= 0 && player.feetY <= standH) {           // actual ground contact
-        const fall = -player.vy;
-        player.feetY = standH; player.vy = 0; player.airborne = false; player.coyote = COYOTE_TIME;
-        player.eyeY = standH + EYE; landJump(g, fall);
-      } else {
-        player.eyeY = player.feetY + EYE;                       // exact height in the air
-      }
-    } else {
-      const moving = wl > 0.01 ? 1 : 0;
-      const amp = (0.06 + (player.sprinting ? 0.05 : 0) + player.scramble * 0.07) * moving;
-      const freq = player.scramble > 0.3 ? 1.7 : 2.6;           // heavier when scrambling
-      const bob = Math.sin(player.bob * freq) * amp;
-      const sit = resting ? -0.8 : (crouching ? -CROUCH_DROP : 0);   // §13.4 lower the camera when crouched (deeper when resting)
-      const target = standH + EYE + bob + sit;
-      player.eyeY += (target - player.eyeY) * Math.min(1, dt * 14);
-      player.feetY = standH;                                    // stay synced with the ground
-    }
-    cam.pos[0] = player.x; cam.pos[1] = player.eyeY + camYOff; cam.pos[2] = player.z;   // §13.1 landing give is camera-only
+    // §P1 fixed-timestep vertical sim (feetY is the single owner of player Y); render interpolates between steps
+    physAcc += dt; let nSteps = 0;
+    while (physAcc >= PHYS_STEP && nSteps < 5) { player.prevFeetY = player.feetY; stepVertical(standH, g); physAcc -= PHYS_STEP; nSteps++; }
+    if (physAcc > PHYS_STEP) physAcc = PHYS_STEP;   // clamp (tab was hidden / big hitch) — avoids spiral of death
+    if (Math.abs(player.feetY - player.prevFeetY) > 3) player.prevFeetY = player.feetY;   // a teleport happened (respawn/climb) — don't interpolate across it
+    const alpha = Math.min(1, physAcc / PHYS_STEP);
+    const renderFeetY = player.prevFeetY + (player.feetY - player.prevFeetY) * alpha;
+    // camera = interpolated feet + eye + additive camera-only offsets (bob, crouch/rest, landing dip) — none touch feetY
+    const moving = wl > 0.01 ? 1 : 0;
+    const amp = (0.06 + (player.sprinting ? 0.05 : 0) + player.scramble * 0.07) * moving;
+    const bobOff = Math.sin(player.bob * (player.scramble > 0.3 ? 1.7 : 2.6)) * amp;
+    const sitTarget = resting ? -0.8 : (crouching ? -CROUCH_DROP : 0);   // §13.4 lower the camera when crouched/resting
+    camSit += (sitTarget - camSit) * Math.min(1, dt * 14);
+    player.eyeY = renderFeetY + EYE + camSit;                            // stable gameplay eye (rays, lantern, spear)
+    cam.pos[0] = player.x; cam.pos[1] = player.eyeY + bobOff + camYOff; cam.pos[2] = player.z;   // + visual bob + landing give
+    if (dbgYGraph) { recordY(renderFeetY, cam.pos[1], player.airborne); drawYGraph(); }    // §P1
    }
   }
 
