@@ -1781,7 +1781,8 @@ function groundGradient(x, z) {
 // Jump feel (§6): a snappy rise under lighter gravity, a faster, heavier fall.
 const JUMP_V = 8.4, GRAVITY_UP = 24, GRAVITY_DOWN = 42, COYOTE_TIME = 0.1, JUMP_BUFFER = 0.11;
 const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, sprinting: false, scramble: 0, vy: 0, airborne: false, coyote: 0, landStun: 0,
-                 swimming: false, underwater: false, breath: 40 };   // §14A swimming/breath (BREATH_MAX)
+                 swimming: false, underwater: false, breath: 40,       // §14A swimming/breath (BREATH_MAX)
+                 climbing: false, climbWet: false, climbIntoX: 0, climbIntoZ: 1, climbSway: 0, climbTrickle: 0 };   // §15 climbing
 let crouching = false;   // §13.4 crouch: lowers the camera, slows you, and makes creatures less skittish
 let crouchStillT = 0;    // time held crouched and still → counts as resting (faster recovery)
 let crouchKey = "KeyC";  // rebindable; "ControlLeft" is the Ctrl option in settings
@@ -1813,10 +1814,18 @@ function landJump(g, fall) {
     for (const sp of (typeof digSpots !== "undefined" ? digSpots : [])) { if (sp.revealed) continue;
       if (Math.hypot(sp.x - player.x, sp.z - player.z) < 10 && surfaceKind(sp.x, sp.z) === "wet") { sp.react = 1.3; } }
   }
-  camYVel = Math.min(camYVel, -Math.min(LAND_IMPACT_CAP, fall * LAND_IMPACT_K) * 11);   // §13.1 downward impulse into the spring
-  camNudge = Math.max(camNudge, Math.min(0.08, 0.02 + fall * 0.008));         // a small pitch nod on top
+  // §15 landing dip scaled up for real falls (not just hops)
+  camYVel = Math.min(camYVel, -Math.min(LAND_IMPACT_CAP * (1 + fall*0.06), fall * LAND_IMPACT_K * 1.4) * 11);
+  camNudge = Math.max(camNudge, Math.min(0.14, 0.02 + fall * 0.01));          // a pitch nod on top
   if (onFootstep) onFootstep(surfaceType(g.h, g.slope), Math.min(1, 0.4 + fall * 0.08));   // landing thud
-  if (fall > 9) player.landStun = Math.min(0.5, (fall - 9) * 0.06);          // big drop: a brief slowdown
+  if (fall > 9) { player.landStun = Math.min(0.8, (fall - 9) * 0.08);        // §15 hard landing: a stagger…
+    if (fall > 10) { stamina = 0; exhausted = true; } }                       // …that empties stamina
+  // §15 a very big fall: fade to black and wake at the base (nothing is lost)
+  if (fall > BIG_FALL && !fade.active) {
+    const base = (lastSafe.x || lastSafe.z) ? { x: lastSafe.x, z: lastSafe.z } : { x: player.x, z: player.z };
+    startFade(() => { player.x = base.x; player.z = base.z; const bh = surfaceAt(base.x, base.z).h;
+      player.feetY = bh; player.eyeY = bh + EYE; player.vy = 0; player.airborne = false; stamina = Math.max(stamina, 0.4); exhausted = false; });
+  }
   // landing on a too-steep slope slides you back to safe ground
   if (g.slope > SLOPE_LIMIT && lastSafe) { player.x = lastSafe.x; player.z = lastSafe.z; }
 }
@@ -1979,6 +1988,82 @@ function updateFade(dt) {
   if (fade.t >= half && !fade.fired) { fade.fired = true; if (fade.mid) fade.mid(); }
   const el = document.getElementById("fadeblack"); if (el) { el.style.opacity = a.toFixed(3); el.style.display = a > 0.001 ? "block" : "none"; }
   if (fade.t >= fade.dur) { fade.active = false; if (el) { el.style.opacity = 0; el.style.display = "none"; } }
+}
+
+/* ===================================================================== *
+ * § 15  CLIMBING — grab a steep rock face (hold E / climb button), WASD
+ *   across it, Space to lunge up; stamina drains, wet rock is slippery,
+ *   sand crumbles, the top mantles you onto the ledge.
+ * ===================================================================== */
+const CLIMB_MIN_SLOPE = 44 * Math.PI / 180;   // steeper than this (and not sand) can be grabbed
+const CLIMB_SPEED = 2.4, CLIMB_HANG_DRAIN = 0.02, CLIMB_MOVE_DRAIN = 0.075;
+const CLIMB_WET_MUL = 2.3, CLIMB_LUNGE = 1.5, CLIMB_LUNGE_COST = 0.22, BIG_FALL = 14;
+let onClimb = null;   // sound hook (grip / scrape) — Phase 18
+let mobileClimb = false;
+function climbHungerMul() { const t = hungerTier(); return (hungerEnabled && (t === "hungry" || t === "starving")) ? (t === "starving" ? 1.8 : 1.35) : 1; }
+// Is there a grabbable face right in front of the player? A wall is where the ground rises sharply just ahead
+// (rise over the short reach, not the per-triangle slope, which low-poly faces read too low). Returns info / {sand} / null.
+function climbTargetInFront() {
+  const fx = Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);         // horizontal facing
+  const base = player.feetY;
+  const near = surfaceAt(player.x + fx*1.0, player.z + fz*1.0).h - base;
+  const far  = surfaceAt(player.x + fx*1.6, player.z + fz*1.6).h - base;
+  if (near > 0.8 || far > 1.3) {                                 // a face steep enough to grab (≳40°)
+    const gx = player.x + fx*1.1, gz = player.z + fz*1.1;
+    if (surfaceKind(gx, gz) === "sand") return { sand: true };   // dunes crumble
+    return { x: gx, z: gz, intoX: fx, intoZ: fz, wet: surfaceAt(gx, gz).h < wetLevel + 0.6 };
+  }
+  for (const c of colliders) if (c.kind === "tree" && c.species === "palm") {   // palms climb for coconuts
+    const dx = c.x - player.x, dz = c.z - player.z, d = Math.hypot(dx, dz) || 1;
+    if (d < 1.7 && (fx*dx + fz*dz)/d > 0.5) return { x: c.x, z: c.z, intoX: dx/d, intoZ: dz/d, wet: false, palm: c };
+  }
+  return null;
+}
+function tryGrabClimb() {
+  if (player.climbing || mode !== "walk" || player.swimming || isPanelOpen()) return false;
+  const t = climbTargetInFront();
+  if (!t) return false;
+  if (t.sand) { showCard("Too crumbly", "Sand and dunes won't hold a grip."); return false; }
+  if (stamina < 0.05) { tooTired(); return false; }
+  player.climbing = true; player.climbWet = !!t.wet; player.climbIntoX = t.intoX; player.climbIntoZ = t.intoZ;
+  player.climbPalm = t.palm || null; player.airborne = false; player.vy = 0; player.climbSway = 0;
+  if (onClimb) onClimb("grip");
+  return true;
+}
+function dropClimb() { if (!player.climbing) return; player.climbing = false; player.airborne = true; player.vy = 0; player.coyote = 0; }
+function mantleClimb() {   // climbed above the ledge → step up onto it
+  player.climbing = false;
+  player.x += player.climbIntoX * 1.3; player.z += player.climbIntoZ * 1.3;
+  const g = surfaceAt(player.x, player.z).h; player.feetY = g; player.eyeY = g + EYE; player.vy = 0; player.airborne = false;
+  if (player.climbPalm) { const n = 1 + (rng()<0.5?1:0); for (let i=0;i<n;i++) Inv.add("coconut", 1); discovered.add("f_coconut"); showCard("Coconuts!", `Knocked ${n} loose from the crown.`); }
+  if (onClimb) onClimb("mantle");
+}
+function climbStep(dt) {
+  if ((!keys["KeyE"] && !mobileClimb) ) { dropClimb(); return; }   // let go to drop
+  const into = [player.climbIntoX, player.climbIntoZ], perp = [-into[1], into[0]];
+  let up = 0, lat = 0, moving = false;
+  if (keys["KeyW"]) { up += 1; moving = true; } if (keys["KeyS"]) { up -= 1; moving = true; }
+  if (keys["KeyD"]) { lat += 1; moving = true; } if (keys["KeyA"]) { lat -= 1; moving = true; }
+  if (Math.abs(analog.x) + Math.abs(analog.y) > 0.01) { lat += analog.x; up += analog.y; moving = true; }
+  const wetMul = player.climbWet ? CLIMB_WET_MUL : 1;
+  spendStamina((moving ? CLIMB_MOVE_DRAIN : CLIMB_HANG_DRAIN) * wetMul * climbHungerMul() * dt, true);
+  if (stamina <= 0.001) { dropClimb(); return; }                  // grip fails
+  if (jumpBufferT > 0) { jumpBufferT = 0; if (stamina > CLIMB_LUNGE_COST) { player.feetY += CLIMB_LUNGE; spendStamina(CLIMB_LUNGE_COST, true); player.climbSway += 0.5; if (onClimb) onClimb("lunge"); } }
+  const spd = CLIMB_SPEED * (wetMul > 1 ? 0.8 : 1);
+  player.feetY += up * spd * dt;
+  if (lat) { const nx = player.x + perp[0]*lat*spd*dt, nz = player.z + perp[1]*lat*spd*dt;
+    if (surfaceAt(nx + into[0]*0.9, nz + into[1]*0.9).h > player.feetY + 0.2) { player.x = nx; player.z = nz; }  // still a wall there
+  }
+  const wallH = player.climbPalm ? (surfaceAt(player.climbPalm.x, player.climbPalm.z).h + 7) : surfaceAt(player.x + into[0]*0.85, player.z + into[1]*0.85).h;
+  if (player.feetY > wallH - 0.1) { mantleClimb(); return; }       // over the top → mantle
+  const baseH = surfaceAt(player.x, player.z).h;
+  if (player.feetY <= baseH + 0.05 && up <= 0) { player.feetY = baseH; dropClimb(); player.airborne = false; return; }   // back at the base → step off
+  if (moving) { player.climbTrickle -= dt; if (player.climbTrickle <= 0) { player.climbTrickle = 0.25 + Math.random()*0.2;
+    spawnSand(player.x + into[0]*0.6, player.feetY + 0.2, player.z + into[1]*0.6, 2, player.climbWet ? [0.4,0.42,0.45] : [0.55,0.5,0.42]); } }
+  player.climbSway += ((moving ? 0.5 : 0) - player.climbSway) * Math.min(1, dt*4);
+  const bob = Math.sin(player.bob) * 0.04 * player.climbSway; player.bob += (moving ? spd*dt*2 : 0);
+  player.eyeY = player.feetY + EYE*0.92 + bob;
+  cam.pos[0] = player.x + Math.sin(cam.yaw)*(-0.05); cam.pos[1] = player.eyeY; cam.pos[2] = player.z - (-Math.cos(cam.yaw))*(-0.05);
 }
 
 /* ===================================================================== *
@@ -2254,7 +2339,7 @@ addEventListener("keydown", (e) => {
   }
   if (e.code === "KeyG") setGFXCustom("dither", !GFX.dither);   // §13.6 quick dither toggle (syncs graphics settings)
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
-  if (e.code === "KeyE") interact();                  // pick up / inspect
+  if (e.code === "KeyE" && !e.repeat) { if (player.climbing) {} else if (!tryGrabClimb()) interact(); }   // §15 grab a face if facing one, else pick up / inspect
   if (e.code === "Space" && mode === "walk") { e.preventDefault(); queueJump(); }
   if (e.code === crouchKey && mode === "walk" && !isPanelOpen() && !e.repeat) { e.preventDefault(); if (!player.swimming) setCrouch(!crouching); }   // §13.4 toggle crouch (held key = swim down)
   if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
@@ -2675,6 +2760,7 @@ if (IS_TOUCH) (function mobileControls() {
        <div class="mBtn" data-act="crouch">Crouch</div>
        <div class="mBtn" data-act="swimup" data-hold="1">▲ Up</div>
        <div class="mBtn" data-act="swimdown" data-hold="1">▼ Down</div>
+       <div class="mBtn" data-act="climb" data-hold="1">Climb</div>
        <div class="mBtn" data-key="KeyI">Pack</div>
        <div class="mBtn" data-key="Tab">Journal</div>
        <div class="mBtn" data-act="pause">Pause</div>
@@ -2714,12 +2800,14 @@ if (IS_TOUCH) (function mobileControls() {
       else if (btn.dataset.act === "crouch") { if (mode === "walk" && !isPanelOpen()) { setCrouch(!crouching); btn.style.background = crouching ? "rgba(60,120,130,.8)" : ""; } }   // §13.4 mobile crouch toggle
       else if (btn.dataset.act === "swimup") { mobileSwimUp = true; btn.style.background = "rgba(60,120,130,.8)"; }   // §14A hold to swim up
       else if (btn.dataset.act === "swimdown") { mobileSwimDown = true; btn.style.background = "rgba(60,120,130,.8)"; }
+      else if (btn.dataset.act === "climb") { mobileClimb = true; tryGrabClimb(); btn.style.background = "rgba(60,120,130,.8)"; }   // §15 hold to climb
       else if (btn.dataset.act === "jump") tryJump();
       else tapKey(btn.dataset.key);
     }, { passive: false });
     if (btn.dataset.hold) {   // §14A release hold-buttons (swim up/down)
       const rel = (e) => { e.preventDefault();
         if (btn.dataset.act === "swimup") mobileSwimUp = false; else if (btn.dataset.act === "swimdown") mobileSwimDown = false;
+        else if (btn.dataset.act === "climb") mobileClimb = false;
         btn.style.background = ""; };
       btn.addEventListener("touchend", rel, { passive: false });
       btn.addEventListener("touchcancel", rel, { passive: false });
@@ -3609,6 +3697,15 @@ function boneMesh() { const m = Mesh(); mCyl(m,-0.6,0.6,0.16,0.16,6,[0.88,0.85,0
 // tools & dug finds
 function shovelMesh() { const m = Mesh(); mBox(m,0,0,0,0.04,0.7,0.04,[0.4,0.3,0.2]); mBox(m,0,0.78,0,0.16,0.08,0.03,[0.35,0.26,0.18]); // handle
   const blade=[0.55,0.56,0.6]; mCyl(m,-0.7,-0.5,0.045,0.045,5,[0.3,0.3,0.32]); mTri(m,[-0.22,-0.7,0],[0.22,-0.7,0],[0,-1.05,0],blade); mBox(m,0,-0.72,0,0.22,0.03,0.02,blade); return m; }
+// §15 two simple low-poly hands gripping, for first-person climbing
+function climbHandsMesh() { const m = Mesh(); const skin=[0.74,0.57,0.45], sleeve=[0.4,0.33,0.26];
+  for (const s of [-1,1]) { const bx = s*0.46;
+    mBox(m, bx, 0, 0, 0.14, 0.1, 0.16, skin);                                  // palm
+    for (let k=0;k<4;k++) mBox(m, bx - 0.09 + k*0.06, 0.13, 0.04, 0.022, 0.13, 0.035, skin);  // curled fingers
+    mBox(m, bx - s*0.12, 0.03, 0.04, 0.03, 0.09, 0.04, skin);                  // thumb
+    mBox(m, bx, -0.22, -0.14, 0.08, 0.22, 0.08, sleeve);                       // forearm sleeve
+  }
+  return m; }
 // §14C fishing spear: a long shaft with a sharpened point at the tip (held point-down like the shovel)
 function spearMesh() { const m = Mesh(); const wood=[0.46,0.34,0.22], tip=[0.62,0.63,0.6];
   mBox(m, 0, 0.0, 0, 0.028, 0.85, 0.028, wood);
@@ -6254,9 +6351,30 @@ function makeToolFP(id, mesh) {
   gl.bindVertexArray(null);
   TOOL_FP[id] = { mesh, vao, posBuf, vc: mesh.pos.length / 3, world: new Float32Array(mesh.pos.length) };
 }
-function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("spear", spearMesh()); }   // §14C spear shows in-hand
+function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("spear", spearMesh()); makeToolFP("climbhands", climbHandsMesh()); }   // §14C/§15
+// §15 render the two gripping hands while climbing, with a hand-over-hand sway
+function drawClimbHands(view) {
+  const fp = TOOL_FP["climbhands"]; if (!fp) return;
+  const f = camForward();
+  let rx = -f[2], rz = f[0]; const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl;
+  const upx = -rz*f[1], upy = rz*f[0] - rx*f[2], upz = rx*f[1];
+  const sway = Math.sin(clock.t*4.5) * 0.05 * (0.4 + player.climbSway);
+  const ox = sway*0.3, oy = -0.12 + sway, oz = 0.72;
+  const scale = 1.0, tilt = 0.45, ct = Math.cos(tilt), st = Math.sin(tilt);
+  const src = fp.mesh.pos, world = fp.world; let p = 0;
+  for (let i = 0; i < src.length; i += 3) { let vx = src[i]*scale, vy = src[i+1]*scale, vz = src[i+2]*scale;
+    const ny = vy*ct - vz*st, nz = vy*st + vz*ct; vy = ny; vz = nz;
+    world[p++] = cam.pos[0] + rx*(ox+vx) + upx*(oy+vy) + f[0]*(oz+vz);
+    world[p++] = cam.pos[1] + upy*(oy+vy) + f[1]*(oz+vz);
+    world[p++] = cam.pos[2] + rz*(ox+vx) + upz*(oy+vy) + f[2]*(oz+vz); }
+  propUniforms(view); gl.uniform1f(propU.uFogDensity, 0);
+  gl.bindVertexArray(fp.vao); gl.bindBuffer(gl.ARRAY_BUFFER, fp.posBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, world, 0, fp.vc*3);
+  gl.clear(gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
+  gl.drawArraysInstanced(gl.TRIANGLES, 0, fp.vc, 1); countDraw(fp.vc/3);
+}
 function drawShovel(view) {
   if (mode !== "walk") return;
+  if (player.climbing) { drawClimbHands(view); return; }       // §15 hands grip the rock instead of a tool
   const fp = TOOL_FP[selectedTool()]; if (!fp) return;        // only the three tools show in-hand
   const f = camForward();
   let rx = -f[2], rz = f[0]; const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl;      // camera right (horizontal)
@@ -7619,11 +7737,15 @@ function frame(now) {
       cam.pos[0] += mx * step; cam.pos[1] += my * step; cam.pos[2] += mz * step;
     }
   } else {
-    // §14A decide swim vs walk, with hysteresis on the open-sea depth under the player
+    // §14A decide swim vs walk, with hysteresis on the open-sea depth under the player (not while climbing)
     const seaDepth = openSeaDepth(player.x, player.z);
-    if (!player.swimming && seaDepth >= SWIM_START) startSwim();
-    else if (player.swimming && seaDepth < SWIM_STOP) stopSwim();
-   if (player.swimming) {
+    if (!player.climbing) {
+      if (!player.swimming && seaDepth >= SWIM_START) startSwim();
+      else if (player.swimming && seaDepth < SWIM_STOP) stopSwim();
+    }
+   if (player.climbing) {
+     climbStep(dt);
+   } else if (player.swimming) {
      swimStep(dt, right);
    } else {
     // ---- walk: wish-dir (manual or path), slope struggle, collide ----
@@ -7912,8 +8034,10 @@ function frame(now) {
     bArc.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.08) ${deg}deg 360deg)`;
     bArc.style.opacity = frac < 0.3 ? (0.6 + 0.4 * Math.abs(Math.sin(performance.now() * 0.009))) : 0.92;
   } else bArc.style.display = "none";
-  if (IS_TOUCH) { const sw = (mode === "walk" && player.swimming) ? "flex" : "none";   // §14A swim up/down buttons only while swimming
-    document.querySelectorAll('.mBtn[data-hold]').forEach(b => { if (b.style.display !== sw) b.style.display = sw; }); }
+  if (IS_TOUCH) { const sw = (mode === "walk" && player.swimming) ? "flex" : "none";   // §14A swim up/down only while swimming
+    document.querySelectorAll('.mBtn[data-act="swimup"], .mBtn[data-act="swimdown"]').forEach(b => { if (b.style.display !== sw) b.style.display = sw; });
+    const cb = document.querySelector('.mBtn[data-act="climb"]');   // §15 climb button when grabbable or climbing
+    if (cb) { const show = (mode === "walk" && (player.climbing || (!player.swimming && !!climbTargetInFront()))) ? "flex" : "none"; if (cb.style.display !== show) cb.style.display = show; } }
   document.getElementById("hotbar").style.display = (mode === "walk") ? "flex" : "none";
   // interaction indicator: a dot that becomes a soft-pulsing ring over anything in reach (§11.2)
   if (mode === "walk") {
