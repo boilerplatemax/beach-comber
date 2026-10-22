@@ -2855,6 +2855,7 @@ function fenceMesh() { const m = Mesh(); mBox(m, 0, 0.45, 0, 0.05, 0.45, 0.05, [
 const propVS = `#version 300 es
 precision highp float;
 uniform mat4 uProj, uView;
+uniform float uTime, uSway;      // §14B gentle current sway for foliage/kelp (uSway 0 = off)
 in vec3 aPos;
 in vec3 aCol;
 in vec3 iOff;        // world position
@@ -2871,6 +2872,9 @@ void main() {
   float cy = cos(yaw), sy = sin(yaw);               // yaw around Y
   vec3 r = vec3(p.x * cy + p.z * sy, p.y, -p.x * sy + p.z * cy);
   vec3 wp = r + iOff;
+  // §14B sway: taller parts of a plant lean more, phased by world position (a drifting current / breeze)
+  float sway = uSway * sin(uTime*0.8 + iOff.x*0.14 + iOff.z*0.11) * 0.05 * max(0.0, r.y);
+  wp.x += sway; wp.z += sway*0.55;
   vWorld = wp; vCol = aCol * iTint;
   gl_Position = uProj * uView * vec4(wp, 1.0);
 }`;
@@ -3199,6 +3203,18 @@ function buildProps() {
     arr.push(x, y, z, sc, rng()*6.28, 0, 0, t[0], t[1], t[2]);
     colliders.push({ x, z, r: sc*0.5, kind: "rock", ii: arr.length/10 - 1, sc, styleIdx });
   });
+  // §14B underwater meadows — eelgrass in the shallows, bull-kelp forest in deeper water (on the seabed)
+  const seabedOK = (x, z) => { const i = cellIndex(x, z); if (i < 0 || ponded.has(i) || filled[i] > waterLevel + 0.35) return false; return true; };
+  const eelgrass = [], kelpF = [];
+  scatter(5, 1.0, 6000, (x, z) => { const h = surfaceAt(x, z).h, d = -h;
+    if (d < 1.0 || d > 5.5 || !seabedOK(x, z) || nearPOI(x, z, 1)) return; if (rng() > 0.55) return;
+    pushInst(eelgrass, x, h, z, 0.8 + rng()*0.9, rng()*6.28, 0, 0, vary([0.32,0.5,0.32], 0.22));
+  });
+  scatter(8, 0.9, 2500, (x, z) => { const h = surfaceAt(x, z).h, d = -h;
+    if (d < 3.5 || d > 18 || !seabedOK(x, z) || nearPOI(x, z, 2)) return; if (rng() > 0.42) return;
+    const sc = Math.max(2.2, d / 1.9 * 0.96);                       // tall enough to reach a surface canopy
+    pushInst(kelpF, x, h, z, sc, rng()*6.28, 0, 0, vary([0.9,0.96,0.85], 0.12));
+  });
   // occasional old fence posts (collide)
   const fences = scatter(28, 1.0, 600, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 6 || s.h > 26 || s.slope > 0.4) return;
@@ -3210,6 +3226,9 @@ function buildProps() {
   propTypes = [
     { kind: "grass",   foliage: true,  snap: true, inst: makeInstanced(grassMesh(), grass) },
     { kind: "seaweed", foliage: true,  snap: true, inst: makeInstanced(grassMesh([0.28,0.32,0.22]), seaweed) },
+    { kind: "eelgrass", foliage: true, snap: true, inst: makeInstanced(eelgrassMesh(), eelgrass) },   // §14B
+    { kind: "kelp",    foliage: true,  snap: true, inst: makeInstanced(bullKelpMesh(), kelpF) },      // §14B
+
     { kind: "palm",    foliage: false, snap: true, inst: makeInstanced(palmMesh(), palms) },
     { kind: "pine",    foliage: false, snap: true, inst: makeInstanced(pineMesh(), trees) },
     { kind: "broadleaf", foliage: false, snap: true, inst: makeInstanced(broadleafMesh(), broadleaf) },
@@ -3219,7 +3238,7 @@ function buildProps() {
     { kind: "fence",   foliage: false, snap: true, inst: makeInstanced(fenceMesh(), fences) },
     { kind: "poi",     foliage: false, snap: false, inst: makeInstanced(poiMesh, poiMesh.pos.length ? [0,0,0, 1,0,0,0, 1,1,1] : []) },
   ];
-  rockStyleTypes = [propTypes[5], propTypes[6], propTypes[7]];   // §13.7 rounded / slab / jagged, by collider.styleIdx
+  rockStyleTypes = [propTypes.find(t=>t.kind==="rock"), propTypes.find(t=>t.kind==="rockSlab"), propTypes.find(t=>t.kind==="rockJag")];   // §13.7 rounded / slab / jagged, by collider.styleIdx
   initPropDeltas();
   rebuildCollHash();
   validateProps();
@@ -3320,6 +3339,7 @@ function drawProps(view) {
   gl.uniform1f(propU.uFogNear, FOG_NEAR);
   gl.uniform1i(propU.uWetBand, 1);                         // §13.7 wet band + barnacles near the waterline
   gl.uniform1f(propU.uWetLevel, wetLevel); gl.uniform1f(propU.uWaterLevel, waterLevel);
+  gl.uniform1f(propU.uTime, clock.t); gl.uniform1f(propU.uSway, 1);   // §14B foliage/kelp sway (world pass only)
   for (const t of propTypes) {
     if (!t.inst.vao || t.inst.count === 0) continue;
     // §13.6 foliage density: draw only a leading fraction of foliage instances (scatter order is random)
@@ -3330,6 +3350,7 @@ function drawProps(view) {
     countDraw(Math.round(t.inst.tris * cnt / t.inst.count));
   }
   gl.uniform1i(propU.uWetBand, 0);                         // §13.7 reset so creatures / tools / icons aren't affected
+  gl.uniform1f(propU.uSway, 0);                            // §14B reset sway
 }
 
 /* §13.6 SUN SHADOWS — soft contact shadows grounded under props & creatures (High/Ultra).
@@ -3468,6 +3489,8 @@ function floatMesh() { const m = Mesh(); mRock(m, mulberry32(11), [0.4,0.6,0.55]
 function cuttleMesh() { return discMesh(0.05,0.4,6,0.05,[0.92,0.9,0.85]); }
 // §13.3 a small curled, drab dried husk — the sun-dried remains of a soft shore creature
 function huskMesh() { const m = discMesh(0.0,0.26,6,0.17,[0.56,0.5,0.42]); mergeMesh(m, discMesh(0.0,0.24,6,-0.08,[0.47,0.42,0.35])); return m; }
+// §14B a round green glass fishing float
+function glassFloatMesh() { const m = Mesh(); const c=[0.42,0.66,0.56]; mergeMesh(m, discMesh(0.0,0.42,8,0.34,c)); mergeMesh(m, discMesh(0.0,0.42,8,-0.34,[c[0]*0.9,c[1]*0.9,c[2]*0.9])); mCyl(m,0.3,0.46,0.08,0.06,6,[0.3,0.4,0.34]); return m; }
 function eggMesh() { const m = Mesh(); mBox(m,0,0.1,0,0.35,0.1,0.22,[0.12,0.1,0.09]); for(const s of [-1,1]) mTri(m,[s*0.35,0.1,0.22],[s*0.6,0.3,0.3],[s*0.35,0.1,-0.22],[0.1,0.09,0.08]); return m; }
 function bottleMesh() { const m = Mesh(); mCyl(m,0,0.7,0.2,0.2,7,[0.35,0.5,0.4]); mCyl(m,0.7,1.0,0.2,0.09,7,[0.35,0.5,0.4]); mCyl(m,1.0,1.15,0.09,0.09,6,[0.3,0.25,0.2]); return m; }
 function boneMesh() { const m = Mesh(); mCyl(m,-0.6,0.6,0.16,0.16,6,[0.88,0.85,0.78]); mRock(m,mulberry32(3),[0.88,0.85,0.78]); return m; }
@@ -3548,6 +3571,18 @@ function stickMesh() { const m = Mesh(); mBox(m,0,0.04,0,0.38,0.03,0.035,[0.45,0
 function wormMesh() { const m = Mesh(); for (let i = 0; i < 6; i++) { const a = i*0.55; mBox(m, Math.sin(a)*0.11, 0.05, i*0.05-0.15, 0.055, 0.05, 0.05, [0.8-i*0.02,0.46,0.46]); } return m; }
 function rootMesh() { const m = Mesh(); const c = [0.6,0.45,0.3]; mCyl(m,-0.02,0.3,0.05,0.02,6,c); mCyl(m,0.0,0.22,0.035,0.015,6,[0.55,0.4,0.26]); mBox(m,0.08,0.12,0.03,0.12,0.025,0.025,[0.5,0.38,0.24]); mBox(m,-0.06,0.08,-0.04,0.1,0.022,0.022,[0.52,0.4,0.26]); return m; }
 function flintMesh() { const m = Mesh(); mRock(m, mulberry32(0x5f11 ^ SEED_INT), [0.26, 0.27, 0.31]); return m; }
+// §14B bull kelp: a long thin stipe with a float near the top and blades forming a surface canopy (scaled to reach the surface)
+function bullKelpMesh() { const m = Mesh(); const stalk=[0.26,0.33,0.19], frond=[0.3,0.4,0.22], flo=[0.5,0.44,0.22];
+  mCyl(m, 0, 1.9, 0.028, 0.018, 5, stalk);
+  mCyl(m, 1.88, 2.02, 0.07, 0.045, 6, flo);
+  for (let i=0;i<5;i++){ const a=i/5*6.283, y=0.9+i*0.22; mBox(m, Math.cos(a)*0.11, y, Math.sin(a)*0.11, 0.3, 0.015, 0.09, frond); }
+  for (let i=0;i<4;i++){ const a=i/4*6.283+0.5; mBox(m, Math.cos(a)*0.18, 2.0, Math.sin(a)*0.18, 0.55, 0.015, 0.13, [0.33,0.42,0.24]); }  // canopy
+  return m; }
+// §14B eelgrass: a tuft of tall thin blades swaying in the shallows
+function eelgrassMesh() { const m = Mesh(); const g=[0.3,0.5,0.32];
+  for (let i=0;i<6;i++){ const a=i/6*6.283, r=0.04+(i%3)*0.05, h=0.7+(i%2)*0.3;
+    mBox(m, Math.cos(a)*r, h*0.5, Math.sin(a)*r, 0.035, h*0.5, 0.035, [g[0]*(0.82+0.18*(i%2)),g[1],g[2]]); }
+  return m; }
 // (driftwoodMesh is the horizontal lying log defined above; §13.1 removed a duplicate vertical version)
 // --- loose material clump (a handful of sand / dirt / gravel / mud) ---
 function clumpMesh(col) { const m = Mesh(); for (let i = 0; i < 7; i++) { const a = i/7*6.283, r = 0.03 + (i%3)*0.06; mBox(m, Math.cos(a)*r, 0.04+(i%2)*0.04, Math.sin(a)*r, 0.09, 0.05, 0.09, [col[0]*(0.9+0.1*(i%2)), col[1], col[2]]); } mBox(m,0,0.08,0,0.1,0.06,0.1,col); return m; }
@@ -3669,6 +3704,8 @@ const FINDS = {
   gullegg:  { mesh: () => eggFoodMesh(),             base: 0.45,max: 60,  label: "Gull Egg", desc: "Speckled and still warm. Good food, and better cooked.", rare: 0 },
   rope:     { mesh: () => ropeMesh(),                base: 0.5, max: 60,  label: "Coiled Rope", desc: "A tangle of weathered rope, washed in on the surge.", rare: 0 },
   crate:    { mesh: () => crateMesh(),               base: 0.7, max: 40,  label: "Broken Crate", desc: "A salt-stained wooden crate, its boards sprung.", rare: 1 },
+  // §14B a glass fishing float lost from some far-off net, rolled onto the seabed
+  glassfloat:{ mesh: () => glassFloatMesh(), base: 0.6, max: 40, label: "Glass Float", desc: "A sea-green glass orb from a fishing net, found resting on the seabed.", rare: 2 },
   // §13.3 dried remains — what a scooped or stranded creature leaves behind when it dries out completely
   driedstar:{ mesh: () => starMesh([0.64,0.57,0.47]), base: 0.8, max: 60, label: "Dried Sea Star", desc: "A sea star left too long in the air, stiff and curled.", rare: 1 },
   husk:     { mesh: () => huskMesh(),                base: 0.45,max: 60,  label: "Dried Husk", desc: "The shrivelled remains of a small shore creature that dried out.", rare: 0 },
@@ -3731,6 +3768,15 @@ function populateLife() {
     if (t === "heron" && rng() < 0.3) spawnCreature("heron", x, z, { timer: rng()*3, tx: x, tz: z });
     else if (t === "hopper" && rng() < 0.5) spawnCreature("hopper", x, z, { timer: rng() });
     else if (t === "crab" && rng() < 0.4) spawnCreature("crab", x, z, { hr: 10 });
+  }
+  // §14B underwater finds scattered on the seabed — reward for diving (shells, sand dollars, glass floats)
+  const SEABED_FINDS = ["sanddollar","shell","moonsnail","seaglass","mussel","limpet"];
+  for (let i = 0; i < 130; i++) {
+    const a = rng()*6.283, r = HALF*(0.35 + rng()*0.55), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const h = surfaceAt(x, z).h, ci = cellIndex(x, z);
+    if (h > -1 || h < -16 || ci < 0 || filled[ci] > waterLevel + 0.35) continue;   // open seabed only
+    const t = rng() < 0.06 ? "glassfloat" : SEABED_FINDS[(rng()*SEABED_FINDS.length)|0];
+    spawnFind(t, x, z);
   }
   // seals on rocky POIs / high rock
   for (const p of POIS) if (p.type === "tidepools" || p.type === "seacave") {
@@ -5899,6 +5945,42 @@ function drawPlankton(view) {
   }
   if (n) { propUniforms(view); partDyn.draw(_moteArr, n); }
 }
+// §14B something very large occasionally passes at the edge of visibility in the deep — it never comes close
+function deepCreatureMesh() { const m = Mesh(); const c = [0.16,0.2,0.24];
+  mBox(m, 0, 0, 0, 1.5, 0.42, 0.3, c);                       // body
+  mBox(m, 1.3, 0.02, 0, 0.5, 0.28, 0.16, c);                // head
+  mTri(m, [-1.5,0,0.01], [-2.2,0.55,0.01], [-2.2,-0.55,0.01], c);   // tail fin
+  mTri(m, [0.2,0.4,0], [0.6,1.0,0], [-0.3,0.4,0], c);       // dorsal fin
+  return m; }
+let deepVisitor = null, deepVisitorDyn = null, deepVisitorCd = 50 + Math.random()*70;
+function updateDeepVisitor(dt) {
+  if (deepVisitor) {
+    deepVisitor.life -= dt;
+    deepVisitor.x += Math.sin(deepVisitor.dir) * deepVisitor.spd * dt;
+    deepVisitor.z += -Math.cos(deepVisitor.dir) * deepVisitor.spd * dt;
+    if (deepVisitor.life <= 0 || Math.hypot(deepVisitor.x-cam.pos[0], deepVisitor.z-cam.pos[2]) > 130) deepVisitor = null;
+    return;
+  }
+  if (!camUnderwaterNow) return;
+  const deep = waterLevel - surfaceAt(player.x, player.z).h > 7;   // only out in deep water
+  if (!deep) return;
+  deepVisitorCd -= dt;
+  if (deepVisitorCd <= 0) {
+    deepVisitorCd = 70 + Math.random()*110;
+    const a = cam.yaw + (Math.random()-0.5)*1.0, dist = 72;        // off at the hazy edge, crossing the view
+    const perp = a + Math.PI/2 * (Math.random()<0.5?1:-1);
+    deepVisitor = { x: cam.pos[0] + Math.sin(a)*dist, z: cam.pos[2] - Math.cos(a)*dist,
+                    y: Math.min(cam.pos[1] - 3, waterLevel - 9), dir: perp, spd: 3 + Math.random()*2.5, life: 26, scale: 6 + Math.random()*5 };
+  }
+}
+function drawDeepVisitor(view) {
+  if (!deepVisitor || !camUnderwaterNow) return;
+  if (!deepVisitorDyn) deepVisitorDyn = makeDynamic(deepCreatureMesh(), 1);
+  propUniforms(view); const a = rockScratch;
+  const yaw = deepVisitor.dir, y = deepVisitor.y + Math.sin(clock.t*0.3)*0.4;
+  a[0]=deepVisitor.x; a[1]=y; a[2]=deepVisitor.z; a[3]=deepVisitor.scale; a[4]=yaw; a[5]=0; a[6]=0; a[7]=0.2; a[8]=0.24; a[9]=0.28;
+  deepVisitorDyn.draw(a, 1);
+}
 
 /* ---- tell markers (dimples / dry patches) drawn as flat discs ---- */
 const dimpleDyn = makeDynamic((function () { const m = discMesh(0, 0.5, 8, 0.0, [1, 1, 1]); return m; })(), 60);
@@ -7414,7 +7496,7 @@ function frame(now) {
    }
   }
 
-  if (mode === "walk") { updateBreath(dt); updateSacks(dt); }   // §14A
+  if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); }   // §14A/B
   updateFade(dt);
   safetyCheck(dt);
 
@@ -7518,6 +7600,7 @@ function frame(now) {
   drawPlaceGhost(view);
   drawParticles(view);
   drawPlankton(view);   // §14B drifting marine snow / bioluminescence, underwater only
+  drawDeepVisitor(view);   // §14B a large silhouette far off in the deep
   drawBounds(view);
 
   // water
