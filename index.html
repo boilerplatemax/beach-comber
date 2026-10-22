@@ -2152,6 +2152,7 @@ function openSettings() {
     <div class="srow"><label>First-run hints</label><button data-k="hints">${onoff(hintsOn)}</button></div>
     <div class="srow"><label>Auto-pickup</label><button data-k="autopick">${onoff(autoPickup)}</button></div>
     <div class="srow"><label>Auto tool-switch</label><button data-k="autoswitch">${onoff(autoSwitch)}</button></div>
+    <div class="srow"><label>Hunger</label><button data-k="hunger">${onoff(hungerEnabled)}</button></div>
     <div class="srow"><label>Crouch key</label><button data-k="crouchkey">${crouchKey === "ControlLeft" ? "Ctrl" : "C"}</button></div>
     <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
     <h4>Graphics</h4>
@@ -2175,6 +2176,7 @@ function openSettings() {
     if (k === "hints") { hintsOn = !hintsOn; saveHints(); }
     else if (k === "autopick") { autoPickup = !autoPickup; saveAutoPick(); }
     else if (k === "autoswitch") { autoSwitch = !autoSwitch; saveAutoSwitch(); }
+    else if (k === "hunger") { setHungerEnabled(!hungerEnabled); }   // §13.8
     else if (k === "crouchkey") { crouchKey = crouchKey === "KeyC" ? "ControlLeft" : "KeyC"; try { localStorage.setItem("bc_crouchKey", crouchKey); } catch (e) {} }
     openSettings();
   });
@@ -4228,6 +4230,7 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgBounds">${showBounds ? "Hide hitboxes" : "Show hitboxes"}</button><button id="dbgAudit">Run audit</button></div>
     <div class="dbgrow"><button id="dbgHints">${hintsOn ? "Hints: on" : "Hints: off"}</button><button id="dbgResetHints">Reset hints</button></div>
     <div class="dbgrow"><button id="dbgAutoPick">${autoPickup ? "Auto-pickup: on" : "Auto-pickup: off"}</button><button id="dbgAutoSwitch">${autoSwitch ? "Auto-switch: on" : "Auto-switch: off"}</button></div>
+    <div class="dbgrow"><button id="dbgHunger">${hungerEnabled ? "Hunger: on" : "Hunger: off"}</button></div>
     <h3>Shovel / stamina</h3>
     ${TUNABLES.map((t) => `<label>${t.k} <b class="tv" data-k="${t.k}">${(+DBG_GET(t.k)).toFixed(t.step < 0.01 ? 3 : 2)}</b>
       <input class="dbgtune" data-k="${t.k}" type="range" min="${t.min}" max="${t.max}" step="${t.step}" value="${DBG_GET(t.k)}"></label>`).join("")}
@@ -4246,6 +4249,7 @@ function syncDebugPanel() {
   p.querySelector("#dbgResetHints").onclick = () => { resetHints(); syncDebugPanel(); };
   p.querySelector("#dbgAutoPick").onclick = () => { autoPickup = !autoPickup; saveAutoPick(); syncDebugPanel(); };
   p.querySelector("#dbgAutoSwitch").onclick = () => { autoSwitch = !autoSwitch; saveAutoSwitch(); syncDebugPanel(); };
+  p.querySelector("#dbgHunger").onclick = () => { setHungerEnabled(!hungerEnabled); syncDebugPanel(); };   // §13.8
   p.querySelectorAll(".dbgtune").forEach((el) => el.oninput = (e) => {
     const k = el.dataset.k, v = +e.target.value; DBG_SET(k, v);
     const b = p.querySelector(`.tv[data-k="${k}"]`); if (b) b.textContent = v.toFixed(v < 0.01 ? 3 : 2);
@@ -4665,6 +4669,10 @@ let SPRINT_DRAIN = 0.08, SCRAMBLE_DRAIN = 0.13, REGEN_ACTIVE = 0.05, REGEN_IDLE 
 let BLIND_FIND_CHANCE = 0.05;    // blind digging (no tell) rarely turns up a find; mostly raw material
 /* ---- hunger (§10.5): drains slowly, worse tiers pinch stamina & speed; never fatal ---- */
 let hunger = 1, growlT = 0;
+// §13.8 hunger is off by default now (system kept intact); toggle in settings / debug panel.
+let hungerEnabled = false;
+try { hungerEnabled = localStorage.getItem("bc_hunger") === "1"; } catch (e) {}
+function setHungerEnabled(on) { hungerEnabled = on; if (!on) hunger = 1; try { localStorage.setItem("bc_hunger", on ? "1" : "0"); } catch (e) {} }
 const HUNGER_DRAIN = 1 / (1.5 * DAY_PERIOD);   // full → empty in ~1.5 in-game days at rest
 const HUNGER_WORK = 0.045;                     // extra hunger per unit of heavy-action stamina spent
 const H_FULL = 0.75, H_PECKISH = 0.4, H_HUNGRY = 0.15;   // tier thresholds
@@ -4672,10 +4680,11 @@ function hungerTier() { return hunger > H_FULL ? "full" : hunger > H_PECKISH ? "
 function maxStamina() { const t = hungerTier(); return t === "starving" ? 0.4 : t === "hungry" ? 0.7 : 1; }   // less max stamina when hungry
 function heavyCostMul() { const t = hungerTier(); return t === "starving" ? 1.6 : t === "hungry" ? 1.25 : 1; } // heavy actions cost more
 function swingRateMul() { const t = hungerTier(); return t === "starving" ? 0.45 : t === "hungry" ? 0.72 : 1; }// and swing slower
-function spendStamina(a, heavy) { if (heavy) { hunger = Math.max(0, hunger - a * HUNGER_WORK); a *= heavyCostMul(); } stamina = Math.max(0, stamina - a); if (stamina <= 0.001) exhausted = true; }
+function spendStamina(a, heavy) { if (heavy) { if (hungerEnabled) hunger = Math.max(0, hunger - a * HUNGER_WORK); a *= heavyCostMul(); } stamina = Math.max(0, stamina - a); if (stamina <= 0.001) exhausted = true; }
 function canHeavyAction() { return !exhausted && stamina > 0.02 && digCommit <= 0; }
 function rootPlayer() { digCommit = COMMIT_TIME; }              // short wind-up: rooted ~0.5s per strike
-function updateHunger(gdt) { hunger = Math.max(0, hunger - HUNGER_DRAIN * gdt);      // passive drain (game-time)
+function updateHunger(gdt) { if (!hungerEnabled) { hunger = 1; return; }   // §13.8 off by default; system kept intact
+  hunger = Math.max(0, hunger - HUNGER_DRAIN * gdt);                       // passive drain (game-time)
   if (hungerTier() === "starving") { growlT -= gdt; if (growlT <= 0) { growlT = 9 + rng()*6; if (onDig) onDig("growl"); } } }
 function updateStamina(dt) {
   if (mode !== "walk") { stamina = 1; resting = false; exhausted = false; digCommit = 0; crouching = false; crouchStillT = 0; return; }
