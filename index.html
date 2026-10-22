@@ -260,6 +260,26 @@
   .recipe .mk { flex: 0 0 auto; font-size: 12px; font-weight: 600; padding: 7px 14px; cursor: pointer; align-self: center; }
   .recipe .mk:disabled { opacity: .4; cursor: default; }
   .makehint { font-size: 12px; opacity: .7; padding: 18px 8px; text-align: center; line-height: 1.4; }
+  /* §17.5 goblin trade panel */
+  #tradepanel { position: fixed; z-index: 13; display: none; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    width: 400px; max-width: 94vw; max-height: 90vh; overflow-y: auto; padding: 18px 20px 16px; color: #f3e9d6; text-align: center;
+    background-color: #4e5a38; box-shadow: 0 8px 30px rgba(0,0,0,.6), inset 0 0 40px rgba(24,32,12,.5);
+    clip-path: polygon(16px 0,calc(100% - 16px) 0,100% 16px,100% calc(100% - 16px),calc(100% - 16px) 100%,16px 100%,0 calc(100% - 16px),0 16px); }
+  #tradepanel .ihead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
+  #tradepanel h2 { font-size: 19px; margin: 0; color: #f6eccb; }
+  #tradepanel .ihead button { font-size: 12px; padding: 4px 10px; }
+  #tradepanel .tsub { font-size: 12px; font-style: italic; opacity: .8; margin: 2px 0 12px; }
+  .tlist { display: flex; flex-direction: column; gap: 7px; }
+  .trow { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 8px;
+    background: rgba(30,36,18,.4); border: 1px solid rgba(20,26,10,.5); }
+  .trow .tgive, .trow .tget { display: flex; align-items: center; gap: 4px; }
+  .trow .ti { display: inline-flex; align-items: center; gap: 2px; background: rgba(18,22,10,.45); border-radius: 6px; padding: 3px 5px; }
+  .trow .ti img { width: 30px; height: 30px; image-rendering: pixelated; }
+  .trow .ti b { font-size: 13px; }
+  .trow .tplus { opacity: .6; } .trow .tarrow { opacity: .75; font-size: 16px; margin: 0 2px; }
+  .trow .tget { margin-left: auto; }
+  .trow .tbtn { flex: 0 0 auto; font-size: 12px; font-weight: 600; padding: 7px 12px; cursor: pointer; }
+  .trow .tbtn:disabled { opacity: .4; cursor: default; }
   .clabel { display: flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
     color: #e6d2a6; opacity: .85; margin: 0 2px 5px; text-shadow: 0 1px 1px rgba(0,0,0,.5); }
   .clabel:before, .clabel:after { content:""; flex:1; height:1px; background: repeating-linear-gradient(90deg,#c8a86e 0 4px,transparent 4px 8px); opacity:.5; }
@@ -415,6 +435,7 @@
 <div id="hotbar"></div>
 <div id="journal"></div>
 <div id="invpanel"></div>
+<div id="tradepanel"></div>
 <canvas id="bucketpanel" width="125" height="145"></canvas>
 <div id="ctxmenu"></div>
 <div id="bucketlook">
@@ -2355,6 +2376,7 @@ addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (e.code === "Escape" && typeof inspect !== "undefined" && inspect.open) { closeInspect(); return; }   // close the close-up first
   if (e.code === "Escape" && typeof bucketLook !== "undefined" && bucketLook.open) { closeBucketLook(); return; }
+  if (e.code === "Escape" && typeof tradeOpen !== "undefined" && tradeOpen) { closeTrade(); return; }
   if (typeof pry !== "undefined" && pry) {                                   // §12C mini-game captures space / esc
     if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); pryStrike(); return; }
     if (e.code === "Escape") { cancelPry(); return; }
@@ -2614,6 +2636,7 @@ function isPanelOpen() {
       || (typeof stashOpen !== "undefined" && stashOpen >= 0)
       || (typeof pry !== "undefined" && !!pry)
       || (typeof bucketLook !== "undefined" && bucketLook.open)
+      || (typeof tradeOpen !== "undefined" && tradeOpen)
       || document.getElementById("journal").style.display === "block"
       || document.getElementById("settingspanel").style.display === "block";
 }
@@ -2665,7 +2688,7 @@ let chewT = 0;
 
 /* ---- the interaction target, independent of the equipped tool (§11.2 / §11.3) ---- */
 // Which tool performs the primary action on each target kind.
-const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", crop: "hand", seaweed: "hand", goat: "hand", salt: "hand", creature: "hand", nest: "hand", chest: "hand", openchest: "hand", storagebox: "hand", driftwood: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
+const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", crop: "hand", seaweed: "hand", goblin: "hand", goat: "hand", salt: "hand", creature: "hand", nest: "hand", chest: "hand", openchest: "hand", storagebox: "hand", driftwood: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
 function aimInfo() {
   if (mode !== "walk") return null;
   if (curTarget) return { kind: curTarget.kind, obj: curTarget.obj, x: curTarget.x, z: curTarget.z, need: TOOL_FOR_KIND[curTarget.kind] || "hand" };
@@ -4040,6 +4063,28 @@ function seaLettuceMesh(cropped){ const m=Mesh(); const g=[0.38,0.76,0.4], g2=[0
   const n = cropped?3:7, H = cropped?0.14:0.45;
   for(let i=0;i<n;i++){ const a=i/n*6.283, r=0.05+(i%2)*0.04, c=(i%2?g:g2);
     mergeAt(m, (i%2? boxM(0.09,H*0.5,0.005,c) : boxM(0.005,H*0.5,0.09,c)), Math.cos(a)*r, H*0.5, Math.sin(a)*r); }
+  return m; }
+// §17.5 a scrappy goblin trader — detailed, with per-goblin variation (skin shade, ear size). Faces +z (nose/eyes forward).
+function goblinMesh(v){ const m=Mesh();
+  const skin=v.skin, skin2=[skin[0]*0.82,skin[1]*0.82,skin[2]*0.8], rag=[0.46,0.3,0.22], rag2=[0.34,0.23,0.17], belt=[0.3,0.22,0.15],
+        eye=[0.96,0.92,0.5], pupil=[0.1,0.08,0.06], tooth=[0.92,0.9,0.82], hair=[0.2,0.16,0.12];
+  for(const sx of [-0.12,0.12]){ mergeAt(m, cylM(0,0.3,0.075,0.055,skin), sx,0,0); mergeAt(m, boxM(0.08,0.035,0.12,skin2), sx,0.03,0.04); }   // stubby legs + feet
+  mergeAt(m, (()=>{const d=Mesh(); mergeMesh(d, discMesh(0.1,0.21,8,0.16,skin)); mCyl(d,0.0,0.14,0.21,0.19,8,skin); return d;})(), 0,0.3,0);   // pot belly
+  mCyl(m,0.3,0.52,0.22,0.17,8,rag); mBox(m,0,0.37,0.17,0.18,0.1,0.04,rag2);   // rag vest + flap
+  mBox(m,0,0.52,0,0.21,0.04,0.19,belt); mergeAt(m, boxM(0.08,0.06,0.05,[0.5,0.42,0.2]), 0.15,0.5,0.14);   // belt + trader pouch
+  mCyl(m,0.52,0.6,0.085,0.11,6,skin);   // neck
+  mergeAt(m, (()=>{const d=Mesh(); mergeMesh(d, discMesh(0.02,0.27,8,0.2,skin)); mCyl(d,-0.14,0.04,0.25,0.27,8,skin); mergeMesh(d, discMesh(-0.14,0.25,8,-0.1,skin)); return d;})(), 0,0.62,0);   // big head
+  for(const sx of [-1,1]){ const e=v.ear;   // big pointy ears
+    mergeAt(m, (()=>{const d=Mesh(); mTri(d,[0,0,0.06],[0.05,0.2*e,-0.02],[0,0.0,-0.1*e],skin); mTri(d,[0,0,0.06],[0,0.0,-0.1*e],[0.05,0.2*e,-0.02],skin2); mCyl(d,0,0.07,0.05,0.025,5,skin2); return d;})(), sx*0.27,0.72,0); }
+  mergeAt(m, (()=>{const d=Mesh(); mCyl(d,0,0.15,0.055,0.03,5,skin2); mBox(d,0,0.14,0.04,0.04,0.035,0.06,skin2); return d;})(), 0,0.69,0.24);   // hooked nose
+  for(const sx of [-1,1]){ mergeAt(m, (()=>{const d=Mesh(); mergeMesh(d, discMesh(0,0.055,6,0.03,eye)); mergeAt(d, boxM(0.022,0.022,0.012,pupil),0,0.0,0.035); return d;})(), sx*0.1,0.77,0.22); mBox(m,sx*0.1,0.84,0.2,0.055,0.018,0.03,skin2); }   // beady eyes + brows
+  mBox(m,0,0.65,0.23,0.09,0.016,0.02,tooth); mergeAt(m, boxM(0.016,0.03,0.01,tooth), 0.03,0.67,0.24);   // snaggle grin
+  for(let i=0;i<4;i++){ const a=i/4*6.283; mergeAt(m, boxM(0.016,0.07,0.016,hair), Math.cos(a)*0.09,0.86,Math.sin(a)*0.09); }   // scruffy hair
+  return m; }
+// an arm hanging from the shoulder (origin = shoulder); swings via the instance lean
+function goblinArmMesh(skin){ const m=Mesh(); const skin2=[skin[0]*0.86,skin[1]*0.86,skin[2]*0.84];
+  mCyl(m,-0.36,0.0,0.052,0.058,5,skin); mergeMesh(m, discMesh(-0.36,0.06,6,-0.03,skin2));   // arm + palm
+  for(let i=-1;i<=1;i++) mBox(m, i*0.035,-0.42,0.0, 0.018,0.05,0.018, skin2);   // three stubby fingers
   return m; }
 // generic storm flotsam (§11.1)
 function ropeMesh() { const m = Mesh(); const c = [0.66,0.56,0.36]; for (let i = 0; i < 6; i++) { const a = i*1.1; mCyl(m, Math.cos(a)*0.14, Math.cos(a)*0.14+0.06, 0.05, 0.05, 5, [c[0]-0.03*(i%2),c[1],c[2]]); } mergeMesh(m, discMesh(0.0,0.2,8,0.03,[0.6,0.5,0.32])); return m; }
@@ -5453,6 +5498,7 @@ function targetAlongRay(r, sticky) {
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
   for (const cr of crops) sphere(cr, "crop", cr.x, cr.z, 0.5*cr.scale, 1.0*cr.scale);   // §17 harvestable crops
   for (const sw of seaweedBeds) if (sw.ripe) sphere(sw, "seaweed", sw.x, sw.z, 0.6*sw.scale, 0.9*sw.scale);   // §17.2 pick sea lettuce
+  for (const gb of goblins) sphere(gb, "goblin", gb.x, gb.z, 0.45*gb.size, 1.1*gb.size);   // §17.5 trade
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
   for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
@@ -5481,6 +5527,7 @@ function useToolOnTarget(t) {
     case "bush": harvestBush(t.obj); return true;
     case "crop": harvestCrop(t.obj); return true;
     case "seaweed": harvestSeaweed(t.obj); return true;
+    case "goblin": openGoblinTrade(t.obj); return true;
     case "goat": offerSaltTo(t.obj); return true;
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "nest": takeEgg(t.obj); return true;
@@ -6638,6 +6685,100 @@ function drawSeaweedBeds(view) {
   gl.uniform1f(propU.uSway, 0); gl.uniform1i(propU.uClampTop, 0);
 }
 
+/* ===================================================================== *
+ * § 17.5  GOBLIN TRADERS — whimsical, scrappy NPCs you barter with
+ * ===================================================================== */
+let goblins = [];
+let tradeOpen = false, tradeGoblin = null;
+const GOBLIN_SKINS = [[0.46,0.56,0.36],[0.5,0.6,0.4],[0.42,0.5,0.32],[0.52,0.58,0.42],[0.44,0.54,0.4],[0.5,0.52,0.3]];
+function clamp01(v){ return Math.max(0.12, Math.min(1, v)); }
+function goblinTrades() {   // Minecraft-villager-style: give → get, with limited stock that restocks
+  return [
+    { give:[["plasticbottle",2]], get:["coin",1], uses:0, max:6 },
+    { give:[["bottlecap",3]], get:["seaglass",1], uses:0, max:6 },
+    { give:[["netscrap",1],["plasticbag",1]], get:["coin",1], uses:0, max:5 },
+    { give:[["sealettuce",3]], get:["berry",1], uses:0, max:5 },
+    { give:[["nautilus",1]], get:["coin",2], uses:0, max:3 },
+    { give:[["coin",2]], get:["rope",1], uses:0, max:4 },
+    { give:[["coin",3]], get:["coconut",2], uses:0, max:4 },
+  ];
+}
+function spawnGoblin(x, z) {
+  const base = GOBLIN_SKINS[(Math.random()*GOBLIN_SKINS.length)|0];
+  const skin = [clamp01(base[0]+(Math.random()-0.5)*0.1), clamp01(base[1]+(Math.random()-0.5)*0.1), clamp01(base[2]+(Math.random()-0.5)*0.08)];
+  const g = { x, z, yaw: Math.random()*6.28, idleYaw: Math.random()*6.28, size: 0.92+Math.random()*0.26, skin,
+    ear: 0.85+Math.random()*0.4, t: Math.random()*6.28, greet: 0, state: "idle", trades: goblinTrades(), restockAt: 0, bodyDyn: null, armDyn: null };
+  goblins.push(g); return g;
+}
+function updateGoblins(dt) {
+  for (const g of goblins) {
+    g.t += dt;
+    const dp = Math.hypot(g.x-player.x, g.z-player.z);
+    g.state = (dayNightEnabled && dayFactor() < 0.3) ? "drowsy" : "awake";   // §17.5 nods off at night (when the cycle is on)
+    let targetYaw;
+    if (g.state !== "drowsy" && dp < 9) targetYaw = Math.atan2(player.x - g.x, player.z - g.z);   // turn to watch you
+    else { g.idleYaw += (Math.random()-0.5)*dt*0.4; targetYaw = g.idleYaw; }
+    let d = targetYaw - g.yaw; while (d > Math.PI) d -= 6.283; while (d < -Math.PI) d += 6.283;
+    g.yaw += Math.max(-dt*3, Math.min(dt*3, d));
+    if (g.greet > 0) g.greet -= dt;
+    if (g.restockAt && clock.t >= g.restockAt) { for (const tr of g.trades) tr.uses = 0; g.restockAt = 0; }
+  }
+}
+const goblinScratch = new Float32Array(10);
+function drawGoblins(view) {
+  if (!goblins.length) return; propUniforms(view);
+  for (const g of goblins) {
+    const dx = g.x-cam.pos[0], dz = g.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    if (!g.bodyDyn) { g.bodyDyn = makeDynamic(goblinMesh({ skin: g.skin, ear: g.ear }), 1); g.armDyn = makeDynamic(goblinArmMesh(g.skin), 1); }
+    const gy = surfaceAt(g.x, g.z).h, t = g.t, drowsy = g.state === "drowsy";
+    const bob = drowsy ? -0.05*g.size + Math.sin(t*1.1)*0.01 : Math.sin(t*2)*0.02*g.size;   // breathe/bob (slump when drowsy)
+    const sc = g.size*(1 + Math.sin(t*(drowsy?1.1:2.5))*0.016), yaw = g.yaw, by = gy + bob;
+    const a = goblinScratch;
+    a[0]=g.x;a[1]=by;a[2]=g.z;a[3]=sc;a[4]=yaw;a[5]=drowsy?0.14:0;a[6]=0;a[7]=1;a[8]=1;a[9]=1; g.bodyDyn.draw(a, 1);   // body (tilts forward when drowsy)
+    const cy = Math.cos(yaw), sy = Math.sin(yaw), shY = by + 0.56*sc, greetAmt = g.greet > 0 ? Math.min(1, g.greet*1.5) : 0;
+    for (const side of [-1, 1]) {
+      const localSX = side*0.24*sc, wx = g.x + localSX*cy, wz = g.z - localSX*sy;
+      let lean = drowsy ? 0.22 : Math.sin(t*1.6 + (side>0?0:3.14))*0.16;        // gentle idle sway
+      if (greetAmt > 0 && side > 0) lean = -1.15 + Math.sin(t*12)*0.3*greetAmt;  // a cheerful wave on greeting
+      a[0]=wx;a[1]=shY;a[2]=wz;a[3]=sc;a[4]=yaw;a[5]=lean;a[6]=0;a[7]=1;a[8]=1;a[9]=1; g.armDyn.draw(a, 1);
+    }
+  }
+}
+/* ---- trade panel ---- */
+function openGoblinTrade(g) {
+  tradeOpen = true; tradeGoblin = g; g.greet = 1.6;
+  document.getElementById("tradepanel").style.display = "block";
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  renderTrade(g);
+}
+function closeTrade() { tradeOpen = false; tradeGoblin = null; document.getElementById("tradepanel").style.display = "none"; if (typeof requestLock === "function") requestLock(); }
+function renderTrade(g) {
+  const p = document.getElementById("tradepanel"); if (!p || !tradeOpen) return;
+  const tItem = (id, q) => `<span class="ti">${ITEMS[id] && ITEMS[id].icon ? `<img src="${ITEMS[id].icon}">` : ""}<b>${q}</b></span>`;
+  const rows = g.trades.map((tr, i) => {
+    const sold = tr.uses >= tr.max, can = !sold && tr.give.every(([id, q]) => Inv.count(id) >= q);
+    const giveH = tr.give.map(([id, q]) => tItem(id, q)).join(`<span class="tplus">+</span>`);
+    return `<div class="trow"><div class="tgive">${giveH}</div><div class="tarrow">→</div><div class="tget">${tItem(tr.get[0], tr.get[1])}</div>`
+      + `<button class="tbtn" data-i="${i}" ${can ? "" : "disabled"}>${sold ? "sold out" : "trade"}</button></div>`;
+  }).join("");
+  p.innerHTML = `<div class="ihead"><h2>Goblin Trader</h2><button id="tradeClose">Close</button></div>`
+    + `<div class="tsub">“Heh heh… whatcha got for ol’ me?”</div><div class="tlist">${rows}</div>`
+    + `<div class="ihint">hand over what it wants for its wares · it restocks in a day</div>`;
+  p.querySelector("#tradeClose").onclick = closeTrade;
+  p.querySelectorAll(".tbtn").forEach(btn => btn.onclick = () => doTrade(g, +btn.dataset.i));
+}
+function doTrade(g, i) {
+  const tr = g.trades[i];
+  if (tr.uses >= tr.max) { showCard("Sold out", "The goblin's traded all it can of that for now."); return; }
+  if (!tr.give.every(([id, q]) => Inv.count(id) >= q)) { showCard("Not enough", "You don't have what the goblin wants."); return; }
+  for (const [id, q] of tr.give) Inv.remove(id, q);
+  Inv.add(tr.get[0], tr.get[1]); tr.uses++;
+  if (g.restockAt === 0) g.restockAt = clock.t + DAY_PERIOD;
+  g.greet = 0.9; if (onDig) onDig("clang");
+  showCard("Traded!", `Got ${tr.get[1]} ${ITEMS[tr.get[0]].name}.`);
+  renderTrade(g);
+}
+
 /* §14A drowned-item sacks — a little bundle with a glint, on the seabed or washed ashore */
 let sackDyn = null;
 function sackMesh() { const m = Mesh(); const c = [0.46,0.39,0.28];
@@ -7423,6 +7564,7 @@ function updateTools(dt, gdt) {
   updateCrops();
   updateSeaweed();
   updateForagePatches();
+  updateGoblins(dt);
   // scattered seeds near mature trees slowly replenish (low density)
   seedScatterT += gdt;
   if (seedScatterT > 45) { seedScatterT = 0; maybeScatterSeed(); }
@@ -8404,6 +8546,10 @@ seedWildCrops();
 populateLife();
 seedSeaweedBeds();   // §17.2 after life[], so bed-dwelling critters aren't wiped
 seedForagePatches(); // §17.3 worm soil / buried clusters the gulls gather over
+// §17.5 TEST: drop one goblin trader near the player's start spot to play with
+(function () { const s = findSpawn(); const ga = s.yaw + 0.7, gx = s.x + Math.sin(ga)*4, gz = s.z - Math.cos(ga)*4;
+  const ok = surfaceAt(gx, gz).h > 0.5 && !spotUnderwater(gx, gz);
+  spawnGoblin(ok ? gx : s.x + 3, ok ? gz : s.z); })();
 const terrain = buildTerrainMesh();
 const water = buildWaterMesh();
 const heightTex = buildHeightTexture();
@@ -8752,6 +8898,7 @@ function frame(now) {
   drawBerryBushes(view);
   drawCrops(view);
   drawSeaweedBeds(view);
+  drawGoblins(view);
   drawSacks(view);
   drawCampfires(view);
   drawGoats(view);
