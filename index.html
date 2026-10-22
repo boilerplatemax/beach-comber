@@ -1689,7 +1689,8 @@ function landJump(g, fall) {
     for (const sp of (typeof digSpots !== "undefined" ? digSpots : [])) { if (sp.revealed) continue;
       if (Math.hypot(sp.x - player.x, sp.z - player.z) < 10 && surfaceKind(sp.x, sp.z) === "wet") { sp.react = 1.3; } }
   }
-  camNudge = Math.max(camNudge, Math.min(0.2, 0.04 + fall * 0.02));          // camera dip scaled by fall speed
+  camYVel = Math.min(camYVel, -Math.min(LAND_IMPACT_CAP, fall * LAND_IMPACT_K) * 11);   // §13.1 downward impulse into the spring
+  camNudge = Math.max(camNudge, Math.min(0.08, 0.02 + fall * 0.008));         // a small pitch nod on top
   if (onFootstep) onFootstep(surfaceType(g.h, g.slope), Math.min(1, 0.4 + fall * 0.08));   // landing thud
   if (fall > 9) player.landStun = Math.min(0.5, (fall - 9) * 0.06);          // big drop: a brief slowdown
   // landing on a too-steep slope slides you back to safe ground
@@ -4549,6 +4550,18 @@ function goatPaw(g) {
 
 // the dig action
 let shovelSwing = 0, camNudge = 0, toolRecoilT = 0, camShake = 0, lastFailT = -99;
+// §13.1 landing: a critically-damped camera spring absorbs the impact velocity and
+// settles — a "knee-bend" that eases in AND out, and never touches the player's real position.
+let camYOff = 0, camYVel = 0;
+const LAND_IMPACT_K = 0.028, LAND_IMPACT_CAP = 0.42, LAND_SPRING_K = 130, LAND_SPRING_C = 23;   // tunables
+function springCamY(dt) {
+  let left = dt;
+  while (left > 1e-4) { const s = Math.min(0.02, left); left -= s;   // substep for stability at any frame rate
+    camYVel += (-camYOff * LAND_SPRING_K - camYVel * LAND_SPRING_C) * s;
+    camYOff += camYVel * s;
+  }
+  if (Math.abs(camYOff) < 0.0004 && Math.abs(camYVel) < 0.002) { camYOff = 0; camYVel = 0; }
+}
 const FAIL_COST = 0.03;          // a bounced swing costs less than a real hit (§10.1)
 // Bright sparks (metal on stone): fast, short-lived, warm.
 function spawnSparks(x, y, z, n) {
@@ -5198,6 +5211,7 @@ function updateDigging(dt) {
   const swingRate = 3.5 * (stamina < 0.3 ? 0.6 : 1) * swingRateMul();   // slower, heavier swing when tired or hungry
   if (shovelSwing > 0) shovelSwing = Math.max(0, shovelSwing - dt * swingRate);
   if (camNudge > 0) camNudge = Math.max(0, camNudge - dt * 0.4);
+  springCamY(dt);                                                             // §13.1 settle the landing give
   if (toolRecoilT > 0) toolRecoilT = Math.max(0, toolRecoilT - dt * 4.5);     // quick recoil settle
   if (camShake > 0) camShake = Math.max(0, camShake - dt * 3.5);              // jolt decays fast
   updateParticles(dt);
@@ -6535,7 +6549,7 @@ function frame(now) {
       player.eyeY += (target - player.eyeY) * Math.min(1, dt * 14);
       player.feetY = standH;                                    // stay synced with the ground
     }
-    cam.pos[0] = player.x; cam.pos[1] = player.eyeY; cam.pos[2] = player.z;
+    cam.pos[0] = player.x; cam.pos[1] = player.eyeY + camYOff; cam.pos[2] = player.z;   // §13.1 landing give is camera-only
   }
 
   safetyCheck(dt);
