@@ -995,22 +995,35 @@ let FOG_NEAR = BASE_FOG_NEAR;         // clear band before fog ramps in
 
 // Day & night palettes; SKY is the blended current state (uploaded each frame).
 const SKY_DAY = { zenith: [0.42, 0.54, 0.63], horizon: [0.78, 0.77, 0.72], warm: [1.00, 0.92, 0.78] };
-const SKY_NIGHT = { zenith: [0.05, 0.07, 0.13], horizon: [0.10, 0.12, 0.18], warm: [0.35, 0.40, 0.55] };
-const SKY = { zenith: [0,0,0], horizon: [0,0,0], warm: [0,0,0], sun: [0,0,0] };
+// §18 a deep moonlit blue, never black — brighter toward the horizon so silhouettes stay readable
+const SKY_NIGHT = { zenith: [0.06, 0.09, 0.19], horizon: [0.15, 0.19, 0.31], warm: [0.42, 0.48, 0.64] };
+const SKY = { zenith: [0,0,0], horizon: [0,0,0], warm: [0,0,0], sun: [0,0,0], moon: [0,0,0] };
+// §18 MOON — a full lunar cycle over twice the tide's spring/neap cycle, so full & new moon both land on spring tides
+let NIGHT_EDGE = -0.5;              // tunable: more negative → shorter night. -0.5 ≈ night is ~1/3 of the day
+function moonPhase() { return (tideDay / (TIDE_CYCLE_DAYS * 2)) % 1; }    // 0 = new moon, 0.5 = full moon (both land on spring tides)
+function moonIllum() { return 0.5 - 0.5 * Math.cos(moonPhase() * 6.2831853); }   // 0 (new) .. 1 (full)
+function moonName() { const p = moonPhase(); const names = ["new","waxing crescent","first quarter","waxing gibbous","full","waning gibbous","last quarter","waning crescent"]; return names[Math.round(p*8) % 8]; }
+function moonVec() {                                                      // the moon rides opposite the sun, high at midnight
+  const ang = (timeOfDay - 0.8) * 6.2831853, el = Math.cos(ang) * 0.85, az = 0.5 + (timeOfDay + 0.5) * 3.0, ce = Math.cos(el);
+  return [ce * Math.sin(az), el, -ce * Math.cos(az)];
+}
 // §14B underwater palette — the fog/haze everything fades into when the camera is submerged
 const SKY_UW = { zenith: [0.14, 0.42, 0.5], horizon: [0.1, 0.34, 0.44], warm: [0.45, 0.72, 0.72] };
 let camUnderwaterNow = false;   // §14B set each frame for the underwater-only draws (plankton etc.)
 
-function dayFactor() { return smoothstep(-0.32, 0.5, Math.cos((timeOfDay - 0.3) * 6.2831853)); }
+function dayFactor() { return smoothstep(NIGHT_EDGE, 0.5, Math.cos((timeOfDay - 0.3) * 6.2831853)); }
 let booted = false;              // true once init finishes (gates runtime-only telegraphs in updateSun)
 function updateSun() {
   const ang = (timeOfDay - 0.3) * 6.2831853;           // 0 at the day's peak
   const el = Math.cos(ang) * 0.9, az = 0.5 + timeOfDay * 3.0;
   const ce = Math.cos(el);
   SKY.sun = [ce * Math.sin(az), Math.max(0.06, el), -ce * Math.cos(az)];
+  SKY.moon = moonVec();
   const f = dayFactor();
+  // §18 night brightness follows the moon — full moon bright, new moon dim (but never black)
+  const ml = 0.42 + 0.58 * (booted ? moonIllum() : 0.5);
   for (const k of ["zenith", "horizon", "warm"])
-    SKY[k] = SKY_DAY[k].map((v, i) => v * f + SKY_NIGHT[k][i] * (1 - f));
+    SKY[k] = SKY_DAY[k].map((v, i) => v * f + SKY_NIGHT[k][i] * ml * (1 - f));
   // telegraph an approaching storm: grey, flatten the sky
   const mood = booted ? eventMood() : 0;
   if (mood > 0) { const grey = [0.5, 0.52, 0.55];
@@ -1034,6 +1047,7 @@ let waterLevel = 0.0;           // THE variable everything reads
 let wetLevel = 0.0;             // lagging high-water mark (wet sand)
 // Spring / neap: amplitude swells and shrinks over a ~7-day cycle (§B).
 const TIDE_CYCLE_DAYS = 7, NEAP_AMP = 0.55, SPRING_AMP = 1.35;
+const MOON_CYCLE_DAYS = TIDE_CYCLE_DAYS * 2;   // §18 a lunar month spans two spring/neap cycles
 const MINUS_AMP = 1.15, MINUS_DROP = 0.9;    // above this amp, lows drop extra (minus tides)
 // The highest the ocean ever reaches (spring high). Nothing dry should sit at or below this.
 const MAX_HIGH_TIDE = TIDE_MID + TIDE_RANGE * 0.5 * SPRING_AMP;
@@ -1650,12 +1664,33 @@ precision highp float;
 in vec2 vNdc;
 out vec4 frag;
 uniform mat4 uInvVP;
-uniform vec3 uCamPos, uSunDir, uZenith, uHorizon, uWarm;
+uniform vec3 uCamPos, uSunDir, uZenith, uHorizon, uWarm, uMoonDir;
+uniform float uNight, uMoonLit, uTime;        // §18 night strength, moon illumination, clock
 ${SKY_GLSL}
+float starHash(vec2 c){ return fract(sin(dot(c, vec2(41.3, 289.1))) * 43758.5453); }
 void main() {
   vec4 world = uInvVP * vec4(vNdc, 1.0, 1.0);   // unproject far plane
   vec3 dir = normalize(world.xyz / world.w - uCamPos);
-  frag = vec4(skyColor(dir, uSunDir, uZenith, uHorizon, uWarm), 1.0);
+  vec3 col = skyColor(dir, uSunDir, uZenith, uHorizon, uWarm);
+  if (uNight > 0.01) {
+    // §18 stars in the upper sky (small points, kept off the horizon so silhouettes read)
+    float up = smoothstep(0.1, 0.42, dir.y);
+    vec2 sc = dir.xz / (abs(dir.y) + 0.22) * 16.0;
+    vec2 cell = floor(sc), fp = fract(sc);
+    float h = starHash(cell);
+    vec2 sp = vec2(starHash(cell + 0.13), starHash(cell + 0.71));          // star's sub-cell position
+    float dd = length(fp - sp);
+    float star = smoothstep(0.09, 0.0, dd) * step(0.90, h) * up;           // ~10% of cells carry a dot
+    star *= 0.55 + 0.45 * sin(uTime * 2.5 + h * 60.0);                     // gentle twinkle
+    col += vec3(0.82, 0.86, 1.0) * star * uNight * (1.1 - uMoonLit * 0.4);   // fewer stars wash out by a full moon
+    // §18 the moon: a soft glow + a disc shaded by its phase
+    float md = max(dot(dir, normalize(uMoonDir)), 0.0);
+    col += vec3(0.8, 0.84, 0.96) * (pow(md, 7.0) * 0.08 + pow(md, 40.0) * 0.25) * uNight;
+    float disc = smoothstep(0.9982, 0.9990, md);
+    float face = 0.35 + 0.65 * uMoonLit;                        // the lit fraction of the disc
+    col = mix(col, vec3(0.9, 0.92, 1.0) * (0.3 + 0.7*uMoonLit), disc * uNight * face);
+  }
+  frag = vec4(col, 1.0);
 }`;
 
 const skyProg = program(fsTriVS, skyFS);
@@ -1689,11 +1724,13 @@ uniform int uQuantize;                          // §13.6 palette quantization o
 uniform float uHungerFx;                        // 0..1 starving: desaturate + darken edges
 uniform float uUnderwater;                      // §14A 0..1 submerged: blue-green tint + vignette
 uniform float uBreathLow;                       // §14A 0..1 running out of air: darker vignette
+uniform float uBrightness;                      // §18 gamma lift — see into the shadows at night
 const float bayer[16] = float[16](
   0.0, 8.0, 2.0, 10.0,  12.0, 4.0, 14.0, 6.0,
   3.0, 11.0, 1.0, 9.0,  15.0, 7.0, 13.0, 5.0);
 void main() {
   vec3 c = clamp(texture(uScene, vUv).rgb, 0.0, 1.0);
+  if (uBrightness != 1.0) c = clamp(pow(c, vec3(1.0 / uBrightness)), 0.0, 1.0);   // §18 brightness/gamma
   if (uHungerFx > 0.001) { float g = dot(c, vec3(0.299, 0.587, 0.114)); c = mix(c, vec3(g), uHungerFx * 0.7); }  // desaturate when starving
   float levels = 8.0;
   ivec2 p = ivec2(vUv * uSceneSize);            // low-res texel → chunky pattern
@@ -2364,6 +2401,10 @@ try { const s = JSON.parse(localStorage.getItem("bc_gfx") || "null");
 function saveGFX() { try { const o = { preset: GFX.preset }; for (const k of GFX_CUSTOM_KEYS) o[k] = GFX[k]; localStorage.setItem("bc_gfx", JSON.stringify(o)); } catch (e) {} }
 function setGFXPreset(name) { GFX.preset = name; if (GFX_PRESETS[name]) Object.assign(GFX, GFX_PRESETS[name]); applyGFX(); saveGFX(); }
 function setGFXCustom(k, v) { GFX[k] = v; GFX.preset = "custom"; applyGFX(); saveGFX(); }
+// §18 brightness / gamma — a standalone comfort setting (helps on dark, new-moon nights)
+let nightBrightness = 1.0;
+try { const b = parseFloat(localStorage.getItem("bc_bright")); if (!isNaN(b)) nightBrightness = Math.max(0.6, Math.min(1.8, b)); } catch (e) {}
+function setBrightness(v) { nightBrightness = Math.max(0.6, Math.min(1.8, v)); try { localStorage.setItem("bc_bright", nightBrightness.toFixed(2)); } catch (e) {} }
 let debugOn = false;             // ` toggles the perf overlay (within debug mode)
 let debugMode = new URLSearchParams(location.search).get("debug") === "1";  // hidden in normal play
 
@@ -2592,6 +2633,7 @@ function openSettings() {
     <div class="spresets">${["low","medium","high","ultra","custom"].map(n =>
       `<button class="spreset${GFX.preset===n?" on":""}" data-gp="${n}">${n[0].toUpperCase()+n.slice(1)}</button>`).join("")}</div>
     ${slider("resScale","Resolution", 0.25, 1, 0.01, GFX.resScale)}
+    <div class="srow"><label>Brightness</label><input id="setBright" type="range" min="0.6" max="1.8" step="0.05" value="${nightBrightness}"></div>
     ${toggle("dither","Dithering", GFX.dither)}
     ${toggle("quantize","Palette quantize", GFX.quantize)}
     ${slider("fog","Fog distance", 0.5, 1.6, 0.05, GFX.fog)}
@@ -2618,6 +2660,7 @@ function openSettings() {
   p.querySelectorAll("button[data-gt]").forEach(b => b.onclick = () => { setGFXCustom(b.dataset.gt, !GFX[b.dataset.gt]); openSettings(); });
   p.querySelectorAll("input[data-gs]").forEach(inp => inp.oninput = (e) => setGFXCustom(inp.dataset.gs, +e.target.value));
   p.querySelectorAll("input[data-gs]").forEach(inp => inp.onchange = () => openSettings());
+  { const sb = p.querySelector("#setBright"); if (sb) sb.oninput = (e) => setBrightness(+e.target.value); }   // §18 brightness
   p.querySelectorAll("button[data-gc]").forEach(b => b.onclick = () => {
     const k = b.dataset.gc;
     if (k === "water") setGFXCustom("water", GFX.water > 0 ? 0 : 1);
@@ -8893,6 +8936,10 @@ function frame(now) {
   gl.uniform3fv(skyU.uZenith, SKY.zenith);
   gl.uniform3fv(skyU.uHorizon, SKY.horizon);
   gl.uniform3fv(skyU.uWarm, SKY.warm);
+  gl.uniform3fv(skyU.uMoonDir, SKY.moon);                               // §18 moon + stars at night
+  gl.uniform1f(skyU.uNight, camUnderwater ? 0 : (1 - dayFactor()));
+  gl.uniform1f(skyU.uMoonLit, moonIllum());
+  gl.uniform1f(skyU.uTime, clock.t);
   gl.bindVertexArray(fsTri);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   countDraw(1);
@@ -9000,6 +9047,7 @@ function frame(now) {
   gl.uniform1f(postU.uHungerFx, mode === "walk" && hunger < H_HUNGRY ? Math.min(1, (H_HUNGRY - hunger) / H_HUNGRY) : 0);
   gl.uniform1f(postU.uUnderwater, camUnderwater ? 1 : 0);   // §14A/B
   gl.uniform1f(postU.uBreathLow, camUnderwater ? breathLow : 0);
+  gl.uniform1f(postU.uBrightness, nightBrightness);          // §18
   gl.bindVertexArray(fsTri);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   countDraw(1);
