@@ -1755,7 +1755,7 @@ const BREATH_MAX = 40;                         // seconds of air underwater (tun
 const SWIM_DRAIN = 0.03, SWIM_SPRINT_DRAIN = 0.14;   // stamina / s while swimming
 const DROWN_LOSS = 0.3;                         // §14A fraction of non-tool items dropped in the sack on drowning
 const NEVER_LOST = { toolkit: 1, bucket: 1, spear: 1 };   // these (and bucket creatures) are never lost
-let infiniteBreath = false;                     // debug toggle
+let infiniteBreath = false, showAlert = false;  // debug toggles (§14A/C)
 let mobileSwimUp = false, mobileSwimDown = false;
 // Depth of OPEN sea water under (x,z) — excludes dug ponds and raised inland basins/pools, so only the
 // real ocean (or a big tidal body) lets you swim. 0 when it's shallow or not open sea.
@@ -1986,6 +1986,104 @@ function updateFade(dt) {
   if (fade.t >= fade.dur) { fade.active = false; if (el) { el.style.opacity = 0; el.style.display = "none"; } }
 }
 
+/* ===================================================================== *
+ * § 14C  THE SPEAR — thrust (quick click) or throw (hold to charge).
+ *   Only fish can be killed; everything else startles and flees unharmed.
+ * ===================================================================== */
+const spear = { charging: false, start: 0, charge: 0, thrustT: 0, cd: 0 };
+let thrownSpears = [];
+let fishRecord = {};   // §14C species → largest scale caught (journal record)
+try { fishRecord = JSON.parse(localStorage.getItem("bc_fishrec") || "{}"); } catch (e) {}
+let onSpear = null;    // sound hook (Phase 18)
+function spearPressStart() { if (spear.cd > 0) return; spear.charging = true; spear.start = clock.t; spear.charge = 0; }
+function spearRelease() { const held = clock.t - spear.start; spear.charging = false;
+  if (held < 0.22) thrustSpear(); else throwSpear(Math.min(1, spear.charge)); }
+// nearest huntable fish within radius r of a world point
+function fishAt(x, y, z, r) { let best = null, bd = r*r;
+  for (const e of life) { if (e.kind !== "creature" || !FISH[e.t]) continue;
+    const ey = e.y !== undefined ? e.y : heightAt(e.x, e.z) + 0.4;
+    const dd = (e.x-x)*(e.x-x) + (ey-y)*(ey-y) + (e.z-z)*(e.z-z); if (dd < bd) { bd = dd; best = e; } }
+  return best; }
+function catchFish(e, x, y, z) {
+  const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
+  const n = Math.max(1, Math.round(e.scale * 2));
+  const added = Inv.add("rawfish", n); const first = !discovered.has("f_rawfish");
+  discovered.add("f_rawfish"); discovered.add(e.t);
+  if (!fishRecord[e.t] || e.scale > fishRecord[e.t]) { fishRecord[e.t] = e.scale; try { localStorage.setItem("bc_fishrec", JSON.stringify(fishRecord)); } catch (er) {} }
+  const reg = CREATURES[e.t]; sparkle(x, y, z, [0.85,0.9,0.95], 10); spawnSand(x, y, z, 8, [0.8,0.84,0.9]);
+  if (typeof notify === "function" && added > 0) notify("rawfish", n, first);
+  showCard("Speared a " + (reg ? reg.label : e.t) + "!", `Raw Fish ×${n}${nearCampfire(player.x,player.z)?" — cook it here for double food.":""}`);
+  if (onSpear) onSpear("catch"); saveState();
+}
+// a near-miss or a hit on a non-fish: it startles and flees, unharmed (tamed goats can't be hit)
+function startleNear(x, z) {
+  for (const e of life) { if (e.kind !== "creature" || FISH[e.t]) continue;
+    const d = Math.hypot(e.x-x, e.z-z); if (d > 3) continue;
+    if (e.t === "crab") { e.state = "sinking"; e.burrow = 0; }
+    else if (e.t === "goat" && e.tame) continue;
+    else { e.alert = 1; e.fleeT = 2.5; e.state = "flee"; e.timer = 1; const a = Math.atan2(e.z-z, e.x-x); e.x += Math.cos(a)*0.3; e.z += Math.sin(a)*0.3; }
+  }
+}
+function thrustSpear() {
+  if (spear.cd > 0 || mode !== "walk") return;
+  spear.thrustT = 0.3; spear.cd = 0.35; shovelSwing = Math.max(shovelSwing, 0.4);
+  const f = camForward(), reach = 2.6;
+  const tx = cam.pos[0] + f[0]*reach, ty = cam.pos[1] + f[1]*reach, tz = cam.pos[2] + f[2]*reach;
+  const fish = fishAt(tx, ty, tz, 1.3);
+  if (fish) catchFish(fish, tx, ty, tz); else { startleNear(tx, tz); if (onSpear) onSpear("jab"); }
+}
+function throwSpear(charge) {
+  if (mode !== "walk" || !Inv.hotbarHasId("spear")) return;
+  spear.cd = 0.4;
+  for (let k = 0; k < HOTBAR_SLOTS; k++) if (Inv.hotbar[k] && Inv.hotbar[k].id === "spear") { Inv.hotbar[k] = null; break; }   // it leaves your hand
+  renderHotbar();
+  const f = camForward(), spd = 12 + charge*20;
+  thrownSpears.push({ x: cam.pos[0]+f[0]*0.6, y: cam.pos[1]-0.2, z: cam.pos[2]+f[2]*0.6,
+    vx: f[0]*spd, vy: f[1]*spd + 1, vz: f[2]*spd, yaw: cam.yaw, pitch: 0, stuck: false, washAt: 0 });
+  if (onSpear) onSpear("throw");
+}
+function updateSpear(dt) {
+  if (spear.cd > 0) spear.cd = Math.max(0, spear.cd - dt);
+  if (spear.charging) spear.charge = Math.min(1, (clock.t - spear.start) / 1.1);
+  for (let i = thrownSpears.length - 1; i >= 0; i--) { const s = thrownSpears[i];
+    if (!s.stuck) {
+      const surf = waterSurfaceAt(s.x, s.z), uw = s.y < surf;
+      if (uw) { const drag = Math.pow(0.015, dt); s.vx *= drag; s.vz *= drag; s.vy = s.vy*drag - 2.2*dt; }   // underwater: slows fast, sinks
+      else s.vy -= 26*dt;
+      s.x += s.vx*dt; s.y += s.vy*dt; s.z += s.vz*dt;
+      const sp = Math.hypot(s.vx, s.vy, s.vz);
+      if (sp > 0.3) { s.yaw = Math.atan2(s.vx, s.vz); s.pitch = Math.atan2(-s.vy, Math.hypot(s.vx, s.vz)); }
+      const fish = fishAt(s.x, s.y, s.z, 1.0);
+      if (fish) { catchFish(fish, s.x, s.y, s.z); thrownSpears.splice(i, 1); continue; }
+      const floor = surfaceAt(s.x, s.z).h;
+      if (s.y <= floor + 0.1 || (uw && sp < 0.6) || Math.hypot(s.x, s.z) > HALF) {   // stick / settle
+        s.y = Math.max(floor + 0.08, s.y); s.stuck = true; s.washAt = clock.t + 4*DAY_PERIOD;
+      }
+    } else if (clock.t >= s.washAt) {                                 // left too long → wash onto the nearest beach
+      const a = Math.atan2(s.x, -s.z);
+      for (let rr = HALF*0.95; rr > 4; rr -= 2) { const bx = Math.sin(a)*rr, bz = -Math.cos(a)*rr; if (heightAt(bx,bz) > 1.5 && heightAt(bx,bz) < 4) { s.x = bx; s.z = bz; s.y = surfaceAt(bx,bz).h + 0.1; break; } }
+      s.washAt = clock.t + 4*DAY_PERIOD;
+    }
+    if (Math.hypot(s.x-player.x, s.z-player.z) < 2.2 && Math.abs(s.y - player.eyeY) < 3.5 && !Inv.hotbarHasId("spear")) {
+      for (let k = 0; k < HOTBAR_SLOTS; k++) if (!Inv.hotbar[k]) { Inv.hotbar[k] = { id:"spear", qty:1 }; break; }
+      if (!Inv.hotbarHasId("spear")) Inv.add("spear", 1);           // belt full → into the satchel
+      thrownSpears.splice(i, 1); renderHotbar(); if (onSplash) onSplash(); showCard("Spear recovered", "");
+    }
+  }
+}
+let spearDyn = null;
+function drawThrownSpears(view) {
+  if (!thrownSpears.length) return;
+  if (!spearDyn) spearDyn = makeDynamic(spearMesh(), 12);
+  propUniforms(view); const a = rockScratch; let n = 0;
+  for (const s of thrownSpears) { if (n >= 12) break; const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    // lean the spear along its travel/stuck angle via the instance lean (tip points where it's going)
+    const o = n*10; a[o]=s.x; a[o+1]=s.y+1.1; a[o+2]=s.z; a[o+3]=1.1; a[o+4]=s.yaw||0; a[o+5]=(s.pitch||0)+ (s.stuck?0.5:0); a[o+6]=(s.yaw||0)+1.57; a[o+7]=1; a[o+8]=1; a[o+9]=1; n++;
+    if (s.stuck && Math.random() < 0.04) sparkle(s.x, s.y+0.3, s.z, [0.95,0.95,0.8], 1);   // a glint so it's findable
+  }
+  if (n) spearDyn.draw(a, n);
+}
+
 // debug: drop the player into the deepest open water we can find
 function teleportToDeepWater() {
   let best = null, bd = 0;
@@ -2178,9 +2276,10 @@ canvas.addEventListener("mousedown", (e) => {
   if (e.button === 1 && mode === "walk" && selectedItem() === "toolkit") { e.preventDefault(); cycleToolkit(); return; }   // §13.2 middle-click cycles the Tool Kit
   if (e.button !== 0) return;
   if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
+  if (mode === "walk" && selectedTool() === "spear" && !isPanelOpen()) { spearPressStart(); return; }   // §14C charge → thrust/throw
   useHeld = true; clickAt(0, 0);                 // §13.2 hold to keep swinging at a work target
 });
-addEventListener("mouseup", (e) => { if (e.button === 0) useHeld = false; });
+addEventListener("mouseup", (e) => { if (e.button === 0) { useHeld = false; if (spear.charging) spearRelease(); } });
 // §13.2 scroll wheel cycles belt slots (skips empties)
 addEventListener("wheel", (e) => {
   if (mode !== "walk" || isPanelOpen()) return;
@@ -2439,8 +2538,8 @@ function resetHints() { for (const k in hintCount) delete hintCount[k]; hintsOn 
 let hintT = 0, hintText = "", lastAimShown = false;
 
 // Edible items → how much hunger they restore (§10.5). Tuned so a beach walk keeps you fed.
-const EDIBLE = { clam: 0.12, cockle: 0.1, mussel: 0.1, kelp: 0.08, seaweed: 0.08, coconut: 0.26, berry: 0.14, gullegg: 0.16 };
-const COOKABLE = { clam: 1, cockle: 1, mussel: 1, gullegg: 1 };   // shellfish & eggs: a campfire doubles their value
+const EDIBLE = { clam: 0.12, cockle: 0.1, mussel: 0.1, kelp: 0.08, seaweed: 0.08, coconut: 0.26, berry: 0.14, gullegg: 0.16, rawfish: 0.2 };
+const COOKABLE = { clam: 1, cockle: 1, mussel: 1, gullegg: 1, rawfish: 1 };   // shellfish, eggs & fish: a campfire doubles their value
 function isFood(id) { return EDIBLE[id] !== undefined; }
 // Eat a food item: restore hunger (doubled for shellfish cooked at a nearby campfire), with a chew + sound.
 function feedPlayer(id) {
@@ -3461,6 +3560,21 @@ function anemoneMesh(col) { const m = Mesh(); mCyl(m,0,0.2,0.28,0.24,7,[col[0]*0
 function starMesh(col) { const m = Mesh(); for(let i=0;i<5;i++){const a0=i/5*6.283,a1=(i+0.5)/5*6.283,a2=(i+1)/5*6.283; mTri(m,[0,0.06,0],[Math.cos(a0)*0.2,0.05,Math.sin(a0)*0.2],[Math.cos(a1)*0.5,0.08,Math.sin(a1)*0.5],col); mTri(m,[0,0.06,0],[Math.cos(a1)*0.5,0.08,Math.sin(a1)*0.5],[Math.cos(a2)*0.2,0.05,Math.sin(a2)*0.2],col);} return m; }
 function urchinMesh(col) { const m = discMesh(0.1,0.3,6,0.15,col); const sp=[col[0]*1.3,col[1]*1.3,col[2]*1.3]; for(let i=0;i<10;i++){const a=i/10*6.283; mTri(m,[Math.cos(a)*0.25,0.1,Math.sin(a)*0.25],[Math.cos(a)*0.5,0.45,Math.sin(a)*0.5],[Math.cos(a+0.25)*0.25,0.1,Math.sin(a+0.25)*0.25],sp);} return m; }
 function hermitMesh(col) { const m = Mesh(); mCyl(m,0,0.4,0.3,0,7,col); mBox(m,0.2,0.05,0,0.2,0.05,0.14,[0.5,0.35,0.25]); return m; }
+// §14C huntable fish — distinct silhouettes so each reads at a glance
+function flounderMesh(col) { const m = Mesh(); col = col||[0.62,0.56,0.42];   // flat oval, camouflaged on sand
+  mergeMesh(m, discMesh(0.02, 0.5, 9, 0.04, col)); mergeMesh(m, discMesh(0.0, 0.5, 9, -0.03, [col[0]*0.8,col[1]*0.8,col[2]*0.8]));
+  mTri(m, [-0.42,0.02,0.12], [-0.42,0.02,-0.12], [-0.62,0.02,0], [col[0]*0.9,col[1]*0.9,col[2]*0.9]);   // tail
+  mBox(m, 0.3, 0.07, 0.12, 0.03, 0.03, 0.03, [0.1,0.1,0.1]); return m; }   // an eye on top
+function rockfishMesh(col) { const m = Mesh(); col = col||[0.82,0.3,0.18];   // bright orange-red, spiny dorsal
+  mTri(m,[0.42,0.05,0],[-0.2,0.05,0.16],[-0.2,0.05,-0.16],col); mTri(m,[-0.2,0.05,0.16],[-0.2,0.05,-0.16],[-0.5,0.05,0],[col[0]*0.8,col[1]*0.8,col[2]*0.8]);
+  for (let i=0;i<4;i++){ const x=0.1-i*0.12; mTri(m,[x,0.1,0],[x-0.05,0.3,0],[x-0.12,0.1,0],[col[0]*0.7,col[1]*0.5,col[2]*0.4]); }   // dorsal spines
+  return m; }
+function lingcodMesh(col) { const m = Mesh(); col = col||[0.4,0.42,0.33];    // large, mottled, elongated
+  mBox(m, 0, 0.06, 0, 0.5, 0.14, 0.1, col); mTri(m,[0.5,0.06,0],[0.72,0.06,0.08],[0.72,0.06,-0.08],[col[0]*1.1,col[1]*1.1,col[2]*1.0]);   // head
+  mTri(m,[-0.5,0.06,0],[-0.8,0.06,0.18],[-0.8,0.06,-0.18],[col[0]*0.85,col[1]*0.85,col[2]*0.8]);   // broad tail
+  for (let i=0;i<5;i++){ const x=0.3-i*0.16; mTri(m,[x,0.18,0],[x-0.04,0.34,0],[x-0.1,0.18,0],[col[0]*0.8,col[1]*0.8,col[2]*0.7]); }   // long dorsal
+  return m; }
+function minnowMesh(col) { return fishMesh(col||[0.7,0.75,0.82]); }   // small schooling fish
 // §12B bigger, high-contrast gull: white body, grey wings, dark wingtips, yellow beak.
 function gullMesh() {
   const m = Mesh(), white=[0.95,0.95,0.96], grey=[0.55,0.57,0.62], dark=[0.18,0.19,0.22], yellow=[0.96,0.78,0.24];
@@ -3497,6 +3611,13 @@ function boneMesh() { const m = Mesh(); mCyl(m,-0.6,0.6,0.16,0.16,6,[0.88,0.85,0
 // tools & dug finds
 function shovelMesh() { const m = Mesh(); mBox(m,0,0,0,0.04,0.7,0.04,[0.4,0.3,0.2]); mBox(m,0,0.78,0,0.16,0.08,0.03,[0.35,0.26,0.18]); // handle
   const blade=[0.55,0.56,0.6]; mCyl(m,-0.7,-0.5,0.045,0.045,5,[0.3,0.3,0.32]); mTri(m,[-0.22,-0.7,0],[0.22,-0.7,0],[0,-1.05,0],blade); mBox(m,0,-0.72,0,0.22,0.03,0.02,blade); return m; }
+// §14C fishing spear: a long shaft with a sharpened point at the tip (held point-down like the shovel)
+function spearMesh() { const m = Mesh(); const wood=[0.46,0.34,0.22], tip=[0.62,0.63,0.6];
+  mBox(m, 0, 0.0, 0, 0.028, 0.85, 0.028, wood);
+  for (const s of [-1,1]) mBox(m, s*0.03, -0.86, 0, 0.012, 0.06, 0.012, [0.4,0.3,0.2]);   // binding
+  mTri(m, [-0.07,-0.9,0.04], [0.07,-0.9,0.04], [0,-1.25,0], tip);
+  mTri(m, [-0.07,-0.9,-0.04], [0.07,-0.9,-0.04], [0,-1.25,0], [tip[0]*0.85,tip[1]*0.85,tip[2]*0.85]);
+  return m; }
 function clamMesh() { const m = discMesh(0.1,0.4,7,0.18,[0.85,0.8,0.72]); const m2=discMesh(-0.1,0.4,7,-0.18,[0.8,0.75,0.68]); for(let i=0;i<m2.pos.length;i++){m.pos.push(m2.pos[i]);m.col.push(m2.col[i]);} return m; }
 function coinMesh() { return discMesh(0.04,0.4,10,0.03,[0.7,0.6,0.32]); }
 function mergeMesh(m, n) { for (let i = 0; i < n.pos.length; i++) { m.pos.push(n.pos[i]); m.col.push(n.col[i]); } }
@@ -3648,6 +3769,11 @@ const CREATURES = {
   piper:    { mesh: () => piperMesh(),                base: 0.7, max: 80,  label: "Sandpiper", desc: "Scurries along the wave edge, chasing the water in and out." },
   hopper:   { mesh: () => hopperMesh(),               base: 0.5, max: 120, label: "Beach Hopper", desc: "Springs out from under a flipped cobble." },
   heron:    { mesh: () => heronMesh(),                base: 1.0, max: 30,  label: "Grey Heron", desc: "Stalks the shallows of the flats, dead still, then stabs." },
+  // §14C huntable fish (spearable) + schooling minnows (atmosphere / bucket)
+  flounder: { mesh: () => flounderMesh(),             base: 0.6, max: 70,  label: "Flounder", desc: "Lies flat and camouflaged on the sandy shallows — spot it before it bursts away.", fish: 1 },
+  rockfish: { mesh: () => rockfishMesh(),             base: 0.55,max: 90,  label: "Rockfish", desc: "Bright orange-red, hovering among the kelp. Curious, but skittish if you rush it.", fish: 1 },
+  lingcod:  { mesh: () => lingcodMesh(),              base: 1.1, max: 30,  label: "Lingcod", desc: "A big mottled ambush predator lurking on the reef drop-off. The prize catch.", fish: 1 },
+  minnow:   { mesh: () => minnowMesh(),               base: 0.35,max: 200, label: "Silverside", desc: "A small fish that moves in flashing schools through the shallows.", fish: 1 },
 };
 const FINDS = {
   shell:    { mesh: () => shellMesh(),               base: 0.5, max: 200, label: "Spiral Shell", desc: "An empty whelk, worn smooth.", rare: 0 },
@@ -3778,6 +3904,31 @@ function populateLife() {
     const t = rng() < 0.06 ? "glassfloat" : SEABED_FINDS[(rng()*SEABED_FINDS.length)|0];
     spawnFind(t, x, z);
   }
+  // §14C huntable fish by depth zone + schooling minnows in the shallows
+  for (let i = 0; i < 90; i++) {                                  // flounder on sandy shallows
+    const a = rng()*6.283, r = HALF*(0.35 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const h = surfaceAt(x, z).h, ci = cellIndex(x, z), d = -h;
+    if (ci < 0 || filled[ci] > waterLevel+0.35 || d < 0.6 || d > 4.5) continue;
+    if (rng() < 0.45) spawnCreature("flounder", x, z, { hx:x, hz:z, hr:6, timer: rng()*2 });
+  }
+  for (let i = 0; i < 80; i++) {                                  // rockfish hover in the kelp / mid-depths
+    const a = rng()*6.283, r = HALF*(0.3 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const h = surfaceAt(x, z).h, ci = cellIndex(x, z), d = -h;
+    if (ci < 0 || filled[ci] > waterLevel+0.35 || d < 4 || d > 15) continue;
+    if (rng() < 0.4) spawnCreature("rockfish", x, z, { hx:x, hz:z, hr:7, timer: rng()*2 });
+  }
+  for (let i = 0; i < 30; i++) {                                  // lingcod — rare, on the deep reef drop-off
+    const a = rng()*6.283, r = HALF*(0.4 + rng()*0.45), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const h = surfaceAt(x, z).h, ci = cellIndex(x, z), d = -h;
+    if (ci < 0 || filled[ci] > waterLevel+0.35 || d < 8 || d > 20) continue;
+    if (rng() < 0.3) spawnCreature("lingcod", x, z, { hx:x, hz:z, hr:9, timer: rng()*3 });
+  }
+  for (let s = 0; s < 10; s++) {                                  // minnow schools in the shallows
+    const a = rng()*6.283, r = HALF*(0.35 + rng()*0.45), cx = Math.sin(a)*r, cz = -Math.cos(a)*r;
+    const h = surfaceAt(cx, cz).h; if (filled[Math.max(0,cellIndex(cx,cz))] > waterLevel+0.35 || -h < 1 || -h > 8) continue;
+    const nn = 6 + (rng()*6|0);
+    for (let k = 0; k < nn; k++) spawnCreature("minnow", cx+(rng()-0.5)*4, cz+(rng()-0.5)*4, { hx:cx, hz:cz, hr:5, timer: rng()*2 });
+  }
   // seals on rocky POIs / high rock
   for (const p of POIS) if (p.type === "tidepools" || p.type === "seacave") {
     if (rng() < 0.7) spawnCreature("seal", p.x + (rng()-0.5)*6, p.z + (rng()-0.5)*6, {});
@@ -3845,7 +3996,7 @@ function washUp(initial) {
 // visibility: is this entity currently present given tide/time?
 function lifeVisible(e) {
   const g = heightAt(e.x, e.z);
-  if (e.kind === "find") return waterLevel < g + 1.6;                  // exposed, or under shallow clear water
+  if (e.kind === "find") return waterLevel < g + 1.6 || g < -1;        // exposed/shallow, or resting on the seabed (§14B)
   if (e.t === "crab") { const d = waterLevel - g; return d < 0.1 && d > -4; }  // wet sand
   if (e.t === "jelly") return waterLevel < g + 0.2;                    // stranded low tide
   if (e.t === "seal") return waterLevel < g + 0.6 && e.state !== "gone";
@@ -3880,8 +4031,45 @@ function creatureExposureDry(e, dt) {
   spawnFind(rem, e.x, e.z);                                             // its dried remains, left on the sand
   e.dead = true; return true;
 }
+// §14C fish AI — an alertness meter driven by your speed, distance and line of sight; slow = calm.
+const FISH = { flounder:1, rockfish:1, lingcod:1, minnow:1 };
+const FISH_FLEE = { flounder: 0.6, rockfish: 0.6, lingcod: 0.78, minnow: 0.3 };
+const FISH_SPD  = { flounder: 6, rockfish: 4.5, lingcod: 5.5, minnow: 3.5 };
+function behaveFish(e, dt, d, dx, dz) {
+  const floor = heightAt(e.x, e.z), surf = waterSurfaceAt(e.x, e.z);
+  if (e.y === undefined) e.y = floor + (e.t === "flounder" ? 0.15 : 1.2 + Math.random()*1.5);
+  if (e.alert === undefined) e.alert = 0;
+  const reach = e.t === "lingcod" ? 16 : 11;
+  const pmove = player.swimming || keys["KeyW"] || keys["KeyA"] || keys["KeyS"] || keys["KeyD"] || Math.abs(analog.x)+Math.abs(analog.y) > 0.01;
+  const speedFactor = player.sprinting ? 1.4 : (pmove ? (crouching ? 0.3 : 0.75) : 0.12);
+  const fdir = camForward(), toF = Math.hypot(dx, dz) || 1;
+  const facing = Math.max(0, -(dx/toF)*fdir[0] - (dz/toF)*fdir[2]);   // is the player looking at the fish?
+  let threat = 0;
+  if (d < reach) { const prox = 1 - d/reach; threat = prox * (0.3 + speedFactor) * (0.5 + facing*0.8); }
+  if (e.t === "flounder" && d > 2.4) threat *= 0.22;                  // stays hidden until you're right on it
+  e.alert = Math.max(0, Math.min(1, e.alert + threat*dt*1.8 - dt*0.25));
+  if (e.alert > (FISH_FLEE[e.t] || 0.5)) e.fleeT = Math.max(e.fleeT || 0, 2 + Math.random()*2);
+  if (e.fleeT > 0) {                                                  // bolt away from the player
+    e.fleeT -= dt;
+    const a = Math.atan2(e.z - player.z, e.x - player.x), spd = FISH_SPD[e.t] || 4;
+    e.x += Math.cos(a)*spd*dt; e.z += Math.sin(a)*spd*dt; e.yaw = a + 1.57;
+    if (e.t === "flounder" && !e._puffed) { spawnSand(e.x, floor+0.2, e.z, 9, [0.82,0.75,0.57]); e._puffed = true; }   // sand cloud burst
+    e.y += ((e.t === "flounder" ? floor+0.4 : floor+2.2) - e.y) * Math.min(1, dt*2.5);
+    if (e.fleeT <= 0) { e.alert = 0.25; e._puffed = false; }
+  } else {                                                           // calm: hover / wander near home
+    e.timer -= dt; if (e.timer < 0) { e.timer = 1 + Math.random()*2.2; e.vx = (Math.random()-0.5); e.vz = (Math.random()-0.5); }
+    const slow = e.t === "flounder" ? 0.08 : (e.t === "lingcod" ? 0.4 : 0.9);
+    e.x += (e.vx||0)*dt*slow; e.z += (e.vz||0)*dt*slow;
+    if (Math.hypot(e.x-e.hx, e.z-e.hz) > (e.hr||7)) { e.vx = (e.hx-e.x)*0.3; e.vz = (e.hz-e.z)*0.3; }
+    e.yaw = Math.atan2(e.vz||0.01, e.vx||0.01) + 1.57;
+    const ty = e.t === "flounder" ? floor+0.15 : floor + (e.t === "lingcod" ? 0.9 : 1.6) + Math.sin(e.phase*0.8)*0.3;
+    e.y += (ty - e.y) * Math.min(1, dt*1.5);
+  }
+  e.y = Math.max(floor+0.1, Math.min(surf-0.3, e.y));
+}
 function behave(e, dt, d, dx, dz) {
   const g = heightAt(e.x, e.z);
+  if (FISH[e.t]) { behaveFish(e, dt, d, dx, dz); return; }     // §14C huntable fish / schools
   if (e.returning) {                                           // poured onto dry land → head for the nearest water
     if (waterDepthAt(e.x, e.z) > 0.12) { e.returning = false; e.exposed = 0; e.hx = e.x; e.hz = e.z; return; }
     if (creatureExposureDry(e, dt)) return;                    // §13.3 too slow → dries out and dies
@@ -3968,7 +4156,9 @@ function drawLife(view) {
       const g = heightAt(e.x, e.z);
       let y = g, sc = e.scale, lean = 0, ld = 0;
       if (e.kind === "creature") {
-        if (e.t === "fish") y = (e.poolRim !== undefined ? Math.max(waterLevel, e.poolRim) : waterLevel) - 0.3 + Math.sin(e.phase*4)*0.05;
+        if (FISH[e.t]) { y = (e.y !== undefined) ? e.y : g + 1.0;   // §14C huntable fish hover in the water column
+          lean = e.t === "flounder" ? 1.5 : Math.sin(e.phase*3)*0.06; ld = e.yaw; }   // flounder lies flat
+        else if (e.t === "fish") y = (e.poolRim !== undefined ? Math.max(waterLevel, e.poolRim) : waterLevel) - 0.3 + Math.sin(e.phase*4)*0.05;
         else if (e.t === "gull") { y = (e.y !== undefined) ? e.y : g + (e.alt || 0);   // §12B flap-and-glide
           const amp = (e.gstate === "soar" || e.gstate === "approach") ? 0.16 : 0.42;  // glide steady, flap hard when working
           lean = Math.sin(e.flap || 0) * amp; ld = e.yaw;
@@ -3982,6 +4172,7 @@ function drawLife(view) {
       lifeScratch[o]=e.x; lifeScratch[o+1]=y; lifeScratch[o+2]=e.z;
       lifeScratch[o+3]=sc; lifeScratch[o+4]=e.yaw; lifeScratch[o+5]=lean; lifeScratch[o+6]=ld;
       lifeScratch[o+7]=e.tint[0]; lifeScratch[o+8]=e.tint[1]; lifeScratch[o+9]=e.tint[2];
+      if (showAlert && FISH[e.t]) { const al = e.alert || 0; lifeScratch[o+7]=0.3+al*0.7; lifeScratch[o+8]=0.9-al*0.7; lifeScratch[o+9]=0.3; }   // §14C green→red by alertness
       n++;
     }
     reg.dyn.draw(lifeScratch, n);
@@ -4012,6 +4203,11 @@ ITEMS.pickaxe = { id: "pickaxe", name: "Pickaxe", category: "tool", rarity: "too
                   desc: "A miner's pick. Break boulders into stone.", model: () => pickaxeMesh(), tint: [1,1,1] };
 ITEMS.bucket = { id: "bucket", name: "Bucket", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
                  desc: "A tin pail. Fill it at the water, scoop up small creatures, and pour it into a pond.", model: () => bucketItemMesh(), tint: [1,1,1] };
+// §14C the fishing spear — a weapon, not part of the Tool Kit. Click to jab, hold to throw.
+ITEMS.spear = { id: "spear", name: "Fishing Spear", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
+                desc: "A sharpened wooden stake. Click to jab at a fish; hold and release to throw it. Only good against fish.", model: () => spearMesh(), tint: [1,1,1] };
+ITEMS.rawfish = { id: "rawfish", name: "Raw Fish", category: "find", rarity: "common", stackable: true, maxStack: 99,
+                  desc: "A fresh-speared fish. Good food, and better cooked at a campfire.", model: () => fishMesh([0.7,0.72,0.66]), tint: [1,1,1] };
 // §13.2 one Tool Kit replaces the three tool slots; Auto picks the right tool as you aim.
 ITEMS.toolkit = { id: "toolkit", name: "Tool Kit", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
                   desc: "Shovel, axe and pickaxe in one. Auto mode picks the right one as you aim; press its slot again (or middle-click) to lock Shovel, Axe or Pickaxe.", model: () => shovelMesh(), tint: [1,1,1] };
@@ -4494,7 +4690,7 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgHints">${hintsOn ? "Hints: on" : "Hints: off"}</button><button id="dbgResetHints">Reset hints</button></div>
     <div class="dbgrow"><button id="dbgAutoPick">${autoPickup ? "Auto-pickup: on" : "Auto-pickup: off"}</button><button id="dbgAutoSwitch">${autoSwitch ? "Auto-switch: on" : "Auto-switch: off"}</button></div>
     <div class="dbgrow"><button id="dbgHunger">${hungerEnabled ? "Hunger: on" : "Hunger: off"}</button><button id="dbgBreath">${infiniteBreath ? "Breath: ∞" : "Breath: norm"}</button></div>
-    <div class="dbgrow"><button id="dbgDeep">To deep water</button></div>
+    <div class="dbgrow"><button id="dbgDeep">To deep water</button><button id="dbgAlert">${showAlert ? "Alertness: on" : "Alertness: off"}</button></div>
     <h3>Shovel / stamina</h3>
     ${TUNABLES.map((t) => `<label>${t.k} <b class="tv" data-k="${t.k}">${(+DBG_GET(t.k)).toFixed(t.step < 0.01 ? 3 : 2)}</b>
       <input class="dbgtune" data-k="${t.k}" type="range" min="${t.min}" max="${t.max}" step="${t.step}" value="${DBG_GET(t.k)}"></label>`).join("")}
@@ -4516,6 +4712,7 @@ function syncDebugPanel() {
   p.querySelector("#dbgHunger").onclick = () => { setHungerEnabled(!hungerEnabled); syncDebugPanel(); };   // §13.8
   p.querySelector("#dbgBreath").onclick = () => { infiniteBreath = !infiniteBreath; syncDebugPanel(); };   // §14A
   p.querySelector("#dbgDeep").onclick = () => teleportToDeepWater();
+  p.querySelector("#dbgAlert").onclick = () => { showAlert = !showAlert; syncDebugPanel(); };   // §14C
   p.querySelectorAll(".dbgtune").forEach((el) => el.oninput = (e) => {
     const k = el.dataset.k, v = +e.target.value; DBG_SET(k, v);
     const b = p.querySelector(`.tv[data-k="${k}"]`); if (b) b.textContent = v.toFixed(v < 0.01 ? 3 : 2);
@@ -4547,7 +4744,9 @@ function DBG_SET(k, v) { switch (k) {
 /* ---- drop an item back onto the ground near the player ---- */
 
 // E interacts with whatever the crosshair is on (same target as a click).
-function interact() { if (pry) { pryStrike(); return; } interactTarget(curTarget || targetAlongRay(rayFromNDC(0, 0))); }
+function interact() { if (pry) { pryStrike(); return; }
+  if (mode === "walk" && selectedTool() === "spear" && !isPanelOpen()) { thrustSpear(); return; }   // §14C E / mobile Use = jab
+  interactTarget(curTarget || targetAlongRay(rayFromNDC(0, 0))); }
 let cardTimer = 0;
 function showCard(name, desc) {
   const el = document.getElementById("card");
@@ -4576,7 +4775,8 @@ function journalGrid(tab) {
   if (tab === "creatures") return Object.keys(CREATURES).map((k) => {
     const got = discovered.has(k), reg = CREATURES[k];
     if (!got) return `<div class="jcard unk"><img src="${reg.icon||""}"><div class="jname">??? </div></div>`;
-    return `<div class="jcard" data-jk="c:${k}"><img src="${reg.icon||""}"><div class="jname">${reg.label}</div></div>`;
+    const rec = fishRecord[k] ? `<div class="jqty">record ${Math.round(fishRecord[k]*50)}cm</div>` : "";   // §14C largest speared
+    return `<div class="jcard" data-jk="c:${k}"><img src="${reg.icon||""}"><div class="jname">${reg.label}</div>${rec}</div>`;
   }).join("");
   if (tab === "finds") return Object.keys(FINDS).map((k) => {
     const got = discovered.has("f_" + k), it = ITEMS[k], cnt = Inv.count(k);
@@ -5389,7 +5589,7 @@ function catchBiomeLabel(x, z) {
 }
 function catchTideLabel() { return isMinusTideNow() ? "a minus tide" : (tideInfo().rising ? "a rising tide" : "an ebbing tide"); }
 // §13.1 every small shore/pool creature is scoopable (seals/gulls/herons are too big for a pail)
-const BUCKETABLE = { crab: 1, fish: 1, star: 1, hermit: 1, anemone: 1, urchin: 1, jelly: 1, hopper: 1, piper: 1 };
+const BUCKETABLE = { crab: 1, fish: 1, star: 1, hermit: 1, anemone: 1, urchin: 1, jelly: 1, hopper: 1, piper: 1, minnow: 1 };
 function bucketScoop(e) {                                       // bucket used on a creature
   if (bucket.creatures.length >= BUCKET_CAP) { showCard("Bucket full", `It holds ${BUCKET_CAP} creatures.`); return true; }
   if (!BUCKETABLE[e.t]) return false;                          // not scoopable → let the normal inspect happen
@@ -6040,7 +6240,7 @@ function makeToolFP(id, mesh) {
   gl.bindVertexArray(null);
   TOOL_FP[id] = { mesh, vao, posBuf, vc: mesh.pos.length / 3, world: new Float32Array(mesh.pos.length) };
 }
-function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); }
+function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("spear", spearMesh()); }   // §14C spear shows in-hand
 function drawShovel(view) {
   if (mode !== "walk") return;
   const fp = TOOL_FP[selectedTool()]; if (!fp) return;        // only the three tools show in-hand
@@ -6049,8 +6249,13 @@ function drawShovel(view) {
   const upx = -rz*f[1], upy = rz*f[0] - rx*f[2], upz = rx*f[1];                           // camera up = right × forward
   const sw = Math.sin(Math.min(1, shovelSwing) * Math.PI);                               // 0→1→0 swing
   const rec = toolRecoilT * toolRecoilT;                                                 // recoil kick on a bounced hit
-  const ox = 0.42, oy = -0.42 - sw * 0.25 + rec * 0.28, oz = 0.78 + sw * 0.32 - rec * 0.5;
-  const scale = 0.5, tilt = -0.5 - sw * 0.9 + rec * 0.8;                                  // head swings down, then kicks back up
+  const isSpear = selectedTool() === "spear";
+  // §14C spear: a forward jab on thrust, and pull it back while charging a throw
+  const jab = isSpear ? Math.sin(Math.min(1, (spear.thrustT/0.3)) * Math.PI) : 0;
+  const chg = isSpear && spear.charging ? spear.charge : 0;
+  const ox = 0.42, oy = -0.42 - sw * 0.25 + rec * 0.28 + chg*0.12,
+        oz = 0.78 + sw * 0.32 - rec * 0.5 + jab*0.55 - chg*0.4;
+  const scale = isSpear ? 0.85 : 0.5, tilt = isSpear ? (-1.35 + jab*0.25 - chg*0.3) : (-0.5 - sw * 0.9 + rec * 0.8);   // spear points forward
   const ct = Math.cos(tilt), st = Math.sin(tilt);
   const src = fp.mesh.pos, world = fp.world; let p = 0;
   for (let i = 0; i < src.length; i += 3) {
@@ -7260,8 +7465,9 @@ loadState();
 // §13.2 migrate old saves: fold any separate shovel/axe/pickaxe belt slots into one Tool Kit
 for (let i = 0; i < Inv.hotbar.length; i++) { const s = Inv.hotbar[i]; if (s && (s.id === "shovel" || s.id === "axe" || s.id === "pickaxe")) Inv.hotbar[i] = null; }
 for (let i = 0; i < Inv.main.length; i++) { const s = Inv.main[i]; if (s && (s.id === "shovel" || s.id === "axe" || s.id === "pickaxe")) Inv.main[i] = null; }
-if (!Inv.hotbarHasId("toolkit")) Inv.hotbar[0] = { id: "toolkit", qty: 1 };   // slots: tool kit, bucket
+if (!Inv.hotbarHasId("toolkit")) Inv.hotbar[0] = { id: "toolkit", qty: 1 };   // slots: tool kit, bucket, spear
 if (!Inv.hotbarHasId("bucket")) Inv.hotbar[1] = { id: "bucket", qty: 1 };
+if (!Inv.hotbarHasId("spear")) Inv.hotbar[2] = { id: "spear", qty: 1 };        // §14C the fishing spear (its own slot)
 renderHotbar();
 syncDebugPanel();
 seedDigSpots();
@@ -7496,7 +7702,7 @@ function frame(now) {
    }
   }
 
-  if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); }   // §14A/B
+  if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateSpear(dt); }   // §14A/B/C
   updateFade(dt);
   safetyCheck(dt);
 
@@ -7601,6 +7807,7 @@ function frame(now) {
   drawParticles(view);
   drawPlankton(view);   // §14B drifting marine snow / bioluminescence, underwater only
   drawDeepVisitor(view);   // §14B a large silhouette far off in the deep
+  drawThrownSpears(view);  // §14C spears stuck in the ground / sinking
   drawBounds(view);
 
   // water
