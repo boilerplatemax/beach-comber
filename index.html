@@ -262,7 +262,7 @@
   .makehint { font-size: 12px; opacity: .7; padding: 18px 8px; text-align: center; line-height: 1.4; }
   /* §17.5 goblin trade panel */
   #tradepanel { position: fixed; z-index: 13; display: none; left: 50%; top: 50%; transform: translate(-50%,-50%);
-    width: 400px; max-width: 94vw; max-height: 90vh; overflow-y: auto; padding: 18px 20px 16px; color: #f3e9d6; text-align: center;
+    width: 300px; max-width: 92vw; max-height: 82vh; overflow-y: auto; padding: 14px 16px 12px; color: #f3e9d6; text-align: center;
     background-color: #4e5a38; box-shadow: 0 8px 30px rgba(0,0,0,.6), inset 0 0 40px rgba(24,32,12,.5);
     clip-path: polygon(16px 0,calc(100% - 16px) 0,100% 16px,100% calc(100% - 16px),calc(100% - 16px) 100%,16px 100%,0 calc(100% - 16px),0 16px); }
   #tradepanel .ihead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
@@ -4064,22 +4064,34 @@ function seaLettuceMesh(cropped){ const m=Mesh(); const g=[0.38,0.76,0.4], g2=[0
   for(let i=0;i<n;i++){ const a=i/n*6.283, r=0.05+(i%2)*0.04, c=(i%2?g:g2);
     mergeAt(m, (i%2? boxM(0.09,H*0.5,0.005,c) : boxM(0.005,H*0.5,0.09,c)), Math.cos(a)*r, H*0.5, Math.sin(a)*r); }
   return m; }
-// §17.5 a scrappy goblin trader — detailed, with per-goblin variation (skin shade, ear size). Faces +z (nose/eyes forward).
+// §17.5/§17.6 a cute chibi goblin trader — big round eyes, rounded head, loincloth. Faces +z (eyes forward).
 function goblinMesh(v){ const m=Mesh();
-  const skin=v.skin, skin2=[skin[0]*0.82,skin[1]*0.82,skin[2]*0.8], rag=[0.46,0.3,0.22], rag2=[0.34,0.23,0.17], belt=[0.3,0.22,0.15],
-        eye=[0.96,0.92,0.5], pupil=[0.1,0.08,0.06], tooth=[0.92,0.9,0.82], hair=[0.2,0.16,0.12];
-  for(const sx of [-0.12,0.12]){ mergeAt(m, cylM(0,0.3,0.075,0.055,skin), sx,0,0); mergeAt(m, boxM(0.08,0.035,0.12,skin2), sx,0.03,0.04); }   // stubby legs + feet
-  mergeAt(m, (()=>{const d=Mesh(); mergeMesh(d, discMesh(0.1,0.21,8,0.16,skin)); mCyl(d,0.0,0.14,0.21,0.19,8,skin); return d;})(), 0,0.3,0);   // pot belly
-  mCyl(m,0.3,0.52,0.22,0.17,8,rag); mBox(m,0,0.37,0.17,0.18,0.1,0.04,rag2);   // rag vest + flap
-  mBox(m,0,0.52,0,0.21,0.04,0.19,belt); mergeAt(m, boxM(0.08,0.06,0.05,[0.5,0.42,0.2]), 0.15,0.5,0.14);   // belt + trader pouch
-  mCyl(m,0.52,0.6,0.085,0.11,6,skin);   // neck
-  mergeAt(m, (()=>{const d=Mesh(); mergeMesh(d, discMesh(0.02,0.27,8,0.2,skin)); mCyl(d,-0.14,0.04,0.25,0.27,8,skin); mergeMesh(d, discMesh(-0.14,0.25,8,-0.1,skin)); return d;})(), 0,0.62,0);   // big head
-  for(const sx of [-1,1]){ const e=v.ear;   // big pointy ears
-    mergeAt(m, (()=>{const d=Mesh(); mTri(d,[0,0,0.06],[0.05,0.2*e,-0.02],[0,0.0,-0.1*e],skin); mTri(d,[0,0,0.06],[0,0.0,-0.1*e],[0.05,0.2*e,-0.02],skin2); mCyl(d,0,0.07,0.05,0.025,5,skin2); return d;})(), sx*0.27,0.72,0); }
-  mergeAt(m, (()=>{const d=Mesh(); mCyl(d,0,0.15,0.055,0.03,5,skin2); mBox(d,0,0.14,0.04,0.04,0.035,0.06,skin2); return d;})(), 0,0.69,0.24);   // hooked nose
-  for(const sx of [-1,1]){ mergeAt(m, (()=>{const d=Mesh(); mergeMesh(d, discMesh(0,0.055,6,0.03,eye)); mergeAt(d, boxM(0.022,0.022,0.012,pupil),0,0.0,0.035); return d;})(), sx*0.1,0.77,0.22); mBox(m,sx*0.1,0.84,0.2,0.055,0.018,0.03,skin2); }   // beady eyes + brows
-  mBox(m,0,0.65,0.23,0.09,0.016,0.02,tooth); mergeAt(m, boxM(0.016,0.03,0.01,tooth), 0.03,0.67,0.24);   // snaggle grin
-  for(let i=0;i<4;i++){ const a=i/4*6.283; mergeAt(m, boxM(0.016,0.07,0.016,hair), Math.cos(a)*0.09,0.86,Math.sin(a)*0.09); }   // scruffy hair
+  const skin=v.skin, skin2=[skin[0]*0.85,skin[1]*0.85,skin[2]*0.83], inner=[0.55,0.4,0.5],   // purplish inner ear
+        cloth=[0.44,0.31,0.2], cloth2=[0.35,0.24,0.16], belt=[0.3,0.22,0.14], buckle=[0.62,0.5,0.26], boot=[0.28,0.22,0.17],
+        white=[0.97,0.97,0.95], pupil=[0.12,0.1,0.1], mouth=[0.32,0.18,0.18], hair=[0.22,0.18,0.14];
+  // short legs + little boots
+  for(const sx of [-0.1,0.1]){ mergeAt(m, cylM(0.12,0.36,0.062,0.055,skin), sx,0,0);
+    mergeAt(m, (()=>{const d=Mesh(); mergeMesh(d, discMesh(0.1,0.085,8,0.04,boot)); mCyl(d,0,0.1,0.075,0.08,8,boot); mBox(d,0,0.04,0.05,0.07,0.045,0.07,boot); return d;})(), sx,0,0.015); }
+  // brown loincloth wrap + belt
+  mCyl(m,0.3,0.52,0.16,0.21,10,cloth); mergeMesh(m, discMesh(0.3,0.21,10,-0.03,cloth2));
+  mBox(m,0,0.12,0.18,0.07,0.16,0.02,cloth2);                                   // front flap
+  mBox(m,0,0.52,0,0.19,0.035,0.18,belt); mergeAt(m, boxM(0.05,0.045,0.03,buckle), 0,0.52,0.18);
+  // compact bare torso
+  mCyl(m,0.52,0.74,0.17,0.145,10,skin); mergeMesh(m, discMesh(0.74,0.145,10,0.03,skin));
+  mCyl(m,0.74,0.8,0.09,0.11,8,skin);                                           // neck
+  // big rounded head
+  mergeAt(m, (()=>{const d=Mesh(); mergeMesh(d, discMesh(0.02,0.31,10,0.26,skin)); mCyl(d,-0.16,0.05,0.29,0.31,10,skin); mergeMesh(d, discMesh(-0.16,0.29,10,-0.14,skin)); return d;})(), 0,0.84,0);
+  // pointy ears, up-and-out, purple inner
+  for(const sx of [-1,1]){ const e=v.ear; mergeAt(m, (()=>{const d=Mesh();
+    mTri(d,[0,0,0.06],[0.05,0.24*e,-0.02],[0,-0.03,-0.1*e],skin); mTri(d,[0,0,0.06],[0,-0.03,-0.1*e],[0.05,0.24*e,-0.02],skin2);
+    mTri(d,[0.015,0.03,0.05],[0.04,0.2*e,-0.01],[0.015,0.0,-0.06*e],inner); return d;})(), sx*0.31,0.94,0.02); }
+  // BIG cute eyes — large white, dark pupils, a bright glint
+  for(const sx of [-1,1]){ mergeAt(m, (()=>{const d=Mesh();
+    mBox(d,0,0,0,0.085,0.1,0.05,white); mBox(d,sx*0.01,-0.005,0.05,0.05,0.058,0.025,pupil); mBox(d,sx*0.02,0.03,0.07,0.02,0.022,0.012,white);
+    return d;})(), sx*0.12,0.88,0.21); }
+  mergeAt(m, boxM(0.03,0.035,0.045,skin2), 0,0.82,0.3);                        // tiny nose
+  for(let i=-1;i<=1;i++) mergeAt(m, boxM(0.028,0.013,0.01,mouth), i*0.045,0.74-Math.abs(i)*0.012,0.29);   // small smile
+  for(let i=0;i<3;i++){ const a=i/3*6.283; mergeAt(m, boxM(0.014,0.05,0.014,hair), Math.cos(a)*0.07,1.1,Math.sin(a)*0.07); }   // scruff
   return m; }
 // an arm hanging from the shoulder (origin = shoulder); swings via the instance lean
 function goblinArmMesh(skin){ const m=Mesh(); const skin2=[skin[0]*0.86,skin[1]*0.86,skin[2]*0.84];
@@ -4576,8 +4588,11 @@ function drawLife(view) {
         if (FISH[e.t]) { y = (e.y !== undefined) ? e.y : g + 1.0;   // §14C huntable fish hover in the water column
           lean = e.t === "flounder" ? 1.5 : Math.sin(e.phase*3)*0.06; ld = e.yaw; }   // flounder lies flat
         else if (e.t === "fish") y = (e.poolRim !== undefined ? Math.max(waterLevel, e.poolRim) : waterLevel) - 0.3 + Math.sin(e.phase*4)*0.05;
-        else if (e.t === "gull") { y = (e.y !== undefined) ? e.y : g + (e.alt || 0) + 0.3;   // §12B flap-and-glide; +0.3 so it never sinks into the ground
-          const amp = (e.gstate === "soar" || e.gstate === "approach") ? 0.16 : 0.42;  // glide steady, flap hard when working
+        else if (e.t === "gull") {                      // §12B flap-and-glide
+          const overW = waterDepthAt(e.x, e.z) > 0.4, lowAlt = (e.alt || 0) < 1.5;
+          const baseY = (overW && lowAlt) ? waterSurfaceAt(e.x, e.z) : g;        // §17.6 float on the surface over water, don't sink to the seabed
+          y = baseY + (e.alt || 0) + ((overW && lowAlt) ? 0.1 + Math.sin(e.phase*2)*0.05 : 0.3);
+          const amp = (e.gstate === "soar" || e.gstate === "approach") ? 0.16 : (overW && lowAlt ? 0.12 : 0.42);  // bob gently when afloat
           lean = Math.sin(e.flap || 0) * amp; ld = e.yaw;
           sc = e.scale * 1.5; }                         // §13.7 read bigger against sky & sand (easy to spot)
         else if (e.t === "jelly") sc = e.scale * (0.9 + Math.sin(e.phase*2)*0.1);
@@ -6692,16 +6707,19 @@ let goblins = [];
 let tradeOpen = false, tradeGoblin = null;
 const GOBLIN_SKINS = [[0.46,0.56,0.36],[0.5,0.6,0.4],[0.42,0.5,0.32],[0.52,0.58,0.42],[0.44,0.54,0.4],[0.5,0.52,0.3]];
 function clamp01(v){ return Math.max(0.12, Math.min(1, v)); }
-function goblinTrades() {   // Minecraft-villager-style: give → get, with limited stock that restocks
-  return [
+function goblinTrades() {   // Minecraft-villager-style: a few simple give → get trades, with limited stock that restocks
+  const all = [
     { give:[["plasticbottle",2]], get:["coin",1], uses:0, max:6 },
     { give:[["bottlecap",3]], get:["seaglass",1], uses:0, max:6 },
-    { give:[["netscrap",1],["plasticbag",1]], get:["coin",1], uses:0, max:5 },
     { give:[["sealettuce",3]], get:["berry",1], uses:0, max:5 },
     { give:[["nautilus",1]], get:["coin",2], uses:0, max:3 },
     { give:[["coin",2]], get:["rope",1], uses:0, max:4 },
     { give:[["coin",3]], get:["coconut",2], uses:0, max:4 },
   ];
+  // each goblin offers a small, slightly different hand — one litter buy is always there, plus 3 others
+  const litter = all[(Math.random()*2)|0];
+  const rest = all.slice(2).sort(() => Math.random()-0.5).slice(0, 3);
+  return [litter, ...rest];
 }
 function spawnGoblin(x, z) {
   const base = GOBLIN_SKINS[(Math.random()*GOBLIN_SKINS.length)|0];
@@ -6735,9 +6753,9 @@ function drawGoblins(view) {
     const sc = g.size*(1 + Math.sin(t*(drowsy?1.1:2.5))*0.016), yaw = g.yaw, by = gy + bob;
     const a = goblinScratch;
     a[0]=g.x;a[1]=by;a[2]=g.z;a[3]=sc;a[4]=yaw;a[5]=drowsy?0.14:0;a[6]=0;a[7]=1;a[8]=1;a[9]=1; g.bodyDyn.draw(a, 1);   // body (tilts forward when drowsy)
-    const cy = Math.cos(yaw), sy = Math.sin(yaw), shY = by + 0.56*sc, greetAmt = g.greet > 0 ? Math.min(1, g.greet*1.5) : 0;
+    const cy = Math.cos(yaw), sy = Math.sin(yaw), shY = by + 0.64*sc, greetAmt = g.greet > 0 ? Math.min(1, g.greet*1.5) : 0;
     for (const side of [-1, 1]) {
-      const localSX = side*0.24*sc, wx = g.x + localSX*cy, wz = g.z - localSX*sy;
+      const localSX = side*0.2*sc, wx = g.x + localSX*cy, wz = g.z - localSX*sy;
       let lean = drowsy ? 0.22 : Math.sin(t*1.6 + (side>0?0:3.14))*0.16;        // gentle idle sway
       if (greetAmt > 0 && side > 0) lean = -1.15 + Math.sin(t*12)*0.3*greetAmt;  // a cheerful wave on greeting
       a[0]=wx;a[1]=shY;a[2]=wz;a[3]=sc;a[4]=yaw;a[5]=lean;a[6]=0;a[7]=1;a[8]=1;a[9]=1; g.armDyn.draw(a, 1);
@@ -7889,10 +7907,11 @@ function seedGullNests() {
 }
 
 function gullInterest() {
-  if (gullLure && clock.t - gullLure.t < GULL.lureLife) return { x: gullLure.x, z: gullLure.z, kind: "lure" };
+  if (gullLure && clock.t - gullLure.t < GULL.lureLife && waterDepthAt(gullLure.x, gullLure.z) < 0.4) return { x: gullLure.x, z: gullLure.z, kind: "lure" };   // §17.6 gulls work the beach, not the water
   // a small find or food sitting out (a fresh hole, a dropped item)
   let best = null, bd = 90;
   for (const e of life) { if (e.kind !== "find" || !GULL_WANTS[e.t]) continue;
+    if (waterDepthAt(e.x, e.z) > 0.4) continue;    // §17.6 don't send them diving for it
     const d = Math.hypot(e.x - player.x, e.z - player.z); if (d < bd) { bd = d; best = { x: e.x, z: e.z, kind: "find", ref: e }; } }
   if (best) return best;
   if (typeof chestGullPoint === "function") { const cp = chestGullPoint(); if (cp) return cp; }   // §12C open/near chests
@@ -7958,6 +7977,8 @@ function updateGulls(dt) {
           const ox = (rng()-0.5)*GULL.forageSpread, oz = (rng()-0.5)*GULL.forageSpread;   // spread out around the target
           e.gstate = "approach"; e.target = { x: interest.x, z: interest.z, ref: interest.ref, kind: interest.kind, ox, oz };
         }
+        // §17.6 with nothing to chase, a gull over the water occasionally drops down to rest on the surface
+        else if (!interest && !e.nest && waterDepthAt(e.x, e.z) > 0.6 && rng() < dt*0.03) { e.gstate = "float"; e.timer = 5 + rng()*9; }
         if (e.nest && e.nest.abandonedUntil <= clock.t && e.nest.eggs > 0 && dp < GULL.nestDefendR && e.nest.defendCd <= 0) {
           e.gstate = "divebomb"; e.timer = 1.4; e.nest.defendCd = GULL.divebombCd; if (onGull) onGull("screech");
         }
@@ -7968,7 +7989,18 @@ function updateGulls(dt) {
         steerGull(e, tx, tz, GULL.approachSpd, dt);
         e.alt += (0.9 - e.alt) * Math.min(1, dt*0.9);
         if (e.target.kind === "find" && e.target.ref && life.indexOf(e.target.ref) < 0) { e.gstate = "soar"; break; }   // the morsel's gone — back up
-        if (Math.hypot(e.x - tx, e.z - tz) < 1.6 && e.alt < 1.6) { e.gstate = "forage"; e.timer = 3 + rng()*4; }
+        if (Math.hypot(e.x - tx, e.z - tz) < 1.6 && e.alt < 1.6) {
+          // §17.6 over water a gull settles on the surface to float, not peck the seabed; on land it forages
+          e.gstate = waterDepthAt(e.x, e.z) > 0.4 ? "float" : "forage"; e.timer = 3 + rng()*4;
+        }
+        break;
+      }
+      case "float": {   // §17.6 bob on the water surface, drift a little, flush if the player comes close
+        e.alt += (0.0 - e.alt) * Math.min(1, dt*2); e.timer -= dt;
+        e.wt = (e.wt || 0) - dt; if (e.wt < 0) { e.wt = 1 + rng()*2.5; e.wvx = (rng()-0.5)*0.4; e.wvz = (rng()-0.5)*0.4; }
+        e.x += (e.wvx||0)*dt; e.z += (e.wvz||0)*dt; e.yaw += (rng()-0.5)*dt*0.6;
+        if (dp < (crouching ? 3 : 7)) { e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call"); }
+        if (e.timer < 0 || waterDepthAt(e.x, e.z) < 0.3) e.gstate = "soar";
         break;
       }
       case "forage": {
