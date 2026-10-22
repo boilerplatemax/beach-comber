@@ -6021,6 +6021,7 @@ function digAt(x, z) {
   spawnSand(x, sy + 0.3, z, 14, kind === "wet" ? [0.62, 0.56, 0.46] : kind === "gravel" ? [0.6, 0.58, 0.55] : [0.86, 0.78, 0.6]);
   if (wasAbove && waterSurfaceAt(x, z) >= surfaceAt(x, z).h - 0.02) spawnInflow(x, z);   // just hit the water table
   revealSpot(x, z, false);
+  digForagePatch(x, z);                                      // §17.3 loot rich worm soil / buried clusters; depletes the patch
   if (typeof lureGulls === "function") lureGulls(x, z);      // §12B a fresh hole draws the gulls in
   if (typeof digTreasure === "function") digTreasure(x, z);  // §12C expose chests / surface buried keys & maps
 }
@@ -7415,6 +7416,7 @@ function updateTools(dt, gdt) {
   updateBerries();
   updateCrops();
   updateSeaweed();
+  updateForagePatches();
   // scattered seeds near mature trees slowly replenish (low density)
   seedScatterT += gdt;
   if (seedScatterT > 45) { seedScatterT = 0; maybeScatterSeed(); }
@@ -7547,6 +7549,7 @@ function saveWorld() {
     crops: crops.map(c => [c.type, +c.x.toFixed(1), +c.z.toFixed(1), +(c.yaw||0).toFixed(2), c.ripe?1:0,   // §17
       c.ripe ? 0 : Math.max(0, +(c.ripeAt - clock.t).toFixed(0)), +c.scale.toFixed(2), c.wild?1:0, c.grown?1:0]),
     seaweed: seaweedBeds.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),   // §17.2 per-bed regrow (0 = ripe)
+    patches: foragePatches.map(p => +p.rich.toFixed(2)),   // §17.3 forage-patch richness (looted spots stay low until they replenish)
   })); } catch (e) {}
 }
 function loadWorld() {
@@ -7585,6 +7588,7 @@ function loadWorld() {
     if (Array.isArray(w.crops)) { crops = w.crops.map(c => ({ type: c[0], x: c[1], z: c[2], yaw: c[3],   // §17 restore crops
       ripe: !!c[4], ripeAt: c[4] ? 0 : clock.t + (c[5] || 0), scale: c[6], wild: !!c[7], grown: !!c[8] })); }
     if (Array.isArray(w.seaweed)) w.seaweed.forEach((v, i) => { if (seaweedBeds[i]) { if (v > 0) { seaweedBeds[i].ripe = false; seaweedBeds[i].regrowAt = clock.t + v; } else seaweedBeds[i].ripe = true; } });   // §17.2
+    if (Array.isArray(w.patches)) w.patches.forEach((v, i) => { if (foragePatches[i]) { foragePatches[i].rich = v; if (v < 1) foragePatches[i].replenishAt = clock.t + PATCH_REPLENISH_DAYS*DAY_PERIOD; } });   // §17.3
     rebuildCollHash();
   } catch (e) {}
 }
@@ -7659,6 +7663,43 @@ const GULL_WANTS = { clam:1, cockle:1, mussel:1, shell:1, molt:1, berry:1, worm:
 let gullLure = null;                       // {x,z,t} a fresh dig or wash-up that pulls gulls in (also the dig tell)
 function lureGulls(x, z) { gullLure = { x, z, t: clock.t }; }
 
+/* §17.3 forage patches — rich ground the gulls flock to (worm-abundant soil, buried clusters).
+   Looting a patch by digging depletes it, so the birds give up and move to the next-richest spot. */
+let foragePatches = [];
+const PATCH_R = 7, PATCH_REPLENISH_DAYS = 4;
+function seedForagePatches() {
+  foragePatches = [];
+  for (let i = 0; i < 160 && foragePatches.filter(p => p.kind === "worms").length < 8; i++) {   // worm soil on damp low ground
+    const a = rng()*6.283, r = HALF*(0.2 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const s = surfaceAt(x, z); if (s.h < 1 || s.h > 8 || s.slope > 0.3 || waterDepthAt(x, z) > 0.1) continue;
+    const biome = coastBiomeAt(x, z); if (biome !== "mudflat" && biome !== "marsh" && s.h > 5) continue;
+    if (foragePatches.some(p => Math.hypot(p.x-x, p.z-z) < 26)) continue;
+    foragePatches.push({ x, z, rich: 1, kind: "worms", replenishAt: 0 });
+  }
+  for (let i = 0; i < 160 && foragePatches.filter(p => p.kind === "cluster").length < 5; i++) {   // buried find clusters on dune/sand
+    const a = rng()*6.283, r = HALF*(0.18 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const s = surfaceAt(x, z); if (s.h < 2 || s.h > 14 || s.slope > 0.3 || waterDepthAt(x, z) > 0.05 || bigPropBlocking(x, z, 2)) continue;
+    if (foragePatches.some(p => Math.hypot(p.x-x, p.z-z) < 26)) continue;
+    foragePatches.push({ x, z, rich: 1, kind: "cluster", replenishAt: 0 });
+  }
+}
+function updateForagePatches() {
+  for (const p of foragePatches) if (p.rich < 1 && p.replenishAt && clock.t >= p.replenishAt) {
+    p.rich = Math.min(1, p.rich + 0.34); p.replenishAt = p.rich < 1 ? clock.t + PATCH_REPLENISH_DAYS*DAY_PERIOD : 0;
+  }
+}
+function nearestForagePatch(x, z, maxd) { let best = null, bd = maxd; for (const p of foragePatches) { if (p.rich < 0.15) continue; const d = Math.hypot(p.x-x, p.z-z); if (d < bd) { bd = d; best = p; } } return best; }
+// a dig at/near a rich patch loots it: bonus worms (worm soil) or a buried find (cluster), and it loses richness
+function digForagePatch(x, z) {
+  let near = null, nd = PATCH_R; for (const p of foragePatches) { if (p.rich < 0.15) continue; const d = Math.hypot(p.x-x, p.z-z); if (d < nd) { nd = d; near = p; } }
+  if (!near) return;
+  if (near.kind === "worms") { const n = 1 + (rng() < near.rich ? 1 : 0); for (let i = 0; i < n; i++) spawnFind("worm", x+(rng()-0.5)*2, z+(rng()-0.5)*2); }
+  else if (rng() < 0.6 + near.rich*0.3) spawnFind(pick(["clam","cockle","shell","agate","coin","seaglass","mussel"]), x+(rng()-0.5)*1.5, z+(rng()-0.5)*1.5);
+  near.rich = Math.max(0, near.rich - 0.28);
+  near.replenishAt = clock.t + PATCH_REPLENISH_DAYS*DAY_PERIOD;
+  if (near.rich < 0.15) for (const e of life) if (e.t === "gull" && e.gstate === "forage" && Math.hypot(e.x-near.x, e.z-near.z) < PATCH_R + 3 && (e.timer||0) > 1) e.timer = 0.6;   // spot's spent → the birds move on
+}
+
 const gullShadowDyn = makeDynamic(discMesh(0, 1, 14, 0, [0.05,0.06,0.07]), 24);
 const nestDyn = makeDynamic((function(){ const m = Mesh(); const tw=[0.4,0.33,0.22], tw2=[0.46,0.38,0.26];
   for (let i=0;i<10;i++){ const a=i/10*6.283; mBox(m, Math.cos(a)*0.5, 0.06, Math.sin(a)*0.5, 0.16,0.07,0.16, i%2?tw:tw2); }
@@ -7706,6 +7747,9 @@ function gullInterest() {
     const d = Math.hypot(e.x - player.x, e.z - player.z); if (d < bd) { bd = d; best = { x: e.x, z: e.z, kind: "find", ref: e }; } }
   if (best) return best;
   if (typeof chestGullPoint === "function") { const cp = chestGullPoint(); if (cp) return cp; }   // §12C open/near chests
+  // §17.3 the richest forage patch within range — worm soil or a buried cluster the birds gather over
+  const fp = nearestForagePatch(player.x, player.z, 110);
+  if (fp) return { x: fp.x, z: fp.z, kind: "patch", ref: fp };
   // a persistent "gulls circling a buried spot" dig tell near the player
   for (const s of (typeof digSpots !== "undefined" ? digSpots : [])) {
     if (s.revealed || s.tell !== "gull") continue;
@@ -8341,6 +8385,7 @@ seedBerryBushes();
 seedWildCrops();
 populateLife();
 seedSeaweedBeds();   // §17.2 after life[], so bed-dwelling critters aren't wiped
+seedForagePatches(); // §17.3 worm soil / buried clusters the gulls gather over
 const terrain = buildTerrainMesh();
 const water = buildWaterMesh();
 const heightTex = buildHeightTexture();
