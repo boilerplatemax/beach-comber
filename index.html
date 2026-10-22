@@ -5777,8 +5777,8 @@ function digBiome(x, z) {
 }
 // What a blind strike (or a goat's paw) turns up per biome: mostly raw material, a find only rarely.
 const BLIND_LOOT = {
-  wet:    { rawChance: 0.5,  raw: ["cockle", "shell"],               find: ["seaglass", "clam", "bottle"] },
-  sand:   { rawChance: 0.55, raw: ["driftwood", "shell", "cockle"],  find: ["bottle", "coin", "ceramic"] },
+  wet:    { rawChance: 0.28, raw: ["cockle", "shell"],               find: ["seaglass", "clam", "bottle"] },
+  sand:   { rawChance: 0.24, raw: ["driftwood", "shell", "cockle"],  find: ["bottle", "coin", "ceramic"] },
   inland: { rawChance: 0.85, raw: ["worm", "root", "flint", "stone"],find: ["bone", "ceramic", "coin"] },
 };
 
@@ -5876,7 +5876,7 @@ function drawSetPieces(view) {
 function seedDigSpots() {
   digSpots = [];
   if (!ODDITY_ITEM) { ODDITY_ITEM = pick(["bell", "tin", "fossil"]); ODDITY_NAME = latinName(); }
-  const n = 200 + (rng() * 100 | 0);   // many attempts; most land off the beach and are skipped
+  const n = 140 + (rng() * 70 | 0);   // many attempts; most land off the beach and are skipped
   for (let k = 0; k < n; k++) {
     const a = rng() * 6.283, r = HALF * (0.3 + rng() * 0.64), x = Math.sin(a) * r, z = -Math.cos(a) * r;
     const h = heightAt(x, z), s = surfaceAt(x, z).slope, ci = cellIndex(x, z);
@@ -5885,7 +5885,7 @@ function seedDigSpots() {
     if (ci >= 0 && filled[ci] - heightmap[ci] > KNEE) continue;                 // never at the bottom of a permanently-deep pool
     const roll = rng();
     let item, band, tell, needed;
-    if (roll < 0.55) { item = pick(["clam", "cockle", "shell", "molt", "seaglass"]); band = 1; needed = 2; tell = rng() < 0.2 ? "gull" : "show"; }
+    if (roll < 0.55) { item = pick(["clam", "cockle", "shell", "molt", "seaglass", "sanddollar", "limpet", "worm"]); band = 1; needed = 2; tell = rng() < 0.2 ? "gull" : "show"; }
     else if (roll < 0.85) { item = pick(["bottle", "ceramic", "coin"]); band = 2; needed = 3; tell = rng() < 0.3 ? "bubble" : "show"; }
     else { item = pick(["fossil", "bell", "tin"]); band = 3; needed = 5; tell = "dry"; }
     digSpots.push({ x, z, item, band, needed, tell, strikes: 0, revealed: false,
@@ -6228,10 +6228,10 @@ const bucketRingMesh = makeDynamic((function () { const m = Mesh(); const c = [0
     mTri(m, [Math.cos(a0)*ri,0,Math.sin(a0)*ri], [Math.cos(a0)*ro,0,Math.sin(a0)*ro], [Math.cos(a1)*ro,0,Math.sin(a1)*ro], c);
     mTri(m, [Math.cos(a0)*ri,0,Math.sin(a0)*ri], [Math.cos(a1)*ro,0,Math.sin(a1)*ro], [Math.cos(a1)*ri,0,Math.sin(a1)*ri], c); }
   return m; })(), 40);
-const CRAWLER = { crab:1, hermit:1, star:1, anemone:1, urchin:1, hopper:1 };    // live on the floor, not mid-water
+const CRAWLER = { crab:1, hermit:1, star:1, anemone:1, urchin:1, hopper:1, snail:1, octopus:1 };    // live on the floor, not mid-water
 const BOTTOM = { star:1, anemone:1, urchin:1 };                                 // §13.3 mostly stay put on the bottom
 // §13.3 calmer motion: gentle, capped speeds — nothing darts or spins in a pail
-const BUCKET_SPEED = { fish:0.14, jelly:0.06, crab:0.10, hermit:0.07, star:0.015, hopper:0.11, piper:0.10, anemone:0, urchin:0 };
+const BUCKET_SPEED = { fish:0.14, jelly:0.06, crab:0.10, hermit:0.07, star:0.015, hopper:0.11, piper:0.10, anemone:0, urchin:0, minnow:0.16, shrimp:0.13, snail:0.03, octopus:0.05 };
 const BUCKET_WATER_COL = [0.16, 0.42, 0.52];
 const BUCKET_TURN = 1.1;                                                        // max heading change (rad/s) — no spinning
 // §13.3 moisture → a drab, dried-out look as a creature dries. 1 = soaked (true colour), 0 = bone dry.
@@ -6272,7 +6272,7 @@ function stepBucketCreatures(dt) {
 function drawBucketScene() {
   bucketMesh.draw(miniInst(0, 0, 0, 1, 0, 0, 0, [1,1,1]), 1);
   for (const cr of bucket.creatures) { const reg = CREATURES[cr.t]; if (!reg) continue;
-    const sc = Math.min(0.2, (cr.scale || 0.5) * 0.22);
+    const sc = Math.min(0.3, (cr.scale || 0.5) * 0.34);   // §17.4 a touch bigger so they read in the little bucket view
     reg.dyn.draw(miniInst(cr.bx, cr.by, cr.bz, sc, cr.byaw || 0, 0, 0, moistTint(cr)), 1); }
 }
 function drawBucketRipples() {
@@ -6431,17 +6431,23 @@ function releaseInspected() {
 }
 function stepInspectCreature(dt) {
   const cr = inspect.subject; if (!cr) return;
-  if (!inspect._sim || inspect._sim.for !== cr) inspect._sim = { for: cr, x: 0, z: 0, vx: (Math.random()-0.5)*0.2, vz: (Math.random()-0.5)*0.2, yaw: 0, ph: Math.random()*6.283, ripples: [] };
-  const s = inspect._sim, floor = !!CRAWLER[cr.t], spd = (BUCKET_SPEED[cr.t] ?? 0.14) * 0.85, Rmax = 0.5;
+  if (!inspect._sim || inspect._sim.for !== cr) inspect._sim = { for: cr, x: 0, z: 0, dir: Math.random()*6.283, yaw: 0, ph: Math.random()*6.283, ripples: [] };
+  // §17.4 steer with a slowly-wandering heading at a clamped turn rate (no fast spinning), like the little bucket view
+  const s = inspect._sim, floor = !!CRAWLER[cr.t], bottom = !!BOTTOM[cr.t], spd = (BUCKET_SPEED[cr.t] ?? 0.14) * 0.85, Rmax = 0.5;
   s.ph += dt;
-  if (spd > 0) {
-    s.vx += (Math.random()-0.5)*0.06; s.vz += (Math.random()-0.5)*0.06; const m = Math.hypot(s.vx, s.vz) || 1; s.vx = s.vx/m*spd; s.vz = s.vz/m*spd;
-    s.x += s.vx*dt; s.z += s.vz*dt; const r = Math.hypot(s.x, s.z);
-    if (r > Rmax) { const nx = s.x/r, nz = s.z/r, d = s.vx*nx + s.vz*nz; s.vx -= 2*d*nx; s.vz -= 2*d*nz; s.x = nx*Rmax; s.z = nz*Rmax; s.ripples.push({ x: s.x, z: s.z, t: 0 }); }
-    s.yaw = Math.atan2(s.vx, s.vz);
-  }
+  if (spd > 0 && !bottom) {
+    s.dir += (Math.random()-0.5) * BUCKET_TURN * dt * 2;
+    const r = Math.hypot(s.x, s.z);
+    if (r > Rmax*0.88) {                                                 // ease the heading back inward near the rim
+      const inward = Math.atan2(-s.z, -s.x); let d = inward - s.dir; while (d > Math.PI) d -= 6.283; while (d < -Math.PI) d += 6.283;
+      s.dir += Math.max(-BUCKET_TURN*dt*2.5, Math.min(BUCKET_TURN*dt*2.5, d));
+    }
+    s.x += Math.cos(s.dir)*spd*dt; s.z += Math.sin(s.dir)*spd*dt;
+    const r2 = Math.hypot(s.x, s.z); if (r2 > Rmax) { s.x = s.x/r2*Rmax; s.z = s.z/r2*Rmax; }
+    s.yaw = s.dir + 1.57;
+    if (Math.random() < dt*0.6) s.ripples.push({ x: s.x, z: s.z, t: 0 });
+  } else if (bottom) { s.yaw = (s.yaw||0) + dt*0.15; }                   // a slow calm turn in place
   s.y = floor ? -0.42 : -0.12 + Math.sin(s.ph*2)*0.05;
-  if (!floor && Math.random() < dt*0.9) s.ripples.push({ x: s.x, z: s.z, t: 0 });
   for (let i = s.ripples.length-1; i >= 0; i--) { s.ripples[i].t += dt; if (s.ripples[i].t > 1.2) s.ripples.splice(i, 1); }
 }
 function drawInspectCreature() {
@@ -7657,6 +7663,7 @@ const GULL = {
   soarAlt: 24, soarR: 24, soarSpd: 3.8, approachSpd: 7, fleeSpd: 10, stealSpd: 8.5, bombSpd: 14,
   stealRange: 2.6, chaseDrop: 6, shooR: 7.5, nestDefendR: 11, divebombCd: 3.5,
   eggReplenishDays: 3, abandonDays: 2, lureLife: 14,
+  maxForage: 6, forageSpread: 4.5,   // §17.4 cap how many land on one spot; spread them out so it reads as a flock, not a pile
 };
 // small finds & food a gull will scavenge or steal from the ground / a fresh hole
 const GULL_WANTS = { clam:1, cockle:1, mussel:1, shell:1, molt:1, berry:1, worm:1, coin:1, seaglass:1, gullegg:1 };
@@ -7786,6 +7793,7 @@ function updateGulls(dt) {
   const interest = gullInterest();
   const sprinting = mode === "walk" && player.sprinting;
   const swung = shovelSwing > 0.5;
+  let nForaging = gulls.reduce((c, e) => c + (e.gstate === "approach" || e.gstate === "forage" ? 1 : 0), 0);   // §17.4 how many are already working the spot
   for (const e of gulls) {
     initGull(e);
     const dp = Math.hypot(e.x - player.x, e.z - player.z);
@@ -7802,22 +7810,32 @@ function updateGulls(dt) {
         const cx = e.nest ? e.nest.x : e.home.x, cz = e.nest ? e.nest.z : e.home.z;
         steerGull(e, cx + Math.cos(e.sp)*GULL.soarR, cz + Math.sin(e.sp)*GULL.soarR, GULL.soarSpd, dt);
         e.alt += (GULL.soarAlt - e.alt) * Math.min(1, dt*0.5);
-        if (interest && !e.nest && rng() < dt*0.3) { e.gstate = "approach"; e.target = { x: interest.x, z: interest.z, ref: interest.ref, kind: interest.kind }; }
+        // §17.4 only a capped number land on one spot; the rest keep circling (a flock, not a pile-up)
+        if (interest && !e.nest && nForaging < GULL.maxForage && rng() < dt*0.35) {
+          nForaging++;
+          const ox = (rng()-0.5)*GULL.forageSpread, oz = (rng()-0.5)*GULL.forageSpread;   // spread out around the target
+          e.gstate = "approach"; e.target = { x: interest.x, z: interest.z, ref: interest.ref, kind: interest.kind, ox, oz };
+        }
         if (e.nest && e.nest.abandonedUntil <= clock.t && e.nest.eggs > 0 && dp < GULL.nestDefendR && e.nest.defendCd <= 0) {
           e.gstate = "divebomb"; e.timer = 1.4; e.nest.defendCd = GULL.divebombCd; if (onGull) onGull("screech");
         }
         break;
       }
       case "approach": {
-        steerGull(e, e.target.x, e.target.z, GULL.approachSpd, dt);
+        const tx = e.target.x + (e.target.ox||0), tz = e.target.z + (e.target.oz||0);
+        steerGull(e, tx, tz, GULL.approachSpd, dt);
         e.alt += (0.9 - e.alt) * Math.min(1, dt*0.9);
-        if (e.target.kind === "find" && e.target.ref && life.indexOf(e.target.ref) < 0) { e.gstate = "soar"; break; }
-        if (Math.hypot(e.x - e.target.x, e.z - e.target.z) < 2 && e.alt < 1.6) { e.gstate = "forage"; e.timer = 4 + rng()*6; }
+        if (e.target.kind === "find" && e.target.ref && life.indexOf(e.target.ref) < 0) { e.gstate = "soar"; break; }   // the morsel's gone — back up
+        if (Math.hypot(e.x - tx, e.z - tz) < 1.6 && e.alt < 1.6) { e.gstate = "forage"; e.timer = 3 + rng()*4; }
         break;
       }
       case "forage": {
         e.alt += (0.0 - e.alt) * Math.min(1, dt*2);
         e.timer -= dt;
+        // §17.4 nothing worth pecking here any more (no wanted find near, and the spot of interest has moved on) → wrap up and leave
+        const stillGood = interest && Math.hypot(interest.x - e.x, interest.z - e.z) < 10;
+        const morselNear = life.some(it => it.kind === "find" && GULL_WANTS[it.t] && Math.hypot(it.x - e.x, it.z - e.z) < 5);
+        if (!stillGood && !morselNear) e.timer -= dt*3.5;
         e.wt = (e.wt || 0) - dt; if (e.wt < 0) { e.wt = 0.5 + rng(); e.wvx = (rng()-0.5); e.wvz = (rng()-0.5); }
         e.x += (e.wvx||0)*dt*1.3; e.z += (e.wvz||0)*dt*1.3; e.yaw = Math.atan2(e.wvz||0.01, e.wvx||0.01) + 1.57;
         for (const o of gulls) if (o !== e && o.gstate === "forage") {   // squabble: shove apart
