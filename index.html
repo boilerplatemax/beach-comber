@@ -1842,7 +1842,7 @@ function landJump(g, fall) {
     if (fall > 10) { stamina = 0; exhausted = true; } }                       // …that empties stamina
   // §15 a very big fall: fade to black and wake at the base (nothing is lost)
   if (fall > BIG_FALL && !fade.active) {
-    const base = (lastSafe.x || lastSafe.z) ? { x: lastSafe.x, z: lastSafe.z } : { x: player.x, z: player.z };
+    const base = shelterSpawn || ((lastSafe.x || lastSafe.z) ? { x: lastSafe.x, z: lastSafe.z } : { x: player.x, z: player.z });   // §16C a shelter catches big falls too
     startFade(() => { player.x = base.x; player.z = base.z; const bh = surfaceAt(base.x, base.z).h;
       player.feetY = bh; player.eyeY = bh + EYE; player.vy = 0; player.airborne = false; stamina = Math.max(stamina, 0.4); exhausted = false; });
   }
@@ -1867,6 +1867,7 @@ function findSpawn() {
 }
 
 let spawnPoint = null;
+let shelterSpawn = null;   // §16C a lean-to set as your respawn point ({x,z}), or null for the nearest shore
 function enterWalk() {
   const s = findSpawn();
   spawnPoint = spawnPoint || { x: s.x, z: s.z, yaw: s.yaw };
@@ -1988,7 +1989,7 @@ function drown() {
   startFade(() => {
     makeDrownSack(player.x, player.z);
     if (bucket.creatures.length) { bucket.creatures = []; bucket.water = true; }   // creatures released to the sea
-    const s = (lastSafe.x || lastSafe.z) ? { x: lastSafe.x, z: lastSafe.z } : findSpawn();
+    const s = shelterSpawn || ((lastSafe.x || lastSafe.z) ? { x: lastSafe.x, z: lastSafe.z } : findSpawn());   // §16C wake at your shelter if set
     player.x = s.x; player.z = s.z;
     stopSwim();
     const g = surfaceAt(s.x, s.z).h; player.feetY = g; player.eyeY = g + EYE; player.vy = 0; player.airborne = false;
@@ -6534,6 +6535,7 @@ function pickUpBuild(b) {
   const refund = (b.cost && b.cost.length) ? b.cost : (RECIPE_BY_ID[def.recipe] ? RECIPE_BY_ID[def.recipe].cost : []);
   for (const [cid, n] of refund) Inv.add(cid, n);
   if (b.coll) { b.coll.r = 0; const k = colliders.indexOf(b.coll); if (k >= 0) colliders.splice(k, 1); rebuildCollHash(); }
+  if (def.shelter && shelterSpawn && Math.hypot(shelterSpawn.x - b.x, shelterSpawn.z - b.z) < 0.6) shelterSpawn = null;   // §16C respawn point gone
   const i = builds.indexOf(b); if (i >= 0) builds.splice(i, 1);
   if (onDig) onDig("clang"); showCard("Picked up " + def.label, "Materials are back in your satchel."); saveWorld();
 }
@@ -6558,7 +6560,29 @@ function tendRack(b) {
   saveWorld();
 }
 const RACK_DRY_TIME = 90;    // §16 seconds of real time to dry (tunable)
-function trySleepShelter(b) { showCard("Lean-to Shelter", "A dry place to rest."); }   // §16C fills this in
+// §16C sleeping in a lean-to: set it as your respawn point, and at night skip to morning.
+function trySleepShelter(b) {
+  const wasMine = shelterSpawn && Math.hypot(shelterSpawn.x - b.x, shelterSpawn.z - b.z) < 0.6;
+  shelterSpawn = { x: b.x, z: b.z };                       // only one shelter is your respawn at a time
+  for (const o of builds) if (o.type === "leanto") o.respawn = false;
+  b.respawn = true; saveWorld();
+  const night = dayNightEnabled && dayFactor() < 0.35;
+  if (night) {
+    startFade(() => {
+      timeOfDay = MORNING_TIME; updateSun();
+      player.x = b.x; player.z = b.z; const h = surfaceAt(b.x, b.z).h;
+      player.feetY = h; player.eyeY = h + EYE; player.vy = 0; player.airborne = false;
+      stamina = 1; exhausted = false; player.breath = BREATH_MAX;
+    });
+    if (onDig) onDig("eat");
+    showCard("You sleep until morning", "Rested. This lean-to is your respawn point.");
+  } else {
+    stamina = 1; exhausted = false;
+    showCard(wasMine ? "Your shelter" : "Respawn point set", dayNightEnabled
+      ? "You'll wake here. Rest at night to skip to morning."
+      : "You'll wake here if you drown or take a bad fall. A quick rest restores your stamina.");
+  }
+}
 function drawBuilds(view) {
   if (buildMode) updateBuildGhost();
   // placed pieces, grouped by type
@@ -7205,6 +7229,7 @@ function saveWorld() {
     fires: campfires.map(c => [+c.x.toFixed(1), +c.z.toFixed(1)]),
     builds: builds.map(b => ({ t: b.type, x: +b.x.toFixed(1), z: +b.z.toFixed(1), y: +b.yaw.toFixed(2), c: b.cost || [],
       l: b.load || null, n: b.n || 0, d: b.load ? Math.max(0, +(b.dryAt - clock.t).toFixed(0)) : 0 })),   // §16B
+    shelter: shelterSpawn ? [+shelterSpawn.x.toFixed(1), +shelterSpawn.z.toFixed(1)] : null,   // §16C respawn point
   })); } catch (e) {}
 }
 function loadWorld() {
@@ -7238,6 +7263,8 @@ function loadWorld() {
       if (def.dry && s.l) { b.load = s.l; b.n = s.n || 1; b.dryAt = clock.t + (s.d || 0); }
       if (def.collide) { const coll = { x: b.x, z: b.z, r: def.collide, kind: "build", build: b }; b.coll = coll; colliders.push(coll); }
       builds.push(b); } }
+    if (Array.isArray(w.shelter)) { shelterSpawn = { x: w.shelter[0], z: w.shelter[1] };   // §16C restore respawn point
+      for (const b of builds) if (b.type === "leanto" && Math.hypot(b.x - shelterSpawn.x, b.z - shelterSpawn.z) < 0.6) b.respawn = true; }
     rebuildCollHash();
   } catch (e) {}
 }
