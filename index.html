@@ -729,6 +729,9 @@ function computeBasins() {
       done[ni] = 1; push(filled[ni], ni);
     }
   }
+  // §12A drop any trapped water sitting above the shore band — tide pools and seeping
+  // water belong in the intertidal / shore zone, never as ponds up the mountain.
+  for (let i = 0; i < N; i++) if (heightmap[i] > SHORE_WATER_MAX) filled[i] = heightmap[i];
   extractPools();
 }
 
@@ -826,6 +829,10 @@ let wetLevel = 0.0;             // lagging high-water mark (wet sand)
 // Spring / neap: amplitude swells and shrinks over a ~7-day cycle (§B).
 const TIDE_CYCLE_DAYS = 7, NEAP_AMP = 0.55, SPRING_AMP = 1.35;
 const MINUS_AMP = 1.15, MINUS_DROP = 0.9;    // above this amp, lows drop extra (minus tides)
+// The highest the ocean ever reaches (spring high). Nothing dry should sit at or below this.
+const MAX_HIGH_TIDE = TIDE_MID + TIDE_RANGE * 0.5 * SPRING_AMP;
+// §12A trapped inland water (ponds/lagoons) is only honoured in the shore band; no water up the mountain.
+const SHORE_WATER_MAX = MAX_HIGH_TIDE + 3;
 function ampAtDay(day) { const ph = (day / TIDE_CYCLE_DAYS) % 1; return NEAP_AMP + (SPRING_AMP - NEAP_AMP) * (0.5 + 0.5 * Math.cos(ph * 6.2831853)); }
 // Shaped so the tide lingers (slack) near high and low.
 function tideShape(ph) { const s = Math.sin(ph * 6.2831853); return Math.sign(s) * Math.pow(Math.abs(s), 0.7); }
@@ -2426,6 +2433,17 @@ function reserveBig(x, z) {
   const k = Math.floor(x / 3) + "," + Math.floor(z / 3);
   if (bigCells.has(k)) return false; bigCells.add(k); return true;
 }
+// §12A is this spot covered by ANY water surface — ocean at spring high, a trapped
+// basin/pond, or a filled hole? Dry-land props and planting must reject such spots.
+function spotUnderwater(x, z, margin) {
+  margin = margin || 0;
+  const g = surfaceAt(x, z).h;
+  if (MAX_HIGH_TIDE + margin >= g) return true;                        // the sea reaches here at spring high
+  const i = cellIndex(x, z); if (i < 0) return false;
+  if (filled[i] > heightmap[i] + 0.1 && filled[i] + margin >= g) return true;   // trapped pond / lagoon
+  if (ponded.has(i) && ponded.get(i) + margin >= g) return true;       // a hole someone filled with the bucket
+  return false;
+}
 // Scatter one prop type over a jittered grid; fn returns true to keep a point.
 function scatter(spacing, jitter, maxN, fn) {
   const inst = [];
@@ -2464,13 +2482,13 @@ function buildProps() {
   // dune grass (walkable)
   const grass = scatter(5.5, 1.0, 7000, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 5 || s.h > 26 || s.slope > 0.5) return;
-    if (rng() > 0.7 || nearPOI(x, z, 2)) return;
+    if (rng() > 0.7 || nearPOI(x, z, 2) || spotUnderwater(x, z)) return;
     pushInst(inst, x, s.h, z, 0.6 + rng()*0.8, rng()*6.28, 0, 0, vary([0.5,0.54,0.3], 0.25));
   });
   // palms at the beach/dune edge (collide)
   const palms = scatter(15, 0.9, 1500, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 3 || s.h > 17 || s.slope > 0.4) return;
-    if (rng() > 0.5 || nearPOI(x, z, 3) || !reserveBig(x, z)) return;
+    if (rng() > 0.5 || nearPOI(x, z, 3) || spotUnderwater(x, z, 0.3) || !reserveBig(x, z)) return;
     const sc = 7 + rng()*6;
     pushInst(inst, x, s.h, z, sc, rng()*6.28, 0.05 + rng()*0.18, rng()*6.28, vary([0.9,0.95,0.8], 0.15));
     colliders.push({ x, z, r: 0.5, kind: "tree", species: "palm", ii: inst.length/10 - 1 });
@@ -2479,7 +2497,7 @@ function buildProps() {
   const trees = scatter(11, 0.9, 3500, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 20 || s.slope > 0.6) return;
     const thin = 1 - smoothstep(HIGH.h * 0.55, HIGH.h * 0.95, s.h);   // fewer up high
-    if (rng() > 0.55 * thin || nearPOI(x, z, 3) || !reserveBig(x, z)) return;
+    if (rng() > 0.55 * thin || nearPOI(x, z, 3) || spotUnderwater(x, z, 0.3) || !reserveBig(x, z)) return;
     const sc = 6 + rng()*10;
     pushInst(inst, x, s.h, z, sc, rng()*6.28, rng()*0.1, rng()*6.28, vary([1,1,1], 0.2));
     colliders.push({ x, z, r: 0.6, kind: "tree", species: "pine", ii: inst.length/10 - 1 });
@@ -2487,7 +2505,7 @@ function buildProps() {
   // interior broadleaf trees (the ones that shed leaves) — dunes up to mid-slope
   const broadleaf = scatter(13, 0.9, 1800, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 13 || s.h > 42 || s.slope > 0.5) return;
-    if (rng() > 0.4 || nearPOI(x, z, 3) || !reserveBig(x, z)) return;
+    if (rng() > 0.4 || nearPOI(x, z, 3) || spotUnderwater(x, z, 0.3) || !reserveBig(x, z)) return;
     const sc = 6 + rng()*7;
     pushInst(inst, x, s.h, z, sc, rng()*6.28, rng()*0.08, rng()*6.28, vary([1,1,1], 0.15));
     colliders.push({ x, z, r: 0.6, kind: "tree", species: "broadleaf", ii: inst.length/10 - 1 });
@@ -2497,7 +2515,7 @@ function buildProps() {
     const s = surfaceAt(x, z);
     const high = s.h > 38, flat = s.h > 2 && s.h < 16;
     if (!(high || flat) || s.h < 1) return;
-    if (rng() > (high ? 0.5 : 0.12) || nearPOI(x, z, 3) || !reserveBig(x, z)) return;
+    if (rng() > (high ? 0.5 : 0.12) || nearPOI(x, z, 3) || spotUnderwater(x, z) || !reserveBig(x, z)) return;
     const sc = 1.2 + rng()*3.5;
     pushInst(inst, x, s.h + sc*0.1, z, sc, rng()*6.28, 0, 0, vary([1,1,1], 0.15));
     colliders.push({ x, z, r: sc*0.5, kind: "rock", ii: inst.length/10 - 1, sc });
@@ -2505,7 +2523,7 @@ function buildProps() {
   // occasional old fence posts (collide)
   const fences = scatter(28, 1.0, 600, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 6 || s.h > 26 || s.slope > 0.4) return;
-    if (rng() > 0.1 || nearPOI(x, z, 2) || !reserveBig(x, z)) return;
+    if (rng() > 0.1 || nearPOI(x, z, 2) || spotUnderwater(x, z) || !reserveBig(x, z)) return;
     pushInst(inst, x, s.h, z, 1 + rng()*0.8, rng()*6.28, 0.08 + rng()*0.2, rng()*6.28, vary([1,1,1], 0.15));
     colliders.push({ x, z, r: 0.3, kind: "fence", ii: inst.length/10 - 1 });
   });
@@ -2523,7 +2541,23 @@ function buildProps() {
   ];
   initPropDeltas();
   rebuildCollHash();
+  validateProps();
 }
+// §12A generation self-check: no dry-land prop (tree, boulder, fence, POI) may stand in water.
+function validateProps() {
+  let bad = 0;
+  for (const c of colliders) {
+    if (c.kind === "tree" || c.kind === "rock" || c.kind === "fence") {
+      if (spotUnderwater(c.x, c.z)) { bad++; if (bad <= 5) console.warn(`prop underwater: ${c.kind} at ${c.x.toFixed(1)},${c.z.toFixed(1)} (ground ${surfaceAt(c.x,c.z).h.toFixed(1)}, water ${waterSurfaceAtMax(c.x,c.z).toFixed(1)})`); }
+    }
+  }
+  const WATER_POI = { tidepools: 1, seacave: 1, pier: 1 };              // these belong at/over the water by design
+  for (const p of POIS) if (!WATER_POI[p.type] && spotUnderwater(p.x, p.z)) { bad++; if (bad <= 5) console.warn(`POI underwater: ${p.type} at ${p.x.toFixed(1)},${p.z.toFixed(1)}`); }
+  console.log(`[props] underwater dry-land props: ${bad} (should be 0)`);
+  return bad;
+}
+// the highest water this spot will ever see (ocean spring-high or a trapped basin)
+function waterSurfaceAtMax(x, z) { const i = cellIndex(x, z); const basin = (i >= 0 && filled[i] > heightmap[i] + 0.1) ? filled[i] : -1e9; return Math.max(MAX_HIGH_TIDE, basin); }
 
 /* ---- prop instance upkeep: keep foliage/trees snapped to the dug ground,
    clear small foliage from a fresh hole, and block digging under big props. ---- */
@@ -5019,6 +5053,7 @@ function checkUndermine(x, z) {
 function canPlant(species, x, z) {
   const k = surfaceKind(x, z), h = surfaceAt(x, z).h, s = surfaceAt(x, z).slope;
   if (s > 0.45 || waterDepthAt(x, z) > 0.05) return false;
+  if (spotUnderwater(x, z)) return false;                              // §12A no planting below the high-tide line or in a basin
   if (k === "rock") return false;
   if (species === "palm") { if (h < 1.2 || h > 18) return false; }     // sand & low dune
   else { if (h < 5 || h > 32) return false; }                          // soil / grass
