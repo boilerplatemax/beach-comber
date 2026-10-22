@@ -145,20 +145,37 @@
   #prompt b { color: #ffe6b0; }
   #card b { font-size: 17px; letter-spacing: .02em; }
   #card span { opacity: .8; font-size: 13px; }
-  /* field journal */
+  /* field journal (§13.5 redesigned: compact, tabbed, 3D-icon cards) */
   #journal {
-    position: fixed; inset: 0; z-index: 12; display: none; overflow: auto;
-    background: rgba(8,14,18,.92); padding: 40px 24px; text-align: center;
+    position: fixed; inset: 0; z-index: 12; display: none; align-items: center; justify-content: center;
+    background: rgba(6,10,13,.72); backdrop-filter: blur(2px); text-align: center;
   }
-  #journal h2 { font-size: 30px; font-weight: 650; margin-bottom: 8px; letter-spacing: .04em; }
-  #journal h3 { margin: 22px 0 10px; opacity: .7; font-weight: 500; letter-spacing: .1em; text-transform: uppercase; font-size: 13px; }
-  .jgrid { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; max-width: 720px; margin: 0 auto; }
-  .jitem {
-    min-width: 128px; padding: 14px 10px; font-size: 14px; background: var(--facet);
-    clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px);
-  }
-  .jitem.unk { color: #68727a; background: var(--panel-edge); letter-spacing: .3em; }
-  .jhint { margin-top: 26px; opacity: .5; font-size: 13px; }
+  #journalbox { width: 70vw; max-width: 760px; max-height: 70vh; display: flex; flex-direction: column;
+    background: var(--facet); padding: 18px 20px 16px; box-shadow: 0 12px 40px rgba(0,0,0,.55);
+    clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); }
+  #journalbox h2 { font-size: 23px; font-weight: 650; margin: 0 0 12px; letter-spacing: .04em; }
+  .jtabs { display: flex; gap: 8px; justify-content: center; margin-bottom: 14px; flex-wrap: wrap; }
+  .jtab { font: inherit; font-size: 13px; font-weight: 600; letter-spacing: .03em; padding: 7px 15px; cursor: pointer;
+    border: none; background: var(--panel-edge); color: var(--ink); opacity: .72;
+    clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px); }
+  .jtab .jtc { opacity: .7; font-weight: 500; margin-left: 5px; font-size: 11px; }
+  .jtab.on { opacity: 1; background: var(--facet); color: #ffe6b0; box-shadow: inset 0 0 0 1px rgba(255,220,150,.5); }
+  .jtab:hover { opacity: 1; }
+  .jbody { overflow-y: auto; flex: 1; padding: 2px; }
+  .jgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
+  .jcard {
+    display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 10px 6px 9px; font-size: 12.5px;
+    background: var(--panel-edge); cursor: pointer; transition: filter .12s, transform .12s;
+    clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px); }
+  .jcard:hover { filter: brightness(1.2); transform: translateY(-2px); }
+  .jcard img { width: 52px; height: 52px; image-rendering: pixelated; }
+  .jcard .jname { line-height: 1.2; }
+  .jcard .jqty { opacity: .6; font-size: 11px; }
+  .jcard.unk { cursor: default; color: #5f6871; }
+  .jcard.unk:hover { filter: none; transform: none; }
+  .jcard.unk img { filter: brightness(0) saturate(0) opacity(.42); }   /* silhouette */
+  .jcard.unk .jname { letter-spacing: .25em; }
+  .jhint { margin-top: 12px; opacity: .5; font-size: 12px; }
   /* toasts (bottom-left, above hud) */
   #toasts { position: fixed; left: 12px; bottom: 60px; z-index: 8; pointer-events: none;
     display: flex; flex-direction: column; gap: 6px; }
@@ -3811,12 +3828,13 @@ function buildIcons() {
   _iconPx = new Uint8Array(64 * 64 * 4);
   _iconProj = M4.perspective(0.6, 1, 0.1, 50); _iconView = M4.lookAt([2.2, 1.9, 2.4], [0, 0.05, 0], [0, 1, 0]);
   for (const k in ITEMS) buildOneIcon(ITEMS[k]);
+  for (const k in CREATURES) CREATURES[k].icon = buildMeshIcon(CREATURES[k].mesh(), [1,1,1]);   // §13.5 journal creature cards
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 }
 let _iconPx, _iconProj, _iconView;
-function buildOneIcon(it) {               // §12C render one item model → its icon (also for items added after init)
-  if (!iconFBO) return;
-  const mesh = it.model();
+// §13.5 render any mesh → a 64×64 icon data URL (shared by item cards, creature cards, the satchel)
+function buildMeshIcon(mesh, tint) {
+  if (!iconFBO) return null;
   let maxr = 0.001; for (let i = 0; i < mesh.pos.length; i += 3) { const r = Math.hypot(mesh.pos[i], mesh.pos[i+1], mesh.pos[i+2]); if (r > maxr) maxr = r; }
   const dyn = makeDynamic(mesh, 1), sc = 1.4 / maxr;
   gl.bindFramebuffer(gl.FRAMEBUFFER, iconFBO);
@@ -3827,11 +3845,15 @@ function buildOneIcon(it) {               // §12C render one item model → its
   gl.uniform3fv(propU.uSunDir, [0.5, 0.8, 0.4]); gl.uniform3fv(propU.uCamPos, [2.2, 1.9, 2.4]);
   gl.uniform3fv(propU.uZenith, [1,1,1]); gl.uniform3fv(propU.uHorizon, [1,1,1]); gl.uniform3fv(propU.uWarm, [1,1,0.95]);
   gl.uniform1f(propU.uFogDensity, 0); gl.uniform1f(propU.uFogNear, 1e6);
-  dyn.draw(new Float32Array([0, -0.1, 0, sc, 0.7, 0, 0, it.tint[0], it.tint[1], it.tint[2]]), 1);
+  dyn.draw(new Float32Array([0, -0.1, 0, sc, 0.7, 0, 0, tint[0], tint[1], tint[2]]), 1);
   gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, _iconPx);
   const img = iconCtx.createImageData(64, 64);
   for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) { const s = ((63 - y) * 64 + x) * 4, d = (y * 64 + x) * 4; img.data[d]=_iconPx[s]; img.data[d+1]=_iconPx[s+1]; img.data[d+2]=_iconPx[s+2]; img.data[d+3]=_iconPx[s+3]; }
-  iconCtx.putImageData(img, 0, 0); it.icon = iconCanvas.toDataURL();
+  iconCtx.putImageData(img, 0, 0); return iconCanvas.toDataURL();
+}
+function buildOneIcon(it) {               // §12C render one item model → its icon (also for items added after init)
+  if (!iconFBO) return;
+  it.icon = buildMeshIcon(it.model(), it.tint || [1,1,1]);
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 }
 
@@ -4074,37 +4096,58 @@ function showCard(name, desc) {
   el.style.display = "block"; cardTimer = 3.5;
 }
 
-function treasureJournal() {   // §12C a page of chests found and what they held
-  if (!chests.length) return `<div class="jitem unk">??? </div>`;
+// §13.5 one treasure card per chest — a chest icon + its state/contents (uses the satchel's 3D icon renderer)
+function treasureCards() {
+  if (!chests.length) return `<div class="jcard unk"><img src="${(ITEMS.chestbox&&ITEMS.chestbox.icon)||""}"><div class="jname">??? </div></div>`;
   return chests.map((c, i) => {
-    const mapN = Inv.count("map_" + c.id), key = Inv.has("key_" + c.id);
+    const mapN = Inv.count("map_" + c.id), key = Inv.has("key_" + c.id), ic = (ITEMS.chestbox && ITEMS.chestbox.icon) || "";
     if (c.opened) { const items = c.log && c.log.items && c.log.items.length ? c.log.items.join(", ") : "empty";
-      return `<div class="jitem">Chest ${i+1}${c.intertidal?" (tidal)":""}<br><span style="font-size:11px;opacity:.75">${items}</span></div>`; }
+      return `<div class="jcard"><img src="${ic}"><div class="jname">Chest ${i+1}${c.intertidal?" (tidal)":""}</div><div class="jqty">${items}</div></div>`; }
     const hint = mapN >= 3 ? "X marks the spot" : mapN >= 1 ? `${mapN}/3 map pieces` : c.exposed ? "dug out — open it" : "rumoured";
-    return `<div class="jitem unk">Chest ${i+1}${c.intertidal?" (tidal)":""}<br><span style="font-size:11px;letter-spacing:0">${hint}${key?" · key found":""}</span></div>`;
+    return `<div class="jcard unk"><img src="${ic}"><div class="jname">Chest ${i+1}${c.intertidal?" (tidal)":""}</div><div class="jqty" style="letter-spacing:0">${hint}${key?" · key found":""}</div></div>`;
   }).join("");
+}
+let journalTab = "creatures";
+function journalCount(tab) {
+  if (tab === "creatures") { let n = 0; for (const k in CREATURES) if (discovered.has(k)) n++; return [n, Object.keys(CREATURES).length]; }
+  if (tab === "finds") { let n = 0; for (const k in FINDS) if (discovered.has("f_" + k)) n++; return [n, Object.keys(FINDS).length]; }
+  const opened = chests.filter(c => c.opened).length; return [opened, chests.length];
+}
+function journalGrid(tab) {
+  if (tab === "creatures") return Object.keys(CREATURES).map((k) => {
+    const got = discovered.has(k), reg = CREATURES[k];
+    if (!got) return `<div class="jcard unk"><img src="${reg.icon||""}"><div class="jname">??? </div></div>`;
+    return `<div class="jcard" data-jk="c:${k}"><img src="${reg.icon||""}"><div class="jname">${reg.label}</div></div>`;
+  }).join("");
+  if (tab === "finds") return Object.keys(FINDS).map((k) => {
+    const got = discovered.has("f_" + k), it = ITEMS[k], cnt = Inv.count(k);
+    if (!got) return `<div class="jcard unk"><img src="${(it&&it.icon)||""}"><div class="jname">??? </div></div>`;
+    return `<div class="jcard" data-jk="f:${k}"><img src="${(it&&it.icon)||""}"><div class="jname">${it?it.name:k}</div>${cnt?`<div class="jqty">×${cnt}</div>`:""}</div>`;
+  }).join("");
+  return treasureCards();
+}
+function renderJournal() {
+  const j = document.getElementById("journal");
+  const tabs = [["creatures","Creatures"],["finds","Finds"],["treasure","Treasure"]];
+  const tabHtml = tabs.map(([id,lbl]) => { const [n,t] = journalCount(id);
+    return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
+  j.innerHTML = `<div id="journalbox"><h2>Field Journal</h2>
+    <div class="jtabs">${tabHtml}</div>
+    <div class="jbody"><div class="jgrid">${journalGrid(journalTab)}</div></div>
+    <div class="jhint">${IS_TOUCH ? "tap a card to inspect" : "click a card to inspect"} · Tab to close</div></div>`;
+  j.querySelectorAll(".jtab").forEach(b => b.onclick = () => { journalTab = b.dataset.jtab; renderJournal(); });
+  j.querySelectorAll(".jcard[data-jk]").forEach(card => card.onclick = () => {
+    const [kind, k] = card.dataset.jk.split(":");
+    if (kind === "c") openInspect({ t: k, scale: CREATURES[k].base, tint: [1,1,1], moist: 1 }, "journal");
+    else openInspect(k, "item");
+  });
 }
 function toggleJournal() {
   const j = document.getElementById("journal");
   if (j.style.display === "block") { j.style.display = "none"; requestLock(); return; }   // §13.1 back to the game
   if (invOpen) { invOpen = false; document.getElementById("invpanel").style.display = "none"; hideTip(); hideContextMenu(); }   // §13.4 one panel at a time
-  const row = (reg, prefix) => Object.keys(reg).map((k) => {
-    const got = discovered.has(prefix + k);
-    const cnt = prefix === "f_" ? (Inv.count(k) ? " ×" + Inv.count(k) : "") : "";
-    const label = reg[k].label || reg[k].name;
-    return `<div class="jitem ${got ? "" : "unk"}">${got ? label + cnt : "??? "}</div>`;
-  }).join("");
-  const digRow = ["clam","cockle","coin","ceramic","fossil","bell","tin"].map((k) => {
-    const got = discovered.has("f_" + k), cnt = Inv.count(k) ? " ×" + Inv.count(k) : "";
-    return `<div class="jitem ${got ? "" : "unk"}">${got ? ITEMS[k].name + cnt : "??? "}</div>`;
-  }).join("");
-  j.innerHTML = `<h2>Field Journal</h2>
-    <h3>Creatures</h3><div class="jgrid">${row(CREATURES, "")}</div>
-    <h3>Finds</h3><div class="jgrid">${row(FINDS, "f_")}</div>
-    <h3>Unearthed</h3><div class="jgrid">${digRow}</div>
-    <h3>Coast &amp; tide</h3><div class="jhint">Sea stars rescued: ${starsRescued}${carryingStars?`  ·  carrying ${carryingStars}`:""}<br>Last tide: ${EVENT_LABEL[currentEvent]||"—"}  ·  next: ${EVENT_LABEL[nextEvent]||"—"}</div>
-    <h3>Buried treasure</h3><div class="jgrid">${treasureJournal()}</div>
-    <div class="jhint">Tab to close</div>`;
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  renderJournal();
   j.style.display = "block";
 }
 
@@ -5202,11 +5245,15 @@ function renderInspectInfo() {
   const nameEl = document.getElementById("inspName"), rEl = document.getElementById("inspRarity"),
     vEl = document.getElementById("inspVariant"), dEl = document.getElementById("inspDesc"),
     cEl = document.getElementById("inspCaught"), navEl = document.getElementById("inspNav"), relBtn = document.getElementById("inspRelease");
-  if (inspect.kind === "bucket") {
-    const cr = inspect.subject, reg = CREATURES[cr.t], list = bucket.creatures, idx = list.indexOf(cr);
+  if (inspect.kind === "bucket" || inspect.kind === "journal") {
+    const cr = inspect.subject, reg = CREATURES[cr.t];
     nameEl.textContent = cr.special && cr.name ? cr.name : (reg ? reg.label : cr.t);
     const rar = creatureRarity(cr.t); rEl.textContent = rar; rEl.className = "r " + rar;
-    vEl.textContent = creatureVariant(cr); dEl.textContent = reg ? reg.desc : "";
+    vEl.textContent = inspect.kind === "bucket" ? creatureVariant(cr) : ""; dEl.textContent = reg ? reg.desc : "";
+    if (inspect.kind === "journal") {   // §13.5 read-only entry from the field journal: no release, no nav
+      cEl.textContent = ""; navEl.innerHTML = ""; relBtn.style.display = "none"; return;
+    }
+    const list = bucket.creatures, idx = list.indexOf(cr);
     cEl.textContent = cr.caught ? `Caught in ${cr.caught.biome}, on ${cr.caught.tide}.` : "";
     navEl.innerHTML = list.length > 1 ? `<button id="inspPrev">‹</button><span>${idx+1} / ${list.length}</span><button id="inspNext">›</button>` : "";
     if (list.length > 1) {
@@ -5278,7 +5325,7 @@ function updateInspectView() {
   const tgt = [0, inspect.kind === "item" ? 0 : -0.05, 0];
   const eye = [tgt[0] + inspect.dist*cp*sy, tgt[1] + inspect.dist*sp, tgt[2] + inspect.dist*cp*cy];
   const fbo = miniFBO(el.width, el.height);
-  if (inspect.kind === "bucket") { stepInspectCreature(dt);
+  if (inspect.kind === "bucket" || inspect.kind === "journal") { stepInspectCreature(dt);
     renderMini(fbo, eye, tgt, 0.72, -0.02, 0.9, BUCKET_WATER_COL, drawInspectCreature, drawInspectRipples); }
   else { inspect.spin += dt*0.6;
     renderMini(fbo, eye, tgt, 0.7, 0, 0, BUCKET_WATER_COL, drawInspectItem, null); }
