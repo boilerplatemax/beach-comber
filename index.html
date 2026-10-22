@@ -2100,7 +2100,7 @@ let chewT = 0;
 
 /* ---- the interaction target, independent of the equipped tool (§11.2 / §11.3) ---- */
 // Which tool performs the primary action on each target kind.
-const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", goat: "hand", salt: "hand", creature: "hand", nest: "hand", chest: "hand", openchest: "hand", storagebox: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
+const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", goat: "hand", salt: "hand", creature: "hand", nest: "hand", chest: "hand", openchest: "hand", storagebox: "hand", driftwood: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
 function aimInfo() {
   if (mode !== "walk") return null;
   if (curTarget) return { kind: curTarget.kind, obj: curTarget.obj, x: curTarget.x, z: curTarget.z, need: TOOL_FOR_KIND[curTarget.kind] || "hand" };
@@ -2718,11 +2718,13 @@ function buildProps() {
     if (rng() > 0.45 || nearPOI(x, z, 2)) return;
     pushInst(inst, x, s.h, z, 0.6 + rng()*0.5, rng()*6.28, 0, 0, vary([0.26,0.3,0.2], 0.3));
   });
-  // driftwood along the shore (walkable)
-  const drift = scatter(26, 0.9, 1200, (x, z, inst) => {
+  // driftwood along the shore — lying flat, choppable (§13.1); tracked, not instanced
+  driftObjs = [];
+  scatter(26, 0.9, 1200, (x, z) => {
     const s = surfaceAt(x, z); if (s.h < 0.4 || s.h > 7 || s.slope > 0.35) return;
     if (rng() > 0.5 || nearPOI(x, z, 2)) return;
-    pushInst(inst, x, s.h + 0.1, z, 1.5 + rng()*2.2, rng()*6.28, 0, 0, vary([0.6,0.55,0.48], 0.15));
+    const scale = 1.5 + rng()*2.2;
+    driftObjs.push({ x, z, scale, yaw: rng()*6.28, roll: (rng()-0.5)*0.5, tint: vary([0.6,0.55,0.48], 0.15), gone: false, big: scale > 2.2 });
   });
   // dune grass (walkable)
   const grass = scatter(5.5, 1.0, 7000, (x, z, inst) => {
@@ -2776,7 +2778,6 @@ function buildProps() {
   propTypes = [
     { kind: "grass",   foliage: true,  snap: true, inst: makeInstanced(grassMesh(), grass) },
     { kind: "seaweed", foliage: true,  snap: true, inst: makeInstanced(grassMesh([0.28,0.32,0.22]), seaweed) },
-    { kind: "drift",   foliage: false, snap: true, inst: makeInstanced(driftwoodMesh(), drift) },
     { kind: "palm",    foliage: false, snap: true, inst: makeInstanced(palmMesh(), palms) },
     { kind: "pine",    foliage: false, snap: true, inst: makeInstanced(pineMesh(), trees) },
     { kind: "broadleaf", foliage: false, snap: true, inst: makeInstanced(broadleafMesh(), broadleaf) },
@@ -3046,7 +3047,7 @@ function stickMesh() { const m = Mesh(); mBox(m,0,0.04,0,0.38,0.03,0.035,[0.45,0
 function wormMesh() { const m = Mesh(); for (let i = 0; i < 6; i++) { const a = i*0.55; mBox(m, Math.sin(a)*0.11, 0.05, i*0.05-0.15, 0.055, 0.05, 0.05, [0.8-i*0.02,0.46,0.46]); } return m; }
 function rootMesh() { const m = Mesh(); const c = [0.6,0.45,0.3]; mCyl(m,-0.02,0.3,0.05,0.02,6,c); mCyl(m,0.0,0.22,0.035,0.015,6,[0.55,0.4,0.26]); mBox(m,0.08,0.12,0.03,0.12,0.025,0.025,[0.5,0.38,0.24]); mBox(m,-0.06,0.08,-0.04,0.1,0.022,0.022,[0.52,0.4,0.26]); return m; }
 function flintMesh() { const m = Mesh(); mRock(m, mulberry32(0x5f11 ^ SEED_INT), [0.26, 0.27, 0.31]); return m; }
-function driftwoodMesh() { const m = Mesh(); const g = [0.62,0.6,0.56]; mCyl(m,-0.4,0.4,0.1,0.08,6,g); mergeMesh(m, discMesh(0.4,0.08,6,0.02,[0.66,0.64,0.6])); mergeMesh(m, discMesh(-0.4,0.1,6,-0.02,[0.58,0.56,0.52])); return m; }
+// (driftwoodMesh is the horizontal lying log defined above; §13.1 removed a duplicate vertical version)
 // --- loose material clump (a handful of sand / dirt / gravel / mud) ---
 function clumpMesh(col) { const m = Mesh(); for (let i = 0; i < 7; i++) { const a = i/7*6.283, r = 0.03 + (i%3)*0.06; mBox(m, Math.cos(a)*r, 0.04+(i%2)*0.04, Math.sin(a)*r, 0.09, 0.05, 0.09, [col[0]*(0.9+0.1*(i%2)), col[1], col[2]]); } mBox(m,0,0.08,0,0.1,0.06,0.1,col); return m; }
 function sandMatMesh()   { return clumpMesh([0.86,0.78,0.59]); }
@@ -4117,6 +4118,9 @@ function targetAlongRay(r, sticky) {
   for (const s of stumps) { const gy = surfaceAt(s.x, s.z).h; capsule(s, "stump", s.x, s.z, s.x, gy, s.z, s.x, gy+0.8, s.z, 1.0); }
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
+  for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
+    capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
+  for (const c of colliders) if (c.kind === "fence" && c.r > 0) { const gy = surfaceAt(c.x, c.z).h; capsule(c, "fence", c.x, c.z, c.x, gy, c.z, c.x, gy+1.0, c.z, 0.32); }   // §13.1 choppable posts
   for (const nst of gullNests) if (nst.eggs > 0 && nst.abandonedUntil <= clock.t) sphere(nst, "nest", nst.x, nst.z, 0.2, 0.75);   // §12B
   for (const ch of chests) { if (ch.carried) continue;                                                                          // §12C
     if (ch.opened && ch.looted) sphere(ch, "openchest", ch.x, ch.z, 0.3, 0.9);                                                   // carry an emptied chest
@@ -4143,6 +4147,8 @@ function useToolOnTarget(t) {
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "nest": takeEgg(t.obj); return true;
     case "chest": openChestAction(t.obj); return true;
+    case "driftwood": return breakDriftwood(t.obj);
+    case "fence": return chopFence(t.obj);
     case "openchest": pickUpChest(t.obj); return true;
     case "storagebox": openStash(storageBoxes.indexOf(t.obj)); return true;
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
@@ -5232,7 +5238,8 @@ const SEED_TREE = { coconut: "palm", pinecone: "pine", nut: "broadleaf" };
 const GROW_DAYS = 3, SPROUT_DAYS = 2;             // seed→mature, stump→sapling (in in-game days)
 const MATURE = { palm: 9, pine: 10, broadleaf: 8 };
 
-let treeObjs = [], rockObjs = [], stumps = [], planted = [], looseRocks = [], fallenTrees = [];
+let treeObjs = [], rockObjs = [], stumps = [], planted = [], looseRocks = [], fallenTrees = [], driftObjs = [];
+const driftDyn = makeDynamic(driftwoodMesh(), 400);   // §13.1 lying driftwood, individually choppable
 let palmType, pineType, broadleafType, rockType, pendingTool = null;
 let palmDyn, pineDyn, broadleafDyn, stumpDyn, rockDyn;
 
@@ -5519,6 +5526,52 @@ function spawnRockNode() {
     return;
   }
 }
+// §13.1 lying driftwood (choppable). Drawn aligned to the ground with a slight roll.
+function drawDriftwood(view) {
+  propUniforms(view); let n = 0; const arr = digScratch;
+  for (const d of driftObjs) { if (d.gone || n >= 400) continue;
+    const dd = Math.hypot(d.x - player.x, d.z - player.z); if (dd > DRAW_R) continue;
+    const y = surfaceAt(d.x, d.z).h, o = n*10;
+    arr[o]=d.x; arr[o+1]=y; arr[o+2]=d.z; arr[o+3]=d.scale; arr[o+4]=d.yaw; arr[o+5]=d.roll; arr[o+6]=0;   // roll around the log's long axis
+    arr[o+7]=d.tint[0]; arr[o+8]=d.tint[1]; arr[o+9]=d.tint[2]; n++; }
+  if (n) driftDyn.draw(arr, n);
+}
+function breakDriftwood(d) {
+  if (!d || d.gone) return true;
+  if (d.big) {                                   // a whole log → chop it into sticks (needs an axe)
+    if (selectedTool() !== "axe") { if (autoSwitch && autoSwitchTo("axe")) {} else { tooTiredOrCant(d.x, d.z, false); return true; } }
+    if (selectedTool() !== "axe") return true;
+    if (!canHeavyAction()) { failStrike(false, d.x, surfaceAt(d.x,d.z).h + 0.4, d.z); return true; }
+    shovelSwing = 1; spendStamina(CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
+    d.gone = true; const nSticks = 2 + (rng()*3|0); Inv.add("stick", nSticks); discovered.add("f_stick");
+    spawnSand(d.x, surfaceAt(d.x,d.z).h + 0.2, d.z, 8, [0.6,0.5,0.4]);
+    showCard("Driftwood", "Chopped into " + nSticks + " sticks."); saveWorld();
+  } else {                                        // a small piece → pick it up directly
+    if (Inv.add("driftwood", 1) > 0) { const first = !discovered.has("f_driftwood"); d.gone = true; discovered.add("f_driftwood"); notify("driftwood", 1, first); if (onDig) onDig("thud"); saveWorld(); }
+    else { showCard("Pack full", "Drop something to make room."); bagShake(); }
+  }
+  return true;
+}
+// §13.1 fence posts are wood → choppable for sticks (audit: nothing breakable is indestructible)
+function hideFenceInstance(c) {
+  const ft = propTypes.find(t => t.kind === "fence");
+  if (ft && ft.inst.data && c.ii != null) { const o = c.ii*10; ft.inst.data[o+3] = 0;
+    gl.bindBuffer(gl.ARRAY_BUFFER, ft.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, (o+3)*4, ft.inst.data, o+3, 1); }
+}
+function chopFence(c) {
+  if (!c || c.r <= 0) return true;
+  if (selectedTool() !== "axe") { if (autoSwitch && autoSwitchTo("axe")) {} else { tooTiredOrCant(c.x, c.z, false); return true; } }
+  if (selectedTool() !== "axe") return true;
+  if (!canHeavyAction()) { failStrike(false, c.x, surfaceAt(c.x,c.z).h + 0.5, c.z); return true; }
+  shovelSwing = 1; spendStamina(CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
+  hideFenceInstance(c); c.r = 0;
+  const n = 1 + (rng()*2|0); Inv.add("stick", n); discovered.add("f_stick");
+  spawnSand(c.x, surfaceAt(c.x,c.z).h + 0.2, c.z, 6, [0.5,0.42,0.3]); showCard("Fence post", "Chopped for " + n + " sticks."); saveWorld();
+  return true;
+}
+// placeholder hook; §13.2 "Too tired" will refine this
+function tooTiredOrCant(x, z, hard) { failStrike(hard, x, surfaceAt(x,z).h + 0.3, z); }
+
 function drawTools(view) {
   propUniforms(view);
   // stumps
@@ -5551,6 +5604,8 @@ function saveWorld() {
     planted: planted.map(p => [p.species, +p.x.toFixed(1), +p.z.toFixed(1), p.plantedAt]),
     stumps: stumps.map(s => [s.species, +s.x.toFixed(1), +s.z.toFixed(1), s.sproutAt]),
     chopped: treeObjs.filter(o => o.gone).map(o => o.i + ":" + o.species),
+    driftGone: driftObjs.map((d, i) => d.gone ? i : -1).filter(i => i >= 0),
+    fenceGone: colliders.filter(c => c.kind === "fence" && c.r <= 0).map(c => c.ii),
     // fallen trees are real toppled instances: save the instance ref + its whittle state
     fallen: fallenTrees.filter(o => !o.gone).map(o => [o.i, o.species, +o.treeScale.toFixed(2), +o.scale.toFixed(2), o.crownChops, o.trunkChops, +o.leanDir.toFixed(2), +(clock.t - o.bornFall).toFixed(0)]),
     // player-built terrain (sparse): [cell index, built height, material]
@@ -5564,6 +5619,9 @@ function loadWorld() {
     const w = JSON.parse(localStorage.getItem("bcw_" + SEED_STR) || "null"); if (!w) return;
     const chop = new Set(w.chopped || []);
     for (const o of treeObjs) if (chop.has(o.i + ":" + o.species)) { o.gone = true; o.scale = 0; setTreeInstance(o); if (o.coll) o.coll.r = 0; }
+    for (const i of (w.driftGone || [])) if (driftObjs[i]) driftObjs[i].gone = true;   // §13.1
+    if (w.fenceGone && w.fenceGone.length) { const fg = new Set(w.fenceGone);
+      for (const c of colliders) if (c.kind === "fence" && fg.has(c.ii)) { c.r = 0; hideFenceInstance(c); } }
     for (const p of (w.planted||[])) { planted.push({ species: p[0], x: p[1], z: p[2], plantedAt: p[3] }); colliders.push({ x: p[1], z: p[2], r: 0.4, kind: "planted" }); }
     for (const s of (w.stumps||[])) stumps.push({ species: s[0], x: s[1], z: s[2], hp: 4, sproutAt: s[3] });
     for (const f of (w.fallen||[])) {
@@ -6637,6 +6695,7 @@ function frame(now) {
   // props & points of interest (instanced), before the transparent water
   drawProps(view);
   drawTools(view);
+  drawDriftwood(view);
   drawSetPieces(view);
   drawBerryBushes(view);
   drawCampfires(view);
