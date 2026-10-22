@@ -2665,7 +2665,7 @@ let chewT = 0;
 
 /* ---- the interaction target, independent of the equipped tool (§11.2 / §11.3) ---- */
 // Which tool performs the primary action on each target kind.
-const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", crop: "hand", goat: "hand", salt: "hand", creature: "hand", nest: "hand", chest: "hand", openchest: "hand", storagebox: "hand", driftwood: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
+const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", crop: "hand", seaweed: "hand", goat: "hand", salt: "hand", creature: "hand", nest: "hand", chest: "hand", openchest: "hand", storagebox: "hand", driftwood: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
 function aimInfo() {
   if (mode !== "walk") return null;
   if (curTarget) return { kind: curTarget.kind, obj: curTarget.obj, x: curTarget.x, z: curTarget.z, need: TOOL_FOR_KIND[curTarget.kind] || "hand" };
@@ -3438,13 +3438,24 @@ function buildProps() {
   const seabedOK = (x, z) => { const i = cellIndex(x, z); if (i < 0 || ponded.has(i) || filled[i] > waterLevel + 0.35) return false; return true; };
   const SUBMERGE_LINE = TIDE_MID - TIDE_RANGE * 0.5;                // deeper than an ordinary low tide → stays underwater
   const lushAt = (x, z) => nMacro.fbm(x * 0.013 + 40, z * 0.013 - 25, 4, 2, 0.5);   // 0..1 patchy seabed richness
-  const eelgrass = [], kelpF = [];
+  const eelgrass = [], kelpF = [], seamoss = [], redalgae = [];
   scatter(5, 1.0, 7000, (x, z) => { const h = surfaceAt(x, z).h, d = -h;
     if (d < 1.2 || d > 8 || h > SUBMERGE_LINE || !seabedOK(x, z) || nearPOI(x, z, 1)) return;
     const lush = lushAt(x, z); if (lush < 0.44) return;             // sandy / barren stretches stay bare
     const dens = (lush - 0.44) / 0.56;                              // thicker where the seabed is lush
     if (rng() > 0.3 + dens * 0.65) return;
     pushInst(eelgrass, x, h, z, 0.75 + rng()*0.5 + dens*0.45, rng()*6.28, 0, 0, vary([0.30,0.5,0.32], 0.2));
+  });
+  // §17.2 a low moss carpet in the shallows, and a mid red algae a bit deeper — height & colour variety
+  scatter(3.5, 1.0, 9000, (x, z) => { const h = surfaceAt(x, z).h, d = -h;
+    if (d < 0.4 || d > 6 || h > SUBMERGE_LINE || !seabedOK(x, z) || nearPOI(x, z, 1)) return;
+    const lush = lushAt(x + 20, z + 12); if (lush < 0.34 || rng() > 0.5) return;
+    pushInst(seamoss, x, h, z, 0.7 + rng()*0.6, rng()*6.28, 0, 0, vary([0.44,0.48,0.36], 0.22));
+  });
+  scatter(5, 1.0, 5000, (x, z) => { const h = surfaceAt(x, z).h, d = -h;
+    if (d < 2 || d > 9 || h > SUBMERGE_LINE || !seabedOK(x, z) || nearPOI(x, z, 1)) return;
+    const lush = lushAt(x - 15, z + 18); if (lush < 0.48 || rng() > 0.4) return;
+    pushInst(redalgae, x, h, z, 0.8 + rng()*0.6, rng()*6.28, 0, 0, vary([0.78,0.5,0.55], 0.18));
   });
   scatter(8, 0.9, 3000, (x, z) => { const h = surfaceAt(x, z).h, d = -h;
     if (d < 3.2 || d > 22 || h > SUBMERGE_LINE - 0.5 || !seabedOK(x, z) || nearPOI(x, z, 2)) return;
@@ -3465,6 +3476,8 @@ function buildProps() {
     { kind: "grass",   foliage: true,  snap: true, inst: makeInstanced(grassMesh(), grass) },
     { kind: "seaweed", foliage: true,  snap: true, inst: makeInstanced(grassMesh([0.28,0.32,0.22]), seaweed) },
     { kind: "eelgrass", foliage: true, snap: true, inst: makeInstanced(eelgrassMesh(), eelgrass) },   // §14B
+    { kind: "seamoss", foliage: true, snap: true, inst: makeInstanced(seaMossMesh(), seamoss) },      // §17.2 low carpet
+    { kind: "redalgae", foliage: true, snap: true, inst: makeInstanced(redAlgaeMesh(), redalgae) },   // §17.2 red mid
     { kind: "kelp",    foliage: true,  snap: true, inst: makeInstanced(bullKelpMesh(), kelpF) },      // §14B
 
     { kind: "palm",    foliage: false, snap: true, inst: makeInstanced(palmMesh(), palms) },
@@ -3587,7 +3600,7 @@ function drawProps(view) {
     if (cnt === 0) continue;
     const rigid = (t.kind === "rock" || t.kind === "rockSlab" || t.kind === "rockJag" || t.kind === "fence" || t.kind === "poi");
     gl.uniform1f(propU.uSway, rigid ? 0 : 1);                         // §14B plants & trees sway, rocks/fences stay put
-    gl.uniform1i(propU.uClampTop, (t.kind === "eelgrass" || t.kind === "kelp") ? 1 : 0);   // §14B ocean plants can't breach the surface
+    gl.uniform1i(propU.uClampTop, (t.kind === "eelgrass" || t.kind === "kelp" || t.kind === "seamoss" || t.kind === "redalgae") ? 1 : 0);   // §14B/§17.2 ocean plants can't breach the surface
     gl.bindVertexArray(t.inst.vao);
     gl.drawArraysInstanced(gl.TRIANGLES, 0, t.inst.vertCount, cnt);
     countDraw(Math.round(t.inst.tris * cnt / t.inst.count));
@@ -4016,6 +4029,18 @@ function plasticBagMesh(){ const m=Mesh(); const c=[0.82,0.85,0.9]; for(let i=0;
 function foamChunkMesh(){ const m=Mesh(); const c=[0.92,0.9,0.85]; mBox(m,0,0.08,0,0.15,0.08,0.1,c); mBox(m,0.09,0.13,0.03,0.05,0.05,0.05,[0.88,0.86,0.8]); mBox(m,-0.07,0.11,-0.04,0.04,0.06,0.06,[0.9,0.88,0.83]); return m; }
 function netScrapMesh(){ const m=Mesh(); const c=[0.38,0.46,0.5]; for(let i=0;i<8;i++){ const a=i*0.85; mCyl(m,Math.cos(a)*0.1,Math.cos(a)*0.1+0.05,0.014,0.014,4,c); } mergeMesh(m, discMesh(0,0.15,6,0.02,[0.34,0.42,0.46])); for(const s of [-1,1]) mBox(m,s*0.12,0.03,0,0.02,0.02,0.1,[0.5,0.42,0.3]); return m; }
 function plasticStrawMesh(){ const m=Mesh(); mCyl(m,0,0.42,0.018,0.018,5,[0.9,0.35,0.5]); mCyl(m,0.1,0.14,0.02,0.02,5,[0.95,0.5,0.6]); return m; }
+// §17.2 varied seabed plants — a low moss carpet, a mid red algae, and harvestable sea lettuce
+function seaMossMesh(){ const m=Mesh(); const c=[0.42,0.5,0.36], c2=[0.5,0.42,0.34];
+  for(let i=0;i<11;i++){ const a=i/11*6.283, r=0.04+0.045*(i%3), h=0.08+0.07*(i%3); mergeAt(m, cylM(0,h,0.03,0.012,(i%2?c:c2)), Math.cos(a)*r,0,Math.sin(a)*r); }
+  mergeMesh(m, discMesh(0,0.15,8,0.01,[0.4,0.44,0.34])); return m; }
+function redAlgaeMesh(){ const m=Mesh(); const base=[0.5,0.2,0.3], tip=[0.74,0.36,0.46];
+  for(let i=0;i<4;i++){ const a=i/4*6.283+0.3; wavyRibbon(m,{h:0.5+(i%2)*0.28, w0:0.06, w1:0.02, seg:6, dir:a, amp:0.16, freq:1.5, phase:i*1.1, droop:0.1, bx:Math.cos(a)*0.04, bz:Math.sin(a)*0.04, twist:0.6, c0:base, c1:tip}); }
+  return m; }
+function seaLettuceMesh(cropped){ const m=Mesh(); const g=[0.38,0.76,0.4], g2=[0.5,0.85,0.46];
+  const n = cropped?3:7, H = cropped?0.14:0.45;
+  for(let i=0;i<n;i++){ const a=i/n*6.283, r=0.05+(i%2)*0.04, c=(i%2?g:g2);
+    mergeAt(m, (i%2? boxM(0.09,H*0.5,0.005,c) : boxM(0.005,H*0.5,0.09,c)), Math.cos(a)*r, H*0.5, Math.sin(a)*r); }
+  return m; }
 // generic storm flotsam (§11.1)
 function ropeMesh() { const m = Mesh(); const c = [0.66,0.56,0.36]; for (let i = 0; i < 6; i++) { const a = i*1.1; mCyl(m, Math.cos(a)*0.14, Math.cos(a)*0.14+0.06, 0.05, 0.05, 5, [c[0]-0.03*(i%2),c[1],c[2]]); } mergeMesh(m, discMesh(0.0,0.2,8,0.03,[0.6,0.5,0.32])); return m; }
 function crateMesh() { const m = Mesh(); const w = [0.5,0.37,0.24], e = [0.4,0.29,0.18]; mBox(m,0,0.2,0,0.22,0.2,0.22,w);
@@ -4632,6 +4657,8 @@ digItem("seed_cassava", "Cassava Cutting", "seed", "common", "A stem cutting —
 digItem("seed_banana", "Banana Sucker", "seed", "common", "A young banana shoot to replant on soil.", () => cropSeedMesh([0.46,0.6,0.3]), [0.46,0.6,0.3]);
 digItem("seed_pineapple", "Pineapple Crown", "seed", "common", "The leafy crown — press it into soil or sand to root.", () => cropSeedMesh([0.42,0.6,0.35]), [0.42,0.6,0.35]);
 digItem("seed_taro", "Taro Top", "seed", "common", "A taro top to replant in damp soil.", () => cropSeedMesh([0.46,0.56,0.42]), [0.46,0.56,0.42]);
+digItem("sealettuce", "Sea Lettuce", "consumable", "common", "A ribbon of bright green sea lettuce, picked fresh off the seabed.", () => seaLettuceMesh(false), [0.4,0.78,0.42]);
+EDIBLE.sealettuce = 0.1;
 EDIBLE.cassava = 0.22; EDIBLE.banana = 0.18; EDIBLE.pineapple = 0.2; EDIBLE.taro = 0.22;
 COOKABLE.cassava = 1; COOKABLE.taro = 1;   // the roots are better roasted
 const CROP_SEED = { seed_cassava: "cassava", seed_banana: "banana", seed_pineapple: "pineapple", seed_taro: "taro" };
@@ -5425,6 +5452,7 @@ function targetAlongRay(r, sticky) {
   for (const s of stumps) { const gy = surfaceAt(s.x, s.z).h; capsule(s, "stump", s.x, s.z, s.x, gy, s.z, s.x, gy+0.8, s.z, 1.0); }
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
   for (const cr of crops) sphere(cr, "crop", cr.x, cr.z, 0.5*cr.scale, 1.0*cr.scale);   // §17 harvestable crops
+  for (const sw of seaweedBeds) if (sw.ripe) sphere(sw, "seaweed", sw.x, sw.z, 0.6*sw.scale, 0.9*sw.scale);   // §17.2 pick sea lettuce
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
   for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
@@ -5452,6 +5480,7 @@ function useToolOnTarget(t) {
     case "rubble": pickRubble(t.obj); return true;
     case "bush": harvestBush(t.obj); return true;
     case "crop": harvestCrop(t.obj); return true;
+    case "seaweed": harvestSeaweed(t.obj); return true;
     case "goat": offerSaltTo(t.obj); return true;
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "nest": takeEgg(t.obj); return true;
@@ -6563,6 +6592,45 @@ function drawCrops(view) {
   }
 }
 
+/* §17.2 harvestable sea-lettuce beds on the shallow seabed — pick them for food; some host a critter */
+let seaweedBeds = [];
+const SEAWEED_REGROW_DAYS = 1.5;      // in-game days to grow back after picking (tunable)
+function seedSeaweedBeds() {
+  seaweedBeds = [];
+  for (let i = 0; i < 80; i++) {
+    const a = rng()*6.283, r = HALF*(0.18 + rng()*0.52), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const h = surfaceAt(x, z).h, d = -h, ci = cellIndex(x, z);
+    if (d < 1 || d > 6 || ci < 0 || ponded.has(ci) || filled[ci] > waterLevel + 0.35) continue;
+    const lush = nMacro.fbm(x*0.013 + 40, z*0.013 - 25, 4, 2, 0.5); if (lush < 0.5) continue;
+    if (seaweedBeds.some(b => Math.hypot(b.x-x, b.z-z) < 4.5)) continue;
+    seaweedBeds.push({ x, z, ripe: true, regrowAt: 0, scale: 0.9 + rng()*0.4, yaw: rng()*6.28 });
+    if (rng() < 0.45) spawnCreature(rng() < 0.6 ? "snail" : "shrimp", x+(rng()-0.5)*1.4, z+(rng()-0.5)*1.4, { hx: x, hz: z, hr: 3, poolRim: waterSurfaceAt(x, z) });   // a home for a critter
+  }
+}
+function updateSeaweed() { for (const b of seaweedBeds) if (!b.ripe && clock.t >= b.regrowAt) b.ripe = true; }
+function nearestSeaweed(x, z, maxd) { let best = null, bd = maxd; for (const b of seaweedBeds) { const dd = Math.hypot(b.x-x, b.z-z); if (dd < bd) { bd = dd; best = b; } } return best; }
+function harvestSeaweed(b) {
+  if (!b.ripe) { showCard("Already picked", "This bed will grow back in a day or so."); return; }
+  const n = 1 + (rng()*2|0); for (let i = 0; i < n; i++) Inv.add("sealettuce", 1);
+  b.ripe = false; b.regrowAt = clock.t + SEAWEED_REGROW_DAYS * DAY_PERIOD;
+  if (onDig) onDig("pluck"); sparkle(b.x, surfaceAt(b.x, b.z).h + 0.4, b.z, [0.4, 0.8, 0.4], 6);
+  showCard("Picked Sea Lettuce ×" + n, "Fresh and salty — eat it now or save it."); saveWorld();
+}
+let seaweedRipeDyn = null, seaweedCropDyn = null;
+function drawSeaweedBeds(view) {
+  if (!seaweedBeds.length) return;
+  if (!seaweedRipeDyn) { seaweedRipeDyn = makeDynamic(seaLettuceMesh(false), 80); seaweedCropDyn = makeDynamic(seaLettuceMesh(true), 80); }
+  propUniforms(view);
+  gl.uniform1f(propU.uSway, 1); gl.uniform1i(propU.uClampTop, 1); gl.uniform1f(propU.uClampY, waterLevel - 0.04);   // sway + stay under the surface
+  const a = rockScratch;
+  for (const [ripe, dyn] of [[true, seaweedRipeDyn], [false, seaweedCropDyn]]) { let n = 0;
+    for (const b of seaweedBeds) { if (b.ripe !== ripe) continue; const dx = b.x-cam.pos[0], dz = b.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R || n >= 80) continue;
+      const o = n*10, y = surfaceAt(b.x, b.z).h; a[o]=b.x;a[o+1]=y;a[o+2]=b.z;a[o+3]=b.scale;a[o+4]=b.yaw;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
+    if (n) dyn.draw(a, n);
+  }
+  gl.uniform1f(propU.uSway, 0); gl.uniform1i(propU.uClampTop, 0);
+}
+
 /* §14A drowned-item sacks — a little bundle with a glint, on the seabed or washed ashore */
 let sackDyn = null;
 function sackMesh() { const m = Mesh(); const c = [0.46,0.39,0.28];
@@ -7346,6 +7414,7 @@ function updateTools(dt, gdt) {
   updateErosion(gdt);
   updateBerries();
   updateCrops();
+  updateSeaweed();
   // scattered seeds near mature trees slowly replenish (low density)
   seedScatterT += gdt;
   if (seedScatterT > 45) { seedScatterT = 0; maybeScatterSeed(); }
@@ -7477,6 +7546,7 @@ function saveWorld() {
     shelter: shelterSpawn ? [+shelterSpawn.x.toFixed(1), +shelterSpawn.z.toFixed(1)] : null,   // §16C respawn point
     crops: crops.map(c => [c.type, +c.x.toFixed(1), +c.z.toFixed(1), +(c.yaw||0).toFixed(2), c.ripe?1:0,   // §17
       c.ripe ? 0 : Math.max(0, +(c.ripeAt - clock.t).toFixed(0)), +c.scale.toFixed(2), c.wild?1:0, c.grown?1:0]),
+    seaweed: seaweedBeds.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),   // §17.2 per-bed regrow (0 = ripe)
   })); } catch (e) {}
 }
 function loadWorld() {
@@ -7514,6 +7584,7 @@ function loadWorld() {
       for (const b of builds) if (b.type === "leanto" && Math.hypot(b.x - shelterSpawn.x, b.z - shelterSpawn.z) < 0.6) b.respawn = true; }
     if (Array.isArray(w.crops)) { crops = w.crops.map(c => ({ type: c[0], x: c[1], z: c[2], yaw: c[3],   // §17 restore crops
       ripe: !!c[4], ripeAt: c[4] ? 0 : clock.t + (c[5] || 0), scale: c[6], wild: !!c[7], grown: !!c[8] })); }
+    if (Array.isArray(w.seaweed)) w.seaweed.forEach((v, i) => { if (seaweedBeds[i]) { if (v > 0) { seaweedBeds[i].ripe = false; seaweedBeds[i].regrowAt = clock.t + v; } else seaweedBeds[i].ripe = true; } });   // §17.2
     rebuildCollHash();
   } catch (e) {}
 }
@@ -8269,6 +8340,7 @@ seedSetPieces();
 seedBerryBushes();
 seedWildCrops();
 populateLife();
+seedSeaweedBeds();   // §17.2 after life[], so bed-dwelling critters aren't wiped
 const terrain = buildTerrainMesh();
 const water = buildWaterMesh();
 const heightTex = buildHeightTexture();
@@ -8616,6 +8688,7 @@ function frame(now) {
   drawSetPieces(view);
   drawBerryBushes(view);
   drawCrops(view);
+  drawSeaweedBeds(view);
   drawSacks(view);
   drawCampfires(view);
   drawGoats(view);
