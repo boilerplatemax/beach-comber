@@ -183,6 +183,8 @@
   @keyframes slotswap { 0%{transform:translateY(-5px) scale(1.12);box-shadow:0 0 16px rgba(255,235,170,.9)} 100%{transform:none} }
   .hslot img { width: 100%; height: 100%; image-rendering: pixelated; }
   .hslot b { position: absolute; left: 3px; top: 0; font-size: 10px; opacity: .6; color:#f0d9b0; }
+  .hslot .tkmode { position: absolute; right: 3px; top: 1px; font-size: 10px; font-weight: 700; font-style: normal;
+    color: #ffe6b0; text-shadow: 0 1px 2px #000; letter-spacing: 0; }
   .hslot span { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 2px #000; }
   /* the satchel */
   #debugpanel { position: fixed; z-index: 13; display: none; background: var(--facet);
@@ -1892,6 +1894,10 @@ canvas.addEventListener("click", () => {
   if (document.pointerLockElement !== canvas) canvas.requestPointerLock();
   else clickAt(0, 0);     // crosshair → walk to the point under it
 });
+canvas.addEventListener("mousedown", (e) => {   // §13.2 middle-click cycles the Tool Kit in-game
+  if (e.button === 1 && mode === "walk" && selectedItem() === "toolkit") { e.preventDefault(); cycleToolkit(); }
+});
+canvas.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
 document.addEventListener("mousemove", (e) => {
   if (document.pointerLockElement !== canvas) return;
   const s = 0.0022;
@@ -2140,15 +2146,20 @@ function aimInfo() {
   if (surfaceKind(pt[0], pt[1]) !== "rock") return { kind: "ground", x: pt[0], z: pt[1], need: "shovel" };   // diggable ground → a shovel target
   return null;
 }
+// §13.2 the Tool Kit counts as owning the shovel, axe and pickaxe
+function ownsTool(id) {
+  if (Inv.hotbarHasId(id) || selectedTool() === id) return true;
+  return (id === "shovel" || id === "axe" || id === "pickaxe") && Inv.hotbarHasId("toolkit");
+}
 // Do you OWN a tool that can affect this target (even if not equipped — auto-switch will reach for it)?
 function aimAffordable(info) {
   if (!info) return false;
   const n = info.need;
   if (n === "hand" || n === "self") return true;
   if (info.kind === "creature") return true;                 // inspecting always works
-  if (info.kind === "stump") return Inv.hotbarHasId("axe") || Inv.hotbarHasId("shovel") || selectedTool() === "axe" || selectedTool() === "shovel";
+  if (info.kind === "stump") return ownsTool("axe") || ownsTool("shovel");
   if (n === "bucket") return Inv.hotbarHasId("bucket") || selectedTool() === "bucket";
-  return Inv.hotbarHasId(n) || selectedTool() === n;
+  return ownsTool(n);
 }
 
 // Debug: audit every registry mesh for invisible / degenerate geometry.
@@ -3470,6 +3481,18 @@ ITEMS.pickaxe = { id: "pickaxe", name: "Pickaxe", category: "tool", rarity: "too
                   desc: "A miner's pick. Break boulders into stone.", model: () => pickaxeMesh(), tint: [1,1,1] };
 ITEMS.bucket = { id: "bucket", name: "Bucket", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
                  desc: "A tin pail. Fill it at the water, scoop up small creatures, and pour it into a pond.", model: () => bucketItemMesh(), tint: [1,1,1] };
+// §13.2 one Tool Kit replaces the three tool slots; Auto picks the right tool as you aim.
+ITEMS.toolkit = { id: "toolkit", name: "Tool Kit", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
+                  desc: "Shovel, axe and pickaxe in one. Auto mode picks the right one as you aim; press its slot again (or middle-click) to lock Shovel, Axe or Pickaxe.", model: () => shovelMesh(), tint: [1,1,1] };
+const TOOLKIT_MODES = ["auto", "shovel", "axe", "pickaxe"];
+const toolkit = { mode: "auto", tool: "shovel" };   // tool = current effective tool in auto mode
+// §13.2 work lock: after hitting an entity, keep acting on it (and keep its tool) even if aim drifts
+let workLock = null;   // { obj, tool, until, x, z }
+const WORK_LOCK_TIME = 1.5;
+function workLockActive() { return !!(workLock && clock.t < workLock.until && workLock.obj && !workLock.obj.gone); }
+function cycleToolkit() { const i = TOOLKIT_MODES.indexOf(toolkit.mode); toolkit.mode = TOOLKIT_MODES[(i+1) % TOOLKIT_MODES.length];
+  renderHotbar(); const lbl = toolkit.mode === "auto" ? "Auto" : toolkit.mode[0].toUpperCase()+toolkit.mode.slice(1);
+  showCard("Tool Kit: " + lbl, toolkit.mode === "auto" ? "Picks the right tool as you aim." : "Locked to the " + toolkit.mode + "."); }
 // materials & seeds (Phase 6; building comes later)
 digItem("log", "Log", "material", "common", "A length of trunk, fresh-cut.", () => logMesh(), [0.5,0.4,0.28]);
 digItem("stone", "Stone", "material", "common", "A heavy chunk of rock. Place it to build; only a pickaxe removes placed stone.", () => stoneMesh(), [0.52,0.5,0.47]);
@@ -3532,8 +3555,14 @@ const Inv = {
     this.emit();
   },
 };
-function selectedTool() { const c = Inv.hotbar[Inv.selected]; return c ? c.id : null; }
-function selectHotbar(i) { if (i < 0 || i >= HOTBAR_SLOTS) return; Inv.selected = i; renderHotbar(); }
+function selectedItem() { const c = Inv.hotbar[Inv.selected]; return c ? c.id : null; }   // raw belt item id
+// §13.2 the effective tool: the Tool Kit resolves to shovel/axe/pickaxe (by aim in Auto, or the locked mode)
+function selectedTool() { const c = Inv.hotbar[Inv.selected]; if (!c) return null;
+  if (c.id === "toolkit") return toolkit.mode === "auto" ? toolkit.tool : toolkit.mode;
+  return c.id; }
+function selectHotbar(i) { if (i < 0 || i >= HOTBAR_SLOTS) return;
+  if (i === Inv.selected && selectedItem() === "toolkit") { cycleToolkit(); return; }   // re-press cycles the mode
+  Inv.selected = i; renderHotbar(); }
 
 /* ---- inventory stack operations (drag / split / drop) ---- */
 function invMove(from, to) {
@@ -3562,7 +3591,7 @@ function invDrop(idx, one) {
 
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
-  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger,
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode,
     bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, caught: c.caught })) } })); } catch (e) {}
 }
 function loadState() {
@@ -3573,6 +3602,7 @@ function loadState() {
       Inv.selected = Math.min(HOTBAR_SLOTS - 1, s.sel || 0); (s.disc || []).forEach((d) => discovered.add(d));
       starsRescued = s.rescued || 0;
       if (typeof s.hunger === "number") hunger = s.hunger;
+      if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
       if (s.bucket) { bucket.water = !!s.bucket.water; bucket.creatures = Array.isArray(s.bucket.creatures) ? s.bucket.creatures : []; }
     }
   } catch (e) {}
@@ -3591,10 +3621,18 @@ let autoSwitch = true;
 try { if (localStorage.getItem("bc_autoswitch") === "0") autoSwitch = false; } catch (e) {}
 function saveAutoSwitch() { try { localStorage.setItem("bc_autoswitch", autoSwitch ? "1" : "0"); } catch (e) {} }
 const TOOLS_FOR_KIND = { tree: ["axe"], fallentree: ["axe"], stump: ["axe", "shovel"], rock: ["pickaxe"] };
-function autoSwitchTo(id) {                 // select the belt slot holding `id`, with a brief swap highlight
+function autoSwitchTo(id) {                 // select the belt slot holding `id` (or set the Tool Kit to it)
   if (selectedTool() === id) return true;
-  const i = Inv.hotbar.findIndex((s) => s && s.id === id);
-  if (i < 0) return false;
+  let i = Inv.hotbar.findIndex((s) => s && s.id === id);
+  if (i < 0) {                             // §13.2 no separate tool → use the Tool Kit if present
+    const tk = Inv.hotbar.findIndex((s) => s && s.id === "toolkit");
+    if (tk >= 0 && (id === "shovel" || id === "axe" || id === "pickaxe")) {
+      Inv.selected = tk; toolkit.tool = id; if (toolkit.mode !== "auto") toolkit.mode = id;   // honour a lock by matching it
+      renderHotbar(); const el = document.querySelector(`#hotbar .hslot[data-h="${tk}"]`); if (el) { el.classList.add("swap"); setTimeout(() => el.classList.remove("swap"), 260); }
+      return true;
+    }
+    return false;
+  }
   Inv.selected = i; renderHotbar();
   const el = document.querySelector(`#hotbar .hslot[data-h="${i}"]`);
   if (el) { el.classList.add("swap"); setTimeout(() => el.classList.remove("swap"), 260); }
@@ -3608,14 +3646,14 @@ function reachForTool(t) {
   const opts = TOOLS_FOR_KIND[t.kind];
   if (!opts) return "pass";
   if (opts.includes(selectedTool())) return "ok";
-  const owned = opts.find((id) => Inv.hotbarHasId(id));
+  const owned = opts.find((id) => ownsTool(id));
   if (owned) { if (autoSwitch) { autoSwitchTo(owned); return "ok"; } return "pass"; }
   failStrike(opts[0] === "pickaxe", t.x, surfaceAt(t.x, t.z).h + 0.4, t.z);   // can't: no such tool on the belt
   return "fail";
 }
 // A failed chop/mine on diggable ground becomes a shovel dig when one is owned (§11.3).
 function groundAutoDig(pt) {
-  if (!autoSwitch || surfaceKind(pt[0], pt[1]) === "rock" || !Inv.hotbarHasId("shovel")) return false;
+  if (!autoSwitch || surfaceKind(pt[0], pt[1]) === "rock" || !ownsTool("shovel")) return false;
   autoSwitchTo("shovel"); digAt(pt[0], pt[1]); return true;
 }
 function toggleAutoPickup() { autoPickup = !autoPickup; saveAutoPick(); showCard("Auto-pickup " + (autoPickup ? "on" : "off"), "Loose items within reach collect themselves. Toggle with P."); }
@@ -3747,14 +3785,22 @@ function applyBagTexture() {
 function renderHotbar() {
   const el = document.getElementById("hotbar");
   el.innerHTML = Inv.hotbar.map((c, i) => {
-    const it = c ? ITEMS[c.id] : null, ic = it && it.icon ? `<img src="${it.icon}">` : "";
-    const shim = it && (it.rarity === "uncommon" || it.rarity === "rare" || it.rarity === "legendary") ? " shimmer" : "";
-    return `<div class="hslot${i === Inv.selected ? " sel" : ""}${shim}" data-h="${i}">${ic}${c && c.qty > 1 ? `<span>${c.qty}</span>` : ""}<b>${i + 1}</b></div>`;
+    let it = c ? ITEMS[c.id] : null, mark = "";
+    if (c && c.id === "toolkit") {   // §13.2 show the active tool's icon + a mode mark
+      const active = toolkit.mode === "auto" ? toolkit.tool : toolkit.mode;
+      it = ITEMS[active] || it;
+      mark = `<i class="tkmode">${toolkit.mode === "auto" ? "A" : toolkit.mode[0].toUpperCase()}</i>`;
+    }
+    const ic = it && it.icon ? `<img src="${it.icon}">` : "";
+    const shim = c && ITEMS[c.id] && (ITEMS[c.id].rarity === "uncommon" || ITEMS[c.id].rarity === "rare" || ITEMS[c.id].rarity === "legendary") ? " shimmer" : "";
+    return `<div class="hslot${i === Inv.selected ? " sel" : ""}${shim}" data-h="${i}">${ic}${mark}${c && c.qty > 1 ? `<span>${c.qty}</span>` : ""}<b>${i + 1}</b></div>`;
   }).join("");
   el.querySelectorAll(".hslot").forEach((s) => {
     const pick = (e) => { e.preventDefault(); e.stopPropagation(); selectHotbar(+s.dataset.h); };
     s.onclick = pick;
     s.addEventListener("touchstart", pick, { passive: false });   // mobile: tap a loop to switch tool
+    s.addEventListener("auxclick", (e) => { if (e.button === 1) { e.preventDefault();   // §13.2 middle-click cycles the Tool Kit
+      const c = Inv.hotbar[+s.dataset.h]; if (c && c.id === "toolkit") { Inv.selected = +s.dataset.h; cycleToolkit(); } } });
   });
 }
 function slotHTML(cell, idx, hk) {
@@ -6442,10 +6488,11 @@ const fsTri = buildFsTri();
 buildIcons();
 buildPanels();
 loadState();
-if (!Inv.hotbarHasId("shovel")) Inv.hotbar[0] = { id: "shovel", qty: 1 };   // slots 1-4: shovel, axe, pickaxe, bucket
-if (!Inv.hotbarHasId("axe")) Inv.hotbar[1] = { id: "axe", qty: 1 };
-if (!Inv.hotbarHasId("pickaxe")) Inv.hotbar[2] = { id: "pickaxe", qty: 1 };
-if (!Inv.hotbarHasId("bucket")) Inv.hotbar[3] = { id: "bucket", qty: 1 };
+// §13.2 migrate old saves: fold any separate shovel/axe/pickaxe belt slots into one Tool Kit
+for (let i = 0; i < Inv.hotbar.length; i++) { const s = Inv.hotbar[i]; if (s && (s.id === "shovel" || s.id === "axe" || s.id === "pickaxe")) Inv.hotbar[i] = null; }
+for (let i = 0; i < Inv.main.length; i++) { const s = Inv.main[i]; if (s && (s.id === "shovel" || s.id === "axe" || s.id === "pickaxe")) Inv.main[i] = null; }
+if (!Inv.hotbarHasId("toolkit")) Inv.hotbar[0] = { id: "toolkit", qty: 1 };   // slots: tool kit, bucket
+if (!Inv.hotbarHasId("bucket")) Inv.hotbar[1] = { id: "bucket", qty: 1 };
 renderHotbar();
 syncDebugPanel();
 seedDigSpots();
@@ -6822,6 +6869,11 @@ function frame(now) {
   if (mode === "walk") {
     curTarget = targetAlongRay(rayFromNDC(0, 0), curTarget);
     const info = aimInfo();
+    // §13.2 Tool Kit Auto: pick the right tool from what we're aiming at, before any click
+    if (selectedItem() === "toolkit" && toolkit.mode === "auto" && !workLockActive()) {
+      const need = info && (info.need === "axe" || info.need === "pickaxe" || info.need === "shovel") ? info.need : null;
+      if (need && need !== toolkit.tool) { toolkit.tool = need; renderHotbar(); }
+    }
     if (info) {
       const dim = !aimAffordable(info);
       crossEl.className = "ring" + (dim ? " dim" : "");
