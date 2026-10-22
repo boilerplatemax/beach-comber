@@ -194,6 +194,14 @@
     box-shadow: 0 8px 30px rgba(0,0,0,.6), inset 0 0 40px rgba(40,24,10,.5);
     background-color: #7a5a38; background-size: cover;
     clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); }
+  /* §12C storage box stash (reuses satchel slot styling) */
+  #stashpanel { position: fixed; z-index: 13; display: none; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    width: 380px; max-width: 94vw; max-height: 88vh; overflow-y: auto; padding: 18px 20px 16px; color: #f3e9d6;
+    background-color: #6a4e30; box-shadow: 0 8px 30px rgba(0,0,0,.6), inset 0 0 40px rgba(40,24,10,.5);
+    clip-path: polygon(16px 0,calc(100% - 16px) 0,100% 16px,100% calc(100% - 16px),calc(100% - 16px) 100%,16px 100%,0 calc(100% - 16px),0 16px); }
+  #stashpanel .ihead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  #stashpanel h2 { font-size: 19px; margin: 0; color: #fbeccd; }
+  #stashpanel .islot { cursor: pointer; }
   #invpanel .ihead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
   #invpanel h2 { font-size: 19px; margin: 0; color: #fbeccd; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
   #invpanel .ihead button { font-size: 12px; padding: 4px 10px; }
@@ -249,6 +257,11 @@
   #debugpanel label { display: block; margin: 10px 0; font-size: 12px; opacity: .8; }
   #debugpanel input[type=range] { width: 100%; }
   .dbgspd.on { background: #2b6f78; border-color: #3f9aa5; }
+  /* §12C pry-open timing mini-game */
+  #pryoverlay { position: fixed; left: 50%; bottom: 20%; transform: translateX(-50%); z-index: 9; display: none;
+    flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
+  #prycv { filter: drop-shadow(0 4px 12px rgba(0,0,0,.5)); }
+  #pryhint { font-size: 13px; letter-spacing: .04em; color: var(--ink); text-shadow: 0 1px 2px var(--ink-shadow); opacity: .9; }
   /* §11.7 close-up inspect overlay */
   #inspectview { position: fixed; inset: 0; z-index: 25; display: none; align-items: center; justify-content: center;
     background: rgba(6,10,13,.72); backdrop-filter: blur(2px); }
@@ -309,6 +322,8 @@
   </div>
 </div>
 <div id="settingspanel"></div>
+<div id="pryoverlay"><canvas id="prycv" width="260" height="190"></canvas><div id="pryhint">Shovel the latch — strike the glowing arc</div></div>
+<div id="stashpanel"></div>
 
 <div id="hud"></div>
 <canvas id="tidecurve" width="150" height="46"></canvas>
@@ -1839,6 +1854,10 @@ let mobileSprint = false;        // mobile "Run" toggle writes here
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (e.code === "Escape" && typeof inspect !== "undefined" && inspect.open) { closeInspect(); return; }   // close the close-up first
+  if (typeof pry !== "undefined" && pry) {                                   // §12C mini-game captures space / esc
+    if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); pryStrike(); return; }
+    if (e.code === "Escape") { cancelPry(); return; }
+  }
   if (e.code === "KeyG") ditherOn = !ditherOn;
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE") interact();                  // pick up / inspect
@@ -2077,7 +2096,7 @@ let chewT = 0;
 
 /* ---- the interaction target, independent of the equipped tool (§11.2 / §11.3) ---- */
 // Which tool performs the primary action on each target kind.
-const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", goat: "hand", salt: "hand", creature: "hand", nest: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
+const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", goat: "hand", salt: "hand", creature: "hand", nest: "hand", chest: "hand", openchest: "hand", storagebox: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
 function aimInfo() {
   if (mode !== "walk") return null;
   if (curTarget) return { kind: curTarget.kind, obj: curTarget.obj, x: curTarget.x, z: curTarget.z, need: TOOL_FOR_KIND[curTarget.kind] || "hand" };
@@ -2954,6 +2973,33 @@ function coinMesh() { return discMesh(0.04,0.4,10,0.03,[0.7,0.6,0.32]); }
 function mergeMesh(m, n) { for (let i = 0; i < n.pos.length; i++) { m.pos.push(n.pos[i]); m.col.push(n.col[i]); } }
 function bellMesh() { const m = Mesh(); mCyl(m,0,0.8,0.5,0.25,8,[0.42,0.55,0.4]); mergeMesh(m, discMesh(0.8,0.25,8,0.05,[0.42,0.55,0.4])); mBox(m,0,0.95,0,0.1,0.15,0.1,[0.42,0.55,0.4]); mCyl(m,-0.2,0.1,0.08,0.08,5,[0.3,0.4,0.3]); return m; }
 function tinMesh() { const m = Mesh(); mCyl(m,0,0.5,0.5,0.5,10,[0.6,0.55,0.48]); mergeMesh(m, discMesh(0.5,0.5,10,0.03,[0.65,0.6,0.52])); return m; }
+// §12C treasure loot + chest meshes
+function jewelryMesh() { const m = Mesh(); const gold=[0.82,0.68,0.26], gem=[0.3,0.65,0.7];
+  for (let i=0;i<8;i++){ const a=i/8*6.283; mBox(m, Math.cos(a)*0.28, 0.04, Math.sin(a)*0.28, 0.06,0.05,0.06, gold); }
+  mBox(m,0,0.12,0.28,0.08,0.08,0.08, gem); return m; }
+function porcelainMesh() { const m = Mesh(); const w=[0.92,0.9,0.86], bl=[0.3,0.4,0.7];
+  mCyl(m,0,0.1,0.34,0.4,10,w); mCyl(m,0.1,0.42,0.4,0.3,10,w); mCyl(m,0.42,0.5,0.3,0.34,10,bl); return m; }
+function compassMesh() { const m = Mesh(); const br=[0.7,0.6,0.3], fc=[0.88,0.86,0.8];
+  mCyl(m,0,0.1,0.42,0.42,12,br); mergeMesh(m, discMesh(0.11,0.36,12,0,fc)); mBox(m,0,0.13,0,0.22,0.02,0.05,[0.7,0.2,0.2]); return m; }
+function loreMesh() { const m = Mesh(); const pa=[0.82,0.74,0.56]; mCyl(m,-0.4,0.4,0.12,0.12,8,pa); mCyl(m,-0.42,0.42,0.14,0.14,8,[0.6,0.5,0.35]); return m; }
+function keyMesh() { const m = Mesh(); const br=[0.72,0.6,0.28];
+  mCyl(m,-0.5,0.3,0.05,0.05,6,br); for (let i=0;i<6;i++){ const a=i/6*6.283; mBox(m,Math.cos(a)*0.14,0.42,Math.sin(a)*0.14,0.05,0.05,0.05,br); }
+  mBox(m,0.06,-0.5,0,0.1,0.04,0.05,br); mBox(m,0.1,-0.42,0,0.06,0.04,0.05,br); return m; }
+function mapPieceMesh() { const m = Mesh(); const pa=[0.82,0.73,0.54], e=[0.66,0.56,0.4];
+  mBox(m,0,0.02,0,0.34,0.02,0.26,pa); mBox(m,0.3,0.02,0,0.06,0.025,0.26,e); mBox(m,-0.3,0.02,0,0.06,0.025,0.26,e); return m; }
+function shardMesh() { const m = Mesh(); const w=[0.9,0.88,0.84]; mTri(m,[-0.2,0,-0.1],[0.25,0.02,0.05],[0,0.03,0.22],w); mTri(m,[-0.2,0,-0.1],[0,0.03,0.22],[-0.25,0.01,0.12],w); return m; }
+function chestMesh(open, barnacled) {
+  const m = Mesh(); const wood=[0.42,0.3,0.18], wood2=[0.5,0.36,0.22], iron=[0.3,0.31,0.34], gold=[0.74,0.6,0.28];
+  mBox(m,0,0.26,0,0.5,0.26,0.34, wood);                      // body
+  for (const sx of [-0.52,0.52]) mBox(m,sx,0.26,0,0.03,0.28,0.36, iron);   // iron bands
+  mBox(m,0,0.26,0,0.52,0.05,0.36, iron);                     // mid band
+  const lidY = open ? 0.9 : 0.56, lidTip = open ? 0.75 : 0.72;
+  mBox(m,0, lidY, open?-0.2:0, 0.5,0.05,0.34, wood2);        // lid slab (tilts back when open)
+  mBox(m,0, lidTip, 0.34, 0.12,0.08,0.05, gold);             // lock
+  if (barnacled) for (let i=0;i<10;i++){ const a=i*2.3, s=0.5+0.4*((i*7)%3);
+    mBox(m, Math.cos(a)*0.48, 0.1+0.4*((i*5)%3)/3, Math.sin(a)*0.33, 0.05*s,0.05*s,0.05*s, [0.78,0.76,0.7]); }
+  return m;
+}
 // Phase 6 tools (first-person; same orientation as the shovel: head at the bottom).
 function axeMesh() { const m = Mesh(); mBox(m,0,0,0,0.035,0.62,0.035,[0.45,0.33,0.22]);   // shaft
   const steel=[0.62,0.64,0.68]; mBox(m,0,-0.6,0,0.05,0.12,0.05,[0.4,0.4,0.43]);            // socket
@@ -3102,6 +3148,12 @@ const FINDS = {
   mussel:   { mesh: () => musselMesh(),              base: 0.45,max: 140, label: "Mussel", desc: "A blue-black shell, clustered on the reef.", rare: 0 },
   limpet:   { mesh: () => limpetMesh(),              base: 0.4, max: 120, label: "Limpet", desc: "A little conical cap, clamped to the rock.", rare: 0 },
   wormcast: { mesh: () => wormcastMesh(),            base: 0.4, max: 100, label: "Worm Cast", desc: "A coiled squiggle of mud — a lugworm lives below.", rare: 0 },
+  // --- §12C buried-treasure loot ---
+  jewelry:  { mesh: () => jewelryMesh(),             base: 0.45,max: 30,  label: "Gold Bracelet", desc: "Heavy gold set with a sea-green stone. Someone treasured this.", rare: 2 },
+  porcelain:{ mesh: () => porcelainMesh(),           base: 0.5, max: 30,  label: "Porcelain Cup", desc: "Fine blue-and-white china, somehow unbroken. Fragile.", rare: 2 },
+  compass:  { mesh: () => compassMesh(),             base: 0.5, max: 20,  label: "Brass Compass", desc: "Still points north, after all this time.", rare: 2 },
+  lorenote: { mesh: () => loreMesh(),                base: 0.45,max: 40,  label: "Folded Note", desc: "Ink gone brown. A few lines survive — a hook for another day.", rare: 2 },
+  shard:    { mesh: () => shardMesh(),               base: 0.4, max: 99,  label: "Shards", desc: "Broken pieces of something that was whole. A smash gone wrong.", rare: 0 },
   pickleweed:{ mesh: () => pickleweedMesh(),         base: 0.6, max: 100, label: "Pickleweed", desc: "Crisp, salty marsh samphire.", rare: 0 },
   kelp:     { mesh: () => kelpMesh(),                base: 1.0, max: 80,  label: "Bull Kelp", desc: "A long rubbery stipe with a float at its head.", rare: 1 },
   seabean:  { mesh: () => seabeanMesh(),             base: 0.4, max: 70,  label: "Sea Bean", desc: "A drift seed carried here from a far-off shore.", rare: 2 },
@@ -3598,25 +3650,30 @@ function buildIcons() {
   gl.bindFramebuffer(gl.FRAMEBUFFER, iconFBO);
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, iconTex, 0);
   gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, iconRB);
-  const px = new Uint8Array(64 * 64 * 4);
-  const proj = M4.perspective(0.6, 1, 0.1, 50), view = M4.lookAt([2.2, 1.9, 2.4], [0, 0.05, 0], [0, 1, 0]);
-  for (const k in ITEMS) {
-    const it = ITEMS[k], mesh = it.model();
-    let maxr = 0.001; for (let i = 0; i < mesh.pos.length; i += 3) { const r = Math.hypot(mesh.pos[i], mesh.pos[i+1], mesh.pos[i+2]); if (r > maxr) maxr = r; }
-    const dyn = makeDynamic(mesh, 1), sc = 1.4 / maxr;
-    gl.viewport(0, 0, 64, 64); gl.clearColor(0, 0, 0, 0); gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-    gl.useProgram(propProg);
-    gl.uniformMatrix4fv(propU.uProj, false, proj); gl.uniformMatrix4fv(propU.uView, false, view);
-    gl.uniform3fv(propU.uSunDir, [0.5, 0.8, 0.4]); gl.uniform3fv(propU.uCamPos, [2.2, 1.9, 2.4]);
-    gl.uniform3fv(propU.uZenith, [1,1,1]); gl.uniform3fv(propU.uHorizon, [1,1,1]); gl.uniform3fv(propU.uWarm, [1,1,0.95]);
-    gl.uniform1f(propU.uFogDensity, 0); gl.uniform1f(propU.uFogNear, 1e6);
-    dyn.draw(new Float32Array([0, -0.1, 0, sc, 0.7, 0, 0, it.tint[0], it.tint[1], it.tint[2]]), 1);
-    gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, px);
-    const img = iconCtx.createImageData(64, 64);
-    for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) { const s = ((63 - y) * 64 + x) * 4, d = (y * 64 + x) * 4; img.data[d]=px[s]; img.data[d+1]=px[s+1]; img.data[d+2]=px[s+2]; img.data[d+3]=px[s+3]; }
-    iconCtx.putImageData(img, 0, 0); it.icon = iconCanvas.toDataURL();
-  }
+  _iconPx = new Uint8Array(64 * 64 * 4);
+  _iconProj = M4.perspective(0.6, 1, 0.1, 50); _iconView = M4.lookAt([2.2, 1.9, 2.4], [0, 0.05, 0], [0, 1, 0]);
+  for (const k in ITEMS) buildOneIcon(ITEMS[k]);
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+}
+let _iconPx, _iconProj, _iconView;
+function buildOneIcon(it) {               // §12C render one item model → its icon (also for items added after init)
+  if (!iconFBO) return;
+  const mesh = it.model();
+  let maxr = 0.001; for (let i = 0; i < mesh.pos.length; i += 3) { const r = Math.hypot(mesh.pos[i], mesh.pos[i+1], mesh.pos[i+2]); if (r > maxr) maxr = r; }
+  const dyn = makeDynamic(mesh, 1), sc = 1.4 / maxr;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, iconFBO);
+  gl.viewport(0, 0, 64, 64); gl.clearColor(0, 0, 0, 0); gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+  gl.useProgram(propProg);
+  gl.uniformMatrix4fv(propU.uProj, false, _iconProj); gl.uniformMatrix4fv(propU.uView, false, _iconView);
+  gl.uniform3fv(propU.uSunDir, [0.5, 0.8, 0.4]); gl.uniform3fv(propU.uCamPos, [2.2, 1.9, 2.4]);
+  gl.uniform3fv(propU.uZenith, [1,1,1]); gl.uniform3fv(propU.uHorizon, [1,1,1]); gl.uniform3fv(propU.uWarm, [1,1,0.95]);
+  gl.uniform1f(propU.uFogDensity, 0); gl.uniform1f(propU.uFogNear, 1e6);
+  dyn.draw(new Float32Array([0, -0.1, 0, sc, 0.7, 0, 0, it.tint[0], it.tint[1], it.tint[2]]), 1);
+  gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, _iconPx);
+  const img = iconCtx.createImageData(64, 64);
+  for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) { const s = ((63 - y) * 64 + x) * 4, d = (y * 64 + x) * 4; img.data[d]=_iconPx[s]; img.data[d+1]=_iconPx[s+1]; img.data[d+2]=_iconPx[s+2]; img.data[d+3]=_iconPx[s+3]; }
+  iconCtx.putImageData(img, 0, 0); it.icon = iconCanvas.toDataURL();
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 }
 
@@ -3840,7 +3897,7 @@ function DBG_SET(k, v) { switch (k) {
 /* ---- drop an item back onto the ground near the player ---- */
 
 // E interacts with whatever the crosshair is on (same target as a click).
-function interact() { interactTarget(curTarget || targetAlongRay(rayFromNDC(0, 0))); }
+function interact() { if (pry) { pryStrike(); return; } interactTarget(curTarget || targetAlongRay(rayFromNDC(0, 0))); }
 let cardTimer = 0;
 function showCard(name, desc) {
   const el = document.getElementById("card");
@@ -3848,6 +3905,16 @@ function showCard(name, desc) {
   el.style.display = "block"; cardTimer = 3.5;
 }
 
+function treasureJournal() {   // §12C a page of chests found and what they held
+  if (!chests.length) return `<div class="jitem unk">??? </div>`;
+  return chests.map((c, i) => {
+    const mapN = Inv.count("map_" + c.id), key = Inv.has("key_" + c.id);
+    if (c.opened) { const items = c.log && c.log.items && c.log.items.length ? c.log.items.join(", ") : "empty";
+      return `<div class="jitem">Chest ${i+1}${c.intertidal?" (tidal)":""}<br><span style="font-size:11px;opacity:.75">${items}</span></div>`; }
+    const hint = mapN >= 3 ? "X marks the spot" : mapN >= 1 ? `${mapN}/3 map pieces` : c.exposed ? "dug out — open it" : "rumoured";
+    return `<div class="jitem unk">Chest ${i+1}${c.intertidal?" (tidal)":""}<br><span style="font-size:11px;letter-spacing:0">${hint}${key?" · key found":""}</span></div>`;
+  }).join("");
+}
 function toggleJournal() {
   const j = document.getElementById("journal");
   if (j.style.display === "block") { j.style.display = "none"; return; }
@@ -3866,6 +3933,7 @@ function toggleJournal() {
     <h3>Finds</h3><div class="jgrid">${row(FINDS, "f_")}</div>
     <h3>Unearthed</h3><div class="jgrid">${digRow}</div>
     <h3>Coast &amp; tide</h3><div class="jhint">Sea stars rescued: ${starsRescued}${carryingStars?`  ·  carrying ${carryingStars}`:""}<br>Last tide: ${EVENT_LABEL[currentEvent]||"—"}  ·  next: ${EVENT_LABEL[nextEvent]||"—"}</div>
+    <h3>Buried treasure</h3><div class="jgrid">${treasureJournal()}</div>
     <div class="jhint">Tab to close</div>`;
   j.style.display = "block";
 }
@@ -4046,6 +4114,10 @@ function targetAlongRay(r, sticky) {
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
   for (const nst of gullNests) if (nst.eggs > 0 && nst.abandonedUntil <= clock.t) sphere(nst, "nest", nst.x, nst.z, 0.2, 0.75);   // §12B
+  for (const ch of chests) { if (ch.carried) continue;                                                                          // §12C
+    if (ch.opened && ch.looted) sphere(ch, "openchest", ch.x, ch.z, 0.3, 0.9);                                                   // carry an emptied chest
+    else if (ch.exposed) sphere(ch, "chest", ch.x, ch.z, 0.3, 0.9); }
+  for (let i = 0; i < storageBoxes.length; i++) sphere(storageBoxes[i], "storagebox", storageBoxes[i].x, storageBoxes[i].z, 0.3, 0.8);
 
   // stickiness: keep the locked target unless another is clearly closer
   if (stick && (!best || best.obj !== stick.obj) && (!best || bestT > stickT - STICK_MARGIN)) return stick;
@@ -4066,6 +4138,9 @@ function useToolOnTarget(t) {
     case "goat": offerSaltTo(t.obj); return true;
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "nest": takeEgg(t.obj); return true;
+    case "chest": openChestAction(t.obj); return true;
+    case "openchest": pickUpChest(t.obj); return true;
+    case "storagebox": openStash(storageBoxes.indexOf(t.obj)); return true;
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
     case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
     case "rock": if (tool === "pickaxe") { mineObj(t.obj); return true; } return false;
@@ -4077,6 +4152,7 @@ function useToolOnTarget(t) {
 function interactTarget(t) { if (!t) return; if (reachForTool(t) === "fail") return; useToolOnTarget(t); }   // the bare interact key (E)
 function clickAt(ndcx, ndcy) {
   if (mode !== "walk") return;
+  if (pry) { pryStrike(); return; }                 // §12C a click is a pry strike while the mini-game is up
   const r = rayFromNDC(ndcx, ndcy);
   const tgt = (ndcx === 0 && ndcy === 0) ? (curTarget || targetAlongRay(r, curTarget)) : targetAlongRay(r);
   if (tgt && reachForTool(tgt) === "fail") return;   // §11.3 reach for the right tool (or react if we own none)
@@ -4093,6 +4169,7 @@ function clickAt(ndcx, ndcy) {
   else if (MAT_ITEM[tool] !== undefined) placeMaterial(pt[0], pt[1]);
   else if (SEED_TREE[tool]) plantAt(pt[0], pt[1]);
   else if (tool === "leaves") useLeavesAt(pt[0], pt[1]);
+  else if (tool === "chestbox") placeStorageBox(pt[0], pt[1]);   // §12C place an emptied chest as storage
 }
 function interactWith(e) {
   if (e.kind === "find") {
@@ -4102,6 +4179,7 @@ function interactWith(e) {
     discovered.add("f_" + e.t);
     notify(e.t, 1, first);
     if (SEED_TREE[e.t] || e.t === "salt" || e.t === "leaves") Inv.autoHotbar(e.t);   // handy items go to the hotbar
+    if (e.t === "bottle" && !e.drop && typeof bottleMapChance === "function") bottleMapChance();   // §12C a bottle may hold a map piece
     if (e.drop) { const di = worldDrops.indexOf(e.drop); if (di >= 0) worldDrops.splice(di, 1); saveDrops(); }  // picked a dropped item back up
     const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
   } else if (e.kind === "creature" && e.stranded) {
@@ -4563,6 +4641,7 @@ function digAt(x, z) {
   if (wasAbove && waterSurfaceAt(x, z) >= surfaceAt(x, z).h - 0.02) spawnInflow(x, z);   // just hit the water table
   revealSpot(x, z, false);
   if (typeof lureGulls === "function") lureGulls(x, z);      // §12B a fresh hole draws the gulls in
+  if (typeof digTreasure === "function") digTreasure(x, z);  // §12C expose chests / surface buried keys & maps
 }
 /* ---- placing materials: raise the ground + paint its surface (§A) ---- */
 const MAT_COL_JS = [[0,0,0], [0.44,0.53,0.31], [0.40,0.30,0.20], [0.86,0.78,0.59], [0.56,0.55,0.51], [0.47,0.44,0.41], [0.34,0.28,0.20]];
@@ -4832,7 +4911,7 @@ function initInspectDOM() {
 }
 function openInspect(subject, kind) {
   if (!inspect.el) initInspectDOM();
-  inspect.open = true; inspect.kind = kind; inspect.subject = subject; inspect._sim = null; inspect.spin = 0;
+  inspect.open = true; inspect.kind = kind; inspect.subject = subject; inspect._sim = null; inspect.spin = 0; inspect._mapDrawn = false;
   inspect.yaw = 0.7; inspect.pitch = kind === "item" ? 0.3 : 0.5; inspect.dist = kind === "item" ? 2.7 : 2.5;
   if (document.pointerLockElement === canvas) document.exitPointerLock();
   renderInspectInfo(); inspect.el.style.display = "flex";
@@ -4907,6 +4986,12 @@ function drawInspectItem() {
 function updateInspectView() {
   if (!inspect.open) return;
   const el = document.getElementById("inspectcanvas"); if (!inspectCtx) inspectCtx = el.getContext("2d");
+  // §12C a map piece shows the procedural parchment chart instead of a 3D object
+  if (inspect.kind === "item" && ITEMS[inspect.subject] && ITEMS[inspect.subject].isMap) {
+    if (!inspect._mapDrawn) { const ch = chests.find(c => c.id === ITEMS[inspect.subject].chest);
+      if (ch) drawTreasureMap(inspectCtx, ch, Inv.count(inspect.subject)); inspect._mapDrawn = true; }
+    return;
+  }
   const now = performance.now()*0.001, dt = Math.min(0.05, now - (inspect.t || now)); inspect.t = now;
   const cy = Math.cos(inspect.yaw), sy = Math.sin(inspect.yaw), cp = Math.cos(inspect.pitch), sp = Math.sin(inspect.pitch);
   const tgt = [0, inspect.kind === "item" ? 0 : -0.05, 0];
@@ -5766,6 +5851,345 @@ function loadNests() {
       if (n) { n.eggs = r[2]; n.abandonedUntil = r[3] > 0 ? clock.t + r[3] : -1e9; n.replenishAt = r[4] > 0 ? clock.t + r[4] : 0; } } } catch (e) {}
 }
 
+/* ===================================================================== *
+ * § 12C  BURIED TREASURE — seeded chests with physical tells, three ways
+ *   to open (key / pry mini-game / smash), procedural maps, and tide
+ *   pressure on intertidal chests.
+ * ===================================================================== */
+let chests = [];
+let buriedFinds = [];                 // keys & map pieces buried as dig finds: {x,z,item,got}
+const CHEST_TUNE = { exposePerDig: 0.26, scrapeCost: 0.05, smashNeed: 4, pryNeed: 3, reburyRate: 0.04 };
+const TREASURE_LOOT = [
+  { id:"coin",     min:2, max:6, w:5, fragile:false },
+  { id:"jewelry",  min:1, max:1, w:3, fragile:false },
+  { id:"porcelain",min:1, max:1, w:3, fragile:true  },
+  { id:"bottle",   min:1, max:2, w:3, fragile:true  },
+  { id:"compass",  min:1, max:1, w:2, fragile:false },
+  { id:"lorenote", min:1, max:1, w:2, fragile:false },
+  { id:"agate",    min:1, max:2, w:2, fragile:false },
+];
+const TREASURE_BONUS = ["compass", "jewelry", "agate", "bell", "fossil"];   // key-opening bonus
+const chestDynClosed = makeDynamic(chestMesh(false, false), 8);
+const chestDynOpen   = makeDynamic(chestMesh(true, false), 8);
+const chestDynBarn   = makeDynamic(chestMesh(false, true), 8);
+const tellChainMesh  = makeDynamic((function(){ const m=Mesh(); const ir=[0.32,0.33,0.36]; for(let i=0;i<3;i++) mCyl(m,i*0.12,i*0.12+0.14,0.07,0.07,6,ir); return m; })(), 8);
+const tellPlankMesh  = makeDynamic((function(){ const m=Mesh(); mBox(m,0,0.1,0,0.3,0.04,0.12,[0.5,0.38,0.24]); mBox(m,0.26,0.16,0,0.06,0.1,0.12,[0.46,0.34,0.2]); return m; })(), 8);
+const tellRopeMesh   = makeDynamic((function(){ const m=Mesh(); for(let i=0;i<4;i++){ const a=i*0.9; mCyl(m,Math.sin(a)*0.1,Math.sin(a)*0.1+0.14,0.05,0.05,5,[0.66,0.56,0.36]); } return m; })(), 8);
+const chestRingDyn   = makeDynamic(discMesh(0, 1, 16, 0, [0.30,0.26,0.19]), 8);   // darker-sand ring tell
+
+function wpick(arr) { let tot = 0; for (const a of arr) tot += a.w; let x = rng()*tot; for (const a of arr) { x -= a.w; if (x <= 0) return a; } return arr[0]; }
+function chestLandSpot(intertidal) {
+  for (let k = 0; k < 600; k++) {
+    const a = rng()*6.283, r = HALF*(0.18 + rng()*0.62), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const s = surfaceAt(x, z);
+    if (bigPropBlocking(x, z, 1.5) || nearPOI(x, z, 7) || s.slope > 0.5) continue;
+    if (intertidal) { if (s.h > wetLevel - 0.3 || s.h < wetLevel - TIDE_RANGE*0.5) continue;   // between low & high water
+      return { x, z }; }
+    if (s.h > BEACH_MAX_H + 0.5 && s.h < 24 && !spotUnderwater(x, z)) return { x, z };          // dry sand / dirt inland
+    if (s.h > 1.5 && s.h < BEACH_MAX_H && !spotUnderwater(x, z)) return { x, z };                // dry upper beach
+  }
+  return null;
+}
+function registerChestItems(id) {
+  if (!ITEMS["key_" + id]) {
+    ITEMS["key_" + id] = { id:"key_"+id, name:"Rusted Key", category:"relic", rarity:"rare", stackable:false, maxStack:1,
+      desc:"A heavy iron key, green with age. It fits one buried chest.", model:()=>keyMesh(), tint:[0.72,0.6,0.28] };
+    ITEMS["map_" + id] = { id:"map_"+id, name:"Treasure Map", category:"relic", rarity:"rare", stackable:true, maxStack:3,
+      desc:"Torn chart pieces. Inspect it to read the search area — the more pieces, the tighter the mark.", model:()=>mapPieceMesh(), tint:[0.82,0.73,0.54], isMap:true, chest:id };
+    buildOneIcon(ITEMS["key_" + id]); buildOneIcon(ITEMS["map_" + id]);
+  }
+}
+function seedChests() {
+  chests = []; buriedFinds = [];
+  const N = 2 + (rng()*3|0);                                   // 2–4
+  for (let i = 0; i < N; i++) {
+    const intertidal = rng() < 0.45;
+    const spot = chestLandSpot(intertidal); if (!spot) continue;
+    const id = i;
+    registerChestItems(id);
+    // loot: 3–5 rolls
+    const loot = []; const rolls = 3 + (rng()*3|0);
+    for (let r = 0; r < rolls; r++) { const L = wpick(TREASURE_LOOT); loot.push({ id: L.id, qty: L.min + (rng()*(L.max-L.min+1)|0), fragile: L.fragile }); }
+    // a key buried elsewhere + 3 map pieces as dig finds
+    const keySpot = chestLandSpot(false) || spot;
+    buriedFinds.push({ x: keySpot.x, z: keySpot.z, item: "key_"+id, got: false });
+    for (let p = 0; p < 3; p++) { const ms = chestLandSpot(rng()<0.5); if (ms) buriedFinds.push({ x: ms.x, z: ms.z, item: "map_"+id, got: false }); }
+    chests.push({ id, x: spot.x, z: spot.z, intertidal, expose: 0, exposed: false,
+      barnacles: intertidal ? 2 + (rng()*2|0) : 0, scrapes: 0, smashHits: 0,
+      opened: false, open: 0, looted: false, loot, keyX: keySpot.x, keyZ: keySpot.z,
+      tell: ["chain","plank","rope"][(rng()*3)|0], placed: false });
+  }
+}
+// §12B hook: circling gulls gather over the nearest buried/exposed-but-unopened chest
+function chestGullPoint() {
+  let best = null, bd = 80;
+  for (const c of chests) { if (c.opened) continue; const d = Math.hypot(c.x - player.x, c.z - player.z); if (d < bd) { bd = d; best = { x: c.x, z: c.z, kind: "chest" }; } }
+  return best;
+}
+// digging over a chest exposes it (deeper than a normal find); near a buried key/map, it surfaces
+function digTreasure(x, z) {
+  for (const c of chests) { if (c.opened || c.exposed) continue;
+    if (Math.hypot(c.x - x, c.z - z) < DIG_R*0.8) {
+      if (c.intertidal && waterDepthAt(c.x, c.z) > KNEE) { showCard("Underwater", "Come back at low tide to dig this out."); return; }
+      c.expose = Math.min(1, c.expose + CHEST_TUNE.exposePerDig);
+      if (c.expose >= 1) { c.exposed = true; if (onDig) onDig("clang"); sparkle(c.x, surfaceAt(c.x,c.z).h + 0.6, c.z, [0.9,0.8,0.4], 12);
+        showCard("A chest!", c.barnacles ? "Barnacle-crusted. Scrape it clean with the shovel, then open it." : "Open it with its key, a shovel (pry) or a pickaxe (smash)."); saveChests(); }
+    }
+  }
+  for (const bf of buriedFinds) { if (bf.got) continue;
+    if (Math.hypot(bf.x - x, bf.z - z) < DIG_R*0.7) {
+      const added = Inv.add(bf.item, 1);
+      if (added > 0) { bf.got = true; const it = ITEMS[bf.item];
+        const firstMap = bf.item.startsWith("map_");
+        discovered.add("f_" + (firstMap ? "treasuremap" : "treasurekey"));
+        showCard(it.name, firstMap ? "A torn piece of a treasure map. Inspect it from your satchel." : "An old key. It opens a buried chest somewhere."); if (onDig) onDig("clink"); saveChests(); }
+    }
+  }
+}
+function exposedChestNear(x, z, maxd) { let best=null, bd=maxd; for (const c of chests) { if (!c.exposed || c.opened) continue; const d=Math.hypot(c.x-x,c.z-z); if (d<bd){bd=d;best=c;} } return best; }
+// a collected bottle sometimes holds a torn map piece for a chest you haven't fully charted
+function bottleMapChance() {
+  if (rng() > 0.3) return;
+  const needy = chests.filter(c => !c.opened && Inv.count("map_" + c.id) < 3);
+  if (!needy.length) return;
+  const c = needy[(rng()*needy.length)|0];
+  if (Inv.add("map_" + c.id, 1) > 0) { discovered.add("f_treasuremap"); showCard("A map piece!", "Rolled up inside the bottle — a torn corner of a treasure chart. Inspect it from your satchel."); }
+}
+function openChestAction(c) {
+  if (!c || c.opened) return;
+  const tool = selectedTool();
+  if (c.barnacles > c.scrapes) {
+    if (tool === "shovel") { c.scrapes++; spendStamina(CHEST_TUNE.scrapeCost); if (onDig) onDig("clink"); sparkle(c.x, surfaceAt(c.x,c.z).h+0.5, c.z, [0.8,0.8,0.75], 6);
+      showCard("Scraping…", c.barnacles > c.scrapes ? `${c.barnacles - c.scrapes} more to clear.` : "Clean! Now open it."); }
+    else showCard("Barnacle-crusted", "Scrape it clean with the shovel first.");
+    return;
+  }
+  if (Inv.has("key_" + c.id)) { openChestLoot(c, "key"); return; }
+  if (tool === "shovel") { startPry(c); return; }
+  if (tool === "pickaxe") { smashChest(c); return; }
+  showCard("Locked chest", "Open it with its key, pry it with a shovel, or smash it with a pickaxe.");
+}
+function smashChest(c) {
+  if (!canHeavyAction()) { failStrike(true, c.x, surfaceAt(c.x,c.z).h+0.5, c.z); return; }
+  spendStamina(MINE_COST, true); rootPlayer(); camShake = Math.max(camShake, 0.4); if (onDig) onDig("clang");
+  c.smashHits++; c.open = Math.min(0.8, c.smashHits / CHEST_TUNE.smashNeed * 0.8);
+  sparkle(c.x, surfaceAt(c.x,c.z).h+0.6, c.z, [0.6,0.5,0.35], 8);
+  if (c.smashHits >= CHEST_TUNE.smashNeed) openChestLoot(c, "smash");
+}
+function openChestLoot(c, method) {
+  c.opened = true; c.open = 1;
+  if (method === "key") { Inv.remove("key_" + c.id, 1); }
+  let broke = 0;
+  const got = [];
+  for (const L of c.loot) {
+    if (method === "smash" && L.fragile && Math.random() < 0.5) { const n = Inv.add("shard", L.qty); broke += L.qty; got.push("shards ×" + L.qty); continue; }
+    const added = Inv.add(L.id, L.qty); if (added > 0) got.push((ITEMS[L.id] ? ITEMS[L.id].name : L.id) + (L.qty>1?" ×"+L.qty:""));
+    discovered.add("f_" + L.id);
+  }
+  let bonusTxt = "";
+  if (method === "key") { const bid = TREASURE_BONUS[(rng()*TREASURE_BONUS.length)|0]; if (Inv.add(bid, 1) > 0) { bonusTxt = "  Bonus: " + (ITEMS[bid]?ITEMS[bid].name:bid) + "."; discovered.add("f_"+bid); } }
+  c.looted = true;
+  c.log = { items: got.slice(), method, broke, when: ISLAND_NAME };
+  if (onDig) onDig("clang"); sparkle(c.x, surfaceAt(c.x,c.z).h+0.8, c.z, [1,0.9,0.5], 18);
+  const methodTxt = method === "key" ? "The key turns and the lid swings open." : method === "smash" ? (broke ? `Smashed open — ${broke} item${broke>1?"s":""} shattered.` : "Smashed open.") : "You pry the lid open.";
+  showCard("Treasure!", methodTxt + " " + (got.length ? got.join(", ") + "." : "Empty.") + bonusTxt);
+  discovered.add("chest_" + c.id);
+  saveChests();
+}
+// ---- pry timing mini-game (stamina-ring minimal style) ----
+let pry = null, pryCtx = null;
+function startPry(c) {
+  pry = { c, pos: rng(), dir: rng()<0.5?1:-1, speed: 0.95, hits: 0, need: CHEST_TUNE.pryNeed, cool: 0,
+    sweetC: 0.3 + rng()*0.4, sweetW: 0.16 };
+  const el = document.getElementById("pryoverlay"); el.style.display = "flex";
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+}
+function cancelPry() { pry = null; document.getElementById("pryoverlay").style.display = "none"; }
+function updatePry(dt) {
+  if (!pry) return;
+  if (!pry.c.exposed || pry.c.opened || Math.hypot(pry.c.x-player.x, pry.c.z-player.z) > REACH+3) { cancelPry(); return; }
+  pry.cool = Math.max(0, pry.cool - dt);
+  pry.pos += pry.dir * pry.speed * dt;
+  if (pry.pos > 1) { pry.pos = 1; pry.dir = -1; } if (pry.pos < 0) { pry.pos = 0; pry.dir = 1; }
+  drawPry();
+}
+function pryStrike() {
+  if (!pry || pry.cool > 0) return;
+  pry.cool = 0.22;
+  const hit = Math.abs(pry.pos - pry.sweetC) < pry.sweetW/2;
+  if (hit) {
+    pry.hits++; pry.c.open = Math.min(0.95, pry.hits / pry.need * 0.95);
+    if (onDig) onDig("clink"); sparkle(pry.c.x, surfaceAt(pry.c.x,pry.c.z).h+0.6, pry.c.z, [0.9,0.8,0.5], 6);
+    pry.sweetC = 0.22 + rng()*0.56; pry.speed += 0.16;
+    if (pry.hits >= pry.need) { const c = pry.c; cancelPry(); openChestLoot(c, "pry"); }
+  } else {
+    spendStamina(0.08); if (onDig) onDig("thud"); camShake = Math.max(camShake, 0.22);
+  }
+}
+function drawPry() {
+  const cv = document.getElementById("prycv"); if (!pryCtx) pryCtx = cv.getContext("2d");
+  const c = pryCtx, W = cv.width, H = cv.height, cx = W/2, cy = H*0.62, R = 86;
+  c.clearRect(0,0,W,H);
+  const a0 = Math.PI*1.15, a1 = Math.PI*1.85, span = a1 - a0;
+  c.lineCap = "round";
+  c.strokeStyle = "rgba(255,255,255,.14)"; c.lineWidth = 12; c.beginPath(); c.arc(cx, cy, R, a0, a1); c.stroke();  // track
+  const sA = a0 + span*(pry.sweetC - pry.sweetW/2), sB = a0 + span*(pry.sweetC + pry.sweetW/2);                   // sweet spot
+  c.strokeStyle = "#8fd0a0"; c.lineWidth = 12; c.beginPath(); c.arc(cx, cy, R, sA, sB); c.stroke();
+  c.shadowColor = "rgba(143,208,160,.7)"; c.shadowBlur = 10; c.beginPath(); c.arc(cx, cy, R, sA, sB); c.stroke(); c.shadowBlur = 0;
+  const mA = a0 + span*pry.pos;                                                                                  // marker
+  c.strokeStyle = "#ffe6b0"; c.lineWidth = 4; c.beginPath(); c.arc(cx, cy, R-10, mA-0.02, mA+0.02); c.lineTo(cx+Math.cos(mA)*(R+10), cy+Math.sin(mA)*(R+10)); c.stroke();
+  c.fillStyle = "#ecdfc4"; c.font = "600 15px 'Chakra Petch', sans-serif"; c.textAlign = "center";
+  for (let i=0;i<pry.need;i++){ c.fillStyle = i < pry.hits ? "#8fd0a0" : "rgba(255,255,255,.2)"; c.beginPath(); c.arc(cx - (pry.need-1)*9 + i*18, cy+26, 5, 0, 6.283); c.fill(); }
+}
+function updateChests(dt) {
+  for (const c of chests) {
+    if (c.opened) { c.open += (1 - c.open) * Math.min(1, dt*4); continue; }
+    // intertidal tide pressure: a rising tide floods the hole and slowly reburies the chest
+    if (c.intertidal && c.exposed && waterDepthAt(c.x, c.z) > 0.2) {
+      c.expose = Math.max(0.35, c.expose - CHEST_TUNE.reburyRate * dt);
+      if (c.expose < 1) { c.exposed = false; if (pry && pry.c === c) cancelPry(); }
+    }
+  }
+}
+function drawChests(view) {
+  propUniforms(view);
+  // darker-sand ring tells (buried chests within ~10m)
+  let nr = 0;
+  for (const c of chests) { if (c.exposed || c.opened) continue; const d = Math.hypot(c.x-player.x, c.z-player.z); if (d > 11) continue;
+    const gy = surfaceAt(c.x, c.z).h, o = nr*10;
+    digScratch[o]=c.x;digScratch[o+1]=gy+0.04;digScratch[o+2]=c.z;digScratch[o+3]=1.7;digScratch[o+4]=0;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=1;digScratch[o+8]=1;digScratch[o+9]=1; nr++; }
+  if (nr) chestRingDyn.draw(digScratch, nr);
+  // a physical poke-out tell by type
+  for (const c of chests) { if (c.exposed || c.opened) continue; const d = Math.hypot(c.x-player.x, c.z-player.z); if (d > 11) continue;
+    const gy = surfaceAt(c.x, c.z).h; digScratch.set([c.x+0.25, gy, c.z+0.15, 1, c.id*0.7, 0.2, 0, 1,1,1], 0);
+    (c.tell==="chain"?tellChainMesh:c.tell==="plank"?tellPlankMesh:tellRopeMesh).draw(digScratch, 1); }
+  // chest bodies (emerging / exposed / open)
+  for (const c of chests) { if (c.carried) continue; const d = Math.hypot(c.x-player.x, c.z-player.z); if (d > 130) continue;
+    if (!c.exposed && c.expose <= 0.01) continue;
+    const gy = surfaceAt(c.x, c.z).h, sink = c.exposed ? 0 : (1 - c.expose) * 0.55;
+    const dyn = c.opened ? chestDynOpen : (c.barnacles > c.scrapes ? chestDynBarn : chestDynClosed);
+    digScratch.set([c.x, gy - sink, c.z, 1, 0, 0, 0, 1,1,1], 0); dyn.draw(digScratch, 1); }
+}
+// ---- procedural treasure map (parchment, from the real coastline) ----
+let _mapGrid = null;
+function sampleMapGrid() {
+  if (_mapGrid) return _mapGrid;
+  const G = 56, g = new Float32Array(G*G);
+  for (let j=0;j<G;j++) for (let i=0;i<G;i++){ const x=(i/(G-1)-0.5)*WORLD*0.96, z=(j/(G-1)-0.5)*WORLD*0.96; g[j*G+i]=heightAt(x,z); }
+  _mapGrid = { G, g }; return _mapGrid;
+}
+function worldToMap(x, z, S, pad) { const u=(x/(WORLD*0.96))+0.5, v=(z/(WORLD*0.96))+0.5; return [pad + u*(S-2*pad), pad + v*(S-2*pad)]; }
+function drawTreasureMap(ctx, chest, pieces) {
+  const S = ctx.canvas.width, c = ctx, pad = 18; c.clearRect(0,0,S,S);
+  c.fillStyle = "#d8c49a"; c.fillRect(0,0,S,S);                       // parchment
+  // mottle + burnt edge
+  for (let i=0;i<1400;i++){ c.fillStyle = `rgba(120,96,56,${(Math.random()*0.05).toFixed(2)})`; const r=Math.random()*2+1; c.beginPath(); c.arc(Math.random()*S, Math.random()*S, r, 0, 6.283); c.fill(); }
+  c.strokeStyle = "rgba(90,66,36,.6)"; c.lineWidth = 6; c.strokeRect(6,6,S-12,S-12);
+  const { G, g } = sampleMapGrid();
+  const land = "#b9a36f", hi = "#a08a56", sea = "#9fb6ad";
+  const cell = (S - 2*pad) / G;
+  for (let j=0;j<G;j++) for (let i=0;i<G;i++){ const h = g[j*G+i]; if (h <= waterLevel) continue;
+    c.fillStyle = h > 24 ? hi : land; c.fillRect(pad + i*cell, pad + j*cell, cell+1, cell+1); }
+  // coastline stipple
+  c.fillStyle = "#6a5230";
+  for (let j=1;j<G-1;j++) for (let i=1;i<G-1;i++){ const h=g[j*G+i]; const nb=g[j*G+i-1],nb2=g[j*G+i+1],nb3=g[(j-1)*G+i],nb4=g[(j+1)*G+i];
+    if (h>waterLevel && (nb<=waterLevel||nb2<=waterLevel||nb3<=waterLevel||nb4<=waterLevel)) { c.fillRect(pad+i*cell, pad+j*cell, 1.5, 1.5); } }
+  // POIs as landmarks
+  for (const p of (typeof POIS!=="undefined"?POIS:[])) { const [mx,my]=worldToMap(p.x,p.z,S,pad);
+    c.fillStyle="#5a4324"; c.beginPath(); c.moveTo(mx,my-5); c.lineTo(mx+4,my+4); c.lineTo(mx-4,my+4); c.closePath(); c.fill(); }
+  // the search mark, tighter with more pieces
+  const [cx,cy] = worldToMap(chest.x, chest.z, S, pad);
+  c.strokeStyle = "#7a2a1e"; c.lineWidth = 2.5;
+  if (pieces >= 1 && pieces < 3) { const R = pieces>=2 ? 34 : 64; c.setLineDash([7,5]); c.beginPath(); c.arc(cx,cy,R,0,6.283); c.stroke(); c.setLineDash([]); }
+  if (pieces >= 3) {
+    c.strokeStyle = "#7a2a1e"; c.lineWidth = 4; const r=11;
+    c.beginPath(); c.moveTo(cx-r,cy-r); c.lineTo(cx+r,cy+r); c.moveTo(cx+r,cy-r); c.lineTo(cx-r,cy+r); c.stroke();
+    const [kx,ky] = worldToMap(chest.keyX, chest.keyZ, S, pad);     // the key, too
+    c.fillStyle = "#3a5a40"; c.font = "bold 13px 'Chakra Petch', serif"; c.fillText("⚷", kx-5, ky+5);
+  }
+  c.fillStyle = "#5a4324"; c.font = "italic 12px 'Chakra Petch', serif"; c.textAlign = "left";
+  c.fillText(pieces>=3 ? "X marks the spot" : pieces>=2 ? "…narrowing it down" : "somewhere in this circle", pad+6, S-pad);
+}
+// ---- storage box (stretch): an emptied chest can be carried and placed ----
+let storageBoxes = [], stash = [];
+const STASH_CAP = 18;
+ITEMS.chestbox = { id:"chestbox", name:"Empty Chest", category:"tool", rarity:"tool", stackable:true, maxStack:9,
+  desc:"An emptied treasure chest. Place it anywhere as a storage box for your finds.", model:()=>chestMesh(false,false), tint:[1,1,1] };
+const storageDyn = makeDynamic(chestMesh(false,false), 20);
+function placeStorageBox(x, z) {
+  if (!Inv.has("chestbox")) return false;
+  if (Math.hypot(x-player.x, z-player.z) > REACH+1.4 || spotUnderwater(x,z) || bigPropBlocking(x,z,0.8)) { showCard("Can't place here", "Find flatter, dry ground within reach."); return true; }
+  Inv.remove("chestbox", 1);
+  storageBoxes.push({ x, z, yaw: cam.yaw });
+  if (onDig) onDig("clang"); saveStorage();
+  showCard("Storage box", "Placed. Interact with it to stash and retrieve finds."); return true;
+}
+let stashOpen = -1;
+function openStash(bi) {
+  stashOpen = bi;
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  renderStash();
+  document.getElementById("stashpanel").style.display = "block";
+}
+function closeStash() { stashOpen = -1; document.getElementById("stashpanel").style.display = "none"; }
+function renderStash() {
+  const p = document.getElementById("stashpanel"); if (stashOpen < 0) return;
+  const cell = (c, where, idx) => { if (!c) return `<div class="islot"></div>`;
+    const it = ITEMS[c.id], ic = it && it.icon ? `<img src="${it.icon}">` : "";
+    return `<div class="islot full" data-where="${where}" data-idx="${idx}">${ic}${c.qty>1?`<span>${c.qty}</span>`:""}</div>`; };
+  const stashCells = Array.from({length: STASH_CAP}, (_,i) => cell(stash[i], "stash", i)).join("");
+  const finds = [];
+  for (let i = 0; i < INV_SLOTS; i++) { const c = Inv.main[i]; if (c && (ITEMS[c.id].category === "find" || ITEMS[c.id].category === "relic")) finds.push([i, c]); }
+  const findCells = finds.map(([i, c]) => cell(c, "bag", i)).join("") || `<div class="islot"></div>`;
+  p.innerHTML = `<div class="ihead"><h2>Storage Box</h2><button id="stashClose">Close</button></div>
+    <div class="clabel">Stashed</div><div class="igrid">${stashCells}</div>
+    <div class="clabel">Your finds (click to stash)</div><div class="igrid">${findCells}</div>
+    <div class="ihint">click a find to stash it · click a stashed item to take it back</div>`;
+  p.querySelector("#stashClose").onclick = closeStash;
+  p.querySelectorAll(".islot.full").forEach(s => s.onclick = () => {
+    const where = s.dataset.where, idx = +s.dataset.idx;
+    if (where === "bag") { const c = Inv.main[idx]; if (!c) return; if (stashAdd(c.id, c.qty)) { Inv.setCell(idx, null); Inv.emit(); } else { showCard("Box full", "No room in the box."); } }
+    else { const c = stash[idx]; if (!c) return; const added = Inv.add(c.id, c.qty); if (added > 0) { stash.splice(idx, 1); } else { showCard("Pack full", "Make room in your satchel."); } }
+    saveStorage(); renderStash();
+  });
+}
+function stashAdd(id, qty) {
+  const it = ITEMS[id]; for (const s of stash) if (s.id === id && it.stackable && s.qty < (it.maxStack||99)) { s.qty += qty; return true; }
+  if (stash.length < STASH_CAP) { stash.push({ id, qty }); return true; } return false;
+}
+function saveStorage() { try { localStorage.setItem("bcs_" + SEED_STR, JSON.stringify({ b: storageBoxes.map(b=>[+b.x.toFixed(1),+b.z.toFixed(1),+b.yaw.toFixed(2)]), s: stash })); } catch (e) {} }
+function loadStorage() { try { const o = JSON.parse(localStorage.getItem("bcs_" + SEED_STR) || "null"); if (!o) return;
+  storageBoxes = (o.b||[]).map(r=>({x:r[0],z:r[1],yaw:r[2]})); stash = o.s || []; } catch (e) {} }
+function drawStorage(view) {
+  if (!storageBoxes.length) return; propUniforms(view); let n = 0;
+  for (const bx of storageBoxes) { if (n >= 20) break; const d = Math.hypot(bx.x-player.x, bx.z-player.z); if (d > 130) continue;
+    const gy = surfaceAt(bx.x, bx.z).h, o = n*10; digScratch[o]=bx.x;digScratch[o+1]=gy;digScratch[o+2]=bx.z;digScratch[o+3]=1;digScratch[o+4]=bx.yaw;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=0.9;digScratch[o+8]=0.86;digScratch[o+9]=0.8; n++; }
+  if (n) storageDyn.draw(digScratch, n);
+}
+function nearestStorage(x, z, maxd) { let bi=-1, bd=maxd; for (let i=0;i<storageBoxes.length;i++){ const d=Math.hypot(storageBoxes[i].x-x, storageBoxes[i].z-z); if (d<bd){bd=d;bi=i;} } return bi; }
+function pickUpChest(c) {   // §12C carry an emptied, looted chest
+  if (!c || !c.opened || !c.looted || c.carried) return;
+  if (Inv.add("chestbox", 1) <= 0) { showCard("Pack full", "No room to carry the chest."); bagShake(); return; }
+  c.carried = true;                                          // leaves the beach but keeps its save slot
+  if (onDig) onDig("clang"); showCard("Chest", "You heft the empty chest into your pack. Place it anywhere as storage."); saveChests();
+}
+
+function saveChests() {
+  try {
+    localStorage.setItem("bct_" + SEED_STR, JSON.stringify({
+      c: chests.map(c => [c.opened?1:0, c.looted?1:0, c.exposed?1:0, +c.expose.toFixed(2), c.scrapes, c.carried?1:0]),
+      b: buriedFinds.map(b => b.got ? 1 : 0),
+    }));
+  } catch (e) {}
+}
+function loadChests() {
+  try { const s = JSON.parse(localStorage.getItem("bct_" + SEED_STR) || "null"); if (!s) return;
+    if (s.c) s.c.forEach((r, i) => { const c = chests[i]; if (!c) return; c.opened=!!r[0]; c.looted=!!r[1]; c.exposed=!!r[2]; c.expose=r[3]; c.scrapes=r[4]||0; c.carried=!!r[5]; c.open=c.opened?1:0;
+      if (c.opened && c.looted) c.log = c.log || { items: [], method: "—" }; });
+    if (s.b) s.b.forEach((v, i) => { if (buriedFinds[i]) buriedFinds[i].got = !!v; });
+  } catch (e) {}
+}
+
 let goats = [], goatDyn, onGoat = null;
 const GOAT_NAMES = ["Biscuit","Pebble","Clover","Juniper","Nutmeg","Thistle","Captain","Waffles","Marbles","Dandelion","Pippin","Gus"];
 function seedGoats() {
@@ -5920,6 +6344,9 @@ loadTamed();
 loadDrops();
 seedGullNests();
 loadNests();
+seedChests();
+loadChests();
+loadStorage();
 if (debugMode) auditRegistries();
 
 let proj = new Float32Array(16);
@@ -5963,6 +6390,8 @@ function frame(now) {
   updateTools(dt, gdtTotal);
   updateGoats(dt);
   updateGulls(dt);
+  updateChests(dt);
+  updatePry(dt);
   updateSalt();
   updateAutoPickup();
   updateStarRescue();
@@ -6181,6 +6610,8 @@ function frame(now) {
   drawCampfires(view);
   drawGoats(view);
   drawNests(view);
+  drawChests(view);
+  drawStorage(view);
   drawSalt(view);
   drawLife(view);
   drawGulls(view);
