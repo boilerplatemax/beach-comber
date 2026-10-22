@@ -240,6 +240,26 @@
   #invpanel h2 { font-size: 19px; margin: 0; color: #fbeccd; text-shadow: 0 1px 2px rgba(0,0,0,.5); }
   #invpanel .ihead button { font-size: 12px; padding: 4px 10px; }
   .compartment { margin: 8px 0 4px; }
+  /* §16 Make tab */
+  .mtabs { display: flex; gap: 4px; margin: 0 auto 0 10px; }
+  .mtab { font-size: 12px; padding: 4px 12px; background: rgba(32,20,10,.4); color: #e6d2a6; border: 1px solid rgba(30,18,8,.55);
+    border-radius: 6px 6px 0 0; cursor: pointer; opacity: .75; }
+  .mtab.on { background: rgba(72,50,28,.65); opacity: 1; color: #fbeccd; box-shadow: inset 0 -2px 0 #e0b571; }
+  .mlist { display: flex; flex-direction: column; gap: 6px; }
+  .recipe { display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 8px;
+    background: rgba(40,26,14,.4); border: 1px solid rgba(30,18,8,.5); }
+  .recipe .mkleft { width: 44px; height: 44px; flex: 0 0 44px; border-radius: 6px; overflow: hidden;
+    background: rgba(20,12,6,.45); box-shadow: inset 0 1px 3px rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
+  .recipe .mkic { width: 100%; height: 100%; background: repeating-linear-gradient(45deg,#4a3420 0 6px,#3a2818 6px 12px); }
+  .recipe .mkbody { flex: 1; min-width: 0; }
+  .recipe .mkname { font-size: 13px; font-weight: 600; color: #fbeccd; }
+  .recipe .mkcost { font-size: 11px; margin-top: 1px; }
+  .recipe .mkcost .ok { color: #bfe6a6; } .recipe .mkcost .no { color: #e9a79a; }
+  .recipe .mkcost .malt { opacity: .6; } .recipe .mkcost .mkneed, .mkneed { opacity: .6; font-weight: 400; }
+  .recipe .mkdesc { font-size: 11px; opacity: .62; margin-top: 2px; line-height: 1.25; }
+  .recipe .mk { flex: 0 0 auto; font-size: 12px; font-weight: 600; padding: 7px 14px; cursor: pointer; align-self: center; }
+  .recipe .mk:disabled { opacity: .4; cursor: default; }
+  .makehint { font-size: 12px; opacity: .7; padding: 18px 8px; text-align: center; line-height: 1.4; }
   .clabel { display: flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
     color: #e6d2a6; opacity: .85; margin: 0 2px 5px; text-shadow: 0 1px 1px rgba(0,0,0,.5); }
   .clabel:before, .clabel:after { content:""; flex:1; height:1px; background: repeating-linear-gradient(90deg,#c8a86e 0 4px,transparent 4px 8px); opacity:.5; }
@@ -2072,6 +2092,7 @@ function climbStep(dt) {
  * ===================================================================== */
 const spear = { charging: false, start: 0, charge: 0, thrustT: 0, cd: 0 };
 let thrownSpears = [];
+let spearHardened = false;    // §16 fire-hardened at a campfire: harder, truer throws
 let fishRecord = {};   // §14C species → largest scale caught (journal record)
 try { fishRecord = JSON.parse(localStorage.getItem("bc_fishrec") || "{}"); } catch (e) {}
 let onSpear = null;    // sound hook (Phase 18)
@@ -2121,9 +2142,9 @@ function throwSpear(charge) {
   spear.cd = 0.4;
   for (let k = 0; k < HOTBAR_SLOTS; k++) if (Inv.hotbar[k] && Inv.hotbar[k].id === "spear") { Inv.hotbar[k] = null; break; }   // it leaves your hand
   renderHotbar();
-  const f = camForward(), spd = 12 + charge*20;
+  const f = camForward(), spd = (12 + charge*20) * (spearHardened ? 1.35 : 1);
   thrownSpears.push({ x: cam.pos[0]+f[0]*0.6, y: cam.pos[1]-0.2, z: cam.pos[2]+f[2]*0.6,
-    vx: f[0]*spd, vy: f[1]*spd + 1, vz: f[2]*spd, yaw: cam.yaw, pitch: 0, stuck: false, washAt: 0 });
+    vx: f[0]*spd, vy: f[1]*spd + (spearHardened ? 0.4 : 1), vz: f[2]*spd, yaw: cam.yaw, pitch: 0, stuck: false, washAt: 0, hard: spearHardened });
   if (onSpear) onSpear("throw");
 }
 function updateSpear(dt) {
@@ -2137,7 +2158,7 @@ function updateSpear(dt) {
       s.x += s.vx*dt; s.y += s.vy*dt; s.z += s.vz*dt;
       const sp = Math.hypot(s.vx, s.vy, s.vz);
       if (sp > 0.3) { s.yaw = Math.atan2(s.vx, s.vz); s.pitch = Math.atan2(-s.vy, Math.hypot(s.vx, s.vz)); }
-      const fish = fishAt(s.x, s.y, s.z, 1.0);
+      const fish = fishAt(s.x, s.y, s.z, s.hard ? 1.4 : 1.0);
       if (fish) { catchFish(fish, s.x, s.y, s.z); thrownSpears.splice(i, 1); continue; }
       const floor = surfaceAt(s.x, s.z).h;
       if (s.y <= floor + 0.1 || (uw && sp < 0.6) || Math.hypot(s.x, s.z) > HALF) {   // stick / settle
@@ -3867,6 +3888,9 @@ function wormcastMesh() { const m = Mesh(); for (let i=0;i<5;i++){ const a=i*0.9
 function pickleweedMesh() { const m = Mesh(); const g=[0.42,0.56,0.33]; for (let i=0;i<4;i++){ const a=i/4*6.283, r=0.06; for(let s=0;s<3;s++) mCyl(m, 0.1+s*0.12, 0.2+s*0.12, 0.04, 0.035, 5, [g[0],g[1]-s*0.03,g[2]]); } return m; }
 function kelpMesh() { const m = Mesh(); mCyl(m,0,1.4,0.04,0.06,6,[0.32,0.26,0.14]); mCyl(m,1.4,1.7,0.12,0.06,7,[0.4,0.34,0.18]); for(let i=0;i<4;i++){const a=i/4*6.283; mBox(m, Math.cos(a)*0.3, 1.8+i*0.05, Math.sin(a)*0.3, 0.5, 0.03, 0.12, [0.34,0.3,0.16]); } return m; }
 function seabeanMesh() { const m = Mesh(); mBox(m,0,0.06,0,0.14,0.08,0.1,[0.4,0.26,0.16]); mBox(m,0,0.08,0,0.1,0.04,0.12,[0.3,0.2,0.12]); return m; }
+// §16 crafted goods
+function stakeMesh() { const m = Mesh(); mCyl(m,0,0.62,0.05,0.045,6,[0.52,0.4,0.26]); mCyl(m,0.6,0.86,0.045,0.0,6,[0.58,0.46,0.3]); return m; }
+function torchMesh() { const m = Mesh(); mCyl(m,0,0.56,0.035,0.03,6,[0.42,0.3,0.18]); mCyl(m,0.5,0.68,0.075,0.04,6,[0.28,0.24,0.2]); mergeMesh(m, discMesh(0.68,0.08,6,0.12,[0.98,0.62,0.22])); return m; }
 // generic storm flotsam (§11.1)
 function ropeMesh() { const m = Mesh(); const c = [0.66,0.56,0.36]; for (let i = 0; i < 6; i++) { const a = i*1.1; mCyl(m, Math.cos(a)*0.14, Math.cos(a)*0.14+0.06, 0.05, 0.05, 5, [c[0]-0.03*(i%2),c[1],c[2]]); } mergeMesh(m, discMesh(0.0,0.2,8,0.03,[0.6,0.5,0.32])); return m; }
 function crateMesh() { const m = Mesh(); const w = [0.5,0.37,0.24], e = [0.4,0.29,0.18]; mBox(m,0,0.2,0,0.22,0.2,0.22,w);
@@ -4404,6 +4428,19 @@ digItem("ceramic", "Ceramic Shard", "find", "uncommon", "A piece of painted pott
 digItem("fossil", "Fossil", "find", "rare", "An ammonite turned to stone.", () => coinMesh(), [0.55,0.52,0.48]);
 digItem("bell", "Ship's Bell", "relic", "rare", "A green bronze bell from a lost vessel.", () => bellMesh(), [0.5,0.6,0.45]);
 digItem("tin", "Sealed Tin", "relic", "rare", "A rusted tin, something rattles inside.", () => tinMesh(), [0.6,0.55,0.5]);
+// §16 crafted goods & cooked food
+digItem("stake", "Wooden Stake", "material", "common", "A sharpened stake. Fence posts, spear shafts and torches start here.", () => stakeMesh(), [0.54,0.42,0.28]);
+digItem("torch", "Torch", "material", "uncommon", "A burning brand. Place it on a stake for a standing light.", () => torchMesh(), [0.8,0.55,0.3]);
+// cooked foods: worth double their raw value, anywhere. [rawId, cookedName, meshFn, tint]
+const COOKED_OF = {};
+[["rawfish","Cooked Fish",()=>fishMesh([0.66,0.46,0.3]),[0.78,0.56,0.4]],
+ ["clam","Cooked Clam",()=>clamMesh(),[0.82,0.62,0.44]],
+ ["cockle","Cooked Cockle",()=>shellMesh(),[0.84,0.64,0.46]],
+ ["mussel","Cooked Mussel",()=>musselMesh(),[0.5,0.4,0.42]],
+ ["gullegg","Cooked Egg",()=>eggFoodMesh(),[0.9,0.78,0.5]],
+].forEach(([raw, name, mesh, tint]) => { const id = "cooked_" + raw; COOKED_OF[raw] = id;
+  digItem(id, name, "consumable", "common", "Roasted over a campfire — twice the nourishment of the raw.", mesh, tint);
+  EDIBLE[id] = (EDIBLE[raw] || 0.1) * 2; });
 
 /* ---- inventory (slot model + hotbar) ---- */
 // 36 main slots + an 8-slot hotbar; every cell is a {id,qty} stack or null.
@@ -4481,6 +4518,7 @@ function invDrop(idx, one) {
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
   try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode,
+    recipes: [...knownRecipes], spearHard: spearHardened,   // §16 crafting
     bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, moist: c.moist, caught: c.caught })) } })); } catch (e) {}
 }
 function loadState() {
@@ -4492,6 +4530,8 @@ function loadState() {
       starsRescued = s.rescued || 0;
       if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
+      if (Array.isArray(s.recipes)) knownRecipes = new Set(s.recipes);   // §16 crafting
+      if (s.spearHard) spearHardened = true;
       if (s.bucket) { bucket.water = !!s.bucket.water; bucket.creatures = Array.isArray(s.bucket.creatures) ? s.bucket.creatures : [];
         for (const c of bucket.creatures) if (c.moist === undefined) c.moist = 1; }   // §13.3 older saves: start soaked
     }
@@ -4715,6 +4755,7 @@ function itemCompartment(id) { const it = ITEMS[id]; if (!it) return "Misc";
   if (it.category === "find" || it.category === "relic") return "Finds";
   return "Misc"; }
 let invOpen = false;
+let invTab = "items";   // §16 satchel tab: "items" | "make"
 function toggleInventory() {
   invOpen = !invOpen; document.getElementById("invpanel").style.display = invOpen ? "block" : "none";
   if (invOpen) { const j = document.getElementById("journal"); if (j.style.display === "block") j.style.display = "none";   // §13.4 one panel at a time
@@ -4723,21 +4764,68 @@ function toggleInventory() {
 }
 function renderInventory() {
   if (!invOpen) return;
-  const groups = { Finds: [], Food: [], Materials: [], Misc: [] };
-  for (let i = 0; i < INV_SLOTS; i++) { const c = Inv.main[i]; if (c) groups[itemCompartment(c.id)].push(i); }
-  let html = `<div class="ihead"><h2>Satchel</h2><div>${canBuildCampfire() ? `<button id="fireBtn">Build campfire</button> ` : ""}<button id="sortBtn">Tidy ▾</button></div></div>`;
-  for (const cat of COMPARTMENTS) {
-    const idxs = groups[cat], cells = Math.max(6, Math.ceil((idxs.length + 1) / 6) * 6);   // a little room to grow
-    let grid = "";
-    for (let j = 0; j < cells; j++) grid += idxs[j] !== undefined ? slotHTML(Inv.main[idxs[j]], idxs[j]) : `<div class="islot"></div>`;
-    html += `<div class="compartment"><div class="clabel">${cat}</div><div class="igrid">${grid}</div></div>`;
+  const tabs = `<div class="mtabs"><button class="mtab ${invTab==="items"?"on":""}" data-tab="items">Items</button><button class="mtab ${invTab==="make"?"on":""}" data-tab="make">Make</button></div>`;
+  let html;
+  if (invTab === "make") {
+    html = `<div class="ihead"><h2>Satchel</h2>${tabs}</div>` + renderMakeHTML();
+    html += `<div class="ihint">craft anywhere · fire recipes need a nearby campfire · I to close</div>`;
+  } else {
+    const groups = { Finds: [], Food: [], Materials: [], Misc: [] };
+    for (let i = 0; i < INV_SLOTS; i++) { const c = Inv.main[i]; if (c) groups[itemCompartment(c.id)].push(i); }
+    html = `<div class="ihead"><h2>Satchel</h2>${tabs}<button id="sortBtn">Tidy ▾</button></div>`;
+    for (const cat of COMPARTMENTS) {
+      const idxs = groups[cat], cells = Math.max(6, Math.ceil((idxs.length + 1) / 6) * 6);   // a little room to grow
+      let grid = "";
+      for (let j = 0; j < cells; j++) grid += idxs[j] !== undefined ? slotHTML(Inv.main[idxs[j]], idxs[j]) : `<div class="islot"></div>`;
+      html += `<div class="compartment"><div class="clabel">${cat}</div><div class="igrid">${grid}</div></div>`;
+    }
+    const hot = Inv.hotbar.map((c, i) => slotHTML(c, INV_SLOTS + i, i + 1)).join("");
+    html += `<div class="compartment"><div class="clabel">Tool belt</div><div class="igrid hot">${hot}</div></div>`;
+    html += `<div class="ihint">${IS_TOUCH ? "tap use · long-press menu · drag to the belt" : "click use · shift-click → belt · right-click menu · drag to move · drag out to drop"} · I to close</div>`;
   }
-  const hot = Inv.hotbar.map((c, i) => slotHTML(c, INV_SLOTS + i, i + 1)).join("");
-  html += `<div class="compartment"><div class="clabel">Tool belt</div><div class="igrid hot">${hot}</div></div>`;
-  html += `<div class="ihint">${IS_TOUCH ? "tap use · long-press menu · drag to the belt" : "click use · shift-click → belt · right-click menu · drag to move · drag out to drop"} · I to close</div>`;
   const p = document.getElementById("invpanel"); p.innerHTML = html;
-  p.querySelector("#sortBtn").onclick = () => Inv.sort();
-  const fb = p.querySelector("#fireBtn"); if (fb) fb.onclick = () => { buildCampfire(); renderInventory(); };
+  const sb = p.querySelector("#sortBtn"); if (sb) sb.onclick = () => Inv.sort();
+  p.querySelectorAll(".mtab").forEach(b => b.onclick = () => { invTab = b.dataset.tab; renderInventory(); });
+  p.querySelectorAll(".recipe .mk").forEach(b => b.onclick = () => { craftRecipe(b.dataset.rid); renderInventory(); });
+}
+// §16 Make tab: list every revealed recipe, grouped by how you make it.
+function renderMakeHTML() {
+  revealRecipes();
+  const near = nearCampfire(player.x, player.z);
+  const cols = { Craft: [], "By the fire": [], Rebuild: [] };
+  for (const r of RECIPES) { if (!knownRecipes.has(r.id)) continue;
+    const g = r.once ? "Rebuild" : (r.station === "campfire" ? "By the fire" : "Craft"); cols[g].push(r); }
+  let html = "";
+  const anyKnown = RECIPES.some(r => knownRecipes.has(r.id));
+  if (!anyKnown) return `<div class="makehint">Gather sticks, stone, kelp and logs, and recipes will appear here.</div>`;
+  for (const group of ["Craft", "By the fire", "Rebuild"]) {
+    if (!cols[group].length) continue;
+    const sub = group === "By the fire" && !near ? ` <span class="mkneed">(stand by a campfire)</span>` : "";
+    html += `<div class="compartment"><div class="clabel">${group}${sub}</div><div class="mlist">`;
+    for (const r of cols[group]) html += recipeRow(r);
+    html += `</div></div>`;
+  }
+  return html;
+}
+function recipeIcon(r) {
+  if (r.out) return ITEMS[r.out] && ITEMS[r.out].icon;
+  if (r.special === "harden") return ITEMS.spear && ITEMS.spear.icon;
+  if (r.special === "cook") return ITEMS.cooked_rawfish && ITEMS.cooked_rawfish.icon;
+  if (r.special === "campfire") return ITEMS.stone && ITEMS.stone.icon;
+  return null;
+}
+function recipeRow(r) {
+  const ok = canCraft(r), icon = recipeIcon(r);
+  const name = r.label + (r.qty > 1 ? ` ×${r.qty}` : "");
+  let costHtml;
+  if (r.special === "cook") { const raw = firstCookableRaw(); costHtml = raw ? `<span class="ok">1 raw food → ${ITEMS[COOKED_OF[raw] || raw].name}</span>` : `<span class="no">needs a raw food</span>`; }
+  else {
+    const fmt = (cost) => cost.map(([id, n]) => `<span class="${Inv.count(id) >= n ? "ok" : "no"}">${n} ${ITEMS[id].name}</span>`).join(" + ");
+    costHtml = fmt(r.cost) + (r.altCost ? ` <span class="malt">or</span> ` + fmt(r.altCost) : "");
+  }
+  const ig = icon ? `<img src="${icon}" width="42" height="42" style="image-rendering:pixelated">` : `<div class="mkic"></div>`;
+  return `<div class="recipe"><div class="mkleft">${ig}</div><div class="mkbody"><div class="mkname">${name}</div><div class="mkcost">${costHtml}</div><div class="mkdesc">${r.desc}</div></div>`
+    + `<button class="mk" data-rid="${r.id}" ${ok ? "" : "disabled"}>${r.build ? "Place" : "Make"}</button></div>`;
 }
 /* ---- item actions (§10.3) ---- */
 function equipToBelt(idx) {
@@ -6233,6 +6321,82 @@ function drawCampfires(view) {
     a[o]=c.x;a[o+1]=y;a[o+2]=c.z;a[o+3]=1;a[o+4]=0;a[o+5]=0;a[o+6]=0;a[o+7]=fl;a[o+8]=fl*0.8;a[o+9]=fl*0.6; n++; }
   if (n) campfireDyn.draw(a, n);
 }
+
+/* ===================================================================== *
+ * § 16  CRAFTING — recipes in the satchel's Make tab
+ * ===================================================================== */
+// cost is [[id, qty], ...]; altCost is an alternative set (rope from kelp OR leaves).
+// station "campfire" recipes need a campfire within reach. special recipes run custom logic.
+const RECIPES = [
+  { id: "stake",    label: "Wooden Stake", out: "stake", qty: 2, cost: [["stick", 2]], station: "hand",
+    desc: "Two stakes from a bundle of sticks. The start of fences, spears and torches." },
+  { id: "rope",     label: "Rope", out: "rope", qty: 1, cost: [["kelp", 2]], altCost: [["leaves", 4]], station: "hand",
+    desc: "Twisted from kelp, or from a double handful of dry beach leaves." },
+  { id: "torch",    label: "Torch", out: "torch", qty: 1, cost: [["stick", 1], ["rope", 1]], station: "hand",
+    desc: "A brand you can plant on a stake for a standing light." },
+  { id: "campfire", label: "Campfire", special: "campfire", cost: [["stick", 3], ["stone", 3]], station: "hand",
+    desc: "Cook food and harden spears nearby. Lays down in front of you." },
+  { id: "firespear", label: "Fire-Hardened Spear", special: "harden", cost: [["stake", 1]], station: "campfire",
+    desc: "Temper a stake in the coals: harder, flatter, truer throws." },
+  { id: "cook",     label: "Cook Food", special: "cook", cost: [], station: "campfire",
+    desc: "Roast a raw fish, shellfish or egg for double the nourishment." },
+  { id: "toolkit",  label: "Tool Kit", out: "toolkit", qty: 1, cost: [["stick", 3], ["stone", 2], ["log", 1]], station: "hand", once: "toolkit",
+    desc: "Rebuild your shovel, axe and pickaxe if you ever lose the kit." },
+  { id: "bucket",   label: "Bucket", out: "bucket", qty: 1, cost: [["log", 2], ["rope", 1]], station: "hand", once: "bucket",
+    desc: "A wooden pail, in case yours was lost to the sea." },
+];
+const RECIPE_BY_ID = {}; for (const r of RECIPES) RECIPE_BY_ID[r.id] = r;
+let knownRecipes = new Set();
+// a recipe's ingredient ids (both the main and the alternative cost)
+function recipeIngredients(r) { const s = new Set(); for (const [id] of r.cost) s.add(id); if (r.altCost) for (const [id] of r.altCost) s.add(id); return [...s]; }
+// "appears once you've collected at least one of its ingredients" — latch it on, permanently per seed
+function revealRecipes() {
+  let changed = false;
+  for (const r of RECIPES) {
+    if (knownRecipes.has(r.id)) continue;
+    let seen = false;
+    if (r.special === "cook") { for (const id in COOKABLE) if (Inv.count(id) > 0) { seen = true; break; } }
+    else for (const id of recipeIngredients(r)) if (Inv.count(id) > 0) { seen = true; break; }
+    if (seen) { knownRecipes.add(r.id); changed = true; }
+  }
+  if (changed) saveState();
+}
+function canAfford(cost) { for (const [id, n] of cost) if (Inv.count(id) < n) return false; return true; }
+// which cost set to use (main preferred, else the alternative) — null if neither is affordable
+function affordableCost(r) { if (canAfford(r.cost)) return r.cost; if (r.altCost && canAfford(r.altCost)) return r.altCost; return null; }
+function recipeStationOK(r) { return r.station !== "campfire" || nearCampfire(player.x, player.z); }
+function firstCookableRaw() { for (const id in COOKABLE) if (Inv.count(id) > 0) return id; return null; }
+// true if the recipe can be crafted right now (afford + station + not an already-owned one-off)
+function canCraft(r) {
+  if (!recipeStationOK(r)) return false;
+  if (r.once && (Inv.hotbarHasId(r.once) || Inv.has(r.once))) return false;
+  if (r.special === "cook") return firstCookableRaw() !== null;
+  return affordableCost(r) !== null;
+}
+function craftRecipe(id) {
+  const r = RECIPE_BY_ID[id]; if (!r) return;
+  if (r.station === "campfire" && !nearCampfire(player.x, player.z)) { showCard("No campfire", "Stand next to a campfire to do this."); return; }
+  if (r.once && (Inv.hotbarHasId(r.once) || Inv.has(r.once))) { showCard("Already have one", `You already carry a ${ITEMS[r.once].name}.`); return; }
+  if (r.special === "campfire") { buildCampfire(); return; }
+  if (r.special === "cook") {
+    const raw = firstCookableRaw(); if (!raw) { showCard("Nothing to cook", "You have no raw food on you."); return; }
+    Inv.remove(raw, 1); const cooked = COOKED_OF[raw] || raw; Inv.add(cooked, 1);
+    if (onDig) onDig("eat"); showCard("Cooked " + ITEMS[raw].name, `A ${ITEMS[cooked].name} — double the food.`); return;
+  }
+  if (r.special === "harden") {
+    if (!canAfford(r.cost)) { showCard("Need a stake", "Fire-hardening a spear takes a Wooden Stake."); return; }
+    for (const [cid, n] of r.cost) Inv.remove(cid, n);
+    spearHardened = true;
+    if (!Inv.hotbarHasId("spear") && !Inv.has("spear")) Inv.equipTool("spear");
+    if (onDig) onDig("plant"); showCard("Fire-hardened spear", "Tempered in the coals — it throws harder and truer now."); saveState(); return;
+  }
+  const cost = affordableCost(r); if (!cost) { showCard("Need materials", craftCostText(r)); return; }
+  for (const [cid, n] of cost) Inv.remove(cid, n);
+  Inv.add(r.out, r.qty || 1);
+  if (onDig) onDig("plant"); showCard("Crafted " + (r.qty > 1 ? r.qty + "× " : "") + ITEMS[r.out].name, "");
+}
+function craftCostText(r) { const parts = r.cost.map(([id, n]) => `${n} ${ITEMS[id].name}`); let t = parts.join(" + ");
+  if (r.altCost) t += " (or " + r.altCost.map(([id, n]) => `${n} ${ITEMS[id].name}`).join(" + ") + ")"; return t; }
 
 // Placed material in the wash zone slowly erodes; everywhere else it's permanent.
 let erosionT = 0;
