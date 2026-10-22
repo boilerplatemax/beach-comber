@@ -2013,10 +2013,14 @@ function catchFish(e, x, y, z) {
 // a near-miss or a hit on a non-fish: it startles and flees, unharmed (tamed goats can't be hit)
 function startleNear(x, z) {
   for (const e of life) { if (e.kind !== "creature" || FISH[e.t]) continue;
-    const d = Math.hypot(e.x-x, e.z-z); if (d > 3) continue;
+    const d = Math.hypot(e.x-x, e.z-z); if (d > 3.5) continue;
     if (e.t === "crab") { e.state = "sinking"; e.burrow = 0; }
-    else if (e.t === "goat" && e.tame) continue;
+    else if (e.t === "gull") { e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call"); }
     else { e.alert = 1; e.fleeT = 2.5; e.state = "flee"; e.timer = 1; const a = Math.atan2(e.z-z, e.x-x); e.x += Math.cos(a)*0.3; e.z += Math.sin(a)*0.3; }
+  }
+  for (const g of (typeof goats !== "undefined" ? goats : [])) {   // goats live in their own array; tamed ones ignore it
+    if (g.tame) continue; if (Math.hypot(g.x-x, g.z-z) > 3.5) continue;
+    g.state = "flee"; g.timer = 0.8; const a = Math.atan2(g.z-z, g.x-x); g.tx = g.x + Math.cos(a)*12; g.tz = g.z + Math.sin(a)*12;
   }
 }
 function thrustSpear() {
@@ -3488,12 +3492,11 @@ function drawContactShadows(view) {
     if ((x-px)*(x-px) + (z-pz)*(z-pz) > R2) return;
     const g = surfaceAt(x, z).h, off = rad*0.22, o = n*4;
     A[o] = x + ox*off; A[o+1] = g + 0.04; A[o+2] = z + oz*off; A[o+3] = rad; n++; };
+  // §15 only static props cast grounded shadows — creatures (esp. flying gulls) looked bad, so they don't
   for (const o of treeObjs) if (!o.gone && !o.falling) add(o.x, o.z, (o.fallen?0.8:1.3)*(0.8+(o.scale||1)*0.3));
   for (const o of rockObjs) if (!o.gone) add(o.x, o.z, 0.9 + (o.sc||1)*0.7);
   for (const o of fallenTrees) if (!o.gone) add(o.x, o.z, 1.0);
   for (const o of driftObjs) if (!o.gone) add(o.x, o.z, 0.5*(o.scale||1));
-  for (const e of life) if (e.kind === "creature" && !e.airborne && e.t !== "gull" && e.t !== "seal" && e.t !== "heron") {
-    if ((e.burrow || 0) > 0.5) continue; add(e.x, e.z, Math.max(0.25, (e.scale||0.4)*0.6)); }
   if (n === 0) return;
   gl.useProgram(shadowProg);
   gl.uniformMatrix4fv(shadowU.uProj, false, proj); gl.uniformMatrix4fv(shadowU.uView, false, view);
@@ -4154,7 +4157,7 @@ function drawLife(view) {
         if (FISH[e.t]) { y = (e.y !== undefined) ? e.y : g + 1.0;   // §14C huntable fish hover in the water column
           lean = e.t === "flounder" ? 1.5 : Math.sin(e.phase*3)*0.06; ld = e.yaw; }   // flounder lies flat
         else if (e.t === "fish") y = (e.poolRim !== undefined ? Math.max(waterLevel, e.poolRim) : waterLevel) - 0.3 + Math.sin(e.phase*4)*0.05;
-        else if (e.t === "gull") { y = (e.y !== undefined) ? e.y : g + (e.alt || 0);   // §12B flap-and-glide
+        else if (e.t === "gull") { y = (e.y !== undefined) ? e.y : g + (e.alt || 0) + 0.3;   // §12B flap-and-glide; +0.3 so it never sinks into the ground
           const amp = (e.gstate === "soar" || e.gstate === "approach") ? 0.16 : 0.42;  // glide steady, flap hard when working
           lean = Math.sin(e.flap || 0) * amp; ld = e.yaw;
           sc = e.scale * 1.5; }                         // §13.7 read bigger against sky & sand (easy to spot)
@@ -4741,7 +4744,10 @@ function DBG_SET(k, v) { switch (k) {
 // E interacts with whatever the crosshair is on (same target as a click).
 function interact() { if (pry) { pryStrike(); return; }
   if (mode === "walk" && selectedTool() === "spear" && !isPanelOpen()) { thrustSpear(); return; }   // §14C E / mobile Use = jab
-  interactTarget(curTarget || targetAlongRay(rayFromNDC(0, 0))); }
+  const t = curTarget || targetAlongRay(rayFromNDC(0, 0));
+  if (t) { interactTarget(t); return; }
+  if (mode === "walk" && !isPanelOpen()) { if (isFood(selectedItem())) eatSelected(); else punch(null); }   // §15 nothing in reach → eat or punch
+}
 let cardTimer = 0;
 function showCard(name, desc) {
   const el = document.getElementById("card");
@@ -5044,6 +5050,19 @@ function clickAt(ndcx, ndcy) {
   else if (SEED_TREE[tool]) plantAt(pt[0], pt[1]);
   else if (tool === "leaves") useLeavesAt(pt[0], pt[1]);
   else if (tool === "chestbox") placeStorageBox(pt[0], pt[1]);   // §12C place an emptied chest as storage
+  else if (isFood(selectedItem())) eatSelected();               // §15 clicking food in hand eats it
+  else punch(pt);                                               // §15 anything else → a punch (startles creatures)
+}
+// §15 eat the food currently in hand
+function eatSelected() { const c = Inv.hotbar[Inv.selected]; if (c && isFood(c.id)) { eatItem(INV_SLOTS + Inv.selected); return true; } return false; }
+// §15 a punch — a short jab with any item (or an empty hand) that startles nearby creatures; it never harms them
+let punchT = 0;
+function punch(pt) {
+  if (punchT > 0 || digCommit > 0 || mode !== "walk") return;
+  punchT = 0.28; shovelSwing = Math.max(shovelSwing, 0.35); camNudge = Math.max(camNudge, 0.03);
+  if (onDig) onDig("thud");
+  const f = camForward(), hx = cam.pos[0] + f[0]*1.8, hz = cam.pos[2] + f[2]*1.8;   // a short reach in front
+  startleNear(hx, hz); if (pt) startleNear(pt[0], pt[1]);
 }
 function interactWith(e) {
   if (e.kind === "find") {
@@ -6273,6 +6292,7 @@ function drawShovel(view) {
 function updateDigging(dt) {
   const swingRate = 3.5 * (stamina < 0.3 ? 0.6 : 1) * swingRateMul();   // slower, heavier swing when tired or hungry
   if (shovelSwing > 0) shovelSwing = Math.max(0, shovelSwing - dt * swingRate);
+  if (punchT > 0) punchT = Math.max(0, punchT - dt);   // §15 punch recovery
   if (camNudge > 0) camNudge = Math.max(0, camNudge - dt * 0.4);
   springCamY(dt);                                                             // §13.1 settle the landing give
   if (toolRecoilT > 0) toolRecoilT = Math.max(0, toolRecoilT - dt * 4.5);     // quick recoil settle
@@ -6854,9 +6874,11 @@ function updateGulls(dt) {
     initGull(e);
     const dp = Math.hypot(e.x - player.x, e.z - player.z);
     e.flap = (e.flap || 0) + dt * (e.gstate === "soar" || e.gstate === "approach" ? 2.6 : 7);   // §13.7 glide more, flap less
-    // shooing: a sprint or a tool swing nearby scatters landed/approaching gulls
-    if ((e.gstate === "forage" || e.gstate === "approach") && (sprinting || swung) && dp < GULL.shooR * (crouching ? 0.5 : 1)) {   // §13.4 crouch → harder to scare
-      e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call");
+    // a landed / approaching gull is wary of the player: it flees when you get close (closer still if you crouch),
+    // and a sprint or a tool swing scatters it from further off.
+    if (e.gstate === "forage" || e.gstate === "approach") {
+      const fearR = (sprinting || swung) ? GULL.shooR : (crouching ? 2.4 : 6.0);
+      if (dp < fearR) { e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call"); }
     }
     switch (e.gstate) {
       case "soar": {
