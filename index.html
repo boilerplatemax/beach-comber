@@ -2061,8 +2061,8 @@ function resetHints() { for (const k in hintCount) delete hintCount[k]; hintsOn 
 let hintT = 0, hintText = "", lastAimShown = false;
 
 // Edible items → how much hunger they restore (§10.5). Tuned so a beach walk keeps you fed.
-const EDIBLE = { clam: 0.12, cockle: 0.1, mussel: 0.1, kelp: 0.08, seaweed: 0.08, coconut: 0.26, berry: 0.14 };
-const COOKABLE = { clam: 1, cockle: 1, mussel: 1 };            // shellfish: a campfire doubles their value
+const EDIBLE = { clam: 0.12, cockle: 0.1, mussel: 0.1, kelp: 0.08, seaweed: 0.08, coconut: 0.26, berry: 0.14, gullegg: 0.16 };
+const COOKABLE = { clam: 1, cockle: 1, mussel: 1, gullegg: 1 };   // shellfish & eggs: a campfire doubles their value
 function isFood(id) { return EDIBLE[id] !== undefined; }
 // Eat a food item: restore hunger (doubled for shellfish cooked at a nearby campfire), with a chew + sound.
 function feedPlayer(id) {
@@ -2077,7 +2077,7 @@ let chewT = 0;
 
 /* ---- the interaction target, independent of the equipped tool (§11.2 / §11.3) ---- */
 // Which tool performs the primary action on each target kind.
-const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", goat: "hand", salt: "hand", creature: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
+const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", goat: "hand", salt: "hand", creature: "hand", nest: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
 function aimInfo() {
   if (mode !== "walk") return null;
   if (curTarget) return { kind: curTarget.kind, obj: curTarget.obj, x: curTarget.x, z: curTarget.z, need: TOOL_FOR_KIND[curTarget.kind] || "hand" };
@@ -2917,7 +2917,19 @@ function anemoneMesh(col) { const m = Mesh(); mCyl(m,0,0.2,0.28,0.24,7,[col[0]*0
 function starMesh(col) { const m = Mesh(); for(let i=0;i<5;i++){const a0=i/5*6.283,a1=(i+0.5)/5*6.283,a2=(i+1)/5*6.283; mTri(m,[0,0.06,0],[Math.cos(a0)*0.2,0.05,Math.sin(a0)*0.2],[Math.cos(a1)*0.5,0.08,Math.sin(a1)*0.5],col); mTri(m,[0,0.06,0],[Math.cos(a1)*0.5,0.08,Math.sin(a1)*0.5],[Math.cos(a2)*0.2,0.05,Math.sin(a2)*0.2],col);} return m; }
 function urchinMesh(col) { const m = discMesh(0.1,0.3,6,0.15,col); const sp=[col[0]*1.3,col[1]*1.3,col[2]*1.3]; for(let i=0;i<10;i++){const a=i/10*6.283; mTri(m,[Math.cos(a)*0.25,0.1,Math.sin(a)*0.25],[Math.cos(a)*0.5,0.45,Math.sin(a)*0.5],[Math.cos(a+0.25)*0.25,0.1,Math.sin(a+0.25)*0.25],sp);} return m; }
 function hermitMesh(col) { const m = Mesh(); mCyl(m,0,0.4,0.3,0,7,col); mBox(m,0.2,0.05,0,0.2,0.05,0.14,[0.5,0.35,0.25]); return m; }
-function gullMesh() { const m = Mesh(), w=[0.9,0.9,0.92], g=[0.5,0.52,0.55]; mBox(m,0,0,0,0.12,0.1,0.35,w); mTri(m,[0,0.05,0.1],[0,0.3,0.9],[0,0.05,-0.1],g); mTri(m,[0,0.05,0.1],[0,0.3,-0.9],[0,0.05,-0.1],g); mBox(m,0.2,0.0,0,0.14,0.06,0.06,[0.8,0.7,0.3]); return m; }
+// §12B bigger, high-contrast gull: white body, grey wings, dark wingtips, yellow beak.
+function gullMesh() {
+  const m = Mesh(), white=[0.95,0.95,0.96], grey=[0.55,0.57,0.62], dark=[0.18,0.19,0.22], yellow=[0.96,0.78,0.24];
+  mBox(m, 0,0,0, 0.17,0.14,0.42, white);                        // body (forward = +z)
+  mBox(m, 0,0.17,0.32, 0.12,0.12,0.14, white);                  // head
+  mBox(m, 0,0.16,0.5, 0.045,0.045,0.11, yellow);                // beak
+  mTri(m, [0.16,0.02,-0.38],[0,0.02,-0.58],[-0.16,0.02,-0.38], dark);   // dark tail
+  for (const s of [1,-1]) {                                     // wings: grey with dark tip
+    mTri(m, [s*0.05,0.08,0.1],[s*0.78,0.14,-0.08],[s*0.05,0.06,-0.26], grey);
+    mTri(m, [s*0.78,0.14,-0.08],[s*1.02,0.11,-0.22],[s*0.5,0.09,-0.32], dark);
+  }
+  return m;
+}
 // small shorebird (sandpiper): speckled body, long thin legs, needle beak
 function piperMesh() { const m = Mesh(), bod=[0.68,0.6,0.5], pale=[0.9,0.87,0.8];
   mBox(m, 0, 0.28, 0, 0.14, 0.1, 0.1, bod); mBox(m, 0.12, 0.34, 0, 0.07, 0.07, 0.07, pale);   // body + head
@@ -3094,6 +3106,7 @@ const FINDS = {
   kelp:     { mesh: () => kelpMesh(),                base: 1.0, max: 80,  label: "Bull Kelp", desc: "A long rubbery stipe with a float at its head.", rare: 1 },
   seabean:  { mesh: () => seabeanMesh(),             base: 0.4, max: 70,  label: "Sea Bean", desc: "A drift seed carried here from a far-off shore.", rare: 2 },
   berry:    { mesh: () => berryMesh(),               base: 0.45,max: 80,  label: "Berries", desc: "Tart wild berries from an inland bush. A good snack.", rare: 0 },
+  gullegg:  { mesh: () => eggFoodMesh(),             base: 0.45,max: 60,  label: "Gull Egg", desc: "Speckled and still warm. Good food, and better cooked.", rare: 0 },
   rope:     { mesh: () => ropeMesh(),                base: 0.5, max: 60,  label: "Coiled Rope", desc: "A tangle of weathered rope, washed in on the surge.", rare: 0 },
   crate:    { mesh: () => crateMesh(),               base: 0.7, max: 40,  label: "Broken Crate", desc: "A salt-stained wooden crate, its boards sprung.", rare: 1 },
 };
@@ -3264,10 +3277,7 @@ function behave(e, dt, d, dx, dz) {
     e.timer -= dt; if (e.timer < 0 || d < 12) { e.timer = 0.4+rng()*1.2; e.tx = e.hx+(rng()-0.5)*e.hr; e.tz = e.hz+(rng()-0.5)*e.hr; }
     const a = Math.atan2(e.tz-e.z, e.tx-e.x); e.x += Math.cos(a)*dt*fast; e.z += Math.sin(a)*dt*fast; e.yaw = a;
   } else if (e.t === "gull") {
-    if (e.state === "circle") { e.phase += dt*0.6; e.x = e.cxx + Math.cos(e.phase)*e.orbit; e.z = e.czz + Math.sin(e.phase)*e.orbit; e.yaw = e.phase+1.57;
-      if (rng() < dt*0.08) { e.state = "land"; } }
-    else if (e.state === "land") { const gy = heightAt(e.cxx, e.czz); e.x = e.cxx; e.z = e.czz; e.state = "ground"; e.timer = 3+rng()*5; }
-    else if (e.state === "ground") { e.timer -= dt; if (d < 16 || e.timer < 0) { e.state = "circle"; e.phase = rng()*6.283; } }
+    // handled by the dedicated flock controller (§12B updateGulls)
   } else if (e.t === "seal") {
     if (e.state === "gone") return;
     if (d < 20) { const a = Math.atan2(-dz, -dx); e.x -= Math.cos(a)*dt*5; e.z -= Math.sin(a)*dt*5; if (heightAt(e.x,e.z) < waterLevel) e.state = "gone"; }
@@ -3323,8 +3333,10 @@ function drawLife(view) {
       let y = g, sc = e.scale, lean = 0, ld = 0;
       if (e.kind === "creature") {
         if (e.t === "fish") y = (e.poolRim !== undefined ? Math.max(waterLevel, e.poolRim) : waterLevel) - 0.3 + Math.sin(e.phase*4)*0.05;
-        else if (e.t === "gull") { y = (e.state === "circle") ? g + e.alt : g + 0.2;
-          if (e.state === "circle") { lean = Math.sin(e.phase * 7.0) * 0.18; ld = e.yaw; } } // wingbeat
+        else if (e.t === "gull") { y = (e.y !== undefined) ? e.y : g + (e.alt || 0);   // §12B flap-and-glide
+          const amp = (e.gstate === "soar" || e.gstate === "approach") ? 0.16 : 0.42;  // glide steady, flap hard when working
+          lean = Math.sin(e.flap || 0) * amp; ld = e.yaw;
+          sc = e.scale * 1.35; }                       // read bigger against sky & sand
         else if (e.t === "jelly") sc = e.scale * (0.9 + Math.sin(e.phase*2)*0.1);
         if (e.t === "crab" || e.t === "anemone") sc = e.scale * (1 - 0.6*e.closed);
         if (e.t === "star" || e.t === "anemone" || e.t === "urchin") y += 0.02;
@@ -4033,6 +4045,7 @@ function targetAlongRay(r, sticky) {
   for (const s of stumps) { const gy = surfaceAt(s.x, s.z).h; capsule(s, "stump", s.x, s.z, s.x, gy, s.z, s.x, gy+0.8, s.z, 1.0); }
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
+  for (const nst of gullNests) if (nst.eggs > 0 && nst.abandonedUntil <= clock.t) sphere(nst, "nest", nst.x, nst.z, 0.2, 0.75);   // §12B
 
   // stickiness: keep the locked target unless another is clearly closer
   if (stick && (!best || best.obj !== stick.obj) && (!best || bestT > stickT - STICK_MARGIN)) return stick;
@@ -4052,6 +4065,7 @@ function useToolOnTarget(t) {
     case "bush": harvestBush(t.obj); return true;
     case "goat": offerSaltTo(t.obj); return true;
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
+    case "nest": takeEgg(t.obj); return true;
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
     case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
     case "rock": if (tool === "pickaxe") { mineObj(t.obj); return true; } return false;
@@ -4548,6 +4562,7 @@ function digAt(x, z) {
   spawnSand(x, sy + 0.3, z, 14, kind === "wet" ? [0.62, 0.56, 0.46] : kind === "gravel" ? [0.6, 0.58, 0.55] : [0.86, 0.78, 0.6]);
   if (wasAbove && waterSurfaceAt(x, z) >= surfaceAt(x, z).h - 0.02) spawnInflow(x, z);   // just hit the water table
   revealSpot(x, z, false);
+  if (typeof lureGulls === "function") lureGulls(x, z);      // §12B a fresh hole draws the gulls in
 }
 /* ---- placing materials: raise the ground + paint its surface (§A) ---- */
 const MAT_COL_JS = [[0,0,0], [0.44,0.53,0.31], [0.40,0.30,0.20], [0.86,0.78,0.59], [0.56,0.55,0.51], [0.47,0.44,0.41], [0.34,0.28,0.20]];
@@ -5519,6 +5534,238 @@ function sparkle(x, y, z, col, count) { for (let i = 0; i < (count||5) && partic
   particles.push({ x: x+(rng()-0.5), y: y+rng()*0.5, z: z+(rng()-0.5), vx: Math.cos(a)*s, vy: 1.2+rng(), vz: Math.sin(a)*s, t: 0, life: 0.6+rng()*0.4, col }); } }
 
 /* ---- wild goats ---- */
+/* ===================================================================== *
+ * § 12B  GULLS — a soaring flock with attractors, stealing and shooing,
+ *   plus seeded nesting colonies with eggs and dive-bomb defense.
+ *   Only gulls near the player are simulated in detail; the flock is capped.
+ * ===================================================================== */
+let onGull = null;                         // sound hook: onGull("call" | "squabble" | "screech")
+let gullNests = [];
+const GULL = {
+  soarAlt: 24, soarR: 24, soarSpd: 6, approachSpd: 11, fleeSpd: 16, stealSpd: 13, bombSpd: 22,
+  stealRange: 2.6, chaseDrop: 6, shooR: 7.5, nestDefendR: 11, divebombCd: 3.5,
+  eggReplenishDays: 3, abandonDays: 2, lureLife: 14,
+};
+// small finds & food a gull will scavenge or steal from the ground / a fresh hole
+const GULL_WANTS = { clam:1, cockle:1, mussel:1, shell:1, molt:1, berry:1, worm:1, coin:1, seaglass:1, gullegg:1 };
+let gullLure = null;                       // {x,z,t} a fresh dig or wash-up that pulls gulls in (also the dig tell)
+function lureGulls(x, z) { gullLure = { x, z, t: clock.t }; }
+
+const gullShadowDyn = makeDynamic(discMesh(0, 1, 14, 0, [0.05,0.06,0.07]), 24);
+const nestDyn = makeDynamic((function(){ const m = Mesh(); const tw=[0.4,0.33,0.22], tw2=[0.46,0.38,0.26];
+  for (let i=0;i<10;i++){ const a=i/10*6.283; mBox(m, Math.cos(a)*0.5, 0.06, Math.sin(a)*0.5, 0.16,0.07,0.16, i%2?tw:tw2); }
+  mergeMesh(m, discMesh(0.02, 0.44, 12, 0, [0.28,0.23,0.16])); return m; })(), 30);
+function eggShape(col) { const m = Mesh(); for (let i=0;i<6;i++){ const a0=i/6*6.283,a1=(i+1)/6*6.283;
+  mTri(m,[0,0.26,0],[Math.cos(a0)*0.12,0.1,Math.sin(a0)*0.12],[Math.cos(a1)*0.12,0.1,Math.sin(a1)*0.12],col);
+  mTri(m,[0,-0.02,0],[Math.cos(a1)*0.12,0.1,Math.sin(a1)*0.12],[Math.cos(a0)*0.12,0.1,Math.sin(a0)*0.12],col); } return m; }
+const eggDyn = makeDynamic(eggShape([0.86,0.82,0.68]), 60);
+function eggFoodMesh() { return eggShape([0.9,0.86,0.72]); }
+
+function seedGullNests() {
+  gullNests = [];
+  const colonies = 2 + (rng()*3|0);                   // 2–4 colonies
+  for (let c = 0; c < colonies; c++) {
+    let site = null;
+    for (let k = 0; k < 500 && !site; k++) {
+      const a = rng()*6.283, r = HALF*(0.28 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+      const s = surfaceAt(x, z);
+      const dune  = s.h > 6 && s.h < 20 && s.slope < 0.5;             // dune shelf
+      const ledge = s.h > 20 && s.h < 44 && s.slope > 0.32 && s.slope < 1.1;   // cliff ledge
+      if ((dune || ledge) && !spotUnderwater(x, z) && !bigPropBlocking(x, z, 1.2) && !nearPOI(x, z, 6)) site = { x, z };
+    }
+    if (!site) continue;
+    const nPer = 1 + (rng()*3|0);
+    for (let n = 0; n < nPer; n++) {
+      const a = rng()*6.283, r = rng()*5, x = site.x + Math.cos(a)*r, z = site.z + Math.sin(a)*r;
+      if (spotUnderwater(x, z) || bigPropBlocking(x, z, 0.8)) continue;
+      const maxEggs = 1 + (rng()*3|0);
+      gullNests.push({ x, z, eggs: maxEggs, maxEggs, replenishAt: 0, abandonedUntil: -1e9, defendCd: 0 });
+    }
+  }
+  // a couple of guardian gulls bound to the colonies
+  let guards = 0;
+  for (const nest of gullNests) { if (guards >= 4) break; if (rng() < 0.6) {
+    spawnCreature("gull", nest.x, nest.z, { cxx: nest.x, czz: nest.z, alt: 18 });
+    const e = life[life.length-1]; e.nest = nest; guards++;
+  } }
+}
+
+function gullInterest() {
+  if (gullLure && clock.t - gullLure.t < GULL.lureLife) return { x: gullLure.x, z: gullLure.z, kind: "lure" };
+  // a small find or food sitting out (a fresh hole, a dropped item)
+  let best = null, bd = 90;
+  for (const e of life) { if (e.kind !== "find" || !GULL_WANTS[e.t]) continue;
+    const d = Math.hypot(e.x - player.x, e.z - player.z); if (d < bd) { bd = d; best = { x: e.x, z: e.z, kind: "find", ref: e }; } }
+  if (best) return best;
+  if (typeof chestGullPoint === "function") { const cp = chestGullPoint(); if (cp) return cp; }   // §12C open/near chests
+  // a persistent "gulls circling a buried spot" dig tell near the player
+  for (const s of (typeof digSpots !== "undefined" ? digSpots : [])) {
+    if (s.revealed || s.tell !== "gull") continue;
+    if (Math.hypot(s.x - player.x, s.z - player.z) < 70) return { x: s.x, z: s.z, kind: "tell" };
+  }
+  return null;
+}
+function steerGull(e, tx, tz, spd, dt) {
+  const a = Math.atan2(tz - e.z, tx - e.x);
+  e.x += Math.cos(a)*dt*spd; e.z += Math.sin(a)*dt*spd; e.yaw = a + 1.57;
+}
+function initGull(e) {
+  if (e.gstate) return;
+  e.gstate = "soar";
+  e.home = { x: e.cxx !== undefined ? e.cxx : e.x, z: e.czz !== undefined ? e.czz : e.z };
+  e.alt = e.alt !== undefined ? e.alt : 20; e.flap = rng()*6.283; e.sp = rng()*6.283; e.carry = null; e.nest = e.nest || null;
+}
+function gullDrop(e) {
+  if (!e.carry) return;
+  const a = rng()*6.283, r = 3 + rng()*5; const [nx, nz] = nearestWalkable(e.x + Math.cos(a)*r, e.z + Math.sin(a)*r);
+  const d = { id: e.carry, x: nx, z: nz }; worldDrops.push(d); spawnDropEntity(d); saveDrops();
+  if (onGull) onGull("call"); e.carry = null;
+}
+function updateGulls(dt) {
+  // nests: replenish eggs; tick defend cooldown
+  for (const nest of gullNests) {
+    if (nest.defendCd > 0) nest.defendCd -= dt;
+    if (nest.abandonedUntil > clock.t) continue;
+    if (nest.eggs < nest.maxEggs && nest.replenishAt && clock.t >= nest.replenishAt) {
+      nest.eggs++; nest.replenishAt = nest.eggs < nest.maxEggs ? clock.t + GULL.eggReplenishDays*DAY_PERIOD : 0;
+    }
+  }
+  const gulls = life.filter(e => e.t === "gull");
+  const interest = gullInterest();
+  const sprinting = mode === "walk" && player.sprinting;
+  const swung = shovelSwing > 0.5;
+  for (const e of gulls) {
+    initGull(e);
+    const dp = Math.hypot(e.x - player.x, e.z - player.z);
+    e.flap = (e.flap || 0) + dt * (e.gstate === "soar" || e.gstate === "approach" ? 5 : 11);
+    // shooing: a sprint or a tool swing nearby scatters landed/approaching gulls
+    if ((e.gstate === "forage" || e.gstate === "approach") && (sprinting || swung) && dp < GULL.shooR) {
+      e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call");
+    }
+    switch (e.gstate) {
+      case "soar": {
+        e.sp += dt*0.5;
+        const cx = e.nest ? e.nest.x : e.home.x, cz = e.nest ? e.nest.z : e.home.z;
+        steerGull(e, cx + Math.cos(e.sp)*GULL.soarR, cz + Math.sin(e.sp)*GULL.soarR, GULL.soarSpd, dt);
+        e.alt += (GULL.soarAlt - e.alt) * Math.min(1, dt*0.5);
+        if (interest && !e.nest && rng() < dt*0.3) { e.gstate = "approach"; e.target = { x: interest.x, z: interest.z, ref: interest.ref, kind: interest.kind }; }
+        if (e.nest && e.nest.abandonedUntil <= clock.t && e.nest.eggs > 0 && dp < GULL.nestDefendR && e.nest.defendCd <= 0) {
+          e.gstate = "divebomb"; e.timer = 1.4; e.nest.defendCd = GULL.divebombCd; if (onGull) onGull("screech");
+        }
+        break;
+      }
+      case "approach": {
+        steerGull(e, e.target.x, e.target.z, GULL.approachSpd, dt);
+        e.alt += (0.9 - e.alt) * Math.min(1, dt*0.9);
+        if (e.target.kind === "find" && e.target.ref && life.indexOf(e.target.ref) < 0) { e.gstate = "soar"; break; }
+        if (Math.hypot(e.x - e.target.x, e.z - e.target.z) < 2 && e.alt < 1.6) { e.gstate = "forage"; e.timer = 4 + rng()*6; }
+        break;
+      }
+      case "forage": {
+        e.alt += (0.0 - e.alt) * Math.min(1, dt*2);
+        e.timer -= dt;
+        e.wt = (e.wt || 0) - dt; if (e.wt < 0) { e.wt = 0.5 + rng(); e.wvx = (rng()-0.5); e.wvz = (rng()-0.5); }
+        e.x += (e.wvx||0)*dt*1.3; e.z += (e.wvz||0)*dt*1.3; e.yaw = Math.atan2(e.wvz||0.01, e.wvx||0.01) + 1.57;
+        for (const o of gulls) if (o !== e && o.gstate === "forage") {   // squabble: shove apart
+          const ddx = e.x - o.x, ddz = e.z - o.z, dd = Math.hypot(ddx, ddz);
+          if (dd > 0.01 && dd < 1.3) { e.x += ddx/dd*dt*1.6; e.z += ddz/dd*dt*1.6; if (rng() < dt*0.4 && onGull) onGull("squabble"); }
+        }
+        // steal a nearby wanted item if you're too slow to beat the gull to it
+        for (const it of life) { if (it.kind !== "find" || !GULL_WANTS[it.t]) continue;
+          if (Math.hypot(e.x - it.x, e.z - it.z) < GULL.stealRange && Math.hypot(player.x - it.x, player.z - it.z) > 3) {
+            e.carry = it.t;
+            if (it.drop) { const di = worldDrops.indexOf(it.drop); if (di >= 0) worldDrops.splice(di, 1); saveDrops(); }
+            const li = life.indexOf(it); if (li >= 0) life.splice(li, 1);
+            const a = rng()*6.283; e.target = { x: e.x + Math.cos(a)*60, z: e.z + Math.sin(a)*60 };
+            e.gstate = "steal"; if (onGull) onGull("call"); break;
+          }
+        }
+        if (e.timer < 0) e.gstate = "soar";
+        break;
+      }
+      case "steal": {
+        steerGull(e, e.target.x, e.target.z, GULL.stealSpd, dt);
+        e.alt += (14 - e.alt) * Math.min(1, dt*0.8);
+        if (dp < GULL.chaseDrop) { gullDrop(e); e.gstate = "flee"; e.timer = 1.4; break; }   // chased → drops the loot
+        if (Math.hypot(e.x - e.target.x, e.z - e.target.z) < 6) { e.carry = null; e.gstate = "soar"; e.home = { x: e.x, z: e.z }; }   // got away
+        break;
+      }
+      case "flee": {
+        const a = Math.atan2(e.z - player.z, e.x - player.x);
+        e.x += Math.cos(a)*dt*GULL.fleeSpd; e.z += Math.sin(a)*dt*GULL.fleeSpd; e.yaw = a + 1.57;
+        e.alt += (18 - e.alt) * Math.min(1, dt*0.8);
+        e.timer -= dt; if (e.timer < 0 && dp > 14) { if (e.carry) gullDrop(e); e.gstate = "soar"; e.home = { x: e.x, z: e.z }; }
+        break;
+      }
+      case "divebomb": {
+        steerGull(e, player.x, player.z, GULL.bombSpd, dt);
+        const targetAlt = Math.max(2, 10 - (1.4 - e.timer)*12);
+        e.alt += (targetAlt - e.alt) * Math.min(1, dt*3);
+        e.timer -= dt;
+        if (dp < 4.5) { camShake = Math.max(camShake, 0.3); camNudge = Math.max(camNudge, 0.05); }   // flinch, no damage
+        if (e.timer < 0) { e.gstate = "soar"; e.home = { x: e.nest.x, z: e.nest.z }; }
+        break;
+      }
+    }
+    e.y = heightAt(e.x, e.z) + e.alt;          // world height from live ground + altitude
+  }
+}
+// Take an egg from a nest; the last one abandons it for a while.
+function takeEgg(nest) {
+  if (!nest || nest.eggs <= 0 || nest.abandonedUntil > clock.t) { showCard("Empty nest", "Nothing to take right now."); return; }
+  const added = Inv.add("gullegg", 1);
+  if (added <= 0) { showCard("Pack full", "No room for the egg."); bagShake(); return; }
+  nest.eggs--;
+  const first = !discovered.has("f_gullegg"); discovered.add("f_gullegg"); notify("gullegg", 1, first);
+  if (nest.eggs <= 0) { nest.abandonedUntil = clock.t + GULL.abandonDays*DAY_PERIOD; nest.replenishAt = nest.abandonedUntil; showCard("Nest emptied", "The gulls abandon an emptied nest for a while. Leave one and it keeps laying."); }
+  else if (!nest.replenishAt) nest.replenishAt = clock.t + GULL.eggReplenishDays*DAY_PERIOD;
+  if (onGull) onGull("call");
+  saveNests();
+}
+function drawGulls(view) {
+  // blob shadows on the ground under near gulls
+  propUniforms(view); let ns = 0;
+  for (const e of life) { if (e.t !== "gull" || e.gstate === undefined) continue;
+    const d = Math.hypot(e.x - player.x, e.z - player.z); if (d > 110 || ns >= 24) continue;
+    const alt = Math.max(0, e.alt || 0), sh = 0.6 + alt*0.03, fade = Math.max(0.12, 0.5 - alt*0.012);
+    const gy = heightAt(e.x, e.z) + 0.05, o = ns*10;
+    digScratch[o]=e.x;digScratch[o+1]=gy;digScratch[o+2]=e.z;digScratch[o+3]=sh;digScratch[o+4]=0;digScratch[o+5]=0;digScratch[o+6]=0;
+    digScratch[o+7]=fade;digScratch[o+8]=fade;digScratch[o+9]=fade; ns++; }
+  if (ns) gullShadowDyn.draw(digScratch, ns);
+  // a tiny carried item under the beak of a thieving gull
+  for (const e of life) { if (e.t !== "gull" || !e.carry) continue;
+    const reg = FINDS[e.carry]; if (!reg || !reg.dyn) continue;
+    const d = Math.hypot(e.x - player.x, e.z - player.z); if (d > 90) continue;
+    digScratch.set([e.x, (e.y||0) - 0.22, e.z, 0.5, e.yaw||0, 0, 0, 1,1,1], 0); reg.dyn.draw(digScratch, 1);
+  }
+}
+function drawNests(view) {
+  propUniforms(view);
+  let nn = 0, ne = 0;
+  for (const nest of gullNests) {
+    const d = Math.hypot(nest.x - player.x, nest.z - player.z); if (d > 120) continue;
+    const gy = surfaceAt(nest.x, nest.z).h, o = nn*10;
+    if (nn < 30) { digScratch[o]=nest.x;digScratch[o+1]=gy;digScratch[o+2]=nest.z;digScratch[o+3]=1;digScratch[o+4]=0;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=1;digScratch[o+8]=1;digScratch[o+9]=1; nn++; }
+  }
+  if (nn) nestDyn.draw(digScratch, nn);
+  for (const nest of gullNests) {
+    const d = Math.hypot(nest.x - player.x, nest.z - player.z); if (d > 120 || nest.abandonedUntil > clock.t) continue;
+    const gy = surfaceAt(nest.x, nest.z).h + 0.08;
+    for (let i = 0; i < nest.eggs && ne < 60; i++) { const a = i/Math.max(1,nest.eggs)*6.283 + nest.x, ex = nest.x + Math.cos(a)*0.16, ez = nest.z + Math.sin(a)*0.16;
+      const o = ne*10; eggScratch(o, ex, gy, ez); ne++; }
+  }
+  if (ne) eggDyn.draw(eggBuf, ne);
+}
+const eggBuf = new Float32Array(600);
+function eggScratch(o, x, y, z) { eggBuf[o]=x;eggBuf[o+1]=y;eggBuf[o+2]=z;eggBuf[o+3]=0.7;eggBuf[o+4]=0;eggBuf[o+5]=0.25;eggBuf[o+6]=0;eggBuf[o+7]=1;eggBuf[o+8]=1;eggBuf[o+9]=1; }
+function nearestNest(x, z, maxd) { let best = null, bd = maxd; for (const n of gullNests) { const d = Math.hypot(n.x - x, n.z - z); if (d < bd) { bd = d; best = n; } } return best; }
+function saveNests() { try { localStorage.setItem("bcn_" + SEED_STR, JSON.stringify(gullNests.map(n => [+n.x.toFixed(1), +n.z.toFixed(1), n.eggs, +(n.abandonedUntil-clock.t).toFixed(0), +(n.replenishAt-clock.t).toFixed(0)]))); } catch (e) {} }
+function loadNests() {
+  try { const a = JSON.parse(localStorage.getItem("bcn_" + SEED_STR) || "null"); if (!a) return;
+    for (const r of a) { const n = gullNests.find(g => Math.abs(g.x-r[0]) < 1 && Math.abs(g.z-r[1]) < 1);
+      if (n) { n.eggs = r[2]; n.abandonedUntil = r[3] > 0 ? clock.t + r[3] : -1e9; n.replenishAt = r[4] > 0 ? clock.t + r[4] : 0; } } } catch (e) {}
+}
+
 let goats = [], goatDyn, onGoat = null;
 const GOAT_NAMES = ["Biscuit","Pebble","Clover","Juniper","Nutmeg","Thistle","Captain","Waffles","Marbles","Dandelion","Pippin","Gus"];
 function seedGoats() {
@@ -5671,6 +5918,8 @@ seedSalt();
 seedGoats();
 loadTamed();
 loadDrops();
+seedGullNests();
+loadNests();
 if (debugMode) auditRegistries();
 
 let proj = new Float32Array(16);
@@ -5713,6 +5962,7 @@ function frame(now) {
   updateDigging(dt);
   updateTools(dt, gdtTotal);
   updateGoats(dt);
+  updateGulls(dt);
   updateSalt();
   updateAutoPickup();
   updateStarRescue();
@@ -5930,8 +6180,10 @@ function frame(now) {
   drawBerryBushes(view);
   drawCampfires(view);
   drawGoats(view);
+  drawNests(view);
   drawSalt(view);
   drawLife(view);
+  drawGulls(view);
   drawTells(view, dt);
   drawRipples(view);
   drawPlaceGhost(view);
