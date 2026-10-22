@@ -77,6 +77,35 @@
   #settingspanel label { font-size: 13px; letter-spacing: .02em; color: var(--ink); }
   #settingspanel input[type=range] { width: 130px; }
   #settingspanel .closebtn { width: 100%; margin-top: 14px; }
+  /* §2 unified menu tab-bar (Satchel / Bucket / Journal), floats above whichever panel is open */
+  #menutabs { position: fixed; z-index: 26; left: 50%; top: 14px; transform: translateX(-50%); display: none; gap: 8px; }
+  #menutabs.show { display: flex; }
+  #menutabs .mtb { font: inherit; font-size: 14px; font-weight: 650; letter-spacing: .04em; padding: 9px 20px; cursor: pointer;
+    border: none; background: var(--panel-edge); color: var(--ink); opacity: .74;
+    box-shadow: 0 4px 16px rgba(0,0,0,.4);
+    clip-path: polygon(9px 0, calc(100% - 9px) 0, 100% 9px, 100% calc(100% - 9px), calc(100% - 9px) 100%, 9px 100%, 0 calc(100% - 9px), 0 9px); }
+  #menutabs .mtb.on { opacity: 1; background: var(--facet); color: #ffe6b0; box-shadow: 0 4px 16px rgba(0,0,0,.4), inset 0 0 0 1px rgba(255,220,150,.55); }
+  #menutabs .mtb:hover { opacity: 1; }
+  /* §2 pause menu (Esc) — chamfered panel */
+  #pausemenu { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center;
+    background: radial-gradient(150% 130% at 50% 35%, rgba(14,26,32,0.32), rgba(8,12,16,0.78)); backdrop-filter: blur(2px); }
+  #pausemenu.show { display: flex; }
+  #pausebox { width: min(320px, 90vw); background: var(--facet); padding: 22px 24px; text-align: center;
+    box-shadow: 0 12px 44px rgba(0,0,0,.6), inset 0 0 40px rgba(40,24,10,.4);
+    clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); }
+  #pausebox h2 { font-size: 22px; letter-spacing: .06em; margin: 0 0 4px; color: #fbeccd; }
+  #pausebox .psub { font-size: 12px; opacity: .6; margin-bottom: 18px; letter-spacing: .04em; }
+  #pausebox button { width: 100%; margin: 7px 0; font-size: 15px; padding: 12px 20px; }
+  #pausebox button.danger { color: #e9b9a0; }
+  /* §2 controls cheat-sheet (inside the pause flow) */
+  #controlsbox { width: min(400px, 92vw); max-height: 82vh; overflow-y: auto; background: var(--facet); padding: 20px 24px; text-align: left;
+    box-shadow: 0 12px 44px rgba(0,0,0,.6);
+    clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); }
+  #controlsbox h2 { font-size: 20px; letter-spacing: .05em; margin: 0 0 14px; text-align: center; color: #fbeccd; }
+  #controlsbox .crow { display: flex; justify-content: space-between; gap: 14px; margin: 9px 0; font-size: 13.5px; align-items: baseline; }
+  #controlsbox .ckey { color: #ffe6b0; font-weight: 650; letter-spacing: .03em; white-space: nowrap; }
+  #controlsbox .cdesc { opacity: .82; text-align: right; }
+  #controlsbox .closebtn { width: 100%; margin-top: 16px; }
   @media (max-width: 560px) {
     #titlemenu { width: min(420px, 94vw); }
     .menucol button { font-size: 18px; padding: 16px 22px; }
@@ -437,6 +466,8 @@
 <div id="hotbar"></div>
 <div id="journal"></div>
 <div id="invpanel"></div>
+<div id="menutabs"></div>
+<div id="pausemenu"></div>
 <div id="tradepanel"></div>
 <canvas id="ygraph" width="260" height="96"></canvas>
 <canvas id="bucketpanel" width="125" height="145"></canvas>
@@ -472,8 +503,8 @@
 <div id="itip"></div>
 <div id="debugpanel"></div>
 <div id="help">
-  WASD move · Shift run · C crouch · Space jump · click — use/interact · E — pick up<br>
-  1-8 hotbar · B bucket · I pack · Tab journal · Esc pause
+  WASD move · Shift run · C crouch · Space jump · click or F — use / pick up / interact<br>
+  1-8 hotbar · E — menu (Satchel · Bucket · Journal) · Tab tabs · L lantern · Esc pause
 </div>
 
 <script>
@@ -2163,7 +2194,7 @@ function mantleClimb() {   // climbed above the ledge → step up onto it
   if (onClimb) onClimb("mantle");
 }
 function climbStep(dt) {
-  if ((!keys["KeyE"] && !mobileClimb) ) { dropClimb(); return; }   // let go to drop
+  if ((!keys["KeyF"] && !mobileClimb) ) { dropClimb(); return; }   // §2 hold the action key (F) to stay on the wall; let go to drop
   const into = [player.climbIntoX, player.climbIntoZ], perp = [-into[1], into[0]];
   let up = 0, lat = 0, moving = false;
   if (keys["KeyW"]) { up += 1; moving = true; } if (keys["KeyS"]) { up -= 1; moving = true; }
@@ -2461,8 +2492,11 @@ let mobileSprint = false;        // mobile "Run" toggle writes here
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (e.code === "Escape" && typeof inspect !== "undefined" && inspect.open) { closeInspect(); return; }   // close the close-up first
-  if (e.code === "Escape" && typeof bucketLook !== "undefined" && bucketLook.open) { closeBucketLook(); return; }
   if (e.code === "Escape" && typeof tradeOpen !== "undefined" && tradeOpen) { closeTrade(); return; }
+  if (e.code === "Escape" && document.getElementById("settingspanel").style.display === "block") { closeSettings(); return; }   // §2 settings → back to pause (or game)
+  if (e.code === "Escape" && pauseStage) { if (pauseStage === "controls") { showPause(); } else closePause(); return; }   // §2 controls → pause; pause → resume
+  if (e.code === "Escape" && menuIsOpen()) { closeMenu(); return; }   // §2 Esc closes the Satchel/Bucket/Journal menu
+  if (e.code === "Escape" && mode === "walk") { openPause(); return; }   // §2 Esc opens the pause menu
   if (typeof pry !== "undefined" && pry) {                                   // §12C mini-game captures space / esc
     if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); pryStrike(); return; }
     if (e.code === "Escape") { cancelPry(); return; }
@@ -2473,18 +2507,17 @@ addEventListener("keydown", (e) => {
   }
   if (e.code === "KeyG") setGFXCustom("dither", !GFX.dither);   // §13.6 quick dither toggle (syncs graphics settings)
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
-  if (e.code === "KeyE" && !e.repeat) { if (player.climbing) {} else if (!tryGrabClimb()) interact(); }   // §15 grab a face if facing one, else pick up / inspect
+  if (e.code === "KeyE" && !e.repeat && !pauseStage) { if (mode === "walk" || menuIsOpen()) toggleMenu(); }   // §2 one menu key: Satchel / Bucket / Journal
+  if (e.code === "KeyF" && !e.repeat && !pauseStage && !isPanelOpen() && !(debugMode && e.shiftKey)) { if (player.climbing) {} else if (!tryGrabClimb()) interact(); }   // §2 the action key: grab a face, pick up / inspect, interact
   if (e.code === "Space" && mode === "walk") { e.preventDefault(); queueJump(); }
   if (e.code === crouchKey && mode === "walk" && !isPanelOpen() && !e.repeat) { e.preventDefault(); if (!player.swimming) setCrouch(!crouching); }   // §13.4 toggle crouch (held key = swim down)
-  if (e.code === "Tab") { e.preventDefault(); toggleJournal(); }
-  if (e.code === "KeyI") toggleInventory();           // inventory panel
-  if (e.code === "KeyB" && mode === "walk" && !isPanelOpen() && ownsTool("bucket")) openBucketLook();   // §13.3 look inside the bucket
+  if (e.code === "Tab") { e.preventDefault(); if (!pauseStage && (mode === "walk" || menuIsOpen())) cycleMenuTab(1); }   // §2 switch tabs within the menu (opens it on the last tab if closed)
   if (e.code === "KeyL" && mode === "walk" && !isPanelOpen()) toggleLantern();   // §18 raise / lower the lantern
   if (e.code === "KeyP" && mode === "walk") toggleAutoPickup();   // auto-pickup on/off
   if (/^Digit[1-8]$/.test(e.code)) selectHotbar(+e.code.slice(5) - 1);
   if (debugMode) {                                    // debug-only shortcuts
     if (e.code === "Backquote") debugOn = !debugOn;
-    if (e.code === "KeyF" && (mode === "walk" || mode === "free")) toggleFly();
+    if (e.code === "KeyF" && e.shiftKey && (mode === "walk" || mode === "free")) toggleFly();   // §2 debug fly moved to Shift+F (F is now the action key)
     if (e.code === "KeyN") forceSpawn = !forceSpawn;   // (moved off B — B now opens the bucket)
     if (e.code === "KeyY") { dbgYGraph = !dbgYGraph; document.getElementById("ygraph").style.display = dbgYGraph ? "block" : "none"; }   // §P1 feet/cam Y graph
     if (e.code === "KeyK") { crabLog = !crabLog; console.log("crab log " + (crabLog ? "ON" : "OFF")); }   // §1c crab lifecycle log
@@ -2498,6 +2531,12 @@ canvas.addEventListener("mousedown", (e) => {
   if (e.button !== 0) return;
   if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
   if (mode === "walk" && buildMode) { placeBuildAtGhost(); return; }      // §16B click to place the ghost
+  if (mode === "walk" && !isPanelOpen()) {                                 // §2 left-click also uses a placed piece (crouch to pick it up) — part of E's old action
+    const b = buildInFront();
+    if (b) { const def = BUILD_DEFS[b.type], hasUse = def.storage || def.dry || def.shelter;
+      if (hasUse && !crouching) { interactBuild(b); return; }
+      if (crouching) { pickUpBuild(b); return; } }
+  }
   if (mode === "walk" && selectedTool() === "spear" && !isPanelOpen()) { spearPressStart(); return; }   // §14C charge → thrust/throw
   useHeld = true; clickAt(0, 0);                 // §13.2 hold to keep swinging at a work target
 });
@@ -2659,6 +2698,65 @@ document.getElementById("startBtn").addEventListener("click", () => {
   overlay.classList.add("hidden");                        // resuming from a pause
   if (!IS_TOUCH) canvas.requestPointerLock();
 });
+
+// §2 pause menu (Esc): a chamfered Resume / Settings / Controls / Save & quit panel that freezes the world
+let pauseStage = null;             // null | "menu" | "controls"
+let pauseWasClockPaused = false;   // remember the debug clock state so Resume restores it
+let settingsFromPause = false;     // Settings opened from the pause menu → closing returns to pause
+function controlsRows() {
+  const crouch = crouchKey === "ControlLeft" ? "Ctrl" : "C";
+  const rows = [
+    ["Move", "W A S D"], ["Look", "Mouse"], ["Jump", "Space"], ["Sprint", "Shift"],
+    ["Crouch / swim down", crouch + " (hold to dive)"], ["Use · pick up · interact", "Left-click or F"],
+    ["Climb a ledge", "Hold F against a face"], ["Open menu (Satchel · Bucket · Journal)", "E"],
+    ["Switch menu tab", "Tab"], ["Hotbar slot", "1 – 8 · scroll"], ["Lantern", "L"], ["Pause", "Esc"],
+  ];
+  return rows.map(([d, k]) => `<div class="crow"><span class="cdesc">${d}</span><span class="ckey">${k}</span></div>`).join("");
+}
+function openPause() {
+  if (mode !== "walk" || menuIsOpen() || isPanelOpen() || buildMode) return;
+  pauseWasClockPaused = clock.paused; clock.paused = true;     // freeze tide / creatures while paused
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  showPause();
+}
+function showPause() {
+  pauseStage = "menu";
+  const el = document.getElementById("pausemenu");
+  el.innerHTML = `<div id="pausebox"><h2>Paused</h2><div class="psub">${ISLAND_NAME}</div>
+    <button class="primary" data-pm="resume">Resume</button>
+    <button data-pm="settings">Settings</button>
+    <button data-pm="controls">Controls</button>
+    <button class="danger" data-pm="quit">Save &amp; quit</button></div>`;
+  el.classList.add("show"); wirePause(el);
+}
+function showControls() {
+  pauseStage = "controls";
+  const el = document.getElementById("pausemenu");
+  el.innerHTML = `<div id="controlsbox"><h2>Controls</h2>${controlsRows()}<button class="closebtn primary" data-pm="back">Back</button></div>`;
+  el.classList.add("show"); wirePause(el);
+}
+function closePause() {
+  pauseStage = null;
+  const el = document.getElementById("pausemenu"); el.classList.remove("show"); el.innerHTML = "";
+  clock.paused = pauseWasClockPaused;
+  requestLock();
+}
+function wirePause(el) {
+  el.querySelectorAll("button[data-pm]").forEach(b => b.onclick = () => {
+    const a = b.dataset.pm;
+    if (a === "resume") closePause();
+    else if (a === "controls") showControls();
+    else if (a === "back") showPause();
+    else if (a === "settings") { el.classList.remove("show"); settingsFromPause = true; openSettings(); }
+    else if (a === "quit") { try { saveState(); if (typeof saveWorld === "function") saveWorld(); } catch (e) {}
+      location.href = location.pathname + "?seed=" + encodeURIComponent(SEED_STR); }
+  });
+}
+function closeSettings() {
+  document.getElementById("settingspanel").style.display = "none";
+  if (settingsFromPause) { settingsFromPause = false; showPause(); }   // returned from the pause flow → back to pause
+  else requestLock();
+}
 document.getElementById("newBtn").addEventListener("click", () => gotoSeed(randomSeed()));
 document.getElementById("diceBtn").addEventListener("click", () => gotoSeed(randomSeed()));
 document.getElementById("seedInput").addEventListener("keydown", (e) => { if (e.key === "Enter") gotoSeed(e.target.value); });
@@ -2717,7 +2815,7 @@ function openSettings() {
     openSettings();
   });
   const sens = p.querySelector("#setSens"); if (sens) sens.oninput = (e) => { lookSensMobile = +e.target.value; };
-  p.querySelector(".closebtn").onclick = () => { p.style.display = "none"; };
+  p.querySelector(".closebtn").onclick = () => closeSettings();
   p.style.display = "block";
 }
 // §13.1 a panel is open (cursor intentionally freed) → closing it returns to the game, never the title
@@ -2729,7 +2827,8 @@ function isPanelOpen() {
       || (typeof bucketLook !== "undefined" && bucketLook.open)
       || (typeof tradeOpen !== "undefined" && tradeOpen)
       || document.getElementById("journal").style.display === "block"
-      || document.getElementById("settingspanel").style.display === "block";
+      || document.getElementById("settingspanel").style.display === "block"
+      || (typeof pauseStage !== "undefined" && !!pauseStage);
 }
 function requestLock() {   // re-acquire pointer lock after a gesture (closing a panel); harmless if it fails
   if (!IS_TOUCH && mode === "walk" && !isPanelOpen()) { try { canvas.requestPointerLock(); } catch (e) {} }
@@ -2898,14 +2997,13 @@ if (IS_TOUCH) (function mobileControls() {
      <div id="mBtns">
        <div class="mBtn" data-act="jump">Jump</div>
        <div class="mBtn" data-act="run">Run</div>
-       <div class="mBtn" data-key="KeyE">Use</div>
+       <div class="mBtn" data-key="KeyF">Use</div>
        <div class="mBtn" data-act="crouch">Crouch</div>
        <div class="mBtn" data-act="swimup" data-hold="1">▲ Up</div>
        <div class="mBtn" data-act="swimdown" data-hold="1">▼ Down</div>
        <div class="mBtn" data-act="climb" data-hold="1">Climb</div>
        <div class="mBtn" data-act="lantern">Lantern</div>
-       <div class="mBtn" data-key="KeyI">Pack</div>
-       <div class="mBtn" data-key="Tab">Journal</div>
+       <div class="mBtn" data-key="KeyE">Bag</div>
        <div class="mBtn" data-act="pause">Pause</div>
        <div class="mBtn mbuild" data-act="brotate" style="display:none">Rotate</div>
        <div class="mBtn mbuild" data-act="bplace" style="display:none">Place</div>
@@ -2941,7 +3039,7 @@ if (IS_TOUCH) (function mobileControls() {
     btn.addEventListener("touchstart", (e) => {
       e.preventDefault(); e.stopPropagation();
       unlockAudio();
-      if (btn.dataset.act === "pause") overlay.classList.remove("hidden");
+      if (btn.dataset.act === "pause") openPause();
       else if (btn.dataset.act === "run") { mobileSprint = !mobileSprint; btn.style.background = mobileSprint ? "rgba(60,120,130,.8)" : ""; }
       else if (btn.dataset.act === "crouch") { if (mode === "walk" && !isPanelOpen()) { setCrouch(!crouching); btn.style.background = crouching ? "rgba(60,120,130,.8)" : ""; } }   // §13.4 mobile crouch toggle
       else if (btn.dataset.act === "swimup") { mobileSwimUp = true; btn.style.background = "rgba(60,120,130,.8)"; }   // §14A hold to swim up
@@ -3028,7 +3126,7 @@ if (IS_TOUCH) (function mobileControls() {
   // ---- block page scroll / pull-to-refresh / pinch-zoom / long-press menu ----
   // block page scroll/bounce, but let scrollable panels (settings, satchel, journal…) scroll natively
   document.addEventListener("touchmove", (e) => {
-    if (e.target.closest && e.target.closest("#settingspanel, #invpanel, #stashpanel, #journal, #bucketlook")) return;
+    if (e.target.closest && e.target.closest("#settingspanel, #invpanel, #stashpanel, #journal, #bucketlook, #pausemenu, #menutabs")) return;
     e.preventDefault();
   }, { passive: false });
   document.addEventListener("gesturestart", (e) => e.preventDefault());
@@ -5149,7 +5247,7 @@ function buildPanels() {
   document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#ctxmenu")) hideContextMenu(); }, true);
   const bag = document.getElementById("bagBtn");
   if (IS_TOUCH) bag.style.display = "flex";
-  bag.addEventListener("click", (e) => { e.preventDefault(); toggleInventory(); });
+  bag.addEventListener("click", (e) => { e.preventDefault(); toggleMenu("satchel"); });
 }
 // procedural canvas-bag texture (noise weave + dashed stitched seam), matching the palette
 function applyBagTexture() {
@@ -5180,7 +5278,7 @@ function renderHotbar() {
     s.addEventListener("auxclick", (e) => { if (e.button === 1) { e.preventDefault();   // §13.2 middle-click cycles the Tool Kit
       const c = Inv.hotbar[+s.dataset.h]; if (c && c.id === "toolkit") { Inv.selected = +s.dataset.h; cycleToolkit(); } } });
     s.addEventListener("contextmenu", (e) => {   // §13.3 right-click the bucket on the belt → Look inside
-      const c = Inv.hotbar[+s.dataset.h]; if (c && c.id === "bucket") { e.preventDefault(); e.stopPropagation(); Inv.selected = +s.dataset.h; renderHotbar(); openBucketLook(); } });
+      const c = Inv.hotbar[+s.dataset.h]; if (c && c.id === "bucket") { e.preventDefault(); e.stopPropagation(); Inv.selected = +s.dataset.h; renderHotbar(); openMenu("bucket"); } });
   });
 }
 function slotHTML(cell, idx, hk) {
@@ -5199,6 +5297,43 @@ function itemCompartment(id) { const it = ITEMS[id]; if (!it) return "Misc";
   return "Misc"; }
 let invOpen = false;
 let invTab = "items";   // §16 satchel tab: "items" | "make"
+// §2 one menu, three tabs — Satchel / Bucket / Journal — opened with E, cycled with Tab, reopens the last tab
+const MENU_TABS = [["satchel", "Satchel"], ["bucket", "Bucket"], ["journal", "Journal"]];
+let menuTab = "satchel";
+try { const v = localStorage.getItem("bc_menutab"); if (v && MENU_TABS.some(t => t[0] === v)) menuTab = v; } catch (e) {}
+function menuIsOpen() { return invOpen || bucketLook.open || document.getElementById("journal").style.display === "block"; }
+function renderMenuTabs() {
+  const el = document.getElementById("menutabs");
+  if (!menuIsOpen()) { el.classList.remove("show"); el.innerHTML = ""; return; }
+  el.classList.add("show");
+  el.innerHTML = MENU_TABS.map(([id, lbl]) => `<button class="mtb${menuTab === id ? " on" : ""}" data-mt="${id}">${lbl}</button>`).join("");
+  el.querySelectorAll(".mtb").forEach(b => b.onclick = () => openMenu(b.dataset.mt));
+}
+function hideMenuBodies() {
+  if (invOpen) { invOpen = false; document.getElementById("invpanel").style.display = "none"; hideTip(); hideContextMenu(); }
+  if (bucketLook.open) { bucketLook.open = false; if (bucketLook.el) bucketLook.el.style.display = "none"; }
+  const j = document.getElementById("journal"); if (j.style.display === "block") j.style.display = "none";
+}
+function openMenu(tab) {
+  if (tab && MENU_TABS.some(t => t[0] === tab)) menuTab = tab;
+  try { localStorage.setItem("bc_menutab", menuTab); } catch (e) {}
+  hideMenuBodies();
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  if (menuTab === "satchel") { invOpen = true; document.getElementById("invpanel").style.display = "block"; renderInventory(); }
+  else if (menuTab === "bucket") { openBucketLook(); }
+  else { renderJournal(); document.getElementById("journal").style.display = "block"; }
+  renderMenuTabs();
+}
+function closeMenu() { hideMenuBodies(); renderMenuTabs(); hideTip(); hideContextMenu(); requestLock(); }
+function toggleMenu(tab) {
+  if (menuIsOpen()) { if (tab && tab !== menuTab) openMenu(tab); else closeMenu(); }
+  else openMenu(tab || menuTab);
+}
+function cycleMenuTab(dir) {
+  if (!menuIsOpen()) { openMenu(menuTab); return; }
+  const i = MENU_TABS.findIndex(t => t[0] === menuTab);
+  openMenu(MENU_TABS[(i + (dir || 1) + MENU_TABS.length) % MENU_TABS.length][0]);
+}
 function toggleInventory() {
   invOpen = !invOpen; document.getElementById("invpanel").style.display = invOpen ? "block" : "none";
   if (invOpen) { const j = document.getElementById("journal"); if (j.style.display === "block") j.style.display = "none";   // §13.4 one panel at a time
@@ -5211,7 +5346,7 @@ function renderInventory() {
   let html;
   if (invTab === "make") {
     html = `<div class="ihead"><h2>Satchel</h2>${tabs}</div>` + renderMakeHTML();
-    html += `<div class="ihint">craft anywhere · fire recipes need a nearby campfire · I to close</div>`;
+    html += `<div class="ihint">craft anywhere · fire recipes need a nearby campfire · E or Esc to close · Tab for tabs</div>`;
   } else {
     const groups = { Finds: [], Food: [], Materials: [], Misc: [] };
     for (let i = 0; i < INV_SLOTS; i++) { const c = Inv.main[i]; if (c) groups[itemCompartment(c.id)].push(i); }
@@ -5224,7 +5359,7 @@ function renderInventory() {
     }
     const hot = Inv.hotbar.map((c, i) => slotHTML(c, INV_SLOTS + i, i + 1)).join("");
     html += `<div class="compartment"><div class="clabel">Tool belt</div><div class="igrid hot">${hot}</div></div>`;
-    html += `<div class="ihint">${IS_TOUCH ? "tap use · long-press menu · drag to the belt" : "click use · shift-click → belt · right-click menu · drag to move · drag out to drop"} · I to close</div>`;
+    html += `<div class="ihint">${IS_TOUCH ? "tap use · long-press menu · drag to the belt" : "click use · shift-click → belt · right-click menu · drag to move · drag out to drop"} · E or Esc to close · Tab for tabs</div>`;
   }
   const p = document.getElementById("invpanel"); p.innerHTML = html;
   const sb = p.querySelector("#sortBtn"); if (sb) sb.onclick = () => Inv.sort();
@@ -5478,7 +5613,7 @@ function renderJournal() {
   j.innerHTML = `<div id="journalbox"><h2>Field Journal</h2>
     <div class="jtabs">${tabHtml}</div>
     <div class="jbody"><div class="jgrid">${journalGrid(journalTab)}</div></div>
-    <div class="jhint">${IS_TOUCH ? "tap a card to inspect" : "click a card to inspect"} · Tab to close</div></div>`;
+    <div class="jhint">${IS_TOUCH ? "tap a card to inspect" : "click a card to inspect"} · Tab for tabs · E or Esc to close</div></div>`;
   j.querySelectorAll(".jtab").forEach(b => b.onclick = () => { journalTab = b.dataset.jtab; renderJournal(); });
   j.querySelectorAll(".jcard[data-jk]").forEach(card => card.onclick = () => {
     const [kind, k] = card.dataset.jk.split(":");
@@ -6525,7 +6660,7 @@ let bucketPanelEl = null, bucketCtx = null, _bucketT = 0;
 function updateBucketPanel() {
   if (!bucketPanelEl) { bucketPanelEl = document.getElementById("bucketpanel"); bucketCtx = bucketPanelEl.getContext("2d");
     // §13.3 tapping the HUD peek opens the full "Look inside" view (works on desktop and mobile)
-    bucketPanelEl.addEventListener("click", () => openBucketLook()); }
+    bucketPanelEl.addEventListener("click", () => openMenu("bucket")); }
   const show = mode === "walk" && selectedTool() === "bucket" && (bucket.water || bucket.creatures.length) && !bucketLook.open;
   bucketPanelEl.style.display = show ? "block" : "none"; if (!show) return;
   const now = performance.now() * 0.001, dt = Math.min(0.05, now - (_bucketT || now)); _bucketT = now;
@@ -6547,12 +6682,12 @@ function projectBL(x, y, z, W, H) {
   return [(o[0]/o[3]*0.5+0.5)*W, (1-(o[1]/o[3]*0.5+0.5))*H];
 }
 function openBucketLook() {
-  if (!(bucket.water || bucket.creatures.length)) { showCard("Empty bucket", "Scoop a creature, or fill it with water first."); return; }
+  // §2 the Bucket tab always opens (shows an empty-bucket state if there's nothing in it yet)
   if (!bucketLook.el) {
     bucketLook.el = document.getElementById("bucketlook");
     bucketLook.cv = document.getElementById("bucketlookcanvas"); bucketLook.ctx = bucketLook.cv.getContext("2d");
-    document.getElementById("bucketlookclose").onclick = closeBucketLook;
-    bucketLook.el.addEventListener("pointerdown", (e) => { if (e.target === bucketLook.el) closeBucketLook(); });
+    document.getElementById("bucketlookclose").onclick = closeMenu;
+    bucketLook.el.addEventListener("pointerdown", (e) => { if (e.target === bucketLook.el) closeMenu(); });
     bucketLook.cv.addEventListener("click", (e) => {
       const r = bucketLook.cv.getBoundingClientRect();
       const mx = (e.clientX - r.left)/r.width*bucketLook.cv.width, my = (e.clientY - r.top)/r.height*bucketLook.cv.height;
@@ -6569,7 +6704,6 @@ function closeBucketLook() { bucketLook.open = false; if (bucketLook.el) bucketL
   if ((!inspect || !inspect.open) && typeof requestLock === "function") requestLock(); }
 function updateBucketLook() {
   if (!bucketLook.open) return;
-  if (!(bucket.water || bucket.creatures.length)) { closeBucketLook(); return; }   // emptied out → close
   const cv = bucketLook.cv;
   const now = performance.now()*0.001, dt = Math.min(0.05, now-(bucketLook.t||now)); bucketLook.t = now;
   stepBucketCreatures(dt);
@@ -6579,7 +6713,9 @@ function updateBucketLook() {
   renderMini(fbo, BL_EYE, BL_TGT, BL_FOV, 0.015, bucket.water ? 0.66 : 0, BUCKET_WATER_COL, drawBucketScene, drawBucketRipples);
   blitMini(fbo, bucketLook.ctx);
   const cEl = document.getElementById("bucketlookcount");
-  if (cEl) cEl.textContent = `${bucket.creatures.length}/${BUCKET_CAP}` + (bucket.creatures.length ? (bucket.water ? " · in fresh water" : " · drying out") : "");
+  if (cEl) cEl.textContent = bucket.creatures.length
+    ? `${bucket.creatures.length}/${BUCKET_CAP}` + (bucket.water ? " · in fresh water" : " · drying out")
+    : (bucket.water ? "empty · just water" : "empty · scoop a critter or fill with water");
 }
 
 /* ---------- §11.7 close-up inspect: a creature in a little pool, or an item on a turntable ---------- */
@@ -7104,7 +7240,7 @@ function craftRecipe(id) {
   const r = RECIPE_BY_ID[id]; if (!r) return;
   if (r.build) {                                        // §16B building: pick it up as a ghost, pay on placement
     if (!affordableCost(r)) { showCard("Need materials", craftCostText(r)); return; }
-    if (invOpen) toggleInventory();
+    if (menuIsOpen()) closeMenu();
     enterBuildMode(r.build, r.id); return;
   }
   if (r.station === "campfire" && !nearCampfire(player.x, player.z)) { showCard("No campfire", "Stand next to a campfire to do this."); return; }
@@ -9261,7 +9397,7 @@ function frame(now) {
       } else if (IS_TOUCH) { crossEl.style.display = "none"; }
       else { crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = "block"; }
       if (!lastAimShown) { lastAimShown = true;
-        if (hintsOn && (hintCount.use || 0) < 3) { hintCount.use = (hintCount.use || 0) + 1; saveHints(); hintText = IS_TOUCH ? "tap to use" : "click / E to use"; hintT = 2.2; } }
+        if (hintsOn && (hintCount.use || 0) < 3) { hintCount.use = (hintCount.use || 0) + 1; saveHints(); hintText = IS_TOUCH ? "tap to use" : "click or F to use"; hintT = 2.2; } }
     } else {
       crossEl.className = ""; lastAimShown = false;
       if (IS_TOUCH) crossEl.style.display = "none";
@@ -9283,7 +9419,7 @@ function frame(now) {
     } else if (tooTiredT <= 0 && hintT <= 0 && !info) {
       const b = buildInFront();
       if (b) { const def = BUILD_DEFS[b.type], hasUse = def.storage || def.dry || def.shelter;
-        promptEl.textContent = hasUse ? (IS_TOUCH ? "tap: use · crouch+tap: pick up" : "E use · crouch+E pick up") : (IS_TOUCH ? "tap to pick up" : "E to pick up");
+        promptEl.textContent = hasUse ? (IS_TOUCH ? "tap: use · crouch+tap: pick up" : "click/F use · crouch+click pick up") : (IS_TOUCH ? "tap to pick up" : "click or F to pick up");
         promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
         crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block"; }
     }
