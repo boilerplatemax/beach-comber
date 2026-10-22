@@ -1641,7 +1641,10 @@ const EYE = 1.7;             // eye height above the ground
 const WALK_SPEED = 9.5;      // units / second (vast map, so not too slow)
 const SPRINT = 1.8;          // sprint multiplier
 const SLOPE_LIMIT = 40 * Math.PI / 180;   // auxiliary limit (walkable checks, landing slide)
-const SLOPE_IMPASS = 42 * Math.PI / 180;  // §7: uphill past this is impassable — you slide back
+const SLOPE_IMPASS = 42 * Math.PI / 180;  // §13.1 uphill past this is impassable — you slide back
+const SPRINT_SLOPE_MAX = 20 * Math.PI / 180;   // §13.1 no sprinting above this uphill grade
+const MOVE_SUBSTEP = 0.25;                // §13.1 substep distance so fast moves can't skip the slope check
+let _curSlopeDeg = 0, _curSpeedMul = 1;   // debug readout
 const WADE_DEPTH = 1.0;      // can wade up to this depth, then it blocks
 // The ONE place slope governs walking speed (§7). `grade` is the signed incline
 // (radians) in the travel direction: + uphill, − downhill. Returns a 0–1 multiplier.
@@ -4274,7 +4277,8 @@ function updateStamina(dt) {
   const moving = Math.abs(analog.x) + Math.abs(analog.y) > 0.01 || keys["KeyW"] || keys["KeyA"] || keys["KeyS"] || keys["KeyD"];
   if (moving) resting = false;
   const tier = hungerTier();
-  if (player.sprinting) spendStamina(SPRINT_DRAIN * dt * (tier === "hungry" ? 2 : 1));   // half sprint duration when hungry
+  // §13.1 sprinting drains fast, and much faster up any incline
+  if (player.sprinting) spendStamina(SPRINT_DRAIN * dt * (1 + Math.max(0, player.incline || 0) * 4) * (tier === "hungry" ? 2 : 1));
   if (player.scramble > 0.3) spendStamina(SCRAMBLE_DRAIN * dt * player.scramble);
   const regen = (resting ? REGEN_REST : (moving ? REGEN_ACTIVE : REGEN_IDLE)) * (tier === "full" ? 1.15 : 1);   // full = a regen bonus
   const cap = maxStamina();
@@ -6473,18 +6477,23 @@ function frame(now) {
     if (digCommit > 0) { wx = 0; wz = 0; manual = false; }   // rooted during a committed strike
 
     const wl = Math.hypot(wx, wz);
-    player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01 && hungerTier() !== "starving";   // no sprint when starving
     const here = surfaceAt(player.x, player.z);
+    const gg = groundGradient(player.x, player.z);   // §13.1 smoothed fall line + slope (stable on bumpy low-poly terrain)
+    // signed grade in the travel direction: + uphill, − downhill (gradient projected onto travel)
+    let fwdGrade = 0;
+    if (wl > 0.01) { const u = -((wx/wl)*gg.dx + (wz/wl)*gg.dz); fwdGrade = gg.slope * u; }
+    const uphillGrade = Math.max(0, fwdGrade);
+    player.incline = uphillGrade;
+    player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01 && hungerTier() !== "starving"
+                       && uphillGrade < SPRINT_SLOPE_MAX;              // §13.1 no sprint up a steep pitch
     let scrambleTarget = 0;
+    _curSpeedMul = 1; _curSlopeDeg = gg.slope * 180 / Math.PI;
 
     if (wl > 0.01) {
       wx /= wl; wz /= wl;
-      // slope in the direction of travel → the single speed curve (§7)
-      const ahead = surfaceAt(player.x + wx*1.6, player.z + wz*1.6);
-      const grade = Math.atan2(ahead.h - here.h, 1.6);
-      let sm = slopeSpeedMul(grade);
-      if (grade > 0.44) scrambleTarget = Math.min(1, (grade - 0.44) / 0.29);   // ~25°+ = scrambling
-      // scrambling burns stamina; with none left you can't push up a steep pitch
+      let sm = slopeSpeedMul(fwdGrade);
+      _curSpeedMul = sm;
+      if (fwdGrade > 0.44) scrambleTarget = Math.min(1, (fwdGrade - 0.44) / 0.29);   // ~25°+ = scrambling
       if (scrambleTarget > 0.35 && (exhausted || stamina < 0.03)) sm = 0;
       const depth = waterLevel - here.h;
       let surfMul = 1;
@@ -6492,21 +6501,29 @@ function frame(now) {
       else if (here.h < 12) surfMul = 0.9;                          // soft sand
       const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * sm * surfMul * (player.landStun > 0 ? 0.5 : 1) * matSpeedMul(Terrain.materialAt(player.x, player.z));
       const dist = speed * dt;
-      const maxClimb = Math.tan(SLOPE_LIMIT) * Math.max(dist, 0.05);
-      const canStep = (nx, nz) => {
-        const s = surfaceAt(nx, nz);
-        if (waterLevel - s.h > WADE_DEPTH) return false;
-        if (s.h - here.h > maxClimb && s.slope > SLOPE_LIMIT) return false;
-        return true;
-      };
+      // §13.1 substep so fast movement can't skip a cliff; block uphill onto a face past the slope limit,
+      // checking BOTH the step rise and the triangle-normal slope at the target.
+      const nsub = Math.max(1, Math.ceil(dist / MOVE_SUBSTEP)), sub = dist / nsub;
       let px = player.x, pz = player.z;
-      const nx = player.x + wx * dist, nz = player.z + wz * dist;
-      if (canStep(nx, player.z)) px = nx;
-      if (canStep(px, nz)) pz = nz;
+      for (let s = 0; s < nsub; s++) {
+        const h0 = surfaceAt(px, pz).h;
+        // try X and Z independently so you can slide along a wall
+        const cand = [[px + wx*sub, pz], [px, pz + wz*sub]];
+        let moved = false;
+        for (const [tx, tz] of cand) {
+          if (tx === px && tz === pz) continue;
+          const st = surfaceAt(tx, tz);
+          if (waterLevel - st.h > WADE_DEPTH) continue;             // deep water
+          const stepGrade = Math.atan2(st.h - h0, sub);
+          if (stepGrade > 0.02 && Math.max(stepGrade, st.slope) > SLOPE_IMPASS) continue;   // uphill onto too-steep → blocked
+          px = tx; pz = tz; moved = true;
+        }
+        if (!moved) break;
+      }
       [px, pz] = slideCircles(px, pz);
       player.x = px; player.z = pz;
       player.bob += dist;
-      if (grade < -0.55 && rng() < dt * 2.5) { player.x += wx * 0.25; player.z += wz * 0.25; } // small slips
+      if (fwdGrade < -0.55 && rng() < dt * 2.5) { player.x += wx * 0.25; player.z += wz * 0.25; } // downhill slips
       const stepLen = scrambleTarget > 0.5 ? 1.5 : 1.15;
       if (player.bob - _stepPhase >= stepLen) {
         _stepPhase = player.bob;
@@ -6514,7 +6531,7 @@ function frame(now) {
       }
     }
 
-    // §7: ground too steep to hold → slide back down (even with no input)
+    // §13.1 ground too steep to hold → slide back down (even with no input)
     const gh = groundGradient(player.x, player.z);
     if (gh.slope > SLOPE_IMPASS && !player.airborne) {
       const slide = Math.min(1, (gh.slope - SLOPE_IMPASS) / 0.2) * 6 * dt;
@@ -6747,7 +6764,8 @@ function frame(now) {
       `draws ${frameDraws}\n` +
       `tris  ${(frameTris / 1000).toFixed(0)}k\n` +
       `res   ${fbo.w}x${fbo.h}\n` +
-      `pos   ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}`;
+      `pos   ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}\n` +
+      `slope ${_curSlopeDeg.toFixed(0)}°  spd ×${_curSpeedMul.toFixed(2)}${player.sprinting ? " sprint" : ""}`;
   } else if (dbgEl.style.display !== "none") {
     dbgEl.style.display = "none";
   }
