@@ -5955,7 +5955,8 @@ const BUCKET_CAP = 5;
 const DRY_OUT_TIME = 300;                        // seconds from soaked to dead when kept dry (tunable)
 // what each creature leaves behind once it dries out completely → a Find
 const DRIED_REMAINS = { crab: "molt", hermit: "shell", star: "driedstar", urchin: "sanddollar",
-                        fish: "husk", anemone: "husk", jelly: "husk", hopper: "husk", piper: "husk" };
+                        fish: "husk", anemone: "husk", jelly: "husk", hopper: "husk", piper: "husk",
+                        snail: "shell", shrimp: "husk", octopus: "husk" };   // §16.1
 // where/when a creature was scooped, for the close-up inspect card (§11.7)
 function catchBiomeLabel(x, z) {
   if (waterDepthAt(x, z) > 0.05) return "the shallows";
@@ -5963,7 +5964,8 @@ function catchBiomeLabel(x, z) {
 }
 function catchTideLabel() { return isMinusTideNow() ? "a minus tide" : (tideInfo().rising ? "a rising tide" : "an ebbing tide"); }
 // §13.1 every small shore/pool creature is scoopable (seals/gulls/herons are too big for a pail)
-const BUCKETABLE = { crab: 1, fish: 1, star: 1, hermit: 1, anemone: 1, urchin: 1, jelly: 1, hopper: 1, piper: 1, minnow: 1 };
+const BUCKETABLE = { crab: 1, fish: 1, star: 1, hermit: 1, anemone: 1, urchin: 1, jelly: 1, hopper: 1, piper: 1, minnow: 1,
+  snail: 1, shrimp: 1, octopus: 1 };   // §16.1 the new pool critters are scoopable too (ducks are too big for a pail)
 function bucketScoop(e) {                                       // bucket used on a creature
   if (bucket.creatures.length >= BUCKET_CAP) { showCard("Bucket full", `It holds ${BUCKET_CAP} creatures.`); return true; }
   if (!BUCKETABLE[e.t]) return false;                          // not scoopable → let the normal inspect happen
