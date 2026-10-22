@@ -1667,6 +1667,7 @@ function groundGradient(x, z) {
 // Jump feel (§6): a snappy rise under lighter gravity, a faster, heavier fall.
 const JUMP_V = 8.4, GRAVITY_UP = 24, GRAVITY_DOWN = 42, COYOTE_TIME = 0.1, JUMP_BUFFER = 0.11;
 const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, sprinting: false, scramble: 0, vy: 0, airborne: false, coyote: 0, landStun: 0 };
+let crouching = false;   // §13.4 crouch (wired later); creatures are less skittish when true
 let jumpBufferT = 0;
 function queueJump() { if (mode === "walk") jumpBufferT = JUMP_BUFFER; }    // buffered: fires on landing if pressed just early
 function canJumpNow() {
@@ -3322,13 +3323,26 @@ function behave(e, dt, d, dx, dz) {
     const grad = groundGradient(e.x, e.z); e.x += grad.dx*dt*2.4; e.z += grad.dz*dt*2.4; e.yaw = Math.atan2(grad.dz, grad.dx) + 1.57; return;
   }
   if (e.t === "crab") {
-    if (e.state === "burrow") { e.closed = Math.min(1, e.closed + dt*2); if (e.closed >= 1) { const a=rng()*6.283; e.x=e.hx+Math.sin(a)*e.hr; e.z=e.hz-Math.cos(a)*e.hr; e.state="wander"; } return; }
-    if (d < 2.6) { e.state = "burrow"; return; }
-    if (d < 11) { const a = Math.atan2(-dz, -dx); e.x -= Math.cos(a)*dt*6; e.z -= Math.sin(a)*dt*6; e.yaw = a+1.57; e.closed = Math.max(0, e.closed-dt*2); return; }
+    if (e.burrow === undefined) e.burrow = 0;
+    const shy = crouching ? 1.2 : 2.4;                       // §13.4 less skittish when the player crouches
+    if (e.state === "sinking") {                             // §13.1 sink into the sand (animated), relocate only once hidden
+      e.burrow = Math.min(1, e.burrow + dt*1.8);
+      if (e.burrow >= 1) { const a = rng()*6.283, rr = e.hr*(0.45 + rng()*0.5); e.x = e.hx + Math.cos(a)*rr; e.z = e.hz + Math.sin(a)*rr; e.state = "emerging"; }
+      return;
+    }
+    if (e.state === "emerging") {                            // rise back up elsewhere, but wait if the player is on top of it
+      if (Math.hypot(e.x-player.x, e.z-player.z) < shy + 1) return;
+      e.burrow = Math.max(0, e.burrow - dt*1.8);
+      if (e.burrow <= 0) { e.state = "wander"; spawnSand(e.x, heightAt(e.x,e.z)+0.1, e.z, 5, [0.82,0.76,0.58]); }
+      return;
+    }
+    if (d < shy && waterDepthAt(e.x, e.z) < 0.1) {           // cornered on dry sand → burrow with a sand puff
+      e.state = "sinking"; e.burrow = 0; spawnSand(e.x, heightAt(e.x,e.z)+0.1, e.z, 8, [0.82,0.76,0.58]); return;
+    }
+    if (d < 11) { const a = Math.atan2(-dz, -dx); e.x -= Math.cos(a)*dt*6; e.z -= Math.sin(a)*dt*6; e.yaw = a+1.57; return; }   // scuttle away, staying visible
     e.timer -= dt; if (e.timer < 0) { e.timer = 0.6+rng()*1.4; e.vx = (rng()-0.5); e.vz = (rng()-0.5); }
     e.x += e.vx*dt*2.5; e.z += e.vz*dt*2.5; e.yaw = Math.atan2(e.vz, e.vx)+1.57;
     if (Math.hypot(e.x-e.hx, e.z-e.hz) > e.hr) { e.vx = (e.hx-e.x)*0.1; e.vz = (e.hz-e.z)*0.1; }
-    e.closed = Math.max(0, e.closed - dt);
   } else if (e.t === "fish") {
     const fast = d < 12 ? 7 : 2.5;
     e.timer -= dt; if (e.timer < 0 || d < 12) { e.timer = 0.4+rng()*1.2; e.tx = e.hx+(rng()-0.5)*e.hr; e.tz = e.hz+(rng()-0.5)*e.hr; }
@@ -3395,7 +3409,8 @@ function drawLife(view) {
           lean = Math.sin(e.flap || 0) * amp; ld = e.yaw;
           sc = e.scale * 1.35; }                       // read bigger against sky & sand
         else if (e.t === "jelly") sc = e.scale * (0.9 + Math.sin(e.phase*2)*0.1);
-        if (e.t === "crab" || e.t === "anemone") sc = e.scale * (1 - 0.6*e.closed);
+        if (e.t === "crab") y = g - (e.burrow || 0) * 0.6;                      // §13.1 sink into the sand (no pop)
+        else if (e.t === "anemone") sc = e.scale * (1 - 0.6*e.closed);
         if (e.t === "star" || e.t === "anemone" || e.t === "urchin") y += 0.02;
       } else { y = g + 0.05; lean = 0.2; }
       const o = n*10;
@@ -4707,7 +4722,8 @@ function catchBiomeLabel(x, z) {
   const bi = digBiome(x, z); return bi === "wet" ? "the wet sand" : bi === "sand" ? "the dry beach" : "a tide pool";
 }
 function catchTideLabel() { return isMinusTideNow() ? "a minus tide" : (tideInfo().rising ? "a rising tide" : "an ebbing tide"); }
-const BUCKETABLE = { crab: 1, fish: 1, star: 1, hermit: 1, anemone: 1 };
+// §13.1 every small shore/pool creature is scoopable (seals/gulls/herons are too big for a pail)
+const BUCKETABLE = { crab: 1, fish: 1, star: 1, hermit: 1, anemone: 1, urchin: 1, jelly: 1, hopper: 1, piper: 1 };
 function bucketScoop(e) {                                       // bucket used on a creature
   if (!bucket.water) { showCard("Empty bucket", "Fill it at the water's edge first."); return true; }
   if (bucket.creatures.length >= BUCKET_CAP) { showCard("Bucket full", `It holds ${BUCKET_CAP} creatures.`); return true; }
