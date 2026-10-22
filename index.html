@@ -30,17 +30,52 @@
   /* §12A chamfered, faceted panels & buttons — cut from the same geometry as the world */
   .chamfer { clip-path: polygon(var(--chamfer) 0, calc(100% - var(--chamfer)) 0, 100% var(--chamfer), 100% calc(100% - var(--chamfer)), calc(100% - var(--chamfer)) 100%, var(--chamfer) 100%, 0 calc(100% - var(--chamfer)), 0 var(--chamfer)); }
 
-  /* Overlay / title */
+  /* Overlay / title (§12A) */
   #overlay {
     position: fixed; inset: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; gap: 18px; text-align: center;
-    background: radial-gradient(130% 120% at 50% 35%, rgba(18,34,42,0.55), rgba(8,12,16,0.9));
-    backdrop-filter: blur(2px); z-index: 10; transition: opacity .4s ease;
+    align-items: center; justify-content: center; gap: 10px; text-align: center;
+    background: radial-gradient(150% 130% at 50% 30%, rgba(14,26,32,0.25), rgba(8,12,16,0.72));
+    z-index: 10; transition: opacity .5s ease; padding: 24px 16px;
   }
   #overlay.hidden { opacity: 0; pointer-events: none; }
-  #overlay h1 { font-size: clamp(32px, 6vw, 56px); font-weight: 650; letter-spacing: .04em; }
-  #overlay p { opacity: .8; max-width: 440px; line-height: 1.5; padding: 0 16px; }
-  .seedline { font-family: var(--ui); opacity: .72; font-size: 13px; letter-spacing: .08em; }
+  #wordmark { width: min(680px, 92vw); height: auto; filter: drop-shadow(0 6px 18px rgba(0,0,0,.55)); }
+  #islandName { font-size: clamp(16px, 2.6vw, 22px); font-weight: 600; letter-spacing: .18em;
+    text-transform: uppercase; color: var(--ink-dim); margin-bottom: 8px; }
+  #titlemenu { display: flex; flex-direction: column; align-items: center; gap: 14px; width: min(340px, 90vw); }
+  .menucol { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+  .menucol button { width: 100%; font-size: 16px; padding: 13px 22px; }
+  .seedrow { display: flex; align-items: center; gap: 8px; width: 100%; }
+  .seedrow label { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-dim); }
+  #seedInput { flex: 1; font: 600 14px var(--ui); letter-spacing: .06em; color: var(--ink); padding: 9px 12px;
+    background: var(--panel-edge); border: none; text-shadow: 0 1px 1px var(--ink-shadow);
+    clip-path: polygon(7px 0,calc(100% - 7px) 0,100% 7px,100% calc(100% - 7px),calc(100% - 7px) 100%,7px 100%,0 calc(100% - 7px),0 7px); }
+  #seedInput:focus { outline: none; background: rgba(8,16,18,.98); }
+  #diceBtn { padding: 9px 13px; font-size: 18px; line-height: 1; }
+  #recentWrap { width: 100%; margin-top: 4px; }
+  .reclabel { font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 7px; }
+  #recentList { display: flex; flex-direction: column; gap: 6px; }
+  .recitem { display: flex; justify-content: space-between; align-items: center; gap: 10px; cursor: pointer;
+    font-size: 13px; padding: 8px 12px; background: var(--facet); text-align: left; letter-spacing: .02em;
+    clip-path: polygon(7px 0,calc(100% - 7px) 0,100% 7px,100% calc(100% - 7px),calc(100% - 7px) 100%,7px 100%,0 calc(100% - 7px),0 7px); }
+  .recitem:hover { filter: brightness(1.2); }
+  .recitem .pct { font-size: 12px; color: var(--accent-lit); font-weight: 600; }
+  .recitem.empty { justify-content: center; color: var(--ink-dim); cursor: default; }
+  .recitem.empty:hover { filter: none; }
+  #settingspanel { position: fixed; z-index: 14; display: none; left: 50%; top: 50%; transform: translate(-50%,-50%);
+    width: min(320px, 90vw); background: var(--facet); padding: 20px 22px; box-shadow: 0 10px 40px rgba(0,0,0,.6);
+    clip-path: polygon(14px 0,calc(100% - 14px) 0,100% 14px,100% calc(100% - 14px),calc(100% - 14px) 100%,14px 100%,0 calc(100% - 14px),0 14px); }
+  #settingspanel h3 { font-size: 18px; letter-spacing: .04em; margin-bottom: 14px; }
+  #settingspanel .srow { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 11px 0; font-size: 13px; }
+  #settingspanel .srow button { min-width: 64px; font-size: 12px; padding: 6px 12px; }
+  #settingspanel label { font-size: 13px; letter-spacing: .02em; color: var(--ink); }
+  #settingspanel input[type=range] { width: 130px; }
+  #settingspanel .closebtn { width: 100%; margin-top: 14px; }
+  @media (max-width: 560px) {
+    #titlemenu { width: min(420px, 94vw); }
+    .menucol button { font-size: 18px; padding: 16px 22px; }
+    #diceBtn { padding: 12px 16px; }
+    .recitem { padding: 11px 14px; font-size: 14px; }
+  }
   .btns { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
   button {
     font: inherit; font-size: 15px; font-weight: 600; letter-spacing: .04em; padding: 11px 22px;
@@ -254,14 +289,26 @@
 <canvas id="gl"></canvas>
 
 <div id="overlay">
-  <h1>Beachcomber</h1>
-  <p>A procedurally generated island, grown entirely from a seed. Milestone 2: low-res dithered rendering, sky, fog & an animated ocean.</p>
-  <div class="btns">
-    <button id="startBtn" class="primary">Explore</button>
-    <button id="newBtn">New island</button>
+  <canvas id="wordmark" width="720" height="150"></canvas>
+  <div id="islandName">…</div>
+  <div id="titlemenu">
+    <div class="menucol">
+      <button id="startBtn" class="primary">Explore</button>
+      <button id="newBtn">New Island</button>
+      <button id="settingsBtn">Settings</button>
+    </div>
+    <div class="seedrow">
+      <label for="seedInput">seed</label>
+      <input id="seedInput" spellcheck="false" autocomplete="off">
+      <button id="diceBtn" title="Random seed">⚅</button>
+    </div>
+    <div id="recentWrap">
+      <div class="reclabel">Recent islands</div>
+      <div id="recentList"></div>
+    </div>
   </div>
-  <div class="seedline">seed: <span id="seedText">…</span></div>
 </div>
+<div id="settingspanel"></div>
 
 <div id="hud"></div>
 <canvas id="tidecurve" width="150" height="46"></canvas>
@@ -1831,21 +1878,169 @@ addEventListener("wheel", (e) => {
  * --------------------------------------------------------------------- */
 
 const overlay = document.getElementById("overlay");
-document.getElementById("seedText").textContent = SEED_STR;
+let lookSensMobile = 0.0045;   // look sensitivity (Settings slider; used by mobile look)
+
+/* --------------------------------------------------------------------- *
+ * § 12A  TITLE SCREEN — seeded island name, faceted wordmark, menu, swoop
+ * --------------------------------------------------------------------- */
+const GOLDEN_HOUR = 0.53;                 // a warm, low evening sun for the title orbit
+
+// A deterministic, evocative island name per seed (never touches the world rng stream).
+function makeIslandName() {
+  const rr = mulberry32((SEED_INT ^ 0x6e414d45) >>> 0);
+  const pick = (a) => a[(rr() * a.length) | 0];
+  const A = ["Kelp", "Drift", "Salt", "Cinder", "Mist", "Tide", "Gull", "Barnacle", "Marrow", "Thorn", "Amber", "Shoal", "Fathom", "Bramble", "Coral", "Hollow", "Wrack", "Pearl", "Storm", "Dune"];
+  const B = ["marrow", "haven", "spit", "reach", "mere", "crag", "strand", "hollow", "watch", "mouth", "barrow", "cove", "holm", "ness", "scar", "fell", "wick", "shoal", "bight", "cay"];
+  const SUF = ["Isle", "Isle", "Key", "Atoll", "Rock", "Spit", "Holm", "Cay"];
+  let name = pick(A) + pick(B);
+  if (rr() < 0.5) name = pick(A) + " " + pick(SUF);
+  else name = name + " " + pick(SUF);
+  return name;
+}
+const ISLAND_NAME = makeIslandName();
+
+// ---- faceted low-poly wordmark: letters from polygon point lists, flat-shaded facets ----
+// Each glyph is a list of quads (4 pts) in a 0..90 x, 0..130 y cell. T = stroke thickness.
+const WM_T = 24;
+function wmRect(x, y, w, h) { return [[x,y],[x+w,y],[x+w,y+h],[x,y+h]]; }
+const WM_GLYPHS = {
+  B: [wmRect(0,0,WM_T,130), wmRect(0,0,64,WM_T), wmRect(0,53,58,WM_T), wmRect(0,106,64,WM_T), wmRect(64,0,WM_T,65), [[58,53],[82,61],[82,130],[58,130]]],
+  E: [wmRect(0,0,WM_T,130), wmRect(0,0,82,WM_T), wmRect(0,53,66,WM_T), wmRect(0,106,82,WM_T)],
+  A: [[[0,130],[WM_T,130],[57,0],[33,0]], [[90-WM_T,130],[90,130],[57,0],[33,0]], wmRect(22,74,46,WM_T)],
+  C: [wmRect(0,0,82,WM_T), wmRect(0,0,WM_T,130), wmRect(0,106,82,WM_T), [[82,0],[90,10],[90,34],[66,24]], [[66,106],[90,96],[90,120],[82,130]]],
+  H: [wmRect(0,0,WM_T,130), wmRect(66,0,WM_T,130), wmRect(0,53,90,WM_T)],
+  O: [wmRect(0,0,82,WM_T), wmRect(0,106,82,WM_T), wmRect(0,0,WM_T,130), wmRect(66,0,WM_T,130)],
+  M: [wmRect(0,0,WM_T,130), wmRect(66,0,WM_T,130), [[WM_T,0],[WM_T+10,0],[51,78],[39,78]], [[90-WM_T-10,0],[90-WM_T,0],[51,78],[39,78]]],
+  R: [wmRect(0,0,WM_T,130), wmRect(0,0,64,WM_T), wmRect(0,53,58,WM_T), wmRect(64,0,WM_T,65), [[40,66],[64,60],[92,130],[64,130]]],
+};
+const WM_FACETS = ["#e3d2a2","#d2bd8a","#c2ad7b","#8fb3a8","#79a096","#e8d9ac"];
+function drawWordmark() {
+  const cv = document.getElementById("wordmark"); if (!cv) return;
+  const letters = "BEACHCOMBER".split("");
+  const cellW = 90, gap = 18, pad = 24;
+  const scale = 1.0;
+  const totalW = letters.length * cellW + (letters.length - 1) * gap;
+  cv.width = Math.ceil(totalW + pad*2); cv.height = 130 + pad*2;
+  const c = cv.getContext("2d"); c.clearRect(0,0,cv.width,cv.height);
+  const nr = mulberry32((SEED_INT ^ 0x7704) >>> 0);           // tiny seeded facet jitter so each title differs a touch
+  let ox = pad;
+  for (const ch of letters) {
+    const g = WM_GLYPHS[ch]; if (g) {
+      let fi = (nr()*WM_FACETS.length)|0;
+      for (const poly of g) {
+        // triangulate (fan) and flat-shade each triangle as a facet
+        for (let i = 1; i < poly.length - 1; i++) {
+          const a = poly[0], b = poly[i], d = poly[i+1];
+          const lit = ((i + fi) % 2) === 0;
+          const col = WM_FACETS[(fi + i) % WM_FACETS.length];
+          c.fillStyle = lit ? col : shade(col, -24);
+          c.beginPath(); c.moveTo(ox+a[0], a[1]+pad);
+          c.lineTo(ox+b[0], b[1]+pad); c.lineTo(ox+d[0], d[1]+pad); c.closePath(); c.fill();
+        }
+        fi++;
+      }
+      // a crisp dark facet edge on each quad for definition
+      c.strokeStyle = "rgba(10,16,14,.5)"; c.lineWidth = 2;
+      for (const poly of g) { c.beginPath(); c.moveTo(ox+poly[0][0], poly[0][1]+pad);
+        for (let i=1;i<poly.length;i++) c.lineTo(ox+poly[i][0], poly[i][1]+pad); c.closePath(); c.stroke(); }
+    }
+    ox += cellW + gap;
+  }
+}
+function shade(hex, d) { const n = parseInt(hex.slice(1),16); let r=(n>>16)+d, g=((n>>8)&255)+d, b=(n&255)+d;
+  r=Math.max(0,Math.min(255,r)); g=Math.max(0,Math.min(255,g)); b=Math.max(0,Math.min(255,b));
+  return "#"+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1); }
+
+// ---- recent islands from saves: name + journal completion % ----
+const JOURNAL_TOTAL = () => Object.keys(CREATURES).length + Object.keys(FINDS).length;
+function seededNameFor(seed) { const si = xmur3(seed)(); const rr = mulberry32((si ^ 0x6e414d45) >>> 0);
+  const pick = (a) => a[(rr()*a.length)|0];
+  const A = ["Kelp","Drift","Salt","Cinder","Mist","Tide","Gull","Barnacle","Marrow","Thorn","Amber","Shoal","Fathom","Bramble","Coral","Hollow","Wrack","Pearl","Storm","Dune"];
+  const B = ["marrow","haven","spit","reach","mere","crag","strand","hollow","watch","mouth","barrow","cove","holm","ness","scar","fell","wick","shoal","bight","cay"];
+  const SUF = ["Isle","Isle","Key","Atoll","Rock","Spit","Holm","Cay"];
+  let name = pick(A)+pick(B); if (rr()<0.5) name = pick(A)+" "+pick(SUF); else name = name+" "+pick(SUF); return name; }
+function loadRecentIslands() {
+  const el = document.getElementById("recentList"); if (!el) return;
+  const items = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i);
+      if (!k || !k.startsWith("bc_") || k.startsWith("bcd_") || k.startsWith("bcw_") || k.startsWith("bcg_")) continue;
+      const seed = k.slice(3); if (!seed || seed === "hints" || seed === "hintsOff" || seed === "autopick" || seed === "autoswitch") continue;
+      let s; try { s = JSON.parse(localStorage.getItem(k) || "null"); } catch (e) { continue; }
+      if (!s) continue;
+      const disc = Array.isArray(s.disc) ? s.disc.length : 0;
+      const pct = Math.min(100, Math.round(100 * disc / Math.max(1, JOURNAL_TOTAL())));
+      items.push({ seed, name: seededNameFor(seed), pct });
+    }
+  } catch (e) {}
+  items.sort((a,b) => b.pct - a.pct);
+  const top = items.slice(0, 4);
+  if (!top.length) { el.innerHTML = `<div class="recitem empty">No islands visited yet</div>`; return; }
+  el.innerHTML = top.map(it => `<div class="recitem" data-seed="${encodeURIComponent(it.seed)}"><span>${it.name}</span><span class="pct">${it.pct}%</span></div>`).join("");
+  el.querySelectorAll(".recitem[data-seed]").forEach(d => d.onclick = () => gotoSeed(decodeURIComponent(d.dataset.seed)));
+}
+
+function randomSeed() { const buf = new Uint32Array(2); crypto.getRandomValues(buf);
+  return (buf[0] >>> 0).toString(36) + (buf[1] >>> 0).toString(36); }
+function gotoSeed(s) { s = (s || "").trim(); if (!s) return; location.href = location.pathname + "?seed=" + encodeURIComponent(s); }
+
+// ---- camera swoop from the orbit down into first person ----
+let intro = null;
+function startIntro() {
+  const sp = findSpawn(); spawnPoint = { x: sp.x, z: sp.z, yaw: sp.yaw };
+  const eyeY = surfaceAt(sp.x, sp.z).h + EYE;
+  intro = { t: 0, dur: 2.4,
+    from: { pos: cam.pos.slice(), yaw: cam.yaw, pitch: cam.pitch },
+    to:   { pos: [sp.x, eyeY, sp.z], yaw: sp.yaw, pitch: -0.04 } };
+  mode = "intro";
+  overlay.classList.add("hidden");           // fade the menu out as the camera dives
+}
+function finishIntro() {
+  intro = null; enterWalk();
+  if (!IS_TOUCH) canvas.requestPointerLock();
+}
+
+function initTitle() {
+  document.getElementById("islandName").textContent = ISLAND_NAME;
+  const seedIn = document.getElementById("seedInput"); if (seedIn) seedIn.value = SEED_STR;
+  drawWordmark();
+  loadRecentIslands();
+}
 document.getElementById("startBtn").addEventListener("click", () => {
-  overlay.classList.add("hidden");
-  if (mode === "preview") enterWalk();      // first time: step onto the island
+  if (mode === "preview") { startIntro(); return; }      // first time: swoop down onto the island
+  overlay.classList.add("hidden");                        // resuming from a pause
   if (!IS_TOUCH) canvas.requestPointerLock();
 });
-document.getElementById("newBtn").addEventListener("click", () => {
-  const buf = new Uint32Array(2);
-  crypto.getRandomValues(buf);
-  const s = (buf[0] >>> 0).toString(36) + (buf[1] >>> 0).toString(36);
-  location.href = location.pathname + "?seed=" + s;
-});
+document.getElementById("newBtn").addEventListener("click", () => gotoSeed(randomSeed()));
+document.getElementById("diceBtn").addEventListener("click", () => gotoSeed(randomSeed()));
+document.getElementById("seedInput").addEventListener("keydown", (e) => { if (e.key === "Enter") gotoSeed(e.target.value); });
+document.getElementById("settingsBtn").addEventListener("click", () => openSettings());
+function openSettings() {
+  const p = document.getElementById("settingspanel");
+  const onoff = (b) => b ? "On" : "Off";
+  p.innerHTML = `<h3>Settings</h3>
+    <div class="srow"><label>Dithered look</label><button data-k="dither">${onoff(ditherOn)}</button></div>
+    <div class="srow"><label>First-run hints</label><button data-k="hints">${onoff(hintsOn)}</button></div>
+    <div class="srow"><label>Auto-pickup</label><button data-k="autopick">${onoff(autoPickup)}</button></div>
+    <div class="srow"><label>Auto tool-switch</label><button data-k="autoswitch">${onoff(autoSwitch)}</button></div>
+    <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
+    <button class="closebtn primary">Close</button>`;
+  p.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => {
+    const k = b.dataset.k;
+    if (k === "dither") ditherOn = !ditherOn;
+    else if (k === "hints") { hintsOn = !hintsOn; saveHints(); }
+    else if (k === "autopick") { autoPickup = !autoPickup; saveAutoPick(); }
+    else if (k === "autoswitch") { autoSwitch = !autoSwitch; saveAutoSwitch(); }
+    openSettings();
+  });
+  const sens = p.querySelector("#setSens"); if (sens) sens.oninput = (e) => { lookSensMobile = +e.target.value; };
+  p.querySelector(".closebtn").onclick = () => { p.style.display = "none"; };
+  p.style.display = "block";
+}
 document.addEventListener("pointerlockchange", () => {
-  if (document.pointerLockElement !== canvas) overlay.classList.remove("hidden");
+  if (document.pointerLockElement !== canvas && mode === "walk") overlay.classList.remove("hidden");
 });
+initTitle();
 const hud = document.getElementById("hud");
 const crossEl = document.getElementById("crosshair");
 const promptEl = document.getElementById("prompt");
@@ -1956,7 +2151,7 @@ function drawBounds(view) {
  *   Pick up / Journal / Pause buttons. Blocks page scroll / zoom / menus.
  * ===================================================================== */
 if (IS_TOUCH) (function mobileControls() {
-  let lookSensMobile = 0.0045;   // becomes a Settings slider in Phase 6
+  // lookSensMobile is a module-scope setting (Settings slider), declared once above
 
   // ---- injected styles ----
   const css = document.createElement("style");
@@ -5532,7 +5727,8 @@ function frame(now) {
   const right = [-fwd[2] / flen, 0, fwd[0] / flen];   // camera-right = normalize(cross(forward, up))
 
   if (mode === "preview") {
-    // slow establishing orbit of the island
+    // slow establishing orbit of the island, pinned to golden hour
+    timeOfDay = GOLDEN_HOUR; updateSun();
     previewAngle += dt * 0.04;
     const R = 720, H = 155;
     cam.pos[0] = Math.sin(previewAngle) * R;
@@ -5540,6 +5736,19 @@ function frame(now) {
     cam.pos[2] = Math.cos(previewAngle) * R;
     cam.yaw = Math.atan2(-cam.pos[0], cam.pos[2]);
     cam.pitch = -0.15;
+  } else if (mode === "intro" && intro) {
+    // swoop from the orbit down into the first-person spawn
+    intro.t += dt;
+    const u = Math.min(1, intro.t / intro.dur), e = u < 0.5 ? 2*u*u : 1 - Math.pow(-2*u+2, 2)/2;  // easeInOut
+    const f = intro.from, g = intro.to;
+    cam.pos[0] = f.pos[0] + (g.pos[0]-f.pos[0]) * e;
+    cam.pos[1] = f.pos[1] + (g.pos[1]-f.pos[1]) * e;
+    cam.pos[2] = f.pos[2] + (g.pos[2]-f.pos[2]) * e;
+    let dyaw = (g.yaw - f.yaw); while (dyaw > Math.PI) dyaw -= 2*Math.PI; while (dyaw < -Math.PI) dyaw += 2*Math.PI;
+    cam.yaw = f.yaw + dyaw * e;
+    cam.pitch = f.pitch + (g.pitch - f.pitch) * e;
+    timeOfDay = GOLDEN_HOUR; updateSun();
+    if (u >= 1) finishIntro();
   } else if (mode === "free") {
     // debug fly
     let mx = 0, my = 0, mz = 0;
@@ -5815,9 +6024,13 @@ function frame(now) {
     if (hintT > 0) { hintT -= dt; promptEl.textContent = hintText; promptEl.style.display = "block"; }
     else promptEl.style.display = "none";
   } else { promptEl.style.display = "none"; crossEl.className = ""; crossEl.style.display = "none"; curTarget = null; }
+  const titleUp = (mode === "preview" || mode === "intro");       // hide in-world readouts behind the title
+  hud.style.display = titleUp ? "none" : "block";
+  const helpEl = document.getElementById("help"); if (helpEl) helpEl.style.display = titleUp ? "none" : "";
+  const tc = document.getElementById("tidecurve"); if (tc) tc.style.display = titleUp ? "none" : "";
   const ti = tideInfo();
   const mins = Math.floor(ti.tToLow / 60), secs = Math.floor(ti.tToLow % 60);
-  hud.textContent =
+  if (!titleUp) hud.textContent =
     `seed ${SEED_STR}  ·  ${archetype}\n` +
     `tide ${ti.rising ? "▲ rising" : "▼ falling"}${ti.minusNow ? " ·· MINUS" : ""}  ·  low in ${mins}:${String(secs).padStart(2, "0")}` +
     `${clock.speed > 1 ? `  (${clock.speed}×)` : ""}${clock.paused ? "  (paused)" : ""}\n` +
