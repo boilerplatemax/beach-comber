@@ -4008,6 +4008,14 @@ function bananaFoodMesh(){ const m=Mesh(); const y=[0.95,0.84,0.3], t=[0.4,0.34,
 function pineappleFoodMesh(){ const m=Mesh(); const f=[0.9,0.72,0.28], g=[0.32,0.55,0.3]; mCyl(m,0.08,0.4,0.14,0.16,8,f); mergeMesh(m, discMesh(0.4,0.16,8,0.05,f)); mergeMesh(m, discMesh(0.08,0.14,8,-0.06,f)); for(let i=0;i<6;i++){ const a=i/6*6.283; mergeAt(m, boxM(0.02,0.11,0.02,g), Math.cos(a)*0.05,0.46,Math.sin(a)*0.05); } return m; }
 function taroFoodMesh(){ const m=Mesh(); const c=[0.6,0.52,0.5], r=[0.42,0.36,0.34]; mergeMesh(m, discMesh(0.08,0.2,8,0.14,c)); mergeMesh(m, discMesh(0.08,0.2,8,-0.1,c)); for(let i=0;i<4;i++){ const y=0.04+i*0.06; mCyl(m,y,y+0.012,0.21,0.21,8,r); } return m; }
 function cropSeedMesh(col){ const m=Mesh(); mCyl(m,0,0.14,0.02,0.015,4,[0.5,0.4,0.28]); for(const s of [-1,1]) mergeAt(m, boxM(0.015,0.006,0.07,col), 0,0.13,s*0.04); mBox(m,0,0.16,0,0.025,0.03,0.025,col); return m; }
+// §17.1 shoreline litter — common washed-up trash to collect and (eventually) hand back
+function plasticBottleMesh(){ const m=Mesh(); const c=[0.58,0.78,0.7]; mCyl(m,0,0.3,0.065,0.055,6,c); mCyl(m,0.3,0.4,0.03,0.025,5,[0.8,0.82,0.8]); mergeMesh(m, discMesh(0.4,0.025,5,0.01,[0.7,0.5,0.3])); mBox(m,0,0.14,0.06,0.055,0.07,0.004,[0.9,0.84,0.35]); return m; }
+function drinkCanMesh(){ const m=Mesh(); const c=[0.72,0.74,0.78]; mCyl(m,0,0.22,0.075,0.075,8,c); mergeMesh(m, discMesh(0.22,0.075,8,0.01,[0.6,0.62,0.66])); mergeMesh(m, discMesh(0,0.075,8,-0.01,[0.6,0.62,0.66])); mBox(m,0,0.11,0.075,0.055,0.06,0.003,[0.82,0.3,0.26]); return m; }
+function bottleCapMesh(){ const m=Mesh(); mCyl(m,0,0.03,0.07,0.07,12,[0.85,0.4,0.3]); for(let i=0;i<12;i++){ const a=i/12*6.283; mBox(m,Math.cos(a)*0.07,0.015,Math.sin(a)*0.07,0.008,0.02,0.008,[0.68,0.3,0.22]); } return m; }
+function plasticBagMesh(){ const m=Mesh(); const c=[0.82,0.85,0.9]; for(let i=0;i<5;i++){ const a=i/5*6.283; mBox(m,Math.cos(a)*0.09,0.03+(i%2)*0.05,Math.sin(a)*0.09,0.1,0.02,0.09,[c[0],c[1],c[2]-0.02*(i%2)]); } mBox(m,0,0.02,0,0.13,0.015,0.13,[0.86,0.88,0.92]); return m; }
+function foamChunkMesh(){ const m=Mesh(); const c=[0.92,0.9,0.85]; mBox(m,0,0.08,0,0.15,0.08,0.1,c); mBox(m,0.09,0.13,0.03,0.05,0.05,0.05,[0.88,0.86,0.8]); mBox(m,-0.07,0.11,-0.04,0.04,0.06,0.06,[0.9,0.88,0.83]); return m; }
+function netScrapMesh(){ const m=Mesh(); const c=[0.38,0.46,0.5]; for(let i=0;i<8;i++){ const a=i*0.85; mCyl(m,Math.cos(a)*0.1,Math.cos(a)*0.1+0.05,0.014,0.014,4,c); } mergeMesh(m, discMesh(0,0.15,6,0.02,[0.34,0.42,0.46])); for(const s of [-1,1]) mBox(m,s*0.12,0.03,0,0.02,0.02,0.1,[0.5,0.42,0.3]); return m; }
+function plasticStrawMesh(){ const m=Mesh(); mCyl(m,0,0.42,0.018,0.018,5,[0.9,0.35,0.5]); mCyl(m,0.1,0.14,0.02,0.02,5,[0.95,0.5,0.6]); return m; }
 // generic storm flotsam (§11.1)
 function ropeMesh() { const m = Mesh(); const c = [0.66,0.56,0.36]; for (let i = 0; i < 6; i++) { const a = i*1.1; mCyl(m, Math.cos(a)*0.14, Math.cos(a)*0.14+0.06, 0.05, 0.05, 5, [c[0]-0.03*(i%2),c[1],c[2]]); } mergeMesh(m, discMesh(0.0,0.2,8,0.03,[0.6,0.5,0.32])); return m; }
 function crateMesh() { const m = Mesh(); const w = [0.5,0.37,0.24], e = [0.4,0.29,0.18]; mBox(m,0,0.2,0,0.22,0.2,0.22,w);
@@ -4128,6 +4136,14 @@ const FINDS = {
   driedstar:{ mesh: () => starMesh([0.64,0.57,0.47]), base: 0.8, max: 60, label: "Dried Sea Star", desc: "A sea star left too long in the air, stiff and curled.", rare: 1 },
   husk:     { mesh: () => huskMesh(),                base: 0.45,max: 60,  label: "Dried Husk", desc: "The shrivelled remains of a small shore creature that dried out.", rare: 0 },
   // §16.1 new beachcombing finds
+  // §17.1 washed-up litter — collect it to keep the shore clean (a trader will want it later)
+  plasticbottle: { mesh: () => plasticBottleMesh(), base: 0.6, max: 60, label: "Plastic Bottle", desc: "A sun-bleached bottle rolled in on the tide. Doesn't belong here.", rare: 0, litter: 1 },
+  drinkcan:  { mesh: () => drinkCanMesh(),           base: 0.5, max: 60,  label: "Drink Can", desc: "A dented, salt-pitted can. Someone's litter, now yours to clear.", rare: 0, litter: 1 },
+  bottlecap: { mesh: () => bottleCapMesh(),          base: 0.35,max: 90,  label: "Bottle Cap", desc: "A little rusted cap, tossed up with the wrack.", rare: 0, litter: 1 },
+  plasticbag:{ mesh: () => plasticBagMesh(),         base: 0.55,max: 60,  label: "Tattered Bag", desc: "A shredded plastic bag — a hazard for the sea life.", rare: 0, litter: 1 },
+  foamchunk: { mesh: () => foamChunkMesh(),          base: 0.5, max: 60,  label: "Foam Chunk", desc: "A crumbling lump of packing foam.", rare: 0, litter: 1 },
+  netscrap:  { mesh: () => netScrapMesh(),           base: 0.55,max: 50,  label: "Net Scrap", desc: "A knot of lost fishing net. Best off the beach.", rare: 0, litter: 1 },
+  strawbit:  { mesh: () => plasticStrawMesh(),       base: 0.4, max: 80,  label: "Plastic Straw", desc: "A faded straw, washed in from somewhere far.", rare: 0, litter: 1 },
   nautilus: { mesh: () => nautilusMesh(),            base: 0.5, max: 60,  label: "Nautilus Shell", desc: "A pearly chambered spiral, drifted from deep water.", rare: 2 },
   oyster:   { mesh: () => oysterMesh(),              base: 0.5, max: 80,  label: "Oyster", desc: "A craggy grey oyster, clamped shut. Good food, better cooked.", rare: 0 },
   barnacle: { mesh: () => barnacleMesh(),            base: 0.5, max: 80,  label: "Barnacles", desc: "A cluster of acorn barnacles broken off a rock.", rare: 0 },
@@ -4260,6 +4276,7 @@ function populateLife() {
 
 // Wash fresh finds along the current wrack line + exposed flats at low tide.
 let lastLowCount = 0;
+const LITTER = ["plasticbottle", "drinkcan", "bottlecap", "plasticbag", "foamchunk", "netscrap", "strawbit"];   // §17.1
 function washUp(initial) {
   const ev = currentEvent;
   const baseN = initial ? 60 : 30, n = ev === "storm" ? baseN * 2 : baseN;
@@ -4268,6 +4285,8 @@ function washUp(initial) {
     const h = heightAt(x, z);
     if (!(h > waterLevel + 0.3 && h < wetLevel + 4)) continue;       // only on exposed sand near the wrack line
     const cb = COAST_BIOMES[coastBiomeAt(x, z)], roll = rng();
+    // §17.1 occasional washed-up litter (a bit more after a storm) — collect it to clean the shore
+    if (rng() < (ev === "storm" ? 0.16 : 0.09)) { spawnFind(LITTER[(rng()*LITTER.length)|0], x, z); continue; }
     // event flavour (rare finds weighted down; see §C variety)
     if (ev === "kelp" && roll < 0.55) { spawnFind("kelp", x, z); if (rng() < 0.5) { const p = cb.finds[(rng()*cb.finds.length)|0]; if (FINDS[p]) spawnFind(p, x+(rng()-0.5), z+(rng()-0.5)); } continue; }
     if (ev === "driftseed" && roll < 0.5) { spawnFind(rng() < 0.65 ? "seabean" : "coconut", x, z); continue; }
