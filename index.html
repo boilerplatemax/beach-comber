@@ -2562,6 +2562,45 @@ function broadleafMesh() {
   return m;
 }
 function boulderMesh() { const m = Mesh(); mRock(m, mulberry32(0x9e37 ^ SEED_INT), [0.46, 0.44, 0.41]); return m; }
+// §13.7 a richer boulder: a jittered lumpy hull with per-face colour variation, moss on the
+// upward faces, lichen spots, a flattened sunk base and a few pebbles around the foot.
+// style ∈ "rounded" | "slab" | "jagged"; base colour sets the biome feel.
+function rockMesh(seed, style, base) {
+  const rand = mulberry32(seed >>> 0), m = Mesh();
+  base = base || [0.46, 0.44, 0.41];
+  const flat = style === "slab" ? 0.5 : style === "rounded" ? 0.82 : 0.66;   // vertical squash
+  const jag  = style === "jagged" ? 0.48 : style === "rounded" ? 0.12 : 0.27; // radius jitter
+  const LAT = 5, LON = 8, R = [];
+  for (let i = 0; i <= LAT; i++) { R[i] = []; for (let j = 0; j < LON; j++) R[i][j] = 1 + (rand()*2 - 1) * jag; R[i][LON] = R[i][0]; }
+  const moss = [0.33, 0.42, 0.24], lichen = [0.78, 0.8, 0.72];
+  const vert = (i, j) => { const th = i/LAT*Math.PI, ph = j/LON*6.283, r = R[i][j];
+    return [Math.cos(ph)*Math.sin(th)*r, Math.cos(th)*flat*r, Math.sin(ph)*Math.sin(th)*r]; };
+  const faceCol = (a, b, c) => {
+    const cy = (a[1] + b[1] + c[1]) / 3;                      // face height → up-facing gets moss
+    const up = Math.max(0, Math.min(1, (cy / (flat*0.9) + 0.1)));
+    const k = 0.82 + rand()*0.3;                             // per-face brightness variation
+    let col = [base[0]*k, base[1]*k, base[2]*k];
+    const mossAmt = up*up * 0.6 * (0.5 + rand()*0.5);        // moss mostly on the crown
+    col = [col[0]+(moss[0]-col[0])*mossAmt, col[1]+(moss[1]-col[1])*mossAmt, col[2]+(moss[2]-col[2])*mossAmt];
+    if (rand() < 0.1) col = [col[0]+(lichen[0]-col[0])*0.5, col[1]+(lichen[1]-col[1])*0.5, col[2]+(lichen[2]-col[2])*0.5];  // lichen spot
+    return col;
+  };
+  for (let i = 0; i < LAT; i++) for (let j = 0; j < LON; j++) {
+    const A = vert(i,j), B = vert(i+1,j), C = vert(i+1,j+1), D = vert(i,j+1);
+    mTri(m, A, B, C, faceCol(A,B,C)); mTri(m, A, C, D, faceCol(A,C,D));
+  }
+  // a few pebbles around the base
+  const pcol = [base[0]*0.9, base[1]*0.9, base[2]*0.9];
+  for (let k = 0; k < 4; k++) { const a = rand()*6.283, d = 0.9 + rand()*0.5, ps = 0.13 + rand()*0.12;
+    const px = Math.cos(a)*d, pz = Math.sin(a)*d, py = -flat*0.78;
+    for (const t of [[1,0,0],[-1,0,0],[0,1,0],[0,0,1],[0,0,-1]]) {
+      const q = [px + t[0]*ps, py + Math.max(0,t[1])*ps*0.8, pz + t[2]*ps];
+      const q2 = [px - t[2]*ps, py, pz + t[0]*ps];
+      mTri(m, [px,py-ps*0.3,pz], q, q2, pcol);
+    }
+  }
+  return m;
+}
 function driftwoodMesh() {
   const m = Mesh(); const col = [0.62, 0.57, 0.5];
   // bent octagonal log along X, resting on the ground
@@ -2624,12 +2663,21 @@ in vec3 vCol;
 out vec4 frag;
 uniform vec3 uSunDir, uCamPos, uZenith, uHorizon, uWarm;
 uniform float uFogDensity, uFogNear;
+uniform float uWetLevel, uWaterLevel;               // §13.7 wet band near the waterline
+uniform int uWetBand;                               // 1 only for the world prop pass (rocks, trees)
 ${SKY_GLSL}
 void main() {
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
   float diff = abs(dot(n, normalize(uSunDir)));      // abs → foliage lit both sides
   vec3 col = vCol * (0.5 + 0.6 * diff);
   col *= mix(vec3(0.85, 0.89, 0.99), uWarm, diff);
+  if (uWetBand == 1) {
+    float wetb = 1.0 - smoothstep(uWaterLevel, uWetLevel + 1.2, vWorld.y);     // darker below the high-water mark
+    col = mix(col, col * 0.58, clamp(wetb, 0.0, 1.0) * 0.8);
+    float band = (1.0 - smoothstep(uWetLevel - 0.2, uWetLevel + 1.0, vWorld.y)) * smoothstep(uWaterLevel - 0.6, uWaterLevel + 0.4, vWorld.y);
+    float sp = fract(sin(dot(floor(vWorld.xz * 7.0), vec2(12.99, 78.23))) * 43758.5);  // barnacle speckle in the splash zone
+    if (band > 0.3 && sp > 0.82) col = mix(col, vec3(0.82, 0.82, 0.78), 0.55);
+  }
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
   float fd = max(dist - uFogNear, 0.0) * uFogDensity;
@@ -2914,15 +2962,23 @@ function buildProps() {
     pushInst(inst, x, s.h, z, sc, rng()*6.28, rng()*0.08, rng()*6.28, vary([1,1,1], 0.15));
     colliders.push({ x, z, r: 0.6, kind: "tree", species: "broadleaf", ii: inst.length/10 - 1 });
   });
-  // boulders: rocky high ground and scattered on the flats (collide)
-  const rocks = scatter(20, 0.9, 1500, (x, z, inst) => {
+  // §13.7 boulders in three biome styles: rounded cobble near the shore, mossy slabs inland,
+  // dark jagged rock up high / on the reef shelf. Sunk 20–40% into the ground.
+  const rocksR = [], rocksS = [], rocksJ = [];
+  scatter(20, 0.9, 1500, (x, z) => {
     const s = surfaceAt(x, z);
     const high = s.h > 38, flat = s.h > 2 && s.h < 16;
     if (!(high || flat) || s.h < 1) return;
     if (rng() > (high ? 0.5 : 0.12) || nearPOI(x, z, 3) || spotUnderwater(x, z) || !reserveBig(x, z)) return;
     const sc = 1.2 + rng()*3.5;
-    pushInst(inst, x, s.h + sc*0.1, z, sc, rng()*6.28, 0, 0, vary([1,1,1], 0.15));
-    colliders.push({ x, z, r: sc*0.5, kind: "rock", ii: inst.length/10 - 1, sc });
+    let arr, styleIdx;
+    if (high) { arr = rocksJ; styleIdx = 2; }           // jagged dark rock up high
+    else if (s.h < 7) { arr = rocksR; styleIdx = 0; }   // smooth rounded cobble near the shore
+    else { arr = rocksS; styleIdx = 1; }                // mossy slab inland
+    const y = s.h - sc*0.22;                            // sink the base into the ground
+    const t = vary([1,1,1], 0.1);
+    arr.push(x, y, z, sc, rng()*6.28, 0, 0, t[0], t[1], t[2]);
+    colliders.push({ x, z, r: sc*0.5, kind: "rock", ii: arr.length/10 - 1, sc, styleIdx });
   });
   // occasional old fence posts (collide)
   const fences = scatter(28, 1.0, 600, (x, z, inst) => {
@@ -2938,10 +2994,13 @@ function buildProps() {
     { kind: "palm",    foliage: false, snap: true, inst: makeInstanced(palmMesh(), palms) },
     { kind: "pine",    foliage: false, snap: true, inst: makeInstanced(pineMesh(), trees) },
     { kind: "broadleaf", foliage: false, snap: true, inst: makeInstanced(broadleafMesh(), broadleaf) },
-    { kind: "rock",    foliage: false, snap: true, inst: makeInstanced(boulderMesh(), rocks) },
+    { kind: "rock",    foliage: false, snap: true, inst: makeInstanced(rockMesh((SEED_INT^0x51)>>>0, "rounded", [0.56,0.54,0.50]), rocksR) },
+    { kind: "rockSlab", foliage: false, snap: true, inst: makeInstanced(rockMesh((SEED_INT^0x52)>>>0, "slab", [0.47,0.47,0.43]), rocksS) },
+    { kind: "rockJag", foliage: false, snap: true, inst: makeInstanced(rockMesh((SEED_INT^0x53)>>>0, "jagged", [0.40,0.40,0.43]), rocksJ) },
     { kind: "fence",   foliage: false, snap: true, inst: makeInstanced(fenceMesh(), fences) },
     { kind: "poi",     foliage: false, snap: false, inst: makeInstanced(poiMesh, poiMesh.pos.length ? [0,0,0, 1,0,0,0, 1,1,1] : []) },
   ];
+  rockStyleTypes = [propTypes[5], propTypes[6], propTypes[7]];   // §13.7 rounded / slab / jagged, by collider.styleIdx
   initPropDeltas();
   rebuildCollHash();
   validateProps();
@@ -3040,6 +3099,8 @@ function drawProps(view) {
   gl.uniform3fv(propU.uWarm, SKY.warm);
   gl.uniform1f(propU.uFogDensity, FOG_DENSITY);
   gl.uniform1f(propU.uFogNear, FOG_NEAR);
+  gl.uniform1i(propU.uWetBand, 1);                         // §13.7 wet band + barnacles near the waterline
+  gl.uniform1f(propU.uWetLevel, wetLevel); gl.uniform1f(propU.uWaterLevel, waterLevel);
   for (const t of propTypes) {
     if (!t.inst.vao || t.inst.count === 0) continue;
     // §13.6 foliage density: draw only a leading fraction of foliage instances (scatter order is random)
@@ -3049,6 +3110,7 @@ function drawProps(view) {
     gl.drawArraysInstanced(gl.TRIANGLES, 0, t.inst.vertCount, cnt);
     countDraw(Math.round(t.inst.tris * cnt / t.inst.count));
   }
+  gl.uniform1i(propU.uWetBand, 0);                         // §13.7 reset so creatures / tools / icons aren't affected
 }
 
 /* §13.6 SUN SHADOWS — soft contact shadows grounded under props & creatures (High/Ultra).
@@ -3296,10 +3358,12 @@ function heronMesh() { const m = Mesh(), g=[0.56,0.6,0.64], pale=[0.8,0.82,0.85]
   return m; }
 function berryMesh() { const m = Mesh(); const c = [0.62,0.16,0.3]; for (let i = 0; i < 3; i++) { const a = i/3*6.283; mBox(m, Math.cos(a)*0.06, 0.08+(i%2)*0.04, Math.sin(a)*0.06, 0.07, 0.07, 0.07, [c[0]*(0.9+0.1*(i%2)),c[1],c[2]]); } mBox(m,0.0,0.16,0,0.02,0.05,0.02,[0.4,0.5,0.3]); return m; }
 // a low inland shrub; ripe=true studs it with berries
-function berryBushMesh(ripe) { const m = Mesh(); const g = [0.33,0.46,0.26];
+// §13.7 three states: "ripe" (red clusters), "green" (small unripe berries), "bare" (just harvested — none)
+function berryBushMesh(state) { const m = Mesh(); const g = [0.33,0.46,0.26];
   for (let i = 0; i < 9; i++) { const a = i/9*6.283, r = 0.1 + (i%3)*0.16; mBox(m, Math.cos(a)*r, 0.3 + (i%3)*0.12, Math.sin(a)*r, 0.22, 0.2, 0.22, [g[0]*(0.85+0.15*(i%2)),g[1],g[2]]); }
   mBox(m, 0, 0.5, 0, 0.26, 0.26, 0.26, g);
-  if (ripe) for (let i = 0; i < 12; i++) { const a = i/12*6.283, r = 0.28 + (i%2)*0.12, y = 0.3 + (i%4)*0.12; mBox(m, Math.cos(a)*r, y, Math.sin(a)*r, 0.05, 0.05, 0.05, [0.66,0.16,0.3]); }
+  if (state === "ripe") for (let i = 0; i < 12; i++) { const a = i/12*6.283, r = 0.28 + (i%2)*0.12, y = 0.3 + (i%4)*0.12; mBox(m, Math.cos(a)*r, y, Math.sin(a)*r, 0.05, 0.05, 0.05, [0.66,0.16,0.3]); }
+  else if (state === "green") for (let i = 0; i < 9; i++) { const a = i/9*6.283, r = 0.28 + (i%2)*0.1, y = 0.32 + (i%3)*0.12; mBox(m, Math.cos(a)*r, y, Math.sin(a)*r, 0.035, 0.035, 0.035, [0.42,0.55,0.3]); }   // small, green, still forming
   return m; }
 function campfireMesh() { const m = Mesh(); const st = [0.5,0.48,0.46];
   for (let i = 0; i < 7; i++) { const a = i/7*6.283; mBox(m, Math.cos(a)*0.5, 0.1, Math.sin(a)*0.5, 0.12, 0.12, 0.12, st); }   // stone ring
@@ -3643,7 +3707,7 @@ function drawLife(view) {
         else if (e.t === "gull") { y = (e.y !== undefined) ? e.y : g + (e.alt || 0);   // §12B flap-and-glide
           const amp = (e.gstate === "soar" || e.gstate === "approach") ? 0.16 : 0.42;  // glide steady, flap hard when working
           lean = Math.sin(e.flap || 0) * amp; ld = e.yaw;
-          sc = e.scale * 1.35; }                       // read bigger against sky & sand
+          sc = e.scale * 1.5; }                         // §13.7 read bigger against sky & sand (easy to spot)
         else if (e.t === "jelly") sc = e.scale * (0.9 + Math.sin(e.phase*2)*0.1);
         if (e.t === "crab") y = g - (e.burrow || 0) * 0.6;                      // §13.1 sink into the sand (no pop)
         else if (e.t === "anemone") sc = e.scale * (1 - 0.6*e.closed);
@@ -5467,6 +5531,10 @@ function seedBerryBushes() {
     berryBushes.push({ x, z, ripe: true, regrowAt: 0, scale: 0.9 + rng()*0.5 });
   }
 }
+// §13.7 bushes ripen through a green stage: bare just after picking, then small green berries that redden.
+function berryState(b) { if (b.ripe) return "ripe";
+  const total = BERRY_REGROW * DAY_PERIOD, prog = 1 - Math.max(0, (b.regrowAt - clock.t)) / total;
+  return prog > 0.5 ? "green" : "bare"; }
 function updateBerries() { for (const b of berryBushes) if (!b.ripe && clock.t >= b.regrowAt) b.ripe = true; }
 function nearestBush(x, z, maxd) { let best = null, bd = maxd; for (const b of berryBushes) { const d = Math.hypot(b.x - x, b.z - z); if (d < bd) { bd = d; best = b; } } return best; }
 function harvestBush(b) {
@@ -5477,15 +5545,16 @@ function harvestBush(b) {
   b.ripe = false; b.regrowAt = clock.t + BERRY_REGROW * DAY_PERIOD;
   sparkle(b.x, surfaceAt(b.x, b.z).h + 0.6, b.z, [0.6, 0.2, 0.3], 6); if (onDig) onDig("pluck"); saveWorld();
 }
+let berryGreenDyn = null;
 function drawBerryBushes(view) {
   if (!berryBushes.length) return;
-  if (!berryRipeDyn) { berryRipeDyn = makeDynamic(berryBushMesh(true), 60); berryBareDyn = makeDynamic(berryBushMesh(false), 60); }
+  if (!berryRipeDyn) { berryRipeDyn = makeDynamic(berryBushMesh("ripe"), 60); berryBareDyn = makeDynamic(berryBushMesh("bare"), 60); berryGreenDyn = makeDynamic(berryBushMesh("green"), 60); }
   propUniforms(view);
-  const a = rockScratch;
-  for (const ripe of [true, false]) { let n = 0;
-    for (const b of berryBushes) { if (b.ripe !== ripe) continue; const dx = b.x-cam.pos[0], dz = b.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R || n >= 60) continue;
+  const a = rockScratch, dyns = { ripe: berryRipeDyn, green: berryGreenDyn, bare: berryBareDyn };
+  for (const st of ["ripe", "green", "bare"]) { let n = 0;
+    for (const b of berryBushes) { if (berryState(b) !== st) continue; const dx = b.x-cam.pos[0], dz = b.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R || n >= 60) continue;
       const o = n*10, y = surfaceAt(b.x, b.z).h; a[o]=b.x;a[o+1]=y;a[o+2]=b.z;a[o+3]=b.scale;a[o+4]=0;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
-    if (n) (ripe ? berryRipeDyn : berryBareDyn).draw(a, n);
+    if (n) dyns[st].draw(a, n);
   }
 }
 
@@ -5670,7 +5739,7 @@ const MATURE = { palm: 9, pine: 10, broadleaf: 8 };
 
 let treeObjs = [], rockObjs = [], stumps = [], planted = [], looseRocks = [], fallenTrees = [], driftObjs = [];
 const driftDyn = makeDynamic(driftwoodMesh(), 400);   // §13.1 lying driftwood, individually choppable
-let palmType, pineType, broadleafType, rockType, pendingTool = null;
+let palmType, pineType, broadleafType, rockType, rockStyleTypes = [], pendingTool = null;
 let palmDyn, pineDyn, broadleafDyn, stumpDyn, rockDyn;
 
 function initWorldObjs() {
@@ -5688,8 +5757,9 @@ function initWorldObjs() {
         baseLean: d[o+5], scale: d[o+3], origY: surfaceAt(c.x, c.z).h,
         shake: 0, leanAdd: 0, leanDir: d[o+6], falling: false, fall: 0, gone: false, coll: c });
     } else if (c.kind === "rock") {
-      const o = c.ii*10, d = rockType.inst.data, hp = Math.max(3, Math.min(4, Math.round(c.sc)));   // §11.5 ~1.8–2.4 rings to break
-      rockObjs.push({ i: c.ii, x: c.x, z: c.z, sc: c.sc, hp, maxhp: hp, scale: d[o+3],
+      const rt = rockStyleTypes[c.styleIdx || 0] || rockType;   // §13.7 which boulder-style buffer this rock lives in
+      const o = c.ii*10, d = rt.inst.data, hp = Math.max(3, Math.min(4, Math.round(c.sc)));   // §11.5 ~1.8–2.4 rings to break
+      rockObjs.push({ t: rt, i: c.ii, x: c.x, z: c.z, sc: c.sc, hp, maxhp: hp, scale: d[o+3],
         baseTint: [d[o+7], d[o+8], d[o+9]], split: false, gone: false, coll: c });
     }
   }
@@ -5697,7 +5767,7 @@ function initWorldObjs() {
   pineDyn = pineDyn || makeDynamic(pineMesh(), 48);
   broadleafDyn = broadleafDyn || makeDynamic(broadleafMesh(), 48);
   stumpDyn = stumpDyn || makeDynamic(stumpMesh(), 80);
-  rockDyn = rockDyn || makeDynamic(boulderMesh(), 200);
+  rockDyn = rockDyn || makeDynamic(rockMesh((SEED_INT^0x51)>>>0, "rounded", [0.54,0.52,0.48]), 200);   // §13.7 richer dynamic rocks
 }
 function nearestObj(arr, x, z, maxd) { let best = null, bd = maxd; for (const o of arr) { if (o.gone) continue; const d = Math.hypot(o.x - x, o.z - z); if (d < bd) { bd = d; best = o; } } return best; }
 
@@ -5711,11 +5781,11 @@ function setTreeInstance(o) {
   gl.bindBuffer(gl.ARRAY_BUFFER, o.t.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, off*4, d, off, 10);
 }
 function setRockInstance(o) {
-  const d = rockType.inst.data, off = o.i*10;
+  const rt = o.t || rockType, d = rt.inst.data, off = o.i*10;   // §13.7 write to this rock's own style buffer
   d[off+3] = o.gone ? 0 : o.scale;
   const dk = 1 - 0.5 * (1 - o.hp / o.maxhp);                   // darken as it cracks
   d[off+7] = o.baseTint[0]*dk; d[off+8] = o.baseTint[1]*dk; d[off+9] = o.baseTint[2]*dk;
-  gl.bindBuffer(gl.ARRAY_BUFFER, rockType.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, off*4, d, off, 10);
+  gl.bindBuffer(gl.ARRAY_BUFFER, rt.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, off*4, d, off, 10);
 }
 
 /* ---- chopping ---- */
@@ -6134,7 +6204,8 @@ function sparkle(x, y, z, col, count) { for (let i = 0; i < (count||5) && partic
 let onGull = null;                         // sound hook: onGull("call" | "squabble" | "screech")
 let gullNests = [];
 const GULL = {
-  soarAlt: 24, soarR: 24, soarSpd: 6, approachSpd: 11, fleeSpd: 16, stealSpd: 13, bombSpd: 22,
+  // §13.7 slower, more gliding flight (~35–40% off) so gulls drift rather than dart
+  soarAlt: 24, soarR: 24, soarSpd: 3.8, approachSpd: 7, fleeSpd: 10, stealSpd: 8.5, bombSpd: 14,
   stealRange: 2.6, chaseDrop: 6, shooR: 7.5, nestDefendR: 11, divebombCd: 3.5,
   eggReplenishDays: 3, abandonDays: 2, lureLife: 14,
 };
@@ -6229,7 +6300,7 @@ function updateGulls(dt) {
   for (const e of gulls) {
     initGull(e);
     const dp = Math.hypot(e.x - player.x, e.z - player.z);
-    e.flap = (e.flap || 0) + dt * (e.gstate === "soar" || e.gstate === "approach" ? 5 : 11);
+    e.flap = (e.flap || 0) + dt * (e.gstate === "soar" || e.gstate === "approach" ? 2.6 : 7);   // §13.7 glide more, flap less
     // shooing: a sprint or a tool swing nearby scatters landed/approaching gulls
     if ((e.gstate === "forage" || e.gstate === "approach") && (sprinting || swung) && dp < GULL.shooR * (crouching ? 0.5 : 1)) {   // §13.4 crouch → harder to scare
       e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call");
