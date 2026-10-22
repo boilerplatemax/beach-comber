@@ -3042,6 +3042,7 @@ const propVS = `#version 300 es
 precision highp float;
 uniform mat4 uProj, uView;
 uniform float uTime, uSway;      // §14B gentle current sway for foliage/kelp (uSway 0 = off)
+uniform float uClampY; uniform int uClampTop;   // §14B pin ocean plants at/under the sea surface
 in vec3 aPos;
 in vec3 aCol;
 in vec3 iOff;        // world position
@@ -3064,6 +3065,9 @@ void main() {
   float hy = max(0.0, r.y);
   float sway = uSway * (sin(ph) * 0.045 + sin(ph*2.3 + 1.7) * 0.015) * hy;
   wp.x += sway; wp.z += sway*0.6;
+  // §14B keep ocean plants under the surface: any vertex above the waterline is pinned to it, so
+  // kelp/eelgrass reaches up to the sea surface and lies along it instead of spearing out of the water.
+  if (uClampTop == 1) wp.y = min(wp.y, uClampY);
   vWorld = wp; vCol = aCol * iTint;
   gl_Position = uProj * uView * vec4(wp, 1.0);
 }`;
@@ -3538,6 +3542,7 @@ function drawProps(view) {
   gl.uniform1i(propU.uWetBand, 1);                         // §13.7 wet band + barnacles near the waterline
   gl.uniform1f(propU.uWetLevel, wetLevel); gl.uniform1f(propU.uWaterLevel, waterLevel);
   gl.uniform1f(propU.uTime, clock.t);                                 // §14B sway clock
+  gl.uniform1f(propU.uClampY, waterLevel - 0.04);                     // §14B ceiling for ocean plants (just under the sea surface)
   for (const t of propTypes) {
     if (!t.inst.vao || t.inst.count === 0) continue;
     // §13.6 foliage density: draw only a leading fraction of foliage instances (scatter order is random)
@@ -3545,12 +3550,14 @@ function drawProps(view) {
     if (cnt === 0) continue;
     const rigid = (t.kind === "rock" || t.kind === "rockSlab" || t.kind === "rockJag" || t.kind === "fence" || t.kind === "poi");
     gl.uniform1f(propU.uSway, rigid ? 0 : 1);                         // §14B plants & trees sway, rocks/fences stay put
+    gl.uniform1i(propU.uClampTop, (t.kind === "eelgrass" || t.kind === "kelp") ? 1 : 0);   // §14B ocean plants can't breach the surface
     gl.bindVertexArray(t.inst.vao);
     gl.drawArraysInstanced(gl.TRIANGLES, 0, t.inst.vertCount, cnt);
     countDraw(Math.round(t.inst.tris * cnt / t.inst.count));
   }
   gl.uniform1i(propU.uWetBand, 0);                         // §13.7 reset so creatures / tools / icons aren't affected
   gl.uniform1f(propU.uSway, 0);                            // §14B reset sway
+  gl.uniform1i(propU.uClampTop, 0);                        // §14B reset surface clamp
 }
 
 /* §13.6 SUN SHADOWS — soft contact shadows grounded under props & creatures (High/Ultra).
