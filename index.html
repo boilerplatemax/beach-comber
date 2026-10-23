@@ -2864,7 +2864,8 @@ function missBite() {                                          // struck during 
 function setHook() {
   const f = rod.fish; const meta = f.species === "junk" ? JUNK_META : FISH_SPECIES[f.species];
   rod.fight = { progress: 0, tension: 0.42, strain: 0, slack: 0, run: 0, runActive: false, runUntil: 0,
-    runCd: 1.6 + Math.random() * 2, land: (meta.fight + f.weight * 1.3) * (relaxedFishing ? 0.75 : 1), str: meta.strength + f.weight * 0.04 };
+    runCd: 1.6 + Math.random() * 2, land: (meta.fight + f.weight * 1.3) * (relaxedFishing ? 0.75 : 1), str: meta.strength + f.weight * 0.04,
+    snaps: 0, snapFlash: 0, zoneGlow: 0 };   // §fishpolish three knots; each full strain snaps one, three snapped = line breaks
   rod.state = "fighting"; rod.bend = 0.5;
   if (typeof SND !== "undefined") SND.play("whoosh");
 }
@@ -2881,14 +2882,18 @@ function updateFight(dt) {
   const reeling = rod.press || rod.pulse > 0; if (rod.pulse > 0) rod.pulse = Math.max(0, rod.pulse - dt);
   fg.tension += (reeling ? 0.85 : -0.72) * dt + fg.run * 0.75 * dt;
   fg.tension = Math.max(0, Math.min(1, fg.tension));
+  if (fg.snapFlash > 0) fg.snapFlash = Math.max(0, fg.snapFlash - dt);
+  const inZone = fg.tension >= lo && fg.tension <= hi;
+  fg.zoneGlow += ((inZone ? 1 : 0) - fg.zoneGlow) * Math.min(1, dt * 10);        // zone glows while the needle is inside
   if (fg.tension > hi)      { fg.strain += (fg.tension - hi) * (relaxed ? 1.5 : 3.4) * dt; fg.slack = Math.max(0, fg.slack - 0.5 * dt); }
-  else if (fg.tension < lo) { fg.slack  += (lo - fg.tension) * (relaxed ? 1.2 : 2.2) * dt; fg.strain = Math.max(0, fg.strain - 0.8 * dt); }
+  else if (fg.tension < lo) { fg.slack  += (lo - fg.tension) * (relaxed ? 1.2 : 2.2) * dt; fg.strain = Math.max(0, fg.strain - 0.8 * dt); fg.progress = Math.max(0, fg.progress - dt * 0.12); }   // fish pulls line → the icon slips back
   else                      { fg.progress += dt / fg.land; fg.strain = Math.max(0, fg.strain - 1.3 * dt); fg.slack = Math.max(0, fg.slack - 1.0 * dt); }
-  if (relaxed) { fg.strain = Math.min(fg.strain, 0.9); fg.slack = Math.min(fg.slack, 0.9); }   // relaxed: can't lose, only takes effort
+  // §fishpolish a full strain snaps one knot (not an instant loss); three snapped knots breaks the line
+  if (fg.strain >= 1) { fg.strain = 0; if (!relaxed) { fg.snaps++; fg.snapFlash = 0.5; if (typeof SND !== "undefined") SND.play("crack", { volume: 0.6 }); if (fg.snaps >= 3) return lineSnap(); } }
+  if (relaxed) fg.slack = Math.min(fg.slack, 0.9);                               // relaxed: can't lose
   fg.lo = lo; fg.hi = hi;
   rod.bend = 0.4 + fg.tension * 0.5 + fg.run * 0.3;
   if (fg.progress >= 1) return landFish();
-  if (fg.strain >= 1) return lineSnap();
   if (fg.slack >= 1) return fishEscape();
 }
 function landFish() {
@@ -3077,29 +3082,47 @@ function drawCastMeter(g) {
   g.strokeStyle = "rgba(255,255,255,0.4)"; g.lineWidth = 1; g.strokeRect(x, y, w, h);
   g.fillStyle = "rgba(230,240,245,0.9)"; g.font = "600 12px system-ui,sans-serif"; g.textAlign = "center"; g.fillText("CAST — release to throw", innerWidth / 2, y - 8);
 }
-function drawReelGauge(g) {
-  const fg = rod.fight; const w = 300, h = 20, x = (innerWidth - w) / 2, y = innerHeight - 150;
-  g.save(); g.textAlign = "center";
-  // tension track
-  g.fillStyle = "rgba(10,16,20,0.62)"; g.fillRect(x - 4, y - 24, w + 8, h + 54);
-  g.fillStyle = "rgba(40,50,56,0.9)"; g.fillRect(x, y, w, h);
-  // safe zone
-  g.fillStyle = fg.run > 0.3 ? "rgba(90,200,120,0.55)" : "rgba(90,200,120,0.75)"; g.fillRect(x + fg.lo * w, y, (fg.hi - fg.lo) * w, h);
-  // danger ends tint
-  g.fillStyle = "rgba(200,70,60,0.35)"; g.fillRect(x + fg.hi * w, y, (1 - fg.hi) * w, h);
-  // needle
-  const nx = x + Math.max(0, Math.min(1, fg.tension)) * w;
-  g.fillStyle = fg.tension > fg.hi ? "#ff6a52" : fg.tension < fg.lo ? "#ffd06a" : "#eaf2f7";
-  g.fillRect(nx - 2, y - 5, 4, h + 10);
-  // progress
-  g.fillStyle = "rgba(10,16,20,0.5)"; g.fillRect(x, y + h + 6, w, 7);
-  g.fillStyle = "rgba(130,200,235,0.95)"; g.fillRect(x, y + h + 6, w * Math.min(1, fg.progress), 7);
-  // strain pips (red bar top)
-  if (fg.strain > 0.02) { g.fillStyle = `rgba(230,60,50,${0.4 + fg.strain * 0.6})`; g.fillRect(x, y - 7, w * Math.min(1, fg.strain), 4); }
-  g.fillStyle = "rgba(230,240,245,0.92)"; g.font = "600 12px system-ui,sans-serif";
-  const label = fg.run > 0.3 ? "IT'S RUNNING — ease off!" : "REEL — keep the needle in the green";
-  g.fillText(label, innerWidth / 2, y - 12);
+const SPECIES_HUD_COL = { surfperch: [0.75,0.77,0.64], rockfish: [0.86,0.32,0.2], lingcod: [0.42,0.46,0.35], ratfish: [0.6,0.63,0.7], junk: [0.55,0.57,0.6] };
+function hudChamfer(g, x, y, w, h, c) { g.beginPath(); g.moveTo(x+c,y); g.lineTo(x+w-c,y); g.lineTo(x+w,y+c); g.lineTo(x+w,y+h-c); g.lineTo(x+w-c,y+h); g.lineTo(x+c,y+h); g.lineTo(x,y+h-c); g.lineTo(x,y+c); g.closePath(); }
+function hudFishToken(g, cx, cy, col, s) {   // a tiny side-on fish facing the hook (right)
+  s = s || 1; const C = `rgb(${col[0]*255|0},${col[1]*255|0},${col[2]*255|0})`;
+  g.save(); g.fillStyle = C;
+  g.beginPath(); g.ellipse(cx, cy, 9*s, 5.2*s, 0, 0, 6.283); g.fill();                 // body
+  g.beginPath(); g.moveTo(cx-8*s, cy); g.lineTo(cx-14*s, cy-5*s); g.lineTo(cx-14*s, cy+5*s); g.closePath(); g.fill();   // tail
+  g.fillStyle = "#12161a"; g.beginPath(); g.arc(cx+5*s, cy-1*s, 1.4*s, 0, 6.283); g.fill();   // eye
   g.restore();
+}
+function hudHook(g, x, y) {
+  g.save(); g.strokeStyle = "rgba(210,215,222,0.9)"; g.lineWidth = 2.2; g.beginPath();
+  g.moveTo(x, y-9); g.lineTo(x, y+2); g.arc(x-4, y+2, 4, 0, Math.PI, false); g.stroke();
+  g.restore();
+}
+function drawReelGauge(g) {
+  const fg = rod.fight; const w = 300, cx = innerWidth / 2, x = cx - w / 2;
+  const yT = innerHeight - 176, yL = innerHeight - 132, h = 18;
+  g.save();
+  g.fillStyle = "rgba(12,16,20,0.62)"; hudChamfer(g, x - 18, yT - 14, w + 36, 80, 9); g.fill();
+  g.strokeStyle = "rgba(180,200,210,0.18)"; g.lineWidth = 1; g.stroke();
+  // --- tension track with a zone that GLOWS inside and flashes red on a strain ---
+  const strainF = fg.snapFlash > 0 ? 1 : (fg.tension > fg.hi ? Math.min(1, (fg.tension - fg.hi) * 4) : 0), glow = fg.zoneGlow;
+  g.fillStyle = "rgba(38,48,54,0.92)"; hudChamfer(g, x, yT, w, h, 4); g.fill();
+  const zx = x + fg.lo * w, zw = (fg.hi - fg.lo) * w;
+  if (strainF > 0) { g.fillStyle = `rgba(230,${90-70*strainF|0},${75-55*strainF|0},${0.55+0.35*strainF})`; g.fillRect(zx, yT, zw, h); }
+  else { g.fillStyle = `rgba(95,205,125,${0.4+0.5*glow})`; g.fillRect(zx, yT, zw, h);
+    if (glow > 0.25) { g.save(); g.shadowColor = "rgba(130,235,160,0.95)"; g.shadowBlur = 12 * glow; g.fillStyle = `rgba(150,245,180,${0.35*glow})`; g.fillRect(zx, yT, zw, h); g.restore(); } }
+  const nx = x + Math.max(0, Math.min(1, fg.tension)) * w;      // needle
+  g.fillStyle = strainF > 0 ? "#ff6a52" : (fg.tension > fg.hi || fg.tension < fg.lo ? "#ffd06a" : "#f0f5f8");
+  g.fillRect(nx - 2, yT - 5, 4, h + 10);
+  // --- progress line: the fish slides toward the hook with each good hit, slips back when it pulls ---
+  g.strokeStyle = "rgba(225,235,242,0.5)"; g.lineWidth = 2; g.beginPath(); g.moveTo(x, yL); g.lineTo(x + w, yL); g.stroke();
+  hudHook(g, x + w, yL);
+  for (let i = 0; i < 3; i++) {                                 // three knots; snapped ones broken & dark, the next one flashes red while straining
+    const kx = x + w * (0.34 + i * 0.2), snapped = i < fg.snaps, straining = (i === fg.snaps) && strainF > 0;
+    if (snapped) { g.fillStyle = "rgba(150,40,32,0.85)"; g.fillRect(kx - 6, yL - 3, 4, 6); g.fillRect(kx + 2, yL - 3, 4, 6); }
+    else { g.fillStyle = straining ? "#ff5a44" : "rgba(214,194,152,0.95)"; g.beginPath(); g.arc(kx, yL, 4.4, 0, 6.283); g.fill(); g.strokeStyle = "rgba(90,70,40,0.7)"; g.lineWidth = 1; g.stroke(); }
+  }
+  hudFishToken(g, x + Math.max(0.02, Math.min(1, fg.progress)) * w, yL, SPECIES_HUD_COL[rod.fish.species] || [0.7,0.75,0.8]);
+  g.restore(); g.textAlign = "left";
 }
 
 // debug: drop the player into the deepest open water we can find
