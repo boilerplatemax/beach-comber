@@ -5208,63 +5208,94 @@ function bladeLeaf(m, bx, bz, dir, len, wide, droop, c0, c1, twist) {
   wavyRibbon(m, { h: len, w0: wide, w1: wide * 0.08, seg: 4, dir, amp: 0.12, freq: 0.9, phase: 0.3,
                   droop: droop, bx, bz, twist: twist || 0, c0, c1 });
 }
+// §Crop polish — a small faceted berry (two low cones meeting into a closed little sphere)
+function berryBit(m, x, y, z, r, col) {
+  const d = Mesh(); const dk = [col[0]*0.82, col[1]*0.82, col[2]*0.82];
+  mergeMesh(d, discMesh(0, r, 5, r*0.95, col)); mergeMesh(d, discMesh(0, r, 5, -r*0.95, dk));   // top + bottom dome → closed
+  mergeAt(m, d, x, y, z);
+}
+// §Crop polish — one curved, faceted, tapered banana finger hanging from (bx,by,bz), splaying toward `dir`
+function bananaFinger(m, bx, by, bz, dir, len, col) {
+  const ox = Math.cos(dir), oz = Math.sin(dir), px = Math.cos(dir+1.5708), pz = Math.sin(dir+1.5708), sides = 5, seg = 4;
+  let prev = null;
+  for (let i = 0; i <= seg; i++) {
+    const t = i / seg;
+    const out = len * 0.55 * Math.sin(t * 1.5), drop = -len * 0.95 * t, lift = len * 0.3 * Math.max(0, t - 0.55);
+    const cx = bx + ox*out, cy = by + drop + lift, cz = bz + oz*out;
+    const rr = (0.05 * (1 - t*0.65)) * (t < 0.14 ? t/0.14 : 1) * (t > 0.9 ? (1-t)/0.1 : 1);   // blunt base, tapered closed tip
+    const ring = [];
+    for (let s = 0; s < sides; s++) { const a = s/sides*6.283; ring.push([cx + px*Math.cos(a)*rr, cy + Math.sin(a)*rr, cz + pz*Math.cos(a)*rr]); }
+    if (prev) for (let s = 0; s < sides; s++) { const n = (s+1)%sides; const c = (s%2 ? col : [col[0]*0.88, col[1]*0.88, col[2]*0.82]); mQuad(m, prev[s], prev[n], ring[n], ring[s], c); }
+    prev = ring;
+  }
+}
+// §Crop polish — a closed faceted ovoid ("football") with a diamond crosshatch (alternating ring offset + checker colour)
+function diamondOvoid(m, cx, cy, cz, ry, rr, c0, c1) {
+  const sides = 8, rings = 6; let prev = null;
+  for (let r = 0; r <= rings; r++) {
+    const t = r / rings, y = cy - ry + 2*ry*t, rad = rr * Math.pow(Math.sin(t * Math.PI), 0.62);   // 0 at both ends → fully capped
+    const ring = [];
+    for (let s = 0; s < sides; s++) { const a = (s + (r%2)*0.5)/sides*6.283; ring.push([cx + Math.cos(a)*rad, y, cz + Math.sin(a)*rad]); }
+    if (prev) for (let s = 0; s < sides; s++) { const n = (s+1)%sides; const c = ((s + r) % 2) ? c0 : c1; mQuad(m, prev[s], prev[n], ring[n], ring[s], c); }
+    prev = ring;
+  }
+}
 function cropMesh(type, stage) {
   const m = Mesh(), sp = stage === "sprout", gr = stage === "grow", rp = stage === "ripe";
   if (type === "cassava") {
-    // §4 woody reddish canes topped with palmate (hand-shaped) leaves — 5–7 narrow leaflets from each point
-    const stem=[0.46,0.33,0.26], stemL=[0.54,0.4,0.31], lf=[0.28,0.5,0.28], lf2=[0.36,0.58,0.32];
-    const canes = sp?1:3, H = sp?0.4:(gr?1.0:1.3);
-    for (let i=0;i<canes;i++){ const a=i/Math.max(1,canes)*6.283+0.5, lean=(gr||rp)?0.1:0.04, bx=Math.cos(a)*0.05, bz=Math.sin(a)*0.05;
-      const tx=bx+Math.cos(a)*lean*H, tz=bz+Math.sin(a)*lean*H;
-      mCyl(m,0,H*0.5,0.035,0.028,5,stem); mergeAt(m, cylM(0,H*0.5,0.03,0.022,stemL), tx*0.5,0,tz*0.5);   // a slightly kinked cane
-      mergeAt(m, cylM(0,H*0.5,0.028,0.02,stem), tx,H*0.5,tz);
-      if (sp) { for (let f=0;f<3;f++){ const fa=f/3*6.283; bladeLeaf(m, tx, tz, fa, 0.18, 0.025, 0.05, lf, lf2, 0); } }
-      else { // a whorl of palmate hands at the crown
-        const hands = gr?2:3;
-        for (let h=0;h<hands;h++){ const hx=tx+Math.cos(a+h)*0.03, hy=H*(0.6+h*0.16), hz=tz+Math.sin(a+h)*0.03;
-          const leaflets = 5 + (h%2);
-          for (let f=0;f<leaflets;f++){ const fa=(f/(leaflets-1)-0.5)*2.4 + a; mergeAt(m, (()=>{const d=Mesh(); bladeLeaf(d, 0,0, fa, 0.22-0.02*(f%2), 0.03, 0.09, lf, lf2, 0.2); return d;})(), hx, hy, hz); } }
+    // §Crop polish — thin, knobby reddish canes; frond-like palmate leaves spaced UP each cane on reddish petioles; tubers on harvest
+    const cane=[0.5,0.32,0.26], caneHi=[0.58,0.38,0.3], petiole=[0.56,0.3,0.26], lf=[0.3,0.52,0.3], lf2=[0.4,0.62,0.34];
+    const canes = sp?1:3, H = sp?0.4:(gr?1.05:1.35);
+    for (let i=0;i<canes;i++){ const a=i/Math.max(1,canes)*6.283+0.5, lean=(gr||rp)?0.12:0.05;
+      const tx=Math.cos(a)*lean*H, tz=Math.sin(a)*lean*H, segs=5;
+      // a thin cane in knobby segments (radius bumps at each node)
+      for (let s=0;s<segs;s++){ const t0=s/segs, t1=(s+1)/segs, y0=t0*H, y1=t1*H;
+        const r0=(0.034-0.016*t0)*(1+(s%2)*0.22), r1=(0.034-0.016*t1)*(1+((s+1)%2)*0.22);   // bulge at nodes = knobby
+        mergeAt(m, cylM(0,y1-y0,r0,r1,(s%2?cane:caneHi)), tx*t0, y0, tz*t0);
+      }
+      if (sp) { for (let f=0;f<3;f++){ const fa=f/3*6.283; bladeLeaf(m, tx*0.5, tz*0.5, fa, 0.2, 0.025, 0.05, lf, lf2, 0); } }
+      else { // palmate hands spaced up the cane, each on a short reddish petiole
+        const hands = gr?3:4;
+        for (let h=0;h<hands;h++){ const hy=H*(0.42+h*(0.52/hands)), hx=tx*(hy/H), hz=tz*(hy/H), ha=a + h*2.2;
+          const px=Math.cos(ha)*0.1, pz=Math.sin(ha)*0.1;
+          mergeAt(m, cylM(0,0.1,0.016,0.01,petiole), hx+px*0.5, hy, hz+pz*0.5);    // the reddish leaf stalk
+          const leaflets = 5 + (h%2), cx=hx+px, cz=hz+pz;
+          for (let f=0;f<leaflets;f++){ const fa=(f/(leaflets-1)-0.5)*2.2 + ha; mergeAt(m, (()=>{const d=Mesh(); bladeLeaf(d, 0,0, fa, 0.2-0.02*(f%2), 0.028, 0.08, lf, lf2, 0.2); return d;})(), cx, hy+0.1, cz); }
+        }
       }
     }
-    if (rp) { const tub=[0.5,0.36,0.27]; for (let i=0;i<4;i++){ const a=i/4*6.283; mergeAt(m, cylM(-0.04,0.1,0.06,0.09,tub), Math.cos(a)*0.08,0,Math.sin(a)*0.08); } }   // tubers swelling at the base
+    if (rp) { const tub=[0.56,0.4,0.3], tub2=[0.48,0.34,0.26]; for (let i=0;i<4;i++){ const a=i/4*6.283;   // knobby tubers swelling at the base
+      const d=Mesh(); mergeMesh(d, discMesh(0,0.07,6,0.1,tub)); mergeMesh(d, discMesh(0,0.07,6,-0.1,tub2)); mergeAt(m, d, Math.cos(a)*0.1, 0.02, Math.sin(a)*0.1); } }
   } else if (type === "banana") {
-    // §4 a pseudostem of layered sheaths, big arching paddle leaves, and a hanging bunch + purple heart when ripe
-    const sheath=[0.46,0.52,0.3], sheath2=[0.52,0.57,0.34], lf=[0.26,0.5,0.26], lftip=[0.36,0.62,0.34];
+    // §Crop polish — layered pseudostem, broad arching paddle leaves, hands of curved faceted fruit + a purple heart bud
+    const sheath=[0.44,0.5,0.28], sheath2=[0.5,0.56,0.33], lf=[0.26,0.5,0.26], lftip=[0.38,0.64,0.36];
     const H = sp?0.45:(gr?1.35:1.6);
-    mCyl(m,0,H,0.1,0.045,7,sheath); mCyl(m,0,H*0.7,0.11,0.07,7,sheath2);              // trunk + an outer sheath layer
+    mCyl(m,0,H,0.1,0.045,7,sheath); mCyl(m,0,H*0.62,0.115,0.075,7,sheath2);           // trunk + an outer sheath layer
+    mCyl(m,0,H*0.3,0.125,0.1,7,sheath);                                               // a fatter base sheath
     mergeMesh(m, discMesh(H,0.045,7,0.02,sheath2));
-    if (sp) { for (let i=0;i<2;i++){ const a=i*3.1; bladeLeaf(m, 0,0, a, 0.3, 0.06, 0.12, lf, lftip, 0.1); mergeAt(m, boxM(0.01,0.14,0.01,lf), 0,H*0.6,0); } }
+    if (sp) { for (let i=0;i<2;i++){ const a=i*3.1; wavyRibbon(m, { h:0.42, w0:0.11, w1:0.04, seg:5, dir:a, amp:0.12, freq:0.8, droop:0.14, y0:H*0.5, twist:0.1, c0:lf, c1:lftip }); } }
     else {
-      const blades = gr?4:6;
-      for (let i=0;i<blades;i++){ const a=i/blades*6.283; wavyRibbon(m, { h: gr?0.75:0.95, w0: 0.1, w1: 0.04, seg: 6, dir: a, amp: 0.3, freq: 0.8, phase: 0.2, droop: gr?0.4:0.55, bx:0, bz:0, y0: H-0.1, twist: 0.15, c0: lf, c1: lftip }); }
+      const blades = gr?4:6;   // broad paddle leaves fanning from the crown
+      for (let i=0;i<blades;i++){ const a=i/blades*6.283 + 0.4; wavyRibbon(m, { h: gr?0.8:1.0, w0: 0.17, w1: 0.05, seg: 6, dir: a, amp: 0.26, freq: 0.75, phase: 0.2, droop: gr?0.42:0.6, bx:0, bz:0, y0: H-0.12, twist: 0.12, c0: lf, c1: lftip }); }
       if (rp) {
-        mergeAt(m, cylM(-0.34,0,0.03,0.02,[0.42,0.48,0.28]), 0,H-0.12,0.02);          // the fruit stalk hanging down
-        const fruit=[0.86,0.78,0.3], fruit2=[0.92,0.84,0.36];
-        for (let tier=0;tier<3;tier++){ const ty=H-0.5-tier*0.12, n=5; for (let i=0;i<n;i++){ const a=i/n*6.283;
-          mergeAt(m, (()=>{const d=Mesh(); for(let s=0;s<3;s++){ const yy=s*0.05; mCyl(d, yy,yy+0.05, 0.022-s*0.004, 0.02-s*0.004, 4, s%2?fruit:fruit2); } return d;})(), Math.cos(a)*0.09, ty, Math.sin(a)*0.09); } }
-        mergeMesh(m, discMesh(H-0.92,0.08,6,-0.12,[0.4,0.2,0.34]));                     // purple heart bud at the tip
-        mergeMesh(m, discMesh(H-0.92,0.08,6,0.06,[0.46,0.24,0.38]));
+        mergeAt(m, cylM(-0.42,0,0.028,0.02,[0.42,0.46,0.26]), 0,H-0.1,0.03);          // the fruit stalk hanging down
+        const fruit=[0.9,0.82,0.3];
+        for (let tier=0;tier<3;tier++){ const ty=H-0.46-tier*0.16, n=6-tier, rad=0.07;   // hands of curved fingers, splaying outward
+          for (let i=0;i<n;i++){ const a=i/n*6.283; bananaFinger(m, Math.cos(a)*rad, ty, Math.sin(a)*rad + 0.03, a, 0.26, [fruit[0], fruit[1]-tier*0.03, fruit[2]]); } }
+        const bud=[0.42,0.2,0.34], bud2=[0.5,0.26,0.4];                                // closed purple heart bud at the tip
+        diamondOvoid(m, 0, H-1.02, 0.03, 0.12, 0.08, bud, bud2);
       }
     }
   } else if (type === "pineapple") {
-    // §4 a rosette of long serrated sword leaves and, when ripe, a faceted barrel fruit with a spiky crown
-    const lf=[0.33,0.55,0.3], lf2=[0.46,0.66,0.36], fr=[0.86,0.66,0.26], fr2=[0.74,0.54,0.2], crown=[0.3,0.56,0.3];
+    // §Crop polish — a ground rosette of serrated sword leaves and, when ripe, a closed diamond-crosshatched football with a spiky crown
+    const lf=[0.33,0.55,0.3], lf2=[0.46,0.66,0.36], fr=[0.88,0.68,0.26], fr2=[0.72,0.5,0.18], crown=[0.3,0.56,0.3];
     const n = sp?6:(gr?11:13), H = sp?0.22:(gr?0.5:0.6);
-    for (let i=0;i<n;i++){ const a=i/n*6.283 + (i%2)*0.25, r=0.04+(i%3)*0.02;
-      bladeLeaf(m, Math.cos(a)*r, Math.sin(a)*r, a, H*(0.9+(i%2)*0.2), 0.05, H*0.4, lf, lf2, 0.25); }
+    for (let i=0;i<n;i++){ const a=i/n*6.283 + (i%2)*0.25, r=0.04+(i%3)*0.02;         // low rosette of arching blades
+      bladeLeaf(m, Math.cos(a)*r, Math.sin(a)*r, a, H*(0.9+(i%2)*0.2), 0.05, H*0.42, lf, lf2, 0.25); }
     if (rp) {
-      // an 8-sided barrel, bulged, with a diamond-scale checker colouring
-      const sides=8, y0=0.12, ym=0.3, y1=0.52, rb=0.1, rm=0.145, rt=0.1;
-      for (let i=0;i<sides;i++){ const a0=i/sides*6.283, a1=(i+1)/sides*6.283;
-        const c = (i%2)? fr : fr2;
-        const p0=[Math.cos(a0)*rb,y0,Math.sin(a0)*rb], p1=[Math.cos(a1)*rb,y0,Math.sin(a1)*rb];
-        const m0=[Math.cos(a0)*rm,ym,Math.sin(a0)*rm], m1=[Math.cos(a1)*rm,ym,Math.sin(a1)*rm];
-        const t0=[Math.cos(a0)*rt,y1,Math.sin(a0)*rt], t1=[Math.cos(a1)*rt,y1,Math.sin(a1)*rt];
-        mQuad(m, p0,p1,m1,m0, c); mQuad(m, m0,m1,t1,t0, (i%2)?fr2:fr); }
-      mergeMesh(m, discMesh(y0,rb,sides,-0.05,fr2));
-      // spiky green crown
-      for (let i=0;i<8;i++){ const a=i/8*6.283; bladeLeaf(m, Math.cos(a)*0.03, Math.sin(a)*0.03, a, 0.2-0.02*(i%2), 0.028, 0.05, crown, lf2, 0.2); }
-      for (let i=0;i<8;i++){ const a=i/8*6.283+0.2; mergeAt(m, boxM(0.014,0.09,0.014,crown), Math.cos(a)*0.02, y1, Math.sin(a)*0.02); }
+      diamondOvoid(m, 0, 0.34, 0, 0.23, 0.15, fr, fr2);                               // closed football fruit, diamond crosshatch, fully capped
+      for (let i=0;i<9;i++){ const a=i/9*6.283; bladeLeaf(m, Math.cos(a)*0.03, Math.sin(a)*0.03, a, 0.22-0.03*(i%2), 0.03, 0.05, crown, lf2, 0.2); }   // spiky green crown
+      for (let i=0;i<7;i++){ const a=i/7*6.283+0.3; mergeAt(m, boxM(0.013,0.1,0.013,crown), Math.cos(a)*0.02, 0.56, Math.sin(a)*0.02); }
     }
   } else { // taro — big heart-shaped leaves on long stalks
     const stalk=[0.42,0.52,0.3], stalk2=[0.5,0.58,0.34], lf=[0.3,0.54,0.3], lf2=[0.38,0.62,0.36];
@@ -5274,16 +5305,22 @@ function cropMesh(type, stage) {
       mCyl(m,0,H,0.03,0.024,5,(i%2?stalk:stalk2)); mergeAt(m, cylM(0,H,0.026,0.02,stalk2), (tx-bx)*0.5,0,(tz-bz)*0.5);
       if (sp) mergeAt(m, boxM(0.08,0.015,0.06,lf), tx*0.6,H,tz*0.6);
       else { // a broad heart leaf: two drooping lobes meeting at the stalk, pointing outward
-        const d=Mesh(); wavyRibbon(d,{h:0.3,w0:0.16,w1:0.03,seg:5,dir:a,amp:0.05,freq:0.7,droop:0.14,c0:lf,c1:lf2});
-        mergeAt(m, d, tx, H-0.02, tz); mergeMesh(m, discMesh(H+0.01, 0.0, 3, 0, lf)); }
+        const d=Mesh(); wavyRibbon(d,{h:0.32,w0:0.19,w1:0.02,seg:5,dir:a,amp:0.05,freq:0.7,droop:0.16,c0:lf,c1:lf2});
+        wavyRibbon(d,{h:0.14,w0:0.12,w1:0.02,seg:3,dir:a+3.14,amp:0.03,droop:0.05,c0:lf,c1:lf2});   // the back heart-lobes
+        mergeAt(m, d, tx, H-0.02, tz); }
     }
   }
   return m;
 }
 // §17 harvested crop foods & plantable seeds
 function cassavaFoodMesh(){ const m=Mesh(); const s=[0.56,0.43,0.3], f=[0.84,0.76,0.62]; mCyl(m,-0.02,0.44,0.07,0.035,6,s); mCyl(m,0.4,0.48,0.035,0.02,5,f); mergeMesh(m, discMesh(-0.02,0.07,6,-0.04,f)); return m; }
-function bananaFoodMesh(){ const m=Mesh(); const y=[0.95,0.84,0.3], t=[0.4,0.34,0.2]; for(let i=0;i<4;i++){ const a=i/4*0.9-0.45; mergeAt(m, boxM(0.045,0.04,0.17,[y[0],y[1]-i*0.02,y[2]]), Math.sin(a)*0.1, 0.1+Math.cos(a)*0.02, 0); } mBox(m,0,0.18,0,0.05,0.04,0.05,t); return m; }
-function pineappleFoodMesh(){ const m=Mesh(); const f=[0.9,0.72,0.28], g=[0.32,0.55,0.3]; mCyl(m,0.08,0.4,0.14,0.16,8,f); mergeMesh(m, discMesh(0.4,0.16,8,0.05,f)); mergeMesh(m, discMesh(0.08,0.14,8,-0.06,f)); for(let i=0;i<6;i++){ const a=i/6*6.283; mergeAt(m, boxM(0.02,0.11,0.02,g), Math.cos(a)*0.05,0.46,Math.sin(a)*0.05); } return m; }
+function bananaFoodMesh(){ const m=Mesh(); const y=[0.95,0.85,0.3], t=[0.4,0.34,0.2];   // a hand of 5 curved faceted fingers joined at a crown
+  for(let i=0;i<5;i++){ const a=(i/4-0.5)*1.3; bananaFinger(m, Math.sin(a)*0.03, 0.34, 0, a+1.5708, 0.3, [y[0],y[1]-i*0.015,y[2]]); }
+  mCyl(m,0.3,0.4,0.05,0.03,6,t); return m; }   // the stem crown they hang from
+function pineappleFoodMesh(){ const m=Mesh(); const f=[0.9,0.72,0.28], f2=[0.74,0.54,0.2], g=[0.32,0.55,0.3], g2=[0.42,0.64,0.36];
+  diamondOvoid(m, 0, 0.26, 0, 0.22, 0.16, f, f2);                                       // closed diamond-crosshatch body
+  for(let i=0;i<9;i++){ const a=i/9*6.283; bladeLeaf(m, Math.cos(a)*0.03, Math.sin(a)*0.03, a, 0.2-0.03*(i%2), 0.03, 0.05, g, g2, 0.2); }   // spiky crown
+  return m; }
 function taroFoodMesh(){ const m=Mesh(); const c=[0.6,0.52,0.5], r=[0.42,0.36,0.34]; mergeMesh(m, discMesh(0.08,0.2,8,0.14,c)); mergeMesh(m, discMesh(0.08,0.2,8,-0.1,c)); for(let i=0;i<4;i++){ const y=0.04+i*0.06; mCyl(m,y,y+0.012,0.21,0.21,8,r); } return m; }
 function cropSeedMesh(col){ const m=Mesh(); mCyl(m,0,0.14,0.02,0.015,4,[0.5,0.4,0.28]); for(const s of [-1,1]) mergeAt(m, boxM(0.015,0.006,0.07,col), 0,0.13,s*0.04); mBox(m,0,0.16,0,0.025,0.03,0.025,col); return m; }
 // §17.1 shoreline litter — common washed-up trash to collect and (eventually) hand back
@@ -5365,11 +5402,15 @@ function berryBushMesh(state) { const m = Mesh();
   // a few leafy sprigs poking out of the top for a natural silhouette
   for (let i=0;i<6;i++){ const a=i/6*6.283+0.5; bladeLeaf(m, Math.cos(a)*0.12, Math.sin(a)*0.12, a, 0.16, 0.03, 0.05, g2, g, 0.3); }
   if (state === "ripe") {
-    const berry=[0.6,0.13,0.26], berry2=[0.72,0.2,0.32];
-    for (let i=0;i<7;i++){ const a=i/7*6.283, r=0.26+(i%2)*0.08, y=0.26+(i%3)*0.1, bx=Math.cos(a)*r, bz=Math.sin(a)*r;
-      for (let k=0;k<3;k++){ const ba=k/3*6.283; mergeAt(m, (()=>{const d=Mesh(); mergeMesh(d, discMesh(0,0.045,5,0.045,k%2?berry:berry2)); mergeMesh(d, discMesh(0,0.045,5,-0.045,k%2?berry:berry2)); return d;})(), bx+Math.cos(ba)*0.04, y, bz+Math.sin(ba)*0.04); } }   // little faceted berry clusters
+    // §Crop polish — 20–40 individual berries scattered over the whole dome (deterministic rng so the mesh is stable)
+    const berry=[0.62,0.13,0.26], berry2=[0.74,0.2,0.34], berry3=[0.5,0.1,0.22], rr=mulberry32(0x6e55 ^ SEED_INT), N=24 + (rr()*14|0);
+    for (let i=0;i<N;i++){ const a=rr()*6.283, ph=0.25+rr()*1.0, rad=0.34*(0.55+0.45*rr());   // scatter on a hemisphere shell
+      const bx=Math.cos(a)*Math.cos(ph-0.4)*rad, by=0.3 + Math.sin(ph)*0.28, bz=Math.sin(a)*Math.cos(ph-0.4)*rad;
+      const c = i%3===0?berry3:(i%2?berry:berry2); berryBit(m, bx, by, bz, 0.035+rr()*0.015, c); }
   } else if (state === "green") {
-    for (let i=0;i<8;i++){ const a=i/8*6.283, r=0.24+(i%2)*0.08, y=0.28+(i%3)*0.1; mergeMesh(m, discMesh(y,0.03,4,0.03,[0.44,0.56,0.3])); const d=Mesh(); mergeMesh(d, discMesh(0,0.03,4,0.03,[0.44,0.56,0.3])); mergeAt(m, d, Math.cos(a)*r,y,Math.sin(a)*r); }   // small green berries forming
+    const rr=mulberry32(0x6e56 ^ SEED_INT), N=18 + (rr()*10|0), g=[0.46,0.58,0.32];
+    for (let i=0;i<N;i++){ const a=rr()*6.283, ph=0.25+rr()*1.0, rad=0.33*(0.55+0.45*rr());
+      berryBit(m, Math.cos(a)*Math.cos(ph-0.4)*rad, 0.3 + Math.sin(ph)*0.26, Math.sin(a)*Math.cos(ph-0.4)*rad, 0.026, g); }   // small green berries forming
   }
   return m; }
 function campfireMesh() { const m = Mesh(); const st = [0.5,0.48,0.46];
