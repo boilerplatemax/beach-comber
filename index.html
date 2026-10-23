@@ -9816,7 +9816,7 @@ function drawShovel(view) {
     oz = 0.82 + sw*0.6 - rec*0.35 + jab*0.5 - chg*0.3;
     roll = -0.4 + swayR - sw*0.12;
     pitch = (isPoke ? (-0.95 + jab*0.3 - chg*0.3) : -0.2) - sw*1.05 + rec*0.65;           // chop sweeps the head down & forward; spear/stake thrust straight ahead
-    if (bladed) toolYaw = -0.785;                                                         // §tools3 45° CW about the vertical YAW axis (applied after tilt), not the tool's own shaft
+    if (bladed) toolYaw = -0.90;                                                          // §tools3 ~52° CW about the vertical YAW axis (applied after tilt), not the tool's own shaft
     if (id === "shovel") { flipEnd = true; oy = -0.26 - sw*0.08 + rec*0.2 - swap*0.5 + bob; oz = 0.78 + sw*0.5 - rec*0.35; pitch = -0.5 - sw*0.9 + rec*0.6; }   // §playtest1 flip 180°: D-grip up in the hand, spade at the far end pointing down & away
   }
   const cr = Math.cos(roll), sr = Math.sin(roll), cp = Math.cos(pitch), sp2 = Math.sin(pitch);
