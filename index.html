@@ -6247,6 +6247,16 @@ const FINDS = {
   barnacle: { mesh: () => barnacleMesh(),            base: 0.5, max: 80,  label: "Barnacles", desc: "Acorn barnacles scraped off a tidal rock — prized fishing bait.", rare: 0, bait: 1 },
   feather:  { mesh: () => featherMesh(),             base: 0.5, max: 90,  label: "Seabird Feather", desc: "A soft grey gull feather, caught on the wrack line.", rare: 0 },
   crabmeat: { mesh: () => crabMeatMesh(),            base: 0.45,max: 80,  label: "Crab Meat", desc: "Pale, sweet meat picked from a crab. Good food, better cooked.", rare: 0 },
+  // §40 rare natural finds — the heart-quickening ones, salted in at long odds
+  whelk:    { mesh: () => whelkMesh(),               base: 0.5, max: 30,  label: "Left-handed Whelk", desc: "A sinistral whelk — its spiral coils the wrong way. One shell in thousands.", rare: 2 },
+  redglass: { mesh: () => glassMesh([0.82,0.14,0.16]),base: 0.35,max: 40,  label: "Red Sea Glass", desc: "The rarest colour of all — old ship's lanterns and ruby glassware, tumbled soft.", rare: 2 },
+  duskglass:{ mesh: () => glassMesh([0.62,0.4,0.72]), base: 0.38,max: 30,  label: "End-of-day Glass", desc: "A swirl of colours fused in one shard — a glassworks' last melt of the day. Only turns up near dusk.", rare: 2 },
+  marble:   { mesh: () => marbleMesh(),              base: 0.34,max: 40,  label: "Old Marble", desc: "A child's glass marble with a ribbon of colour at its heart. How long has it rolled with the tide?", rare: 2 },
+  sharktooth:{ mesh: () => sharkToothMesh(false),    base: 0.4, max: 40,  label: "Shark Tooth", desc: "A fossil tooth, black with age and still needle-sharp.", rare: 2 },
+  megalodon:{ mesh: () => sharkToothMesh(true),      base: 0.7, max: 20,  label: "Megalodon Tooth", desc: "A palm-sized tooth from a shark long extinct. The find of a lifetime.", rare: 2 },
+  hagstone: { mesh: () => hagStoneMesh(),            base: 0.5, max: 40,  label: "Hag Stone", desc: "A beach stone worn clean through by the sea. Look through the hole for luck, they say.", rare: 2 },
+  quartz:   { mesh: () => crystalMesh([0.92,0.94,0.98]),base: 0.5, max: 30, label: "Quartz Crystal", desc: "A clear six-sided point, broken from a geode's heart.", rare: 2 },
+  amethyst: { mesh: () => crystalMesh([0.62,0.44,0.82]),base: 0.5, max: 20, label: "Amethyst", desc: "A cluster of violet crystal from inside a geode. Rare and lovely.", rare: 2 },
 };
 
 // build dynamic draw objects
@@ -6419,6 +6429,7 @@ function washUp(initial) {
     let pick;
     if (low && rng() < (ev === "storm" ? 0.42 : 0.22)) pick = ["float","egg","bottle","bone","agate"][(rng()*5)|0];
     else pick = cb.finds[(rng()*cb.finds.length)|0];
+    if (typeof rollRareFind === "function" && rng() < (ev === "storm" ? RARE_WASH_P*1.8 : RARE_WASH_P)) { rollRareFind(x, z); continue; }   // §40 a rare natural find now and then (more after a storm)
     if (FINDS[pick]) spawnFind(pick, x, z);
   }
   // sea-star stranding: scatter rescuable stars across the just-bared sand
@@ -6993,7 +7004,7 @@ function tooTired() {
   staminaFlash = Math.max(staminaFlash, 0.9);   // flash the ring on every blocked attempt, even inside the throttle window
 }
 const WORK_LOCK_TIME = 1.5;
-const WORK_KINDS = { tree: 1, fallentree: 1, rock: 1, stump: 1, fence: 1, chest: 1, heaveboulder: 1 };   // multi-strike targets
+const WORK_KINDS = { tree: 1, fallentree: 1, rock: 1, stump: 1, fence: 1, chest: 1, heaveboulder: 1, geode: 1 };   // multi-strike targets
 function workLockActive() { return !!(workLock && clock.t < workLock.until && workLock.obj && !workLock.obj.gone && !(workLock.kind === "fence" && workLock.obj.r <= 0)); }
 function setWorkLock(t) { if (!t || !WORK_KINDS[t.kind]) return; workLock = { obj: t.obj, kind: t.kind, tool: selectedTool(), until: clock.t + WORK_LOCK_TIME }; lastEntityHitT = clock.t; }
 function workLockReach() { const o = workLock.obj; return Math.hypot(o.x - player.x, o.z - player.z) <= REACH + 2; }
@@ -7218,6 +7229,7 @@ function saveState() {
   try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup, stonesBack: stonesPutBack, variants: variantsSeen,
     heaves: heaveBoulders.map((b,i)=>b.flipped?[i,+b.refillAt.toFixed(2),+b.flippedAt.toFixed(2)]:0).filter(e=>e),   // §21D heaved boulders (index, refillAt, flippedAt)
     pearls: pearlsSeen, oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)]),   // §23 pearl sightings + oyster-bed stock
+    geodes: geodes.map((g,i)=>g.cracked?i:-1).filter(i=>i>=0),   // §40 which geodes are already cracked
     recipes: [...knownRecipes], spearHard: spearHardened,   // §16 crafting
     bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, moist: c.moist, caught: c.caught })) } })); } catch (e) {}
 }
@@ -7234,6 +7246,7 @@ function loadState() {
       if (Array.isArray(s.heaves)) _savedHeave = s.heaves;   // §21D heaved boulders (applied in seedHeaveBoulders)
       if (s.pearls && typeof s.pearls === "object") pearlsSeen = s.pearls;   // §23 pearl sightings per variant
       if (Array.isArray(s.oysters)) _savedOysters = s.oysters;   // §23 oyster-bed stock (applied in seedOysterBeds)
+      if (Array.isArray(s.geodes)) _savedGeodes = s.geodes;   // §40 cracked geodes (applied in seedGeodes)
       if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
       if (Array.isArray(s.recipes)) knownRecipes = new Set(s.recipes);   // §16 crafting
@@ -7256,7 +7269,7 @@ function saveAutoPick() { try { localStorage.setItem("bc_autopick", autoPickup ?
 let autoSwitch = true;
 try { if (localStorage.getItem("bc_autoswitch") === "0") autoSwitch = false; } catch (e) {}
 function saveAutoSwitch() { try { localStorage.setItem("bc_autoswitch", autoSwitch ? "1" : "0"); } catch (e) {} }
-const TOOLS_FOR_KIND = { tree: ["axe"], fallentree: ["axe"], stump: ["axe", "shovel"], rock: ["pickaxe"], heaveboulder: ["shovel"] };
+const TOOLS_FOR_KIND = { tree: ["axe"], fallentree: ["axe"], stump: ["axe", "shovel"], rock: ["pickaxe"], heaveboulder: ["shovel"], geode: ["pickaxe"] };
 function autoSwitchTo(id) {                 // select the belt slot holding `id` (or set the Tool Kit to it)
   if (selectedTool() === id) return true;
   let i = Inv.hotbar.findIndex((s) => s && s.id === id);
@@ -8049,6 +8062,7 @@ function targetAlongRay(r, sticky) {
   for (const s of flipStones) if (!s.anim) sphere(s, "flipstone", s.x, s.z, 0.4*s.sc, 0.5 + s.sc*0.4);   // §21 flippable stones
   if (typeof heaveBoulders !== "undefined") for (const b of heaveBoulders) if (!b.anim && !b.flipped) sphere(b, "heaveboulder", b.x, b.z, 0.5*b.sc, 0.7 + b.sc*0.5);   // §21D heavy boulders to lever over
   if (typeof oysterBeds !== "undefined") for (const b of oysterBeds) if (oysterBedExposed(b)) sphere(b, "oysterbed", b.x, b.z, 0.5*b.sc, 0.75);   // §23 oyster beds bared at low tide
+  if (typeof geodes !== "undefined") for (const g of geodes) if (!g.cracked) sphere(g, "geode", g.x, g.z, 0.4*g.sc, 0.5 + g.sc*0.4);   // §40 geodes to crack with a pickaxe
   for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
   for (const c of colliders) if (c.kind === "fence" && c.r > 0) { const gy = surfaceAt(c.x, c.z).h; capsule(c, "fence", c.x, c.z, c.x, gy, c.z, c.x, gy+1.0, c.z, 0.32); }   // §13.1 choppable posts
@@ -8088,6 +8102,7 @@ function useToolOnTarget(t) {
     case "flipstone": flipStone(t.obj); return true;   // §21 flip a stone / put it back
     case "heaveboulder": return heaveBoulderAction(t.obj);   // §21D lever a heavy boulder over (shovel)
     case "oysterbed": return oysterBedAction(t.obj);   // §23 pick & shuck an oyster at low tide
+    case "geode": return geodeAction(t.obj);   // §40 crack a geode open with a pickaxe
     case "bush": harvestBush(t.obj); return true;
     case "crop": harvestCrop(t.obj); return true;
     case "seaweed": harvestSeaweed(t.obj); return true;
@@ -11091,6 +11106,119 @@ function drawShuck() {
 }
 
 /* ===================================================================== *
+ * § 40  RARE NATURAL FINDS & GEODES — the heart-quickening things: a left-
+ *   handed whelk, red or end-of-day sea glass, an old marble, fossil teeth,
+ *   a hag stone. And geodes: dull rocks on the cobble that crack open under a
+ *   pickaxe to a chime and a nest of crystal. Rare finds are also what now
+ *   hides under stones and boulders (the §21/§36 stoneItemFind hook).
+ * ===================================================================== */
+// --- meshes (function declarations: hoisted, so the FINDS dyn/icon build above can call them) ---
+function whelkMesh() { const m = Mesh(); const c=[0.86,0.78,0.6], c2=[0.7,0.6,0.46], ap=[0.78,0.55,0.4];
+  // a right-leaning spire of shrinking whorls (sinistral — it leans the "wrong" way)
+  let y=0, r=0.26; for (let i=0;i<5;i++){ mCyl(m, y, y+0.14, r, r*0.74, 7, i%2?c:c2); const off=0.05*(i+1); mergeAt(m, discMesh(0,r*0.74,7,0.02,c), -off*0.3, y+0.14, 0); y+=0.13; r*=0.74; }
+  mCyl(m, -0.14, 0, 0.1, 0.26, 7, ap);   // the open aperture flaring at the base
+  return m; }
+function marbleMesh() { const m = Mesh(); const g=[0.78,0.86,0.95], core=[0.3,0.55,0.85];
+  mergeMesh(m, discMesh(0,0.16,8,0.15,g)); mergeMesh(m, discMesh(0,0.16,8,-0.15,g));          // clear glass sphere
+  mergeMesh(m, discMesh(0,0.07,6,0.06,core)); mergeMesh(m, discMesh(0,0.07,6,-0.06,core));    // the ribbon of colour inside
+  return m; }
+function sharkToothMesh(big) { const m = Mesh(); const s = big?1.7:1.0, crown=[0.22,0.22,0.26], root=[0.52,0.44,0.34];
+  mTri(m, [0,0.42*s,0], [-0.17*s,0,0.02], [0.17*s,0,0.02], crown);                            // the blade
+  mTri(m, [0,0.42*s,0], [0.17*s,0,-0.02], [-0.17*s,0,-0.02], crown);
+  mBox(m, 0, -0.04*s, 0, 0.18*s, 0.05*s, 0.04*s, root);                                       // the root
+  return m; }
+function hagStoneMesh() { const m = Mesh(); mRock(m, mulberry32(0x4a19 ^ SEED_INT), [0.5,0.49,0.47]);
+  for (let i=0;i<m.pos.length;i+=3) m.pos[i+1] *= 0.42;                                        // flatten it into a holey beach cobble
+  mergeMesh(m, discMesh(0.16, 0.1, 7, 0.0, [0.14,0.14,0.16]));                                 // the sea-bored hole (a dark disc through the middle)
+  return m; }
+function crystalMesh(col) { const m = Mesh(); const base=[0.4,0.4,0.44];
+  mergeMesh(m, discMesh(0,0.26,7,0.03,base));                                                  // a little rocky cup
+  for (const [x,z,h] of [[0,0,0.44],[0.12,0.06,0.34],[-0.1,0.08,0.3],[0.05,-0.12,0.32],[-0.08,-0.1,0.26]]) {
+    const cone = Mesh(); mCyl(cone, 0.02, h, 0.06, 0.045, 6, col); mergeMesh(cone, discMesh(h, 0.045, 6, 0.06, col));   // a six-sided point capped with a pyramid
+    mergeAt(m, cone, x, 0, z);
+  }
+  return m; }
+function geodeMesh() { const m = Mesh(); mRock(m, mulberry32(0x77c5 ^ SEED_INT), [0.56,0.54,0.5]); return m; }   // a dull, promising lump
+function geodeCrackedMesh() { const m = Mesh(); const rock=[0.5,0.48,0.45], crys=[0.74,0.62,0.86];
+  mergeMesh(m, discMesh(-0.05,0.42,8,0.08,rock));                                              // the split-open lower half
+  for (const [x,z,h] of [[0,0,0.3],[0.12,0.05,0.22],[-0.1,0.08,0.2],[0.06,-0.1,0.24]]) { const cone=Mesh(); mCyl(cone,0.02,h,0.05,0.03,6,crys); mergeMesh(cone,discMesh(h,0.03,6,0.04,crys)); mergeAt(m, cone, x, 0.02, z); }
+  return m; }
+
+// --- rare-find spawning ---
+const RARE_WASH = [["whelk",10],["redglass",8],["marble",8],["fossil",9],["sharktooth",7],["hagstone",9],["nautilus",8],["jewelry",3],["megalodon",1]];
+const RARE_WASH_P = 0.05;                          // chance a wash-up slot upgrades to a rare natural find (tunable)
+const STONE_ITEM_POOL = [["marble",12],["fossil",11],["sharktooth",9],["hagstone",10],["whelk",8],["redglass",7],["coin",14],["tin",6]];
+function isDuskNow() { const t = (typeof timeOfDay === "number") ? timeOfDay : 0.5; return (t > 0.74 && t < 0.86) || (t > 0.15 && t < 0.24); }   // sunset (or the matching dawn glow)
+function weightedKey(pairs) { let tot = 0; for (const p of pairs) tot += p[1]; let x = rng()*tot; for (const p of pairs) { x -= p[1]; if (x < 0) return p[0]; } return pairs[0][0]; }
+function rollRareFind(x, z) {
+  let t = weightedKey(RARE_WASH);
+  if (isDuskNow() && rng() < 0.35) t = "duskglass";          // the end-of-day glass only shows near dusk
+  if (FINDS[t]) spawnFind(t, x, z);
+}
+// §21/§36 the richer under-stone / under-boulder item table
+function stoneItemFind(s) {
+  const x = s.x, z = s.z;
+  let t = weightedKey(STONE_ITEM_POOL);
+  if (isDuskNow() && rng() < 0.2) t = "duskglass";
+  if (FINDS[t]) spawnFind(t, x+(rng()-0.5)*0.3, z+(rng()-0.5)*0.3);
+}
+
+// --- geodes: dull cobble that cracks open under a pickaxe ---
+const GEODE_N = 8;                                 // geodes per island (tunable)
+const GEODE_HITS = 2;                              // pickaxe strikes to crack one open
+const GEODE_AMETHYST_P = 0.3;                      // else quartz (tunable)
+let geodes = [], geodeDyn = null, geodeCrackedDyn = null, _savedGeodes = null;
+const geodeScratch = new Float32Array(GEODE_N * 10), geodeCrackScratch = new Float32Array(GEODE_N * 10);
+function seedGeodes() {
+  geodes = [];
+  for (let k=0; k<4000 && geodes.length<GEODE_N; k++) {
+    const a = rng()*6.283, r = HALF*(0.08+rng()*0.9), x = Math.sin(a)*r, z = -Math.cos(a)*r, surf = surfaceAt(x, z), h = surf.h;
+    if (surf.slope > 0.4 || h < waterLevel+0.3) continue;
+    const biome = coastBiomeAt(x, z);
+    if (biome !== "cobble" && biome !== "reef" && h < 7) continue;     // cobble/reef shores, or higher rocky ground
+    if (typeof insideCottage === "function" && insideCottage(x, z)) continue;
+    if (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, 0.6)) continue;
+    let near = false; for (const g of geodes) if (Math.hypot(g.x-x, g.z-z) < 9) { near = true; break; } if (near) continue;
+    geodes.push({ x, z, yaw: rng()*6.283, sc: 0.7+rng()*0.4, hits: 0, cracked: false });
+  }
+  if (_savedGeodes) for (const i of _savedGeodes) { if (geodes[i]) { geodes[i].cracked = true; geodes[i].hits = GEODE_HITS; } }
+}
+function crackGeode(g) {
+  if (g.cracked) { showCard("Already opened", "This geode's been cracked — its crystals are in your pack."); return true; }
+  if (selectedTool() !== "pickaxe") { showCard("Needs a pickaxe", "This dull nodule looks promising. Swing a pickaxe at it to crack it open."); return true; }
+  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
+  shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST, true); rootPlayer(); if (onDig) onDig("mine");
+  const sy = surfaceAt(g.x, g.z).h + g.sc*0.3; spawnSand(g.x, sy, g.z, 7, [0.52,0.5,0.47]);
+  g.hits++;
+  if (g.hits >= GEODE_HITS) {
+    g.cracked = true;
+    if (onDig) onDig("crack");
+    const amethyst = rng() < GEODE_AMETHYST_P, t = amethyst ? "amethyst" : "quartz";
+    spawnFind(t, g.x+(rng()-0.5)*0.4, g.z+(rng()-0.5)*0.4);
+    if (typeof SND !== "undefined") { SND.play("discover"); setTimeout(()=>{ try{ SND.play("discover"); }catch(e){} }, 180); }
+    if (typeof sparkle === "function") sparkle(g.x, sy+0.3, g.z, amethyst ? [0.7,0.5,0.9] : [0.9,0.95,1], 18);
+    showCard("The geode cracks open!", "Hollow all along — and lined with " + (amethyst ? "violet amethyst" : "clear quartz") + " crystal. " + (amethyst ? "A rare one." : "A beauty."));
+    saveState();
+  }
+  return true;
+}
+function drawGeodes(view) {
+  if (!geodes.length) return;
+  if (!geodeDyn) geodeDyn = makeDynamic(geodeMesh(), GEODE_N);
+  if (!geodeCrackedDyn) geodeCrackedDyn = makeDynamic(geodeCrackedMesh(), GEODE_N);
+  propUniforms(view); let n = 0, cn = 0;
+  for (const g of geodes) { const dx = g.x-cam.pos[0], dz = g.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    const gy = surfaceAt(g.x, g.z).h + g.sc*0.08;
+    if (g.cracked) { const o = cn*10; geodeCrackScratch[o]=g.x;geodeCrackScratch[o+1]=gy;geodeCrackScratch[o+2]=g.z;geodeCrackScratch[o+3]=g.sc;geodeCrackScratch[o+4]=g.yaw;geodeCrackScratch[o+5]=0;geodeCrackScratch[o+6]=0;geodeCrackScratch[o+7]=1;geodeCrackScratch[o+8]=1;geodeCrackScratch[o+9]=1; cn++; }
+    else { const o = n*10; geodeScratch[o]=g.x;geodeScratch[o+1]=gy;geodeScratch[o+2]=g.z;geodeScratch[o+3]=g.sc;geodeScratch[o+4]=g.yaw;geodeScratch[o+5]=0;geodeScratch[o+6]=0;geodeScratch[o+7]=1;geodeScratch[o+8]=1;geodeScratch[o+9]=1; n++; }
+  }
+  if (n) geodeDyn.draw(geodeScratch, n);
+  if (cn) geodeCrackedDyn.draw(geodeCrackScratch, cn);
+}
+function geodeAction(g) { return crackGeode(g); }
+function geodePrompt(g) { return g.cracked ? "cracked open" : (selectedTool()==="pickaxe" ? (IS_TOUCH?"hold to crack it open":"crack it open") : "a dull nodule — try a pickaxe"); }
+
+/* ===================================================================== *
  * § 19  THE COTTAGE — a weathered home base near spawn: shelter, hearth,
  *        bed, storage, displays, an aquarium & collection-set rewards.
  *        (§19A shell + fixtures; interactivity follows in §19B+.)
@@ -12689,6 +12817,7 @@ initCottage();     // §19 the home-base cottage near spawn (needs terrain + col
 seedFlipStones();  // §21 flippable stones scattered on beach & forest floor
 seedHeaveBoulders();  // §21D heavy boulders to lever over (needs colliders + cottage)
 seedOysterBeds();  // §23 oyster beds on the intertidal flats
+seedGeodes();  // §40 geodes on cobble & rocky shores
 loadWorld();
 loadCottage();     // §19 restore cosiness / displays / aquarium for this seed
 saltDyn = makeDynamic(discMesh(0, 0.5, 8, 0.03, [0.94,0.95,0.97]), 60);
@@ -13072,6 +13201,7 @@ function frame(now) {
   drawFlipStones(view);   // §21 flippable stones + their damp patches
   drawHeaveBoulders(view);   // §21D heavy boulders (and their bared ground)
   drawOysterBeds(view);   // §23 oyster beds on the intertidal flats
+  drawGeodes(view);   // §40 geodes on the cobble & rocky shores
   drawDigCellDebug(view);   // §urgent3 dig-cell state overlay (debug)
   drawPlaceGhost(view);
   drawParticles(view);
@@ -13229,6 +13359,11 @@ function frame(now) {
     }
     if (!buildMode && curTarget && curTarget.kind === "oysterbed") {   // §23 oyster-bed tooltip
       promptEl.textContent = oysterBedPrompt(curTarget.obj);
+      promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
+      crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
+    }
+    if (!buildMode && curTarget && curTarget.kind === "geode") {   // §40 geode tooltip
+      promptEl.textContent = geodePrompt(curTarget.obj);
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
