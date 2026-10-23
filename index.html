@@ -1332,7 +1332,8 @@ function synthRender(ctx, p) {
 const SND = {
   ctx: null, master: null, bus: {}, lp: {}, buf: {}, voices: [], amb: {}, _noise: null,
   reg: {}, unlocked: false, muted: false, underwater: false, lastAt: {},
-  vol: { master: 0.75, sfx: 0.9, ambience: 0.6, ui: 0.7 },
+  vol: { master: 0.75, sfx: 0.9, ambience: 0.6, ui: 0.7, music: 0.55 },
+  music: { el: null, node: null, fade: null, src: null, url: null, want: 0 },
   MAX_VOICES: 24, MAX_DIST: 48,
   // register a sound: id → { p: params | [variants], vol, pv (pitch var), vv (vol var), cd (cooldown s), max, bus }
   def(id, p, o = {}) { this.reg[id] = { p, vol: o.vol ?? 0.5, pv: o.pv ?? 0.06, vv: o.vv ?? 0.12, cd: o.cd ?? 0, max: o.max ?? 4, bus: o.bus || "sfx" }; },
@@ -1350,6 +1351,8 @@ const SND = {
         const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 20000;   // opens up; closes underwater
         g.connect(lp); lp.connect(this.master); this.bus[b] = g; this.lp[b] = lp;
       }
+      // §music a clean full-band bus for the title theme (streamed mp3), under master so Mute/Master apply
+      { const g = ctx.createGain(); g.gain.value = this.vol.music; g.connect(this.master); this.bus.music = g; }
       // shared looping white-noise bed for the ambience layers
       const nb = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), nd = nb.getChannelData(0);
       for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1; this._noise = nb;
@@ -1384,6 +1387,30 @@ const SND = {
   setVol(bus, v) { this.vol[bus] = v; if (!this.ctx) { this.saveVol(); return; }
     if (bus === "master") this.master.gain.value = this.muted ? 0 : v; else if (this.bus[bus]) this.bus[bus].gain.value = v; this.saveVol(); },
   setMute(m) { this.muted = m; if (this.master) this.master.gain.value = m ? 0 : this.vol.master; this.saveVol(); },
+  // §music the title theme — a streamed mp3 routed through a fade gain into the music bus (so Mute & Master apply)
+  initMusic(url) {
+    if (!this.ctx || this.music.el) return;
+    try {
+      const el = new Audio(url); el.loop = true; el.preload = "auto"; this.music.el = el; this.music.url = url;
+      const src = this.ctx.createMediaElementSource(el);
+      const fade = this.ctx.createGain(); fade.gain.value = 0;
+      src.connect(fade); fade.connect(this.bus.music || this.master);
+      this.music.src = src; this.music.fade = fade;
+    } catch (e) { this.music.el = this.music.el || null; }
+  },
+  playMusic(url, vol) {
+    if (!this.ctx) return;
+    this.initMusic(url);
+    const m = this.music; if (!m.el) return;
+    m.want = (vol == null ? 1 : vol);
+    const p = m.el.play(); if (p && p.catch) p.catch(() => {});
+    if (m.fade) m.fade.gain.setTargetAtTime(m.want, this.ctx.currentTime, 0.5);   // ~1.5s ease-in
+  },
+  fadeOutMusic() {
+    const m = this.music; if (!m.el) return; m.want = 0;
+    if (m.fade && this.ctx) m.fade.gain.setTargetAtTime(0, this.ctx.currentTime, 0.7);
+    clearTimeout(m._stopT); m._stopT = setTimeout(() => { try { if (m.want === 0 && m.el) m.el.pause(); } catch (e) {} }, 2600);
+  },
   setUnderwater(u) { this.underwater = u; if (!this.ctx) return;
     for (const b of ["sfx", "ambience"]) this.lp[b].frequency.setTargetAtTime(u ? 480 : 20000, this.ctx.currentTime, 0.2); },
   // the one API everything calls
@@ -1530,7 +1557,9 @@ const SND = {
 SND.loadVol();   // reflect saved volumes in Settings before the first gesture unlocks audio
 // surfAudio kept as an alias so older checks still read "audio is on"
 let surfAudio = null;
-window.startAudio = function () { SND.init(); if (SND.ctx) surfAudio = SND; };
+const MUSIC_URL = "beachcombing_theme.mp3";   // §music the title theme (sits beside index.html)
+window.startAudio = function () { SND.init(); if (SND.ctx) surfAudio = SND;
+  if (SND.ctx && !SND.muted && (mode === "preview" || mode === "intro")) SND.playMusic(MUSIC_URL); };   // §music start the title theme on the first gesture, while still on the menu
 // §playtest1 surf wave cycle: a swell builds, crashes, washes up, retreats, then a quieter gap — looped
 let _surfPhase = Math.random(), _surfT = performance.now();
 const SURF_PERIOD = 8.5;   // seconds per wave (tunable)
@@ -2687,6 +2716,7 @@ function enterWalk() {
   cam.yaw = s.yaw; cam.pitch = -0.04;
   mode = "walk";
   timeOfDay = MORNING_TIME; updateSun();   // §13.9 the game opens in the morning (then advances only if day/night is on)
+  if (typeof SND !== "undefined" && SND.fadeOutMusic) SND.fadeOutMusic();   // §music the title theme gives way to the island's own sounds
 }
 
 /* ===================================================================== *
@@ -4087,6 +4117,7 @@ function openSettings() {
       <div class="srow"><label>Master</label><input data-sv="master" type="range" min="0" max="1" step="0.05" value="${SND.vol.master}"></div>
       <div class="srow"><label>Effects</label><input data-sv="sfx" type="range" min="0" max="1" step="0.05" value="${SND.vol.sfx}"></div>
       <div class="srow"><label>Ambience</label><input data-sv="ambience" type="range" min="0" max="1" step="0.05" value="${SND.vol.ambience}"></div>
+      <div class="srow"><label>Music</label><input data-sv="music" type="range" min="0" max="1" step="0.05" value="${SND.vol.music}"></div>
       <div class="srow"><label>Interface</label><input data-sv="ui" type="range" min="0" max="1" step="0.05" value="${SND.vol.ui}"></div>
       <div class="srow"><label>Audio status</label><span class="sstat">${SND.ctx ? (SND.ctx.state + (SND.muted ? " · muted" : "")) : "not started"}</span></div>
       <div class="srow"><label>Test sound</label><button data-snd="test">Play ▶</button></div>`,
@@ -4134,7 +4165,9 @@ function openSettings() {
   { const sb = p.querySelector("#setBright"); if (sb) sb.oninput = (e) => setBrightness(+e.target.value); }   // §18 brightness
   { const ss = p.querySelector("#setShake"); if (ss) ss.oninput = (e) => setScreenShake(+e.target.value); }   // §R4 screen shake
   p.querySelectorAll("input[data-sv]").forEach(inp => inp.oninput = (e) => SND.setVol(inp.dataset.sv, +e.target.value));   // §Sound bus volumes
-  { const mb = p.querySelector("button[data-snd=mute]"); if (mb) mb.onclick = () => { SND.setMute(!SND.muted); openSettings(); }; }
+  { const mb = p.querySelector("button[data-snd=mute]"); if (mb) mb.onclick = () => { SND.setMute(!SND.muted);
+      if (!SND.muted && (mode === "preview" || mode === "intro")) SND.playMusic(MUSIC_URL);   // §music unmuting on the title brings the theme back
+      openSettings(); }; }
   { const tb = p.querySelector("button[data-snd=test]"); if (tb) tb.onclick = () => {   // §urgent6 unlock if needed, then play a clearly-audible test sound
       try { if (typeof window.startAudio === "function") window.startAudio(); if (SND.ctx && SND.ctx.state === "suspended") SND.ctx.resume(); } catch (e) {}
       SND.play("discover"); setTimeout(() => SND.play("pickup"), 180); setTimeout(openSettings, 60); }; }
