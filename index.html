@@ -313,6 +313,40 @@
   #fishrevealbox .frkeep { background: var(--facet); color: #ffe6b0; }
   #fishrevealbox .frrel { background: rgba(120,140,150,.25); color: var(--ink); }
   #fishrevealbox .frhint { font-size: 11px; opacity: .55; }
+  /* §Cooking campfire panel */
+  #firepanel { position: fixed; inset: 0; z-index: 14; display: none; align-items: center; justify-content: center; pointer-events: auto; }
+  #firebox { background: rgba(12,16,20,.95); border: 1px solid rgba(180,140,90,.4); border-radius: 8px;
+    padding: 18px 22px; width: 340px; max-height: 86vh; overflow-y: auto; box-shadow: 0 12px 44px rgba(0,0,0,.55); }
+  #firebox h2 { margin: 0 0 12px; font-size: 20px; color: #ffcf8a; text-align: center; }
+  #firebox .fsec { border-top: 1px solid rgba(180,140,90,.2); padding: 11px 0; }
+  #firebox .fsec > label { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; opacity: .6; display: block; margin-bottom: 7px; }
+  #firebox .frow { display: flex; align-items: center; gap: 8px; }
+  #firebox .frow label { font-size: 13px; opacity: .8; width: 34px; }
+  #firebox .fbar { flex: 1; height: 12px; background: rgba(0,0,0,.4); border-radius: 3px; overflow: hidden; position: relative; }
+  #firebox .fbar span { position: absolute; left: 0; top: 0; bottom: 0; display: block; }
+  #firebox .fbar .fzone { position: absolute; left: 50%; right: 0; top: 0; bottom: 0; background: rgba(120,220,130,.18); }
+  #firebox .frow b { font-size: 12px; width: 34px; text-align: right; opacity: .85; }
+  #firebox .fbtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  #firebox button { font: 600 13px var(--ui); padding: 7px 13px; cursor: pointer; border: 0; border-radius: 4px; background: var(--facet); color: #ffe6b0; }
+  #firebox button:disabled { opacity: .4; cursor: default; }
+  #firebox .closebtn { width: 100%; margin-top: 12px; }
+  #firebox .fchips { display: flex; flex-wrap: wrap; gap: 6px; }
+  #firebox .fchip { background: rgba(120,140,150,.22); color: var(--ink); font-weight: 500; padding: 5px 10px; }
+  #firebox .fchip i { opacity: .6; font-style: normal; font-size: 11px; }
+  #firebox .fnone { font-size: 12px; opacity: .45; font-style: italic; }
+  #firebox .froast { display: flex; align-items: center; gap: 8px; }
+  #firebox .froast span { font-size: 13px; width: 90px; }
+  #firebox .froast em { font-size: 11px; opacity: .8; width: 86px; font-style: normal; }
+  #firebox .fslots { display: flex; gap: 6px; margin-bottom: 8px; }
+  #firebox .fslot { flex: 1; min-height: 34px; display: flex; align-items: center; justify-content: center; text-align: center;
+    font-size: 11px; background: rgba(0,0,0,.3); border: 1px dashed rgba(180,140,90,.3); border-radius: 4px; padding: 4px; }
+  #firebox .fslot.on { background: rgba(180,140,90,.25); border-style: solid; color: #ffe6b0; }
+  #firebox .ftoggle { display: flex; gap: 8px; margin-bottom: 9px; flex-wrap: wrap; }
+  #firebox .ftoggle span { font-size: 12px; padding: 5px 10px; border-radius: 4px; cursor: pointer; background: rgba(120,140,150,.18); }
+  #firebox .ftoggle span.on { background: rgba(110,180,120,.4); color: #e8ffe0; }
+  #firebox .fcooking em, #firebox .fdone { font-size: 13px; }
+  #firebox .fdone { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  #firebox .fhint { font-size: 11px; opacity: .5; margin-top: 10px; text-align: center; }
   #soundtest { position: fixed; right: 10px; top: 10px; z-index: 22; display: none; max-height: 86vh; overflow-y: auto;
     background: rgba(8,12,16,.86); border: 1px solid rgba(160,200,230,.3); border-radius: 4px; padding: 8px; width: 150px; }
   #soundtest h5 { margin: 0 0 6px; font-size: 11px; letter-spacing: .1em; opacity: .7; text-transform: uppercase; }
@@ -502,6 +536,7 @@
 <canvas id="critcanvas"></canvas>
 <canvas id="fishcanvas"></canvas>
 <div id="fishreveal"></div>
+<div id="firepanel"></div>
 <div id="soundtest"></div>
 <canvas id="bucketpanel" width="125" height="145"></canvas>
 <div id="ctxmenu"></div>
@@ -3230,6 +3265,7 @@ addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (e.code === "Escape" && typeof inspect !== "undefined" && inspect.open) { closeInspect(); return; }   // close the close-up first
   if (e.code === "Escape" && typeof tradeOpen !== "undefined" && tradeOpen) { closeTrade(); return; }
+  if (e.code === "Escape" && typeof fireUI !== "undefined" && fireUI.open) { closeFirePanel(); return; }   // §Cooking close the fire panel first
   if (e.code === "Escape" && document.getElementById("settingspanel").style.display === "block") { closeSettings(); return; }   // §2 settings → back to pause (or game)
   if (e.code === "Escape" && pauseStage) { if (pauseStage === "controls") { showPause(); } else closePause(); return; }   // §2 controls → pause; pause → resume
   if (e.code === "Escape" && menuIsOpen()) { closeMenu(); return; }   // §2 Esc closes the Satchel/Bucket/Journal menu
@@ -3585,6 +3621,7 @@ function isPanelOpen() {
       || document.getElementById("journal").style.display === "block"
       || document.getElementById("settingspanel").style.display === "block"
       || (typeof fishReveal !== "undefined" && fishReveal.open)
+      || (typeof fireUI !== "undefined" && fireUI.open)
       || (typeof pauseStage !== "undefined" && !!pauseStage);
 }
 function requestLock() {   // re-acquire pointer lock after a gesture (closing a panel); harmless if it fails
@@ -5340,6 +5377,23 @@ function campfireMesh() { const m = Mesh(); const st = [0.5,0.48,0.46];
   mBox(m, 0, 0.12, 0, 0.5, 0.05, 0.1, [0.4,0.3,0.2]); mBox(m, 0, 0.17, 0, 0.1, 0.05, 0.5, [0.46,0.34,0.22]);              // crossed logs
   for (let i = 0; i < 3; i++) { const a = i/3*6.283; mTri(m, [Math.cos(a)*0.13, 0.26, Math.sin(a)*0.13], [Math.cos(a+1.2)*0.13, 0.26, Math.sin(a+1.2)*0.13], [0, 0.72, 0], [1, 1, 1]); }  // flame (tinted per instance)
   return m; }
+// §Cooking a cast-iron cook-pot (cauldron): a dark rounded belly on three stubby legs, a rim and a bail handle
+function potMesh() { const m = Mesh(); const iron=[0.22,0.22,0.24], iron2=[0.3,0.3,0.33], rim=[0.36,0.36,0.39];
+  mCyl(m, 0.12, 0.46, 0.28, 0.34, 9, iron);                       // belly (wider at top)
+  mergeMesh(m, discMesh(0.12, 0.28, 9, -0.12, iron2));            // rounded bottom
+  mCyl(m, 0.46, 0.52, 0.34, 0.32, 9, rim);                        // rim band
+  mergeMesh(m, discMesh(0.52, 0.32, 9, 0.02, [0.12,0.12,0.14]));  // dark mouth (contents fill later)
+  for (let i=0;i<3;i++){ const a=i/3*6.283+0.5; mBox(m, Math.cos(a)*0.2, 0.05, Math.sin(a)*0.2, 0.04, 0.08, 0.04, iron2); }   // three legs
+  for (const s of [1,-1]) mBox(m, s*0.33, 0.56, 0, 0.02, 0.1, 0.02, rim);   // bail lugs
+  return m; }
+// §Cooking a shallow wooden bowl holding a stew (tint picks the dish colour)
+function bowlMesh(stew) { const m = Mesh(); const wood=[0.46,0.34,0.22], wood2=[0.56,0.42,0.28]; stew = stew||[0.7,0.5,0.3];
+  mCyl(m, 0.0, 0.14, 0.24, 0.34, 9, wood);                        // bowl wall
+  mergeMesh(m, discMesh(0.0, 0.24, 9, -0.06, wood2));             // base
+  mergeMesh(m, discMesh(0.12, 0.3, 9, 0.02, stew));               // stew surface
+  for (let i=0;i<3;i++){ const a=i/3*6.283; mBox(m, Math.cos(a)*0.14, 0.14, Math.sin(a)*0.14, 0.04, 0.015, 0.04, [stew[0]*1.1,stew[1]*1.1,stew[2]*1.0]); }   // chunks
+  return m; }
+function charcoalMesh() { const m = Mesh(); const c=[0.12,0.11,0.1]; mRock(m, mulberry32(7), c); return m; }
 // fallen trunk: a log lying along +X from x=0 (base) to x=1 (unit, scaled by length)
 function fallenTrunkMesh() { const m = Mesh(); const c = BROWN;
   mBox(m, 0.5, 0.17, 0, 0.5, 0.15, 0.15, c);
@@ -6171,6 +6225,37 @@ COOKABLE.crabmeat = 1;                      // §R4 crab meat cooks up better to
 const CROP_SEED = { seed_cassava: "cassava", seed_banana: "banana", seed_pineapple: "pineapple", seed_taro: "taro" };
 const CROP_FOOD_SEED = { cassava: "seed_cassava", banana: "seed_banana", pineapple: "seed_pineapple", taro: "seed_taro" };
 
+/* ---- §Cooking — the cook-pot, the dishes it makes, and the food-value table ---- */
+ITEMS.pot = { id: "pot", name: "Cook-Pot", category: "tool", rarity: "tool", stackable: true, maxStack: 9,
+  desc: "A cast-iron cauldron. Set it on a lit campfire, then simmer up to four ingredients with water (and a pinch of salt) into a hearty dish.", model: () => potMesh(), tint: [1,1,1] };
+digItem("charcoal", "Burnt Scraps", "material", "common", "Something left on the fire far too long. Fit only for the compost.", () => charcoalMesh(), [0.14,0.13,0.12]);
+EDIBLE.charcoal = 0.01;
+// dishes simmered in the pot — [id, name, stewColour, foodValue, boost]; higher tiers want more/varied ingredients + salt
+const DISHES = [
+  ["seafood_stew", "Seafood Stew",    [0.78,0.46,0.34], 0.5,  {m:1.9,d:52}],
+  ["chowder",      "Creamy Chowder",  [0.9,0.84,0.7],   0.58, {m:2.0,d:58}],
+  ["root_mash",    "Root Mash",       [0.86,0.74,0.5],  0.42, {m:1.7,d:46}],
+  ["veg_broth",    "Vegetable Broth", [0.5,0.7,0.4],    0.4,  {m:1.7,d:44}],
+  ["fruit_compote","Fruit Compote",   [0.86,0.56,0.6],  0.44, {m:1.65,d:40}],
+  ["hearty_stew",  "Hearty Stew",     [0.74,0.5,0.3],   0.66, {m:2.15,d:64}],
+  ["mixed_pot",    "Mixed Pot",       [0.68,0.58,0.42], 0.46, {m:1.75,d:48}],
+];
+const DISH_SET = {};
+DISHES.forEach(([id, name, col, val, boost]) => { DISH_SET[id] = { id, name, col, val };
+  digItem(id, name, "consumable", "common", "A dish cooked up in a pot over the fire. Warm, filling, and a good stamina lift.", () => bowlMesh(col), col);
+  EDIBLE[id] = val; FOOD_BOOST[id] = boost; });
+// which pot-ingredient category a food falls into (drives the dish you get)
+const FOOD_CAT = {
+  rawfish:"sea", surfperch:"sea", rockfish:"sea", lingcod:"sea", ratfish:"sea", clam:"sea", cockle:"sea",
+  mussel:"sea", oyster:"sea", crabmeat:"sea", kelp:"sea", sealettuce:"sea", seaweed:"sea",
+  cooked_rawfish:"sea", cooked_clam:"sea", cooked_cockle:"sea", cooked_mussel:"sea", cooked_oyster:"sea",
+  cassava:"root", taro:"root", coconut:"root", cooked_cassava:"root", cooked_taro:"root",
+  banana:"fruit", pineapple:"fruit", berry:"fruit",
+  gullegg:"egg", cooked_gullegg:"egg",
+};
+function isPotIngredient(id) { return !!FOOD_CAT[id]; }
+// the full food-value table, for reference: EDIBLE[id] is hunger restored; cooked = 2× raw; dishes above.
+
 /* ---- inventory (slot model + hotbar) ---- */
 // 36 main slots + an 8-slot hotbar; every cell is a {id,qty} stack or null.
 const INV_SLOTS = 36, HOTBAR_SLOTS = 8;
@@ -6719,6 +6804,7 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgAutoPick">${autoPickup ? "Auto-pickup: on" : "Auto-pickup: off"}</button><button id="dbgAutoSwitch">${autoSwitch ? "Auto-switch: on" : "Auto-switch: off"}</button></div>
     <div class="dbgrow"><button id="dbgHunger">${hungerEnabled ? "Hunger: on" : "Hunger: off"}</button><button id="dbgBreath">${infiniteBreath ? "Breath: ∞" : "Breath: norm"}</button></div>
     <div class="dbgrow"><button id="dbgDeep">To deep water</button><button id="dbgAlert">${showAlert ? "Alertness: on" : "Alertness: off"}</button></div>
+    <div class="dbgrow"><button id="dbgCook">${fireInstantCook ? "Cook: instant" : "Cook: normal"}</button><button id="dbgFuel">${fireFreeFuel ? "Fuel: ∞" : "Fuel: normal"}</button><button id="dbgGivePot">Give pot+bait</button></div>
     <h3>Shovel / stamina</h3>
     ${TUNABLES.map((t) => `<label>${t.k} <b class="tv" data-k="${t.k}">${(+DBG_GET(t.k)).toFixed(t.step < 0.01 ? 3 : 2)}</b>
       <input class="dbgtune" data-k="${t.k}" type="range" min="${t.min}" max="${t.max}" step="${t.step}" value="${DBG_GET(t.k)}"></label>`).join("")}
@@ -6739,6 +6825,9 @@ function syncDebugPanel() {
   p.querySelector("#dbgAutoSwitch").onclick = () => { autoSwitch = !autoSwitch; saveAutoSwitch(); syncDebugPanel(); };
   p.querySelector("#dbgHunger").onclick = () => { setHungerEnabled(!hungerEnabled); syncDebugPanel(); };   // §13.8
   p.querySelector("#dbgBreath").onclick = () => { infiniteBreath = !infiniteBreath; syncDebugPanel(); };   // §14A
+  p.querySelector("#dbgCook").onclick = () => { fireInstantCook = !fireInstantCook; syncDebugPanel(); };   // §Cooking instant roast/stew
+  p.querySelector("#dbgFuel").onclick = () => { fireFreeFuel = !fireFreeFuel; syncDebugPanel(); };         // §Cooking fires never burn out
+  p.querySelector("#dbgGivePot").onclick = () => { Inv.add("pot", 2); Inv.add("worm", 5); Inv.add("salt", 3); Inv.add("clam", 4); Inv.add("cassava", 2); showCard("Debug", "+2 pots, bait, salt & ingredients."); };
   p.querySelector("#dbgDeep").onclick = () => teleportToDeepWater();
   p.querySelector("#dbgAlert").onclick = () => { showAlert = !showAlert; syncDebugPanel(); };   // §14C
   p.querySelectorAll(".dbgtune").forEach((el) => el.oninput = (e) => {
@@ -6806,6 +6895,7 @@ function journalCount(tab) {
   if (tab === "creatures") { let n = 0; for (const k in CREATURES) if (discovered.has(k)) n++; return [n, Object.keys(CREATURES).length]; }
   if (tab === "finds") { let n = 0; for (const k in FINDS) if (discovered.has("f_" + k)) n++; return [n, Object.keys(FINDS).length]; }
   if (tab === "angling") { let n = 0; for (const k in FISH_SPECIES) if (rodRecord[k]) n++; return [n, Object.keys(FISH_SPECIES).length]; }
+  if (tab === "cookbook") return [cookbook.size, DISHES.length];
   const opened = chests.filter(c => c.opened).length; return [opened, chests.length];
 }
 function journalGrid(tab) {
@@ -6825,11 +6915,16 @@ function journalGrid(tab) {
     if (!rec) return `<div class="jcard unk"><img src="${(it&&it.icon)||""}"><div class="jname">??? </div></div>`;
     return `<div class="jcard" data-jk="a:${sp.item}"><img src="${(it&&it.icon)||""}"><div class="jname">${sp.label}</div><div class="jqty">record ${rec.toFixed(2)} kg</div></div>`;
   }).join("");
+  if (tab === "cookbook") return DISHES.map(([id, name]) => {
+    const it = ITEMS[id], got = cookbook.has(id), n = cookRecord[id] || 0;
+    if (!got) return `<div class="jcard unk"><img src="${(it&&it.icon)||""}"><div class="jname">??? </div></div>`;
+    return `<div class="jcard" data-jk="d:${id}"><img src="${(it&&it.icon)||""}"><div class="jname">${name}</div><div class="jqty">cooked ×${n}</div></div>`;
+  }).join("");
   return treasureCards();
 }
 function renderJournal() {
   const j = document.getElementById("journal");
-  const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["treasure","Treasure"]];
+  const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["cookbook","Cookbook"],["treasure","Treasure"]];
   const tabHtml = tabs.map(([id,lbl]) => { const [n,t] = journalCount(id);
     return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
   const cleanupLine = `<div class="jstat">🌊 Beach cleanup — <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared</div>`;
@@ -7046,6 +7141,7 @@ function targetAlongRay(r, sticky) {
     if (ch.opened && ch.looted) sphere(ch, "openchest", ch.x, ch.z, 0.3, 0.9);                                                   // carry an emptied chest
     else if (ch.exposed) sphere(ch, "chest", ch.x, ch.z, 0.3, 0.9); }
   for (let i = 0; i < storageBoxes.length; i++) sphere(storageBoxes[i], "storagebox", storageBoxes[i].x, storageBoxes[i].z, 0.3, 0.8);
+  for (const c of campfires) sphere(c, "campfire", c.x, c.z, 0.35, 1.0);   // §Cooking look at a fire + F to cook
 
   // stickiness: keep the locked target unless another is clearly closer
   if (stick && (!best || best.obj !== stick.obj) && (!best || bestT > stickT - STICK_MARGIN)) return stick;
@@ -7076,6 +7172,7 @@ function useToolOnTarget(t) {
     case "fence": return chopFence(t.obj);
     case "openchest": pickUpChest(t.obj); return true;
     case "storagebox": openStash(storageBoxes.indexOf(t.obj)); return true;
+    case "campfire": openFirePanel(t.obj); return true;   // §Cooking open the fire/roast/pot panel
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
     case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
     case "rock": if (tool === "pickaxe") { mineObj(t.obj); return true; } return false;
@@ -8413,26 +8510,197 @@ function drawSacks(view) {
   if (n) sackDyn.draw(a, n);
 }
 
-/* ---- campfire (§10.5 stretch): built from Sticks + Stone; doubles shellfish value nearby ---- */
-let campfires = [], campfireDyn = null;
+/* ---- §Cooking campfire: built from Sticks + Stone; burns fuel, refuels & relights; roasts food and
+   holds a cook-pot for stews. A lit fire within reach still doubles the value of food eaten nearby. ---- */
+let campfires = [], campfireDyn = null, potDyn = null, roastDyn = null;
 const CAMPFIRE_COST = { stick: 3, stone: 3 }, CAMPFIRE_R = 4;
+const FUEL_STICK = 0.22, FUEL_LOG = 0.6, FUEL_DRIFT = 0.3, CAMPFIRE_BURN = 1 / (0.55 * DAY_PERIOD);   // lit fire burns out in ~0.55 in-game day
+const ROAST_DONE = 11, ROAST_BURN = 22;   // game-seconds on the fire: cooked at 11s, ruined past 22s
+let fireInstantCook = false, fireFreeFuel = false;   // debug
+function newCampfire(x, z, extra) { return Object.assign({ x, z, fuel: 1, lit: true, pot: null, roast: null }, extra || {}); }
 function canBuildCampfire() { return Inv.count("stick") >= CAMPFIRE_COST.stick && Inv.count("stone") >= CAMPFIRE_COST.stone; }
 function buildCampfire() {
   if (!canBuildCampfire()) { showCard("Need materials", `A campfire takes ${CAMPFIRE_COST.stick} Sticks and ${CAMPFIRE_COST.stone} Stone.`); return; }
   const fx = Math.sin(cam.yaw), fz = -Math.cos(cam.yaw), x = player.x + fx*2, z = player.z + fz*2;
   if (waterDepthAt(x, z) > 0.1 || bigPropBlocking(x, z, 1)) { showCard("No room", "Not here."); return; }
   Inv.remove("stick", CAMPFIRE_COST.stick); Inv.remove("stone", CAMPFIRE_COST.stone);
-  campfires.push({ x, z }); if (onDig) onDig("plant"); showCard("Campfire built", "Eat shellfish nearby to cook it — double the food."); saveWorld();
+  campfires.push(newCampfire(x, z)); if (onDig) onDig("plant"); showCard("Campfire built", "It's lit. Look at it and press F to cook — roast food, or set a pot on it for a stew."); saveWorld();
 }
-function nearCampfire(x, z) { for (const c of campfires) if (Math.hypot(c.x - x, c.z - z) < CAMPFIRE_R) return true; return false; }
+// a lit fire within reach — this is what "cooking nearby" needs (an unlit/burnt-out fire doesn't cook)
+function nearCampfire(x, z) { for (const c of campfires) if (c.lit && c.fuel > 0 && Math.hypot(c.x - x, c.z - z) < CAMPFIRE_R) return true; return false; }
+function campfireAt(x, z, r) { let best = null, bd = (r||1.4)*(r||1.4); for (const c of campfires) { const d = (c.x-x)*(c.x-x)+(c.z-z)*(c.z-z); if (d < bd) { bd = d; best = c; } } return best; }
+function refuelCampfire(c) {
+  let added = 0, src = null;
+  if (fireFreeFuel) { c.fuel = 1; }
+  else if (Inv.has("log")) { Inv.remove("log", 1); c.fuel = Math.min(1, c.fuel + FUEL_LOG); src = "a log"; added = 1; }
+  else if (Inv.has("driftwood")) { Inv.remove("driftwood", 1); c.fuel = Math.min(1, c.fuel + FUEL_DRIFT); src = "driftwood"; added = 1; }
+  else if (Inv.count("stick") >= 2) { Inv.remove("stick", 2); c.fuel = Math.min(1, c.fuel + FUEL_STICK); src = "sticks"; added = 1; }
+  if (!added && !fireFreeFuel) { showCard("No firewood", "You need a Log, Driftwood, or 2 Sticks to feed the fire."); return false; }
+  if (onDig) onDig("plant"); saveWorld(); return true;
+}
+function lightCampfire(c) { if (c.fuel <= 0) { if (!refuelCampfire(c)) return; } c.lit = true; if (typeof SND !== "undefined") SND.play("flame", { position: [c.x, surfaceAt(c.x,c.z).h, c.z] }); saveWorld(); }
+function updateCampfires(dt) {
+  for (const c of campfires) {
+    if (c.lit && c.fuel > 0) { c.fuel = Math.max(0, c.fuel - CAMPFIRE_BURN * dt * (fireFreeFuel ? 0 : 1)); if (c.fuel <= 0) c.lit = false; }
+    // roasting advances only on a lit fire; a pot stew likewise
+    if (c.lit && c.fuel > 0) {
+      if (c.roast) { c.roast.t += dt * (fireInstantCook ? 20 : 1); if (Math.random() < dt * 1.2) { const y = surfaceAt(c.x,c.z).h + 0.4; sparkle(c.x, y, c.z, [0.95,0.8,0.4], 1); } }
+      if (c.pot && c.pot.cooking && !c.pot.done) { c.pot.t += dt * (fireInstantCook ? 20 : 1); if (c.pot.t >= POT_COOK_TIME) { c.pot.done = true; if (typeof SND !== "undefined") SND.play("glug", { position:[c.x,surfaceAt(c.x,c.z).h,c.z] }); } }
+    }
+    if (fireUI.open && fireUI.fire === c) renderFirePanel();   // live-refresh the open panel
+  }
+}
 function drawCampfires(view) {
   if (!campfires.length) return;
   if (!campfireDyn) campfireDyn = makeDynamic(campfireMesh(), 30);
   propUniforms(view); const a = rockScratch; let n = 0;
   for (const c of campfires) { if (n >= 30) break; const dx = c.x-cam.pos[0], dz = c.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const o = n*10, y = surfaceAt(c.x, c.z).h, fl = 0.9 + Math.sin(clock.t*8 + c.x)*0.1;
-    a[o]=c.x;a[o+1]=y;a[o+2]=c.z;a[o+3]=1;a[o+4]=0;a[o+5]=0;a[o+6]=0;a[o+7]=fl;a[o+8]=fl*0.8;a[o+9]=fl*0.6; n++; }
+    const o = n*10, y = surfaceAt(c.x, c.z).h, lit = c.lit && c.fuel > 0;
+    const fl = lit ? (0.9 + Math.sin(clock.t*8 + c.x)*0.1) * (0.5 + 0.5*c.fuel) : 0;   // flame brightness scales with fuel; grey embers when out
+    a[o]=c.x;a[o+1]=y;a[o+2]=c.z;a[o+3]=1;a[o+4]=0;a[o+5]=0;a[o+6]=0;
+    if (lit) { a[o+7]=fl; a[o+8]=fl*0.8; a[o+9]=fl*0.55; } else { a[o+7]=0.22; a[o+8]=0.2; a[o+9]=0.2; }   // cold grey when unlit
+    n++;
+    if (lit && Math.random() < 0.15*c.fuel) sparkle(c.x, y+0.6, c.z, [0.95,0.6,0.25], 1);   // embers rising
+  }
   if (n) campfireDyn.draw(a, n);
+  // pots sitting on fires
+  let pn = 0; if (!potDyn) potDyn = makeDynamic(potMesh(), 30);
+  for (const c of campfires) { if (!c.pot || pn >= 30) continue; const dx = c.x-cam.pos[0], dz = c.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    const o = pn*10, y = surfaceAt(c.x, c.z).h + 0.24;
+    const col = (c.pot.done && c.pot.dish) ? (DISH_SET[c.pot.dish] ? DISH_SET[c.pot.dish].col : [1,1,1]) : [1,1,1];
+    a[o]=c.x;a[o+1]=y;a[o+2]=c.z;a[o+3]=0.9;a[o+4]=0;a[o+5]=0;a[o+6]=0;a[o+7]=col[0];a[o+8]=col[1];a[o+9]=col[2]; pn++;
+    if (c.lit && c.fuel>0 && c.pot.cooking && !c.pot.done && Math.random()<0.25) sparkle(c.x, y+0.4, c.z, [0.85,0.85,0.9], 1);   // steam
+  }
+  if (pn) potDyn.draw(a, pn);
+}
+const POT_COOK_TIME = 20;   // game-seconds for a stew to simmer
+
+/* ---- §Cooking — the campfire action panel: fuel, roasting, and pot stews; plus the cookbook ---- */
+let fireUI = { open: false, fire: null };
+let cookbook = new Set(), cookRecord = {};
+try { cookbook = new Set(JSON.parse(localStorage.getItem("bc_cookbook") || "[]")); } catch (e) {}
+try { cookRecord = JSON.parse(localStorage.getItem("bc_cookrec") || "{}"); } catch (e) {}
+function saveCookbook() { try { localStorage.setItem("bc_cookbook", JSON.stringify([...cookbook])); localStorage.setItem("bc_cookrec", JSON.stringify(cookRecord)); } catch (e) {} }
+function haveWaterNear() { if (waterDepthAt(player.x, player.z) > 0.05) return true; for (let a = 0; a < 6.28; a += 1.05) { const x = player.x + Math.sin(a) * 5, z = player.z - Math.cos(a) * 5; if (waterDepthAt(x, z) > 0.05) return true; } return false; }
+// roasting
+function roastDoneness(r) { if (!r) return "none"; if (r.t < ROAST_DONE) return "raw"; if (r.t <= ROAST_BURN) return "cooked"; return "burnt"; }
+function roastColor(r) { const d = roastDoneness(r); return d === "raw" ? [0.8,0.5,0.4] : d === "cooked" ? [0.7,0.46,0.26] : [0.14,0.12,0.11]; }
+function addRoast(c, id) { if (c.roast) { showCard("Fire's full", "Pull off what's roasting first."); return; }
+  if (!c.lit || c.fuel <= 0) { showCard("Light the fire first", "A cold fire won't cook."); return; }
+  if (Inv.count(id) < 1) return; Inv.remove(id, 1); c.roast = { id, t: 0 }; if (onDig) onDig("eat"); renderFirePanel(); }
+function collectRoast(c) { const r = c.roast; if (!r) return; const d = roastDoneness(r);
+  const out = d === "cooked" ? (COOKED_OF[r.id] || r.id) : d === "raw" ? r.id : "charcoal";
+  c.roast = null; Inv.add(out, 1);
+  showCard(d === "burnt" ? "Burnt to a crisp" : d === "cooked" ? "Roasted " + (ITEMS[r.id] ? ITEMS[r.id].name : r.id) : "Pulled it off early",
+    d === "cooked" ? (ITEMS[out].name + " — double the nourishment.") : d === "burnt" ? "Only burnt scraps left." : "Still raw — leave it longer next time.");
+  if (typeof SND !== "undefined") SND.play(d === "burnt" ? "thud" : "pickup"); renderFirePanel(); }
+// pots
+function placePot(c) { if (c.pot) return; if (Inv.count("pot") < 1) { showCard("No pot", "You need a Cook-Pot to set on the fire. Mine rocks to turn one up."); return; } Inv.remove("pot", 1); c.pot = { ingredients: [], water: false, salt: false, cooking: 0, t: 0, done: false, dish: null }; if (onDig) onDig("clang"); renderFirePanel(); }
+function takePot(c) { if (!c.pot) return; const p = c.pot;
+  if (p.cooking && !p.done) { showCard("Still simmering", "Wait for the stew, or it'll be wasted."); return; }
+  if (p.done) { collectDish(c); }
+  for (const id of p.ingredients) Inv.add(id, 1);   // hand back anything not yet cooked
+  Inv.add("pot", 1); c.pot = null; renderFirePanel(); }
+function potAdd(c, id) { const p = c.pot; if (!p || p.cooking || p.done) return;
+  if (p.ingredients.length >= 4) { showCard("Pot's full", "Four ingredients is the most it'll hold."); return; }
+  if (!isPotIngredient(id) || Inv.count(id) < 1) return; Inv.remove(id, 1); p.ingredients.push(id); if (onDig) onDig("plop"); renderFirePanel(); }
+function potRemoveLast(c) { const p = c.pot; if (!p || p.cooking || p.done || !p.ingredients.length) return; Inv.add(p.ingredients.pop(), 1); renderFirePanel(); }
+function potWater(c) { const p = c.pot; if (!p || p.cooking || p.done || p.water) return;
+  if (bucket.water) { bucket.water = false; p.water = true; if (onDig) onDig("pour"); }
+  else if (haveWaterNear()) { p.water = true; if (onDig) onDig("pour"); }
+  else { showCard("No water", "Stand near the sea or a pond, or carry a full bucket."); return; }
+  renderFirePanel(); }
+function potSalt(c) { const p = c.pot; if (!p || p.cooking || p.done || p.salt) return; if (Inv.count("salt") < 1) { showCard("No salt", "Scrape sea salt from a dried pool rim."); return; } Inv.remove("salt", 1); p.salt = true; renderFirePanel(); }
+function pickDish(cats, n, salt) {
+  const c = { sea: 0, root: 0, fruit: 0, egg: 0 }; for (const k of cats) c[k] = (c[k] || 0) + 1;
+  const kinds = ["sea","root","fruit","egg"].filter(k => c[k] > 0).length;
+  if (kinds >= 3 || (n >= 3 && salt && kinds >= 2)) return "hearty_stew";
+  if (c.sea > 0 && c.root > 0) return "chowder";
+  if (c.sea > 0 && c.sea === n) return "seafood_stew";
+  if (c.root > 0 && c.root === n) return "root_mash";
+  if (c.fruit > 0 && c.fruit === n && c.sea === 0) return "fruit_compote";
+  if (c.sea === 0 && (c.fruit > 0 || c.root > 0 || c.egg > 0)) return "veg_broth";
+  return "mixed_pot";
+}
+function dishDisplayName(p) {
+  const uniq = [...new Set(p.ingredients.map(id => ITEMS[id] ? ITEMS[id].name : id))];
+  const base = DISH_SET[p.dish].name.split(" ").pop();   // Stew / Chowder / Broth / Mash / Compote / Pot
+  const prefix = uniq.length === 1 ? uniq[0] : uniq.slice(0, 2).join(" & ");
+  return (p.salt ? "Salted " : "") + prefix + " " + base;
+}
+function cookPot(c) { const p = c.pot; if (!p) return;
+  if (!c.lit || c.fuel <= 0) { showCard("Light the fire", "The pot needs a flame under it."); return; }
+  if (p.ingredients.length < 1) { showCard("Empty pot", "Add at least one ingredient."); return; }
+  if (!p.water) { showCard("Needs water", "Add water before you simmer."); return; }
+  p.cooking = 1; p.t = 0; p.done = false;
+  p.dish = pickDish(p.ingredients.map(id => FOOD_CAT[id]), p.ingredients.length, p.salt);
+  if (typeof SND !== "undefined") SND.play("glug", { position: [c.x, surfaceAt(c.x,c.z).h, c.z] });
+  renderFirePanel(); }
+function collectDish(c) { const p = c.pot; if (!p || !p.done) return;
+  const name = dishDisplayName(p), dish = DISH_SET[p.dish];
+  Inv.add(p.dish, 1);
+  const firstTime = !cookbook.has(p.dish); cookbook.add(p.dish);
+  cookRecord[p.dish] = (cookRecord[p.dish] || 0) + 1; saveCookbook();
+  showCard("Cooked: " + name, dish.name + " — a filling meal. " + (firstTime ? "New recipe saved to your cookbook!" : "In your cookbook."));
+  if (typeof notify === "function") notify(p.dish, 1, firstTime);
+  p.ingredients = []; p.water = false; p.salt = false; p.cooking = 0; p.t = 0; p.done = false; p.dish = null;
+  renderFirePanel(); }
+
+function openFirePanel(c) { fireUI.open = true; fireUI.fire = c; if (!IS_TOUCH && document.pointerLockElement === canvas) document.exitPointerLock(); renderFirePanel(); document.getElementById("firepanel").style.display = "flex"; }
+function closeFirePanel() { fireUI.open = false; fireUI.fire = null; const el = document.getElementById("firepanel"); if (el) el.style.display = "none"; if (!IS_TOUCH && mode === "walk") { try { canvas.requestPointerLock(); } catch (e) {} } }
+function foodChips(ids, handlerName) {   // build clickable chips for inventory foods matching ids filter
+  return ids.filter(id => Inv.count(id) > 0).map(id => `<button class="fchip" data-food="${id}" data-fn="${handlerName}">${ITEMS[id] ? ITEMS[id].name : id} <i>×${Inv.count(id)}</i></button>`).join("") || `<span class="fnone">nothing to add</span>`;
+}
+function renderFirePanel() {
+  const c = fireUI.fire; if (!c) return; const el = document.getElementById("firepanel"); if (!el) return;
+  const lit = c.lit && c.fuel > 0;
+  const fuelPct = Math.round(c.fuel * 100);
+  let html = `<div id="firebox"><h2>Campfire</h2>`;
+  // fuel
+  html += `<div class="fsec"><div class="frow"><label>Fire</label><div class="fbar"><span style="width:${fuelPct}%;background:${lit ? "#e8904a" : "#596069"}"></span></div><b>${lit ? fuelPct + "%" : "out"}</b></div>
+    <div class="fbtns">${lit ? "" : `<button data-act="light">Light</button>`}<button data-act="refuel">Add firewood</button></div></div>`;
+  // roast
+  html += `<div class="fsec"><label>Roast on the coals</label>`;
+  if (c.roast) { const d = roastDoneness(c.roast), pct = Math.min(100, Math.round(c.roast.t / ROAST_BURN * 100));
+    const col = d === "raw" ? "#c98" : d === "cooked" ? "#7bc06a" : "#c05a46";
+    html += `<div class="froast"><span>${ITEMS[c.roast.id] ? ITEMS[c.roast.id].name : c.roast.id}</span>
+      <div class="fbar"><span style="width:${pct}%;background:${col}"></span><i class="fzone"></i></div>
+      <em>${d === "raw" ? "raw…" : d === "cooked" ? "cooked — take it!" : "burnt!"}</em>
+      <button data-act="takeroast">Take</button></div>`;
+  } else { const raw = Object.keys(COOKABLE).filter(id => Inv.count(id) > 0);
+    html += `<div class="fchips">${lit ? foodChips(raw, "roast") : `<span class="fnone">light the fire to roast</span>`}</div>`; }
+  html += `</div>`;
+  // pot
+  html += `<div class="fsec"><label>Cook-Pot</label>`;
+  if (!c.pot) { html += `<div class="fbtns"><button data-act="placepot"${Inv.count("pot") < 1 ? " disabled" : ""}>Set a pot on the fire${Inv.count("pot") < 1 ? " (none)" : ""}</button></div>`; }
+  else { const p = c.pot;
+    if (p.done) { html += `<div class="fdone">Stew's ready — <b>${DISH_SET[p.dish].name}</b><button data-act="serve">Serve it up</button></div>`; }
+    else if (p.cooking) { const pct = Math.min(100, Math.round(p.t / POT_COOK_TIME * 100));
+      html += `<div class="fcooking"><div class="fbar"><span style="width:${pct}%;background:#d6a24a"></span></div><em>simmering… ${pct}%</em></div>`; }
+    else {
+      html += `<div class="fpot"><div class="fslots">`;
+      for (let i = 0; i < 4; i++) { const id = p.ingredients[i]; html += `<div class="fslot${id ? " on" : ""}">${id ? (ITEMS[id] ? ITEMS[id].name : id) : "+"}</div>`; }
+      html += `</div><div class="ftoggle"><span class="${p.water ? "on" : ""}" data-act="water">💧 Water${p.water ? " ✓" : ""}</span><span class="${p.salt ? "on" : ""}" data-act="salt">🧂 Salt${p.salt ? " ✓" : ""}</span>${p.ingredients.length ? `<span data-act="unpot">⟲ Remove last</span>` : ""}</div>`;
+      const addable = Object.keys(FOOD_CAT);
+      html += `<div class="fchips">${foodChips(addable, "pot")}</div>`;
+      const ready = lit && p.ingredients.length >= 1 && p.water;
+      html += `<div class="fbtns"><button data-act="cook"${ready ? "" : " disabled"}>Simmer${!p.water ? " (add water)" : !lit ? " (light fire)" : !p.ingredients.length ? " (add food)" : ""}</button><button data-act="takepot">Take pot off</button></div>`;
+    }
+  }
+  html += `</div>`;
+  html += `<div class="fhint">Look away or press Esc to step back from the fire.</div><button class="closebtn primary" data-act="close">Done</button></div>`;
+  el.innerHTML = html;
+  el.querySelectorAll("[data-act]").forEach(b => b.onclick = () => {
+    const a = b.dataset.act, c2 = fireUI.fire; if (!c2) return;
+    if (a === "light") lightCampfire(c2); else if (a === "refuel") refuelCampfire(c2);
+    else if (a === "takeroast") collectRoast(c2);
+    else if (a === "placepot") placePot(c2); else if (a === "takepot") takePot(c2);
+    else if (a === "water") potWater(c2); else if (a === "salt") potSalt(c2); else if (a === "unpot") potRemoveLast(c2);
+    else if (a === "cook") cookPot(c2); else if (a === "serve") collectDish(c2);
+    else if (a === "close") closeFirePanel();
+    if (a === "light" || a === "refuel") renderFirePanel();
+  });
+  el.querySelectorAll(".fchip").forEach(b => b.onclick = () => { const c2 = fireUI.fire; if (!c2) return; const id = b.dataset.food; if (b.dataset.fn === "roast") addRoast(c2, id); else potAdd(c2, id); });
 }
 
 /* ===================================================================== *
@@ -9193,6 +9461,10 @@ function mineObj(o) {                                           // one pickaxe s
     o.gone = true; o.scale = 0; setRockInstance(o);
     if (o.coll) { o.coll.r = 0; rebuildCollHash(); }
     const n = 3 + (rng()*2|0); for (let i = 0; i < n; i++) dropRubble(o.x+(rng()-0.5)*2, o.z+(rng()-0.5)*2, 0.4+rng()*0.4);
+    if (rng() < 0.14) {                                        // §Cooking a rusted barrel's cook-pot, wedged in the rock
+      const added = Inv.add("pot", 1);
+      if (added) { discovered.add("f_pot"); notify("pot", 1, true); showCard("A cook-pot!", "An old iron pot was buried in that rock. Set it on a campfire to simmer a stew."); }
+    }
   } else setRockInstance(o);
 }
 // Small rubble pieces: no mining needed — walk up and pick one for Stone.
@@ -9365,7 +9637,9 @@ function saveWorld() {
     // player-built terrain (sparse): [cell index, built height, material]
     build: [...builtCells].map(i => [i, +built[i].toFixed(2), material[i]]),
     berries: berryBushes.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),   // 0 = ripe, else seconds left
-    fires: campfires.map(c => [+c.x.toFixed(1), +c.z.toFixed(1)]),
+    fires: campfires.map(c => ({ x: +c.x.toFixed(1), z: +c.z.toFixed(1), f: +(c.fuel||0).toFixed(2), lit: c.lit ? 1 : 0,
+      roast: c.roast ? [c.roast.id, +c.roast.t.toFixed(1)] : null,
+      pot: c.pot ? { ing: c.pot.ingredients.slice(), w: c.pot.water ? 1 : 0, s: c.pot.salt ? 1 : 0, ck: c.pot.cooking ? 1 : 0, t: +c.pot.t.toFixed(1), d: c.pot.done ? 1 : 0, dish: c.pot.dish } : null })),
     builds: builds.map(b => ({ t: b.type, x: +b.x.toFixed(1), z: +b.z.toFixed(1), y: +b.yaw.toFixed(2), c: b.cost || [],
       l: b.load || null, n: b.n || 0, d: b.load ? Math.max(0, +(b.dryAt - clock.t).toFixed(0)) : 0 })),   // §16B
     shelter: shelterSpawn ? [+shelterSpawn.x.toFixed(1), +shelterSpawn.z.toFixed(1)] : null,   // §16C respawn point
@@ -9400,7 +9674,10 @@ function loadWorld() {
       rebuildRegion(0, 0, GRID-1, GRID-1); updateHeightTex(0, 0, GRID-1, GRID-1);
     }
     if (Array.isArray(w.berries)) w.berries.forEach((v, i) => { if (berryBushes[i]) { if (v > 0) { berryBushes[i].ripe = false; berryBushes[i].regrowAt = clock.t + v; } else berryBushes[i].ripe = true; } });
-    if (Array.isArray(w.fires)) campfires = w.fires.map(c => ({ x: c[0], z: c[1] }));
+    if (Array.isArray(w.fires)) campfires = w.fires.map(c => Array.isArray(c)
+      ? newCampfire(c[0], c[1])    // migrate old saves (position only) → a fresh lit fire
+      : { x: c.x, z: c.z, fuel: c.f != null ? c.f : 1, lit: !!c.lit, roast: c.roast ? { id: c.roast[0], t: c.roast[1] } : null,
+          pot: c.pot ? { ingredients: c.pot.ing || [], water: !!c.pot.w, salt: !!c.pot.s, cooking: c.pot.ck ? 1 : 0, t: c.pot.t || 0, done: !!c.pot.d, dish: c.pot.dish || null } : null });
     if (Array.isArray(w.builds)) { builds = []; for (const s of w.builds) { const def = BUILD_DEFS[s.t]; if (!def) continue;   // §16B
       const b = { type: s.t, x: s.x, z: s.z, yaw: s.y, cost: s.c || [] };
       if (def.dry && s.l) { b.load = s.l; b.n = s.n || 1; b.dryAt = clock.t + (s.d || 0); }
@@ -10368,6 +10645,18 @@ loadNests();
 seedChests();
 loadChests();
 loadStorage();
+// §Cooking guaranteed first cook-pot: once per seed, lay a lit, pot-topped campfire near spawn
+try {
+  if (localStorage.getItem("bc_firstfire_" + SEED_STR) !== "1") {
+    const sp = findSpawn();
+    let fx = sp.x, fz = sp.z, placed = false;
+    for (let k = 0; k < 40 && !placed; k++) { const a = sp.yaw + (k ? (Math.random()-0.5)*3 : 0.4), r = 2.5 + Math.random()*3;
+      const x = sp.x + Math.sin(a)*r, z = sp.z - Math.cos(a)*r;
+      if (surfaceAt(x, z).h > 0.6 && waterDepthAt(x, z) < 0.05 && !bigPropBlocking(x, z, 1)) { fx = x; fz = z; placed = true; } }
+    campfires.push(newCampfire(fx, fz, { pot: { ingredients: [], water: false, salt: false, cooking: 0, t: 0, done: false, dish: null } }));
+    localStorage.setItem("bc_firstfire_" + SEED_STR, "1"); saveWorld();
+  }
+} catch (e) {}
 if (debugMode) auditRegistries();
 
 let proj = new Float32Array(16);
@@ -10434,6 +10723,7 @@ function frame(now) {
   updateFlotsam(dt);   // §5 floating debris drifts & beaches itself
   updateBarnacles();   // §5 barnacles regrow over time
   updateChests(dt);
+  updateCampfires(dt);   // §Cooking fuel burns, food roasts, stews simmer
   updatePry(dt);
   updateSalt();
   updateAutoPickup();
