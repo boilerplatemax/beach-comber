@@ -4072,8 +4072,27 @@ function eggMesh() { const m = Mesh(); mBox(m,0,0.1,0,0.35,0.1,0.22,[0.12,0.1,0.
 function bottleMesh() { const m = Mesh(); mCyl(m,0,0.7,0.2,0.2,7,[0.35,0.5,0.4]); mCyl(m,0.7,1.0,0.2,0.09,7,[0.35,0.5,0.4]); mCyl(m,1.0,1.15,0.09,0.09,6,[0.3,0.25,0.2]); return m; }
 function boneMesh() { const m = Mesh(); mCyl(m,-0.6,0.6,0.16,0.16,6,[0.88,0.85,0.78]); mRock(m,mulberry32(3),[0.88,0.85,0.78]); return m; }
 // tools & dug finds
-function shovelMesh() { const m = Mesh(); mBox(m,0,0,0,0.04,0.7,0.04,[0.4,0.3,0.2]); mBox(m,0,0.78,0,0.16,0.08,0.03,[0.35,0.26,0.18]); // handle
-  const blade=[0.55,0.56,0.6]; mCyl(m,-0.7,-0.5,0.045,0.045,5,[0.3,0.3,0.32]); mTri(m,[-0.22,-0.7,0],[0.22,-0.7,0],[0,-1.05,0],blade); mBox(m,0,-0.72,0,0.22,0.03,0.02,blade); return m; }
+// §R4 first-person tools — bold, recognizable Minecraft-style heads. Modelled upright: the hand grips low
+// (y≈0), the head sits at the top (y≈0.8+). The FP transform angles them into the lower-right, head up & in.
+const TW_DK=[0.34,0.24,0.15], TW_MD=[0.47,0.34,0.21], TW_LT=[0.58,0.44,0.29];     // wood: dark / mid / light
+const TM_DK=[0.33,0.35,0.39], TM_MD=[0.52,0.55,0.6], TM_HI=[0.7,0.73,0.78];        // metal: dark / mid / highlight
+function toolShaft(m, y0, y1, r, hi) {   // a wooden shaft with a lighter highlight strip down the +x face
+  mCyl(m, y0, y1, r*1.12, r*0.92, 6, TW_MD);
+  mBox(m, r*0.85, (y0+y1)/2, 0, r*0.3, (y1-y0)*0.46, r*0.34, hi ? TW_LT : TW_DK);
+}
+function shovelMesh() { const m = Mesh();
+  toolShaft(m, 0.0, 0.66, 0.045, true);
+  // D-grip near the hand (bottom)
+  mBox(m, 0, -0.04, 0, 0.14, 0.03, 0.035, TW_DK);
+  for (const s of [-1,1]) mBox(m, s*0.11, -0.14, 0, 0.03, 0.12, 0.035, TW_DK);
+  mBox(m, 0, -0.24, 0, 0.14, 0.03, 0.035, TW_DK);
+  // socket + spade blade at the top (the head, clearly visible)
+  mCyl(m, 0.66, 0.78, 0.06, 0.07, 6, TM_DK);
+  const b0=0.78; mBox(m, 0, b0+0.11, 0, 0.19, 0.12, 0.02, TM_MD);          // blade body
+  mTri(m, [-0.19,b0+0.23,0],[0.19,b0+0.23,0],[0,b0+0.4,0], TM_MD);          // pointed tip
+  mBox(m, 0.07, b0+0.11, 0.022, 0.09, 0.1, 0.006, TM_HI);                   // highlight face
+  mBox(m, 0, b0+0.02, 0, 0.19, 0.02, 0.03, TM_DK);                          // shoulder step
+  return m; }
 // §15 two simple low-poly hands gripping, for first-person climbing
 function climbHandsMesh() { const m = Mesh(); const skin=[0.74,0.57,0.45], sleeve=[0.4,0.33,0.26];
   for (const s of [-1,1]) { const bx = s*0.46;
@@ -4083,12 +4102,16 @@ function climbHandsMesh() { const m = Mesh(); const skin=[0.74,0.57,0.45], sleev
     mBox(m, bx, -0.22, -0.14, 0.08, 0.22, 0.08, sleeve);                       // forearm sleeve
   }
   return m; }
-// §14C fishing spear: a long shaft with a sharpened point at the tip (held point-down like the shovel)
-function spearMesh() { const m = Mesh(); const wood=[0.46,0.34,0.22], tip=[0.62,0.63,0.6];
-  mBox(m, 0, 0.0, 0, 0.028, 0.85, 0.028, wood);
-  for (const s of [-1,1]) mBox(m, s*0.03, -0.86, 0, 0.012, 0.06, 0.012, [0.4,0.3,0.2]);   // binding
-  mTri(m, [-0.07,-0.9,0.04], [0.07,-0.9,0.04], [0,-1.25,0], tip);
-  mTri(m, [-0.07,-0.9,-0.04], [0.07,-0.9,-0.04], [0,-1.25,0], [tip[0]*0.85,tip[1]*0.85,tip[2]*0.85]);
+// §R4 the stake/spear: a wooden shaft with a sharpened, fire-darkened point at the top
+function spearMesh() { const m = Mesh(); const char=[0.18,0.15,0.14], char2=[0.3,0.24,0.2];
+  toolShaft(m, 0.0, 0.92, 0.03, true);
+  for (const s of [-1,1]) mBox(m, s*0.035, 0.1, 0, 0.012, 0.05, 0.016, TW_DK);   // lashing near the grip
+  // whittled, charred point
+  mCyl(m, 0.92, 1.02, 0.03, 0.02, 6, char2);
+  mTri(m, [-0.035,1.02,0.02],[0.035,1.02,0.02],[0,1.26,0], char);
+  mTri(m, [-0.035,1.02,-0.02],[0.035,1.02,-0.02],[0,1.26,0], char2);
+  mTri(m, [0.035,1.02,0.02],[0.035,1.02,-0.02],[0,1.26,0], char2);
+  mTri(m, [-0.035,1.02,0.02],[-0.035,1.02,-0.02],[0,1.26,0], char);
   return m; }
 function clamMesh() { const m = discMesh(0.1,0.4,7,0.18,[0.85,0.8,0.72]); const m2=discMesh(-0.1,0.4,7,-0.18,[0.8,0.75,0.68]); for(let i=0;i<m2.pos.length;i++){m.pos.push(m2.pos[i]);m.col.push(m2.col[i]);} return m; }
 function coinMesh() { return discMesh(0.04,0.4,10,0.03,[0.7,0.6,0.32]); }
@@ -4122,14 +4145,32 @@ function chestMesh(open, barnacled) {
     mBox(m, Math.cos(a)*0.48, 0.1+0.4*((i*5)%3)/3, Math.sin(a)*0.33, 0.05*s,0.05*s,0.05*s, [0.78,0.76,0.7]); }
   return m;
 }
-// Phase 6 tools (first-person; same orientation as the shovel: head at the bottom).
-function axeMesh() { const m = Mesh(); mBox(m,0,0,0,0.035,0.62,0.035,[0.45,0.33,0.22]);   // shaft
-  const steel=[0.62,0.64,0.68]; mBox(m,0,-0.6,0,0.05,0.12,0.05,[0.4,0.4,0.43]);            // socket
-  mTri(m,[0.05,-0.46,0],[0.05,-0.74,0],[0.36,-0.62,0.0],steel); mTri(m,[0.05,-0.46,0],[0.36,-0.62,0.0],[0.05,-0.74,0],steel); return m; }
-function pickaxeMesh() { const m = Mesh(); mBox(m,0,0,0,0.035,0.62,0.035,[0.45,0.33,0.22]);
-  const steel=[0.55,0.57,0.62]; mBox(m,0,-0.6,0,0.05,0.05,0.05,[0.4,0.4,0.43]);
-  mBox(m,0,-0.62,0,0.34,0.03,0.03,steel);                                                   // horizontal pick bar
-  mTri(m,[0.34,-0.59,0],[0.34,-0.65,0],[0.46,-0.62,0],steel); mTri(m,[-0.34,-0.59,0],[-0.34,-0.65,0],[-0.46,-0.62,0],steel); return m; }
+// §R4 axe: a wooden haft with a wedge-shaped blade at the top
+function axeMesh() { const m = Mesh();
+  toolShaft(m, 0.0, 0.8, 0.036, true);
+  mCyl(m, 0.74, 0.86, 0.055, 0.06, 6, TM_DK);                                 // socket over the haft
+  // a wedge blade sweeping out to one side, wide at the cutting edge
+  const bx0=0.05, by0=0.72, by1=0.9;
+  mTri(m, [bx0,by0,0.03],[bx0,by1,0.03],[0.34,0.86,0.0], TM_MD);
+  mTri(m, [bx0,by0,-0.03],[bx0,by1,-0.03],[0.34,0.86,0.0], TM_DK);
+  mTri(m, [bx0,by0,0.03],[0.34,0.86,0.0],[bx0,by0,-0.03], TM_MD);             // close the wedge underside
+  mTri(m, [bx0,by1,0.03],[0.34,0.86,0.0],[bx0,by1,-0.03], TM_MD);
+  mBox(m, 0.22, 0.86, 0.02, 0.08, 0.06, 0.006, TM_HI);                        // bright bevel highlight
+  mBox(m, 0.33, 0.86, 0, 0.02, 0.09, 0.03, TM_HI);                            // the keen cutting edge
+  return m; }
+// §R4 pickaxe: a wooden haft with a curved two-point steel head at the top
+function pickaxeMesh() { const m = Mesh();
+  toolShaft(m, 0.0, 0.8, 0.036, true);
+  mBox(m, 0, 0.84, 0, 0.065, 0.07, 0.055, TM_DK);                             // central head block
+  for (const s of [-1,1]) {
+    mBox(m, s*0.15, 0.85, 0, 0.1, 0.045, 0.045, TM_MD);                       // inner arm
+    mBox(m, s*0.29, 0.885, 0, 0.08, 0.04, 0.04, TM_MD);                       // outer arm, lifting
+    mTri(m, [s*0.36,0.865,0.035],[s*0.36,0.905,0],[s*0.52,0.95,0], TM_HI);    // the point curves up
+    mTri(m, [s*0.36,0.865,-0.035],[s*0.36,0.905,0],[s*0.52,0.95,0], TM_MD);
+    mTri(m, [s*0.36,0.865,0.035],[s*0.36,0.865,-0.035],[s*0.52,0.95,0], TM_DK);
+  }
+  mBox(m, 0.03, 0.86, 0.04, 0.05, 0.045, 0.012, TM_HI);                       // highlight face
+  return m; }
 function bucketItemMesh() { const m = Mesh(); const tin = [0.62,0.66,0.7], dk = [0.42,0.45,0.5];
   mCyl(m, -0.3, 0.3, 0.26, 0.34, 10, tin); mergeMesh(m, discMesh(-0.3, 0.26, 10, -0.03, dk));   // tapered pail + base
   mergeMesh(m, discMesh(0.3, 0.34, 10, 0.0, [0.3,0.5,0.62]));                                     // water surface
@@ -7906,7 +7947,7 @@ function makeToolFP(id, mesh) {
   gl.bindVertexArray(null);
   TOOL_FP[id] = { mesh, vao, posBuf, vc: mesh.pos.length / 3, world: new Float32Array(mesh.pos.length) };
 }
-function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("spear", spearMesh()); makeToolFP("climbhands", climbHandsMesh()); }   // §14C/§15
+function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("spear", spearMesh()); makeToolFP("climbhands", climbHandsMesh()); makeToolFP("bucket", bucketItemMesh()); makeToolFP("lantern", lanternMesh()); }   // §R4 bucket & lantern held too
 // §15 render the two gripping hands while climbing, with a hand-over-hand sway
 function drawClimbHands(view) {
   const fp = TOOL_FP["climbhands"]; if (!fp) return;
@@ -7927,30 +7968,48 @@ function drawClimbHands(view) {
   gl.clear(gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
   gl.drawArraysInstanced(gl.TRIANGLES, 0, fp.vc, 1); countDraw(fp.vc/3);
 }
+let toolSwapT = 0, lastFpTool = null;
 function drawShovel(view) {
   if (mode !== "walk") return;
   if (player.climbing) { drawClimbHands(view); return; }       // §15 hands grip the rock instead of a tool
-  const fp = TOOL_FP[selectedTool()]; if (!fp) return;        // only the three tools show in-hand
+  const id = selectedTool();
+  const fp = TOOL_FP[id]; if (!fp) return;
+  if (id !== lastFpTool) { if (lastFpTool !== null) toolSwapT = 1; lastFpTool = id; }   // §R4 quick dip when the tool changes
   const f = camForward();
   let rx = -f[2], rz = f[0]; const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl;      // camera right (horizontal)
   const upx = -rz*f[1], upy = rz*f[0] - rx*f[2], upz = rx*f[1];                           // camera up = right × forward
-  const sw = Math.sin(Math.min(1, shovelSwing) * Math.PI);                               // 0→1→0 swing
+  const sw = Math.sin(Math.min(1, shovelSwing) * Math.PI);                               // 0→1→0 swing arc
   const rec = toolRecoilT * toolRecoilT;                                                 // recoil kick on a bounced hit
-  const isSpear = selectedTool() === "spear";
-  // §14C spear: a forward jab on thrust, and pull it back while charging a throw
-  const jab = isSpear ? Math.sin(Math.min(1, (spear.thrustT/0.3)) * Math.PI) : 0;
+  const isSpear = id === "spear", held = (id === "bucket" || id === "lantern");
+  const jab = isSpear ? Math.sin(Math.min(1, (spear.thrustT/0.3)) * Math.PI) : 0;        // §14C spear thrust
   const chg = isSpear && spear.charging ? spear.charge : 0;
-  const ox = 0.42, oy = -0.42 - sw * 0.25 + rec * 0.28 + chg*0.12,
-        oz = 0.78 + sw * 0.32 - rec * 0.5 + jab*0.55 - chg*0.4;
-  const scale = isSpear ? 0.85 : 0.5, tilt = isSpear ? (-1.35 + jab*0.25 - chg*0.3) : (-0.5 - sw * 0.9 + rec * 0.8);   // spear points forward
-  const ct = Math.cos(tilt), st = Math.sin(tilt);
+  const t = clock.t;
+  const bobA = Math.min(1, (player.walkLen || 0));                                        // 0 still … 1 moving
+  const bob = Math.sin((player.bob || 0) * 2.6) * 0.02 * bobA + Math.cos((player.bob||0)*1.3)*0.01*bobA;
+  const sway = Math.sin(t*1.1)*0.01, swayR = Math.sin(t*0.9)*0.03;                        // idle sway
+  const swap = toolSwapT*toolSwapT;                                                       // swap dip
+  let ox, oy, oz, roll, pitch, scale;
+  if (held) {                                                                             // bucket / lantern: carried upright in the lower-right
+    scale = id === "bucket" ? 0.46 : 0.6;
+    ox = 0.26 + sway; oy = -0.52 - swap*0.5 + bob; oz = 0.92;
+    roll = 0.08 + swayR; pitch = -0.08;
+  } else {                                                                                // shovel / axe / pickaxe / spear: angled, head up & in
+    scale = isSpear ? 0.5 : 0.46;
+    ox = 0.16 + sway;
+    oy = -0.42 - sw*0.18 + rec*0.2 - swap*0.5 + bob + chg*0.1;
+    oz = 0.82 + sw*0.22 - rec*0.35 + jab*0.5 - chg*0.3;
+    roll = -0.4 + swayR - sw*0.28;                                                        // top leans toward centre; the swing rolls it over
+    pitch = (isSpear ? (-0.9 + jab*0.3 - chg*0.3) : -0.35) - sw*0.9 + rec*0.65;           // swing sweeps the head down & forward; spear points ahead
+  }
+  const cr = Math.cos(roll), sr = Math.sin(roll), cp = Math.cos(pitch), sp2 = Math.sin(pitch);
   const src = fp.mesh.pos, world = fp.world; let p = 0;
   for (let i = 0; i < src.length; i += 3) {
-    let vx = src[i] * scale, vy = src[i+1] * scale, vz = src[i+2] * scale;
-    const ny = vy * ct - vz * st, nz = vy * st + vz * ct; vy = ny; vz = nz;               // pitch (tilt)
-    world[p++] = cam.pos[0] + rx*(ox+vx) + upx*(oy+vy) + f[0]*(oz+vz);
-    world[p++] = cam.pos[1] + upy*(oy+vy) + f[1]*(oz+vz);
-    world[p++] = cam.pos[2] + rz*(ox+vx) + upz*(oy+vy) + f[2]*(oz+vz);
+    const vx = src[i] * scale, vy = src[i+1] * scale, vz = src[i+2] * scale;
+    const x2 = vx*cr - vy*sr, y2 = vx*sr + vy*cr;                                          // roll about the view forward
+    const y3 = y2*cp - vz*sp2, z3 = y2*sp2 + vz*cp;                                        // pitch about the view right
+    world[p++] = cam.pos[0] + rx*(ox+x2) + upx*(oy+y3) + f[0]*(oz+z3);
+    world[p++] = cam.pos[1] + upy*(oy+y3) + f[1]*(oz+z3);
+    world[p++] = cam.pos[2] + rz*(ox+x2) + upz*(oy+y3) + f[2]*(oz+z3);
   }
   propUniforms(view);
   gl.uniform1f(propU.uFogDensity, 0);                          // §13.1 no fog on the held tool
@@ -7965,6 +8024,7 @@ function drawShovel(view) {
 function updateDigging(dt) {
   const swingRate = 3.5 * (stamina < 0.3 ? 0.6 : 1) * swingRateMul();   // slower, heavier swing when tired or hungry
   if (shovelSwing > 0) shovelSwing = Math.max(0, shovelSwing - dt * swingRate);
+  if (toolSwapT > 0) toolSwapT = Math.max(0, toolSwapT - dt * 4.5);   // §R4 tool-swap dip settles quickly
   if (punchT > 0) punchT = Math.max(0, punchT - dt);   // §15 punch recovery
   if (camNudge > 0) camNudge = Math.max(0, camNudge - dt * 0.4);
   springCamY(dt);                                                             // §13.1 settle the landing give
@@ -9557,6 +9617,7 @@ function frame(now) {
     const renderFeetY = player.prevFeetY + (player.feetY - player.prevFeetY) * alpha;
     // camera = interpolated feet + eye + additive camera-only offsets (bob, crouch/rest, landing dip) — none touch feetY
     const moving = wl > 0.01 ? 1 : 0;
+    player.walkLen = moving ? Math.min(1, wl) : 0;              // §R4 feeds the first-person tool's walk bob
     const amp = (0.06 + (player.sprinting ? 0.05 : 0) + player.scramble * 0.07) * moving;
     const bobOff = Math.sin(player.bob * (player.scramble > 0.3 ? 1.7 : 2.6)) * amp;
     const sitTarget = resting ? -0.8 : (crouching ? -CROUCH_DROP : 0);   // §13.4 lower the camera when crouched/resting
