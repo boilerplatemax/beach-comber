@@ -5551,7 +5551,7 @@ function shrimpMesh() { const m = Mesh(); const c=[0.92,0.62,0.52];
   mBox(m,0.33,0.11,0,0.04,0.015,0.08,[0.86,0.5,0.42]); return m; }
 function octopusMesh() { const m = Mesh(); const c=[0.72,0.42,0.47];
   mergeMesh(m, discMesh(0.1,0.17,8,0.14,c)); mCyl(m,0,0.12,0.17,0.12,8,c);
-  for (let i=0;i<6;i++){ const a=i/6*6.283; mergeAt(m, (()=>{const d=Mesh(); mCyl(d,0,0.17,0.035,0.012,4,[c[0]*0.9,c[1],c[2]]); return d;})(), Math.cos(a)*0.14, 0, Math.sin(a)*0.14); }
+  for (let i=0;i<8;i++){ const a=i/8*6.283; mergeAt(m, (()=>{const d=Mesh(); mCyl(d,0,0.18,0.035,0.012,4,[c[0]*0.9,c[1],c[2]]); return d;})(), Math.cos(a)*0.14, 0, Math.sin(a)*0.14); }   // §playtest1 eight arms
   for (const s of [-1,1]) mergeAt(m, (()=>{const d=Mesh(); mBox(d,0,0,0,0.028,0.028,0.012,[0.08,0.08,0.08]); return d;})(), s*0.07, 0.15, 0.13);
   return m; }
 function seaDuckMesh() { const m = Mesh(); const body=[0.26,0.27,0.31], head=[0.14,0.14,0.17], bill=[0.32,0.3,0.3], white=[0.86,0.86,0.9];
@@ -5816,7 +5816,7 @@ function logSectionMesh() { const m = Mesh(); mBox(m, 0, 0.3, 0, 0.72, 0.3, 0.3,
 // --- registries: mesh, palette, scale, how many may draw, behaviour ---
 const CREATURES = {
   crab:     { mesh: () => crabMesh([0.6,0.35,0.3]),  base: 0.6, max: 160, label: "Shore Crab", desc: "Sidles across the wet sand; shy of footsteps." },
-  fish:     { mesh: () => fishMesh([0.7,0.75,0.8]),  base: 0.5, max: 220, label: "Pool Fish", desc: "Darts between the rocks of a tide pool." },
+  fish:     { mesh: () => fishMesh([0.7,0.75,0.8]),  base: 0.72, max: 220, label: "Pool Fish", desc: "Darts between the rocks of a tide pool." },
   anemone:  { mesh: () => anemoneMesh([0.8,0.4,0.45]),base: 0.7, max: 160, label: "Beadlet Anemone", desc: "Closes up when touched or left by the tide." },
   star:     { mesh: () => starMesh([0.85,0.5,0.3]),   base: 0.8, max: 140, label: "Sea Star", desc: "Rests on the pool floor, arms slowly working." },
   urchin:   { mesh: () => urchinMesh([0.3,0.2,0.38]), base: 0.7, max: 140, label: "Sea Urchin", desc: "A pincushion wedged in a rocky crevice." },
@@ -5824,14 +5824,14 @@ const CREATURES = {
   gull:     { mesh: () => gullMesh(),                 base: 1.1, max: 60,  label: "Grey Gull", desc: "Wheels over the beach and settles on the sand." },
   seal:     { mesh: () => sealMesh(),                 base: 2.2, max: 24,  label: "Harbour Seal", desc: "Hauls out on the rocks at low water." },
   jelly:    { mesh: () => jellyMesh(),                base: 0.9, max: 90,  label: "Stranded Jelly", desc: "Left glistening on the flats by the ebbing tide." },
-  piper:    { mesh: () => piperMesh(),                base: 0.7, max: 80,  label: "Sandpiper", desc: "Scurries along the wave edge, chasing the water in and out." },
+  piper:    { mesh: () => piperMesh(),                base: 1.05, max: 80,  label: "Sandpiper", desc: "Scurries along the wave edge, chasing the water in and out." },
   hopper:   { mesh: () => hopperMesh(),               base: 0.5, max: 120, label: "Beach Hopper", desc: "Springs out from under a flipped cobble." },
   heron:    { mesh: () => heronMesh(),                base: 1.0, max: 30,  label: "Grey Heron", desc: "Stalks the shallows of the flats, dead still, then stabs." },
   // §14C huntable fish (spearable) + schooling minnows (atmosphere / bucket)
-  flounder: { mesh: () => flounderMesh(),             base: 0.6, max: 70,  label: "Flounder", desc: "Lies flat and camouflaged on the sandy shallows — spot it before it bursts away.", fish: 1 },
-  rockfish: { mesh: () => rockfishMesh(),             base: 0.72,max: 90,  label: "Rockfish", desc: "Bright orange-red, hovering among the kelp. Curious, but skittish if you rush it.", fish: 1 },
-  lingcod:  { mesh: () => lingcodMesh(),              base: 1.1, max: 30,  label: "Lingcod", desc: "A big mottled ambush predator lurking on the reef drop-off. The prize catch.", fish: 1 },
-  minnow:   { mesh: () => minnowMesh(),               base: 0.35,max: 200, label: "Silverside", desc: "A small fish that moves in flashing schools through the shallows.", fish: 1 },
+  flounder: { mesh: () => flounderMesh(),             base: 0.9, max: 70,  label: "Flounder", desc: "Lies flat and camouflaged on the sandy shallows — spot it before it bursts away.", fish: 1 },
+  rockfish: { mesh: () => rockfishMesh(),             base: 1.05,max: 90,  label: "Rockfish", desc: "Bright orange-red, hovering among the kelp. Curious, but skittish if you rush it.", fish: 1 },
+  lingcod:  { mesh: () => lingcodMesh(),              base: 1.6, max: 30,  label: "Lingcod", desc: "A big mottled ambush predator lurking on the reef drop-off. The prize catch.", fish: 1 },
+  minnow:   { mesh: () => minnowMesh(),               base: 0.52,max: 200, label: "Silverside", desc: "A small fish that moves in flashing schools through the shallows.", fish: 1 },
   // §16.1 new tide-pool & nearshore life
   snail:    { mesh: () => seaSnailMesh(),             base: 0.4, max: 120, label: "Sea Snail", desc: "A periwinkle grazing the pool floor, slow and unbothered." },
   shrimp:   { mesh: () => shrimpMesh(),               base: 0.4, max: 160, label: "Shrimp", desc: "A near-clear shrimp flicking backwards through a tide pool." },
@@ -6371,6 +6371,9 @@ function fleeFrom(e, dx, dz, dt, spd) {        // move directly away from the pl
 function behave(e, dt, d, dx, dz) {
   const g = heightAt(e.x, e.z);
   if (e.cdState === undefined) e.cdState = "idle";              // §R4 debug: current AI state
+  // §playtest1 poured onto land and can't crawl (fish/shrimp flop, stars/urchins stay) → stay put and dry out; wash-back rescues it
+  if (e.beached) { if (waterDepthAt(e.x, e.z) > 0.12) { e.beached = false; e.flop = false; e.exposed = 0; e.hx = e.x; e.hz = e.z; }
+    else { creatureExposureDry(e, dt); return; } }
   if (FISH[e.t]) { behaveFish(e, dt, d, dx, dz); return; }     // §14C huntable fish / schools
   if (e.returning) {                                           // poured onto dry land → head for the nearest water
     if (waterDepthAt(e.x, e.z) > 0.12) { e.returning = false; e.exposed = 0; e.hx = e.x; e.hz = e.z; return; }
@@ -6432,10 +6435,13 @@ function behave(e, dt, d, dx, dz) {
     if (e.probe > 0) { e.probe -= dt; e.cdState = "probe"; return; }        // paused, beak down in the sand
     e.timer -= dt; if (e.timer < 0) { e.timer = 0.5 + rng()*1.3; e.side = rng() < 0.5 ? 1 : -1; if (rng() < 0.35) { e.probe = 0.4 + rng()*0.6; return; } }
     e.cdState = "run";
-    const target = waterLevel + 0.2, grad = groundGradient(e.x, e.z);
+    // §playtest1 chase the swash: the edge the piper follows oscillates with the wave cycle — waves wash up, it retreats; they pull back, it follows out
+    const swash = Math.sin((typeof _surfPhase === "number" ? _surfPhase : 0) * 6.283) * 0.5;
+    const target = waterLevel + 0.35 + swash, grad = groundGradient(e.x, e.z);
     let mx = 0, mz = 0;
-    if (g > target + 0.3) { mx = grad.dx; mz = grad.dz; }           // too dry → follow the water down
+    if (g > target + 0.25) { mx = grad.dx; mz = grad.dz; }          // too dry → follow the water down
     else if (g < target - 0.1) { mx = -grad.dx; mz = -grad.dz; }    // in the wash → scurry up
+    if (waterDepthAt(e.x, e.z) > 0.1) { mx = grad.dx * 2.2; mz = grad.dz * 2.2; }   // never into water deeper than a thin film — bolt up-slope
     mx += -grad.dz * e.side * 0.8; mz += grad.dx * e.side * 0.8;     // lateral run along the shore
     const m = Math.hypot(mx, mz) || 1; e.x += mx/m*dt*CRIT_SPD.piper.cruise; e.z += mz/m*dt*CRIT_SPD.piper.cruise; e.yaw = Math.atan2(mz, mx) + 1.57;
   } else if (e.t === "heron") {
@@ -6542,6 +6548,7 @@ function drawLife(view) {
         if (e.dying > 0.45 && e.dying < 0.95) lean += Math.sin((e.dying-0.45)/0.5*Math.PI) * 0.06;   // a little settle bounce
         ld = e.deathYaw || e.yaw; y = g + 0.04;
       }
+      if (e.flop && e.beached) { lean = Math.sin(e.phase * 16) * 0.55; ld = (e.yaw || 0) + 1.5708; }   // §playtest1 a stranded fish/shrimp flops in place
       e._sc = sc;                                          // §urgent5 remember the drawn scale so the fade pass matches it (no pop)
       const o = n*10;
       lifeScratch[o]=e.x; lifeScratch[o+1]=y; lifeScratch[o+2]=e.z;
@@ -8436,9 +8443,16 @@ function pourIntoHole(x, z) {
   if (typeof onWaterGround === "function") onWaterGround(x, z);   // hook for watering crops later
   saveState();
 }
-// Pour out onto dry ground: creatures are stranded and make for the nearest water.
+// §playtest1 what a creature does when poured onto dry land
+const DUMP_CRAWL = { crab:1, hermit:1, horseshoe:1, octopus:1 };                          // crawl back to the water
+const DUMP_STAY = { star:1, urchin:1, anemone:1, cucumber:1, nudibranch:1, jelly:1, snail:1 };   // stuck fast — stay put
+// everything else (fish, sculpin, shrimp) can only flop in place. All of them still dry out on the moisture timer.
+// Pour out onto dry ground: crawlers make for water, others flop/stay where they land.
 function pourOnGround(x, z) {
-  for (const c of bucket.creatures) { const e = spawnFromBucket(c, x + (rng()-0.5)*1.2, z + (rng()-0.5)*1.2, { hr: 6 }); e.returning = true; }
+  for (const c of bucket.creatures) { const e = spawnFromBucket(c, x + (rng()-0.5)*1.2, z + (rng()-0.5)*1.2, { hr: 6 });
+    if (DUMP_CRAWL[c.t]) e.returning = true;                                              // crawls to the sea
+    else { e.beached = true; e.flop = !DUMP_STAY[c.t]; }                                  // flops (fish/shrimp) or stays put (stars/urchins/…)
+  }
   if (bucket.creatures.length) { if (onDig) onDig("splash"); spawnSand(x, surfaceAt(x,z).h + 0.1, z, 10, [0.72, 0.86, 0.96]); }
   bucket.creatures = []; bucket.water = false; saveState();
 }
