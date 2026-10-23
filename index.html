@@ -2269,13 +2269,41 @@ function startleNear(x, z) {
     g.state = "flee"; g.timer = 0.8; const a = Math.atan2(g.z-z, g.x-x); g.tx = g.x + Math.cos(a)*12; g.tz = g.z + Math.sin(a)*12;
   }
 }
+// §R4 weapons can strike any creature. Small per-species HP; a hit hurts and scatters it, enough hits kill it.
+const CREATURE_HP = { crab:2, hermit:2, piper:2, hopper:1, gull:3, seal:6, heron:3, seaduck:2, snail:1, shrimp:1, octopus:2, star:1, urchin:1, anemone:1, jelly:1 };
+const CREATURE_DROP = { crab:"crabmeat", hermit:"crabmeat", gull:"feather", piper:"feather", heron:"feather", seaduck:"feather" };
+function creatureHP(t) { return CREATURE_HP[t] || 2; }
+function creatureAt(x, y, z, r) { let best = null, bd = r*r;
+  for (const e of life) { if (e.kind !== "creature" || FISH[e.t] || e.dying !== undefined) continue;
+    const ey = e.y !== undefined ? e.y : heightAt(e.x, e.z) + 0.3;
+    const dd = (e.x-x)*(e.x-x) + (ey-y)*(ey-y) + (e.z-z)*(e.z-z); if (dd < bd) { bd = dd; best = e; } }
+  return best; }
+function hurtCreature(e, hx, hz) {
+  if (!e || e.dying !== undefined) return;
+  if (e.hp === undefined) e.hp = creatureHP(e.t);
+  e.hp -= 1; e.hurtT = 0.32;                                 // damage flash
+  const a = Math.atan2(e.z - hz, e.x - hx); e.x += Math.cos(a)*0.45; e.z += Math.sin(a)*0.45;   // knockback
+  if (e.t === "gull") { e.gstate = "flee"; e.timer = 1.6 + rng(); } else { e.alert = 1; e.fleeT = 3; e.jet = 0.7; e.state = "flee"; e.timer = 1; }
+  if (onSpear) onSpear("hitflesh");
+  sparkle(e.x, (e.y !== undefined ? e.y : heightAt(e.x,e.z)+0.3), e.z, [0.8,0.3,0.3], 5);
+  if (e.hp <= 0) { e.dying = 0; }                            // start the death animation (handled in updateLife/drawLife)
+}
+// a spear strike: catch a fish, else wound a creature; returns true if it hit something living
+function spearStrike(x, y, z, r) {
+  const fish = fishAt(x, y, z, r); if (fish) { catchFish(fish, x, y, z); return true; }
+  const e = creatureAt(x, y, z, r); if (e) { hurtCreature(e, x, z); return true; }
+  return false;
+}
 function thrustSpear() {
   if (spear.cd > 0 || mode !== "walk") return;
   spear.thrustT = 0.3; spear.cd = 0.35; shovelSwing = Math.max(shovelSwing, 0.4);
   const f = camForward(), reach = 2.6;
   const tx = cam.pos[0] + f[0]*reach, ty = cam.pos[1] + f[1]*reach, tz = cam.pos[2] + f[2]*reach;
-  const fish = fishAt(tx, ty, tz, 1.3);
-  if (fish) catchFish(fish, tx, ty, tz); else { startleNear(tx, tz); if (onSpear) onSpear("jab"); }
+  if (spearStrike(tx, ty, tz, 1.3)) return;
+  // nothing living → a thud + wobble on an object, else a harmless jab
+  const t = curTarget || targetAlongRay(rayFromNDC(0,0));
+  if (t && (t.kind === "tree" || t.kind === "fallentree")) { t.obj.shake = Math.max(t.obj.shake||0, 0.6); setTreeInstance(t.obj); if (onSpear) onSpear("thud"); }
+  else { startleNear(tx, tz); if (onSpear) onSpear("jab"); }
 }
 function throwSpear(charge) {
   if (mode !== "walk" || !Inv.hotbarHasId("spear")) return;
@@ -2300,6 +2328,8 @@ function updateSpear(dt) {
       if (sp > 0.3) { s.yaw = Math.atan2(s.vx, s.vz); s.pitch = Math.atan2(-s.vy, Math.hypot(s.vx, s.vz)); }
       const fish = fishAt(s.x, s.y, s.z, s.hard ? 1.4 : 1.0);
       if (fish) { catchFish(fish, s.x, s.y, s.z); thrownSpears.splice(i, 1); continue; }
+      const cre = creatureAt(s.x, s.y, s.z, s.hard ? 1.4 : 1.0);   // §R4 a thrown spear wounds a creature and sticks nearby
+      if (cre) { hurtCreature(cre, s.x, s.z); const fl = surfaceAt(s.x, s.z).h; s.y = Math.max(fl+0.08, s.y); s.stuck = true; s.washAt = clock.t + 4*DAY_PERIOD; continue; }
       const floor = surfaceAt(s.x, s.z).h;
       if (s.y <= floor + 0.1 || (uw && sp < 0.6) || Math.hypot(s.x, s.z) > HALF) {   // stick / settle
         s.y = Math.max(floor + 0.08, s.y); s.stuck = true; s.washAt = clock.t + 4*DAY_PERIOD;
@@ -2879,7 +2909,24 @@ function resetHints() { for (const k in hintCount) delete hintCount[k]; hintsOn 
 let hintT = 0, hintText = "", lastAimShown = false;
 
 // Edible items → how much hunger they restore (§10.5). Tuned so a beach walk keeps you fed.
-const EDIBLE = { clam: 0.12, cockle: 0.1, mussel: 0.1, oyster: 0.13, kelp: 0.08, seaweed: 0.08, coconut: 0.26, berry: 0.14, gullegg: 0.16, rawfish: 0.2 };
+const EDIBLE = { clam: 0.12, cockle: 0.1, mussel: 0.1, oyster: 0.13, kelp: 0.08, seaweed: 0.08, coconut: 0.26, berry: 0.14, gullegg: 0.16, rawfish: 0.2, crabmeat: 0.16 };
+// §R4 eating gives a temporary stamina-regen boost: {m: regen multiplier, d: seconds}. Berries small & short,
+// shellfish medium, coconut & fish strong & long. Cooking makes it stronger and longer. Boosts never stack.
+const FOOD_BOOST = {
+  berry:{m:1.3,d:16}, kelp:{m:1.25,d:14}, seaweed:{m:1.25,d:14}, gullegg:{m:1.55,d:30},
+  clam:{m:1.6,d:32}, cockle:{m:1.55,d:28}, mussel:{m:1.55,d:28}, oyster:{m:1.7,d:34},
+  crabmeat:{m:1.7,d:38}, rawfish:{m:1.8,d:46}, coconut:{m:2.0,d:58},
+};
+let staminaBoost = { m: 1, until: 0 };
+function staminaBoostMult() { return clock.t < staminaBoost.until ? staminaBoost.m : 1; }
+function staminaBoostActive() { return clock.t < staminaBoost.until; }
+function applyFoodBoost(id, cooked) {
+  const b = FOOD_BOOST[id]; if (!b) return;
+  let m = b.m, d = b.d; if (cooked) { m += 0.5; d += 20; }          // cooking: stronger & longer
+  const activeM = staminaBoostActive() ? staminaBoost.m : 1;
+  if (m > activeM) { staminaBoost.m = m; staminaBoost.until = clock.t + d; }                 // stronger replaces
+  else if (Math.abs(m - activeM) < 1e-3) { staminaBoost.until = Math.max(staminaBoost.until, clock.t + d); }   // same refreshes
+}
 const COOKABLE = { clam: 1, cockle: 1, mussel: 1, oyster: 1, gullegg: 1, rawfish: 1 };   // shellfish, eggs & fish: a campfire doubles their value
 function isFood(id) { return EDIBLE[id] !== undefined; }
 // Eat a food item: restore hunger (doubled for shellfish cooked at a nearby campfire), with a chew + sound.
@@ -2887,6 +2934,7 @@ function feedPlayer(id) {
   let val = EDIBLE[id] || 0; let cooked = false;
   if (COOKABLE[id] && nearCampfire(player.x, player.z)) { val *= 2; cooked = true; }
   hunger = Math.min(1, hunger + val);
+  applyFoodBoost(id, cooked);                       // §R4 stamina-regen boost (works regardless of hunger setting)
   chewT = 0.5; camNudge = Math.max(camNudge, 0.03); if (onDig) onDig("eat");
   showCard((cooked ? "Ate cooked " : "Ate ") + ITEMS[id].name, "Hunger " + Math.round(hunger * 100) + "%");
   saveState();
@@ -4114,6 +4162,10 @@ function spearMesh() { const m = Mesh(); const char=[0.18,0.15,0.14], char2=[0.3
   mTri(m, [-0.035,1.02,0.02],[-0.035,1.02,-0.02],[0,1.26,0], char);
   return m; }
 function clamMesh() { const m = discMesh(0.1,0.4,7,0.18,[0.85,0.8,0.72]); const m2=discMesh(-0.1,0.4,7,-0.18,[0.8,0.75,0.68]); for(let i=0;i<m2.pos.length;i++){m.pos.push(m2.pos[i]);m.col.push(m2.col[i]);} return m; }
+function crabMeatMesh() { const m = Mesh(); const pink=[0.92,0.8,0.74], pink2=[0.86,0.7,0.64];   // §R4 pale lumps of crab meat
+  const lumps=[[0,0,0.17],[0.13,0.06,0.12],[-0.1,0.09,0.11],[0.05,-0.12,0.1]];
+  for (let i=0;i<lumps.length;i++){ const [x,z,r]=lumps[i]; const d=Mesh(); mergeMesh(d, discMesh(0, r, 6, r*0.9, i%2?pink:pink2)); mergeMesh(d, discMesh(0, r, 6, -r*0.5, i%2?pink:pink2)); mergeAt(m, d, x, 0.04, z); }
+  return m; }
 function coinMesh() { return discMesh(0.04,0.4,10,0.03,[0.7,0.6,0.32]); }
 function mergeMesh(m, n) { for (let i = 0; i < n.pos.length; i++) { m.pos.push(n.pos[i]); m.col.push(n.col[i]); } }
 function bellMesh() { const m = Mesh(); mCyl(m,0,0.8,0.5,0.25,8,[0.42,0.55,0.4]); mergeMesh(m, discMesh(0.8,0.25,8,0.05,[0.42,0.55,0.4])); mBox(m,0,0.95,0,0.1,0.15,0.1,[0.42,0.55,0.4]); mCyl(m,-0.2,0.1,0.08,0.08,5,[0.3,0.4,0.3]); return m; }
@@ -4653,6 +4705,7 @@ const FINDS = {
   oyster:   { mesh: () => oysterMesh(),              base: 0.5, max: 80,  label: "Oyster", desc: "A craggy grey oyster, clamped shut. Good food, better cooked.", rare: 0 },
   barnacle: { mesh: () => barnacleMesh(),            base: 0.5, max: 80,  label: "Barnacles", desc: "Acorn barnacles scraped off a tidal rock — prized fishing bait.", rare: 0, bait: 1 },
   feather:  { mesh: () => featherMesh(),             base: 0.5, max: 90,  label: "Seabird Feather", desc: "A soft grey gull feather, caught on the wrack line.", rare: 0 },
+  crabmeat: { mesh: () => crabMeatMesh(),            base: 0.45,max: 80,  label: "Crab Meat", desc: "Pale, sweet meat picked from a crab. Good food, better cooked.", rare: 0 },
 };
 
 // build dynamic draw objects
@@ -4953,6 +5006,7 @@ function wetBandSpot(cx, cz) {
 }
 // visibility: is this entity currently present given tide/time?
 function lifeVisible(e) {
+  if (e.dying !== undefined) return true;                              // §R4 always show the death animation
   const g = heightAt(e.x, e.z);
   if (e.kind === "find") return waterLevel < g + 1.6 || g < -1;        // exposed/shallow, or resting on the seabed (§14B)
   if (e.t === "crab") { const d = waterLevel - g; return d < 0.1 && d > -4; }  // wet sand
@@ -4967,6 +5021,30 @@ function lifeVisible(e) {
 
 const BASE_UPDATE_R = 70, BASE_DRAW_R = 190;   // §13.6 base radii; graphics settings scale these live
 let UPDATE_R = BASE_UPDATE_R, DRAW_R = BASE_DRAW_R;
+// §R4 populations replenish: remember the starting census, and slowly top each species back up toward it after kills.
+let creatureCensus = {}, _replenishT = 25;
+function recordCensus() { creatureCensus = {}; for (const e of life) if (e.kind === "creature" && !FISH[e.t]) creatureCensus[e.t] = (creatureCensus[e.t]||0) + 1; }
+function queueRespawn() {}   // kept for call-site clarity; the census top-up handles it
+function respawnOne(t) {
+  const reg = CREATURES[t]; if (!reg) return false;
+  // find a spot in a plausible band, away from the player
+  for (let k = 0; k < 120; k++) {
+    const a = rng()*6.283, r = HALF*(0.2 + rng()*0.72), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    if (Math.hypot(x-player.x, z-player.z) < 25) continue;
+    const g = heightAt(x, z), band = waterLevel - g;
+    const ok = (t === "crab" || t === "piper" || t === "hopper") ? (band < 0.2 && band > -3.2) :
+               (t === "gull" || t === "heron" || t === "seaduck" || t === "seal") ? (band < 1.5 && band > -8) :
+               (band > -0.5 && band < 4);                    // pool / shallow life wants water
+    if (!ok) continue;
+    spawnCreature(t, x, z, { hx: x, hz: z, hr: 6, timer: rng()*2 }); return true;
+  }
+  return false;
+}
+function updateReplenish(dt) {
+  _replenishT -= dt; if (_replenishT > 0) return; _replenishT = 18 + rng()*18;
+  const now = {}; for (const e of life) if (e.kind === "creature" && !FISH[e.t] && e.dying === undefined) now[e.t] = (now[e.t]||0) + 1;
+  for (const t in creatureCensus) if ((now[t]||0) < creatureCensus[t]) { respawnOne(t); break; }   // one per tick, gradual
+}
 function updateLife(dt, tSec) {
   const px = cam.pos[0], pz = cam.pos[2];
   for (let i = life.length - 1; i >= 0; i--) {
@@ -4976,6 +5054,12 @@ function updateLife(dt, tSec) {
     const d = Math.sqrt(d2);
     e.phase += dt;
     if (e.kind === "find") continue;
+    if (e.hurtT > 0) e.hurtT = Math.max(0, e.hurtT - dt);
+    if (e.dying !== undefined) {                         // §R4 killed → topples, lingers, fades, then drops & is removed
+      e.dying += dt;
+      if (e.dying > 2.3) { const drop = CREATURE_DROP[e.t]; if (drop) spawnFind(drop, e.x, e.z); queueRespawn(e.t); life.splice(i, 1); }
+      continue;
+    }
     behave(e, dt, d, dx, dz);
     if (e.dead) life.splice(i, 1);                       // §13.3 dried out — removed, remains already dropped
   }
@@ -5199,10 +5283,13 @@ function drawLife(view) {
         if (e.t === "star" || e.t === "anemone" || e.t === "urchin" || e.t === "snail" || e.t === "octopus") y += 0.02;
         else if (e.t === "shrimp") y += 0.06;
       } else { y = g + 0.05; lean = 0.2; }
+      // §R4 death throes: topple onto its side, linger, then shrink away
+      if (e.dying !== undefined) { lean = Math.min(1.45, e.dying*5); ld = e.yaw; if (e.dying > 1.4) sc *= Math.max(0, 1 - (e.dying-1.4)/0.9); }
       const o = n*10;
       lifeScratch[o]=e.x; lifeScratch[o+1]=y; lifeScratch[o+2]=e.z;
       lifeScratch[o+3]=sc; lifeScratch[o+4]=e.yaw; lifeScratch[o+5]=lean; lifeScratch[o+6]=ld;
       lifeScratch[o+7]=e.tint[0]; lifeScratch[o+8]=e.tint[1]; lifeScratch[o+9]=e.tint[2];
+      if (e.hurtT > 0) { const h = e.hurtT/0.32; lifeScratch[o+7]=e.tint[0]*(1-h)+1.0*h; lifeScratch[o+8]=e.tint[1]*(1-h)+0.3*h; lifeScratch[o+9]=e.tint[2]*(1-h)+0.3*h; }   // §R4 red hurt flash
       if (showAlert && FISH[e.t]) { const al = e.alert || 0; lifeScratch[o+7]=0.3+al*0.7; lifeScratch[o+8]=0.9-al*0.7; lifeScratch[o+9]=0.3; }   // §14C green→red by alertness
       n++;
     }
@@ -5236,7 +5323,7 @@ ITEMS.bucket = { id: "bucket", name: "Bucket", category: "tool", rarity: "tool",
                  desc: "A tin pail. Fill it at the water, scoop up small creatures, and pour it into a pond.", model: () => bucketItemMesh(), tint: [1,1,1] };
 // §14C the fishing spear — a weapon, not part of the Tool Kit. Click to jab, hold to throw.
 ITEMS.spear = { id: "spear", name: "Fishing Spear", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
-                desc: "A sharpened wooden stake. Click to jab at a fish; hold and release to throw it. Only good against fish.", model: () => spearMesh(), tint: [1,1,1] };
+                desc: "A sharpened wooden stake. Click to jab, hold and release to throw. Spears fish, and will wound any creature.", model: () => spearMesh(), tint: [1,1,1] };
 ITEMS.rawfish = { id: "rawfish", name: "Raw Fish", category: "find", rarity: "common", stackable: true, maxStack: 99,
                   desc: "A fresh-speared fish. Good food, and better cooked at a campfire.", model: () => fishMesh([0.7,0.72,0.66]), tint: [1,1,1] };
 ITEMS.lantern = { id: "lantern", name: "Lantern", category: "tool", rarity: "tool", stackable: false, maxStack: 1,   // §18
@@ -5320,6 +5407,7 @@ digItem("sealettuce", "Sea Lettuce", "consumable", "common", "A ribbon of bright
 EDIBLE.sealettuce = 0.1;
 EDIBLE.cassava = 0.22; EDIBLE.banana = 0.18; EDIBLE.pineapple = 0.2; EDIBLE.taro = 0.22;
 COOKABLE.cassava = 1; COOKABLE.taro = 1;   // the roots are better roasted
+COOKABLE.crabmeat = 1;                      // §R4 crab meat cooks up better too
 const CROP_SEED = { seed_cassava: "cassava", seed_banana: "banana", seed_pineapple: "pineapple", seed_taro: "taro" };
 const CROP_FOOD_SEED = { cassava: "seed_cassava", banana: "seed_banana", pineapple: "seed_pineapple", taro: "seed_taro" };
 
@@ -6372,7 +6460,7 @@ function updateStamina(dt) {
   // §13.1 sprinting drains fast, and much faster up any incline
   if (player.sprinting) spendStamina(SPRINT_DRAIN * dt * (1 + Math.max(0, player.incline || 0) * 4) * (tier === "hungry" ? 2 : 1));
   if (player.scramble > 0.3) spendStamina(SCRAMBLE_DRAIN * dt * player.scramble);
-  const regen = (resting ? REGEN_REST : (moving ? REGEN_ACTIVE : REGEN_IDLE)) * (tier === "full" ? 1.15 : 1);   // full = a regen bonus
+  const regen = (resting ? REGEN_REST : (moving ? REGEN_ACTIVE : REGEN_IDLE)) * (tier === "full" ? 1.15 : 1) * staminaBoostMult();   // §R4 food boost
   const cap = maxStamina();
   stamina = Math.min(cap, stamina + regen * dt);
   if (stamina > cap) stamina = cap;
@@ -9443,6 +9531,7 @@ seedBerryBushes();
 seedWildCrops();
 populateLife();
 seedSeaweedBeds();   // §17.2 after life[], so bed-dwelling critters aren't wiped
+recordCensus();      // §R4 remember starting populations for replenishment
 seedForagePatches(); // §17.3 worm soil / buried clusters the gulls gather over
 seedFlotsam();       // §5 a little floating debris already out on the water
 // §17.5 TEST: drop one goblin trader near the player's start spot to play with
@@ -9548,6 +9637,7 @@ function frame(now) {
   updateTools(dt, gdtTotal);
   updateGoats(dt);
   updateGulls(dt);
+  updateReplenish(dt); // §R4 populations recover over time
   updateFlotsam(dt);   // §5 floating debris drifts & beaches itself
   updateBarnacles();   // §5 barnacles regrow over time
   updateChests(dt);
@@ -9888,7 +9978,7 @@ function frame(now) {
   if (staminaFlash > 0) staminaFlash = Math.max(0, staminaFlash - dt * 2.4);
   if (mode === "walk" && (stamina < 0.995 || staminaFlash > 0)) {
     const deg = Math.max(0, stamina) * 360;
-    let col = stamina < 0.25 ? "#d9694e" : resting ? "#8fd0a0" : "#79bcc6";
+    let col = stamina < 0.25 ? "#d9694e" : staminaBoostActive() ? "#e3b36a" : resting ? "#8fd0a0" : "#79bcc6";   // §R4 warm tint while a food boost is active
     if (staminaFlash > 0) col = "#ff8a6b";
     staminaEl.style.display = "block";
     staminaEl.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.1) ${deg}deg 360deg)`;
