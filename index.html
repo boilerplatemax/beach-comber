@@ -216,6 +216,8 @@
   .jtab .jtc { opacity: .7; font-weight: 500; margin-left: 5px; font-size: 11px; }
   .jtab.on { opacity: 1; background: var(--facet); color: #ffe6b0; box-shadow: inset 0 0 0 1px rgba(255,220,150,.5); }
   .jtab:hover { opacity: 1; }
+  #journal.setflash #journalbox { animation: setflash 1s ease-out; }
+  @keyframes setflash { 0% { box-shadow: 0 0 0 0 rgba(255,228,150,0); } 25% { box-shadow: 0 0 40px 8px rgba(255,228,150,.65); } 100% { box-shadow: 0 0 0 0 rgba(255,228,150,0); } }
   .jbody { overflow-y: auto; flex: 1; padding: 2px; }
   .jgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 10px; }
   .jcard {
@@ -7449,6 +7451,7 @@ function journalCount(tab) {
   if (tab === "finds") { let n = 0; for (const k in FINDS) if (discovered.has("f_" + k)) n++; return [n, Object.keys(FINDS).length]; }
   if (tab === "angling") { let n = 0; for (const k in FISH_SPECIES) if (rodRecord[k]) n++; return [n, Object.keys(FISH_SPECIES).length]; }
   if (tab === "cookbook") return [cookbook.size, DISHES.length];
+  if (tab === "collections") { let n = 0; for (const set of COLLECTION_SETS) { const [a,b] = setProgress(set); if (b>0 && a>=b) n++; } return [n, COLLECTION_SETS.length]; }
   const opened = chests.filter(c => c.opened).length; return [opened, chests.length];
 }
 function journalGrid(tab) {
@@ -7473,11 +7476,20 @@ function journalGrid(tab) {
     if (!got) return `<div class="jcard unk"><img src="${(it&&it.icon)||""}"><div class="jname">??? </div></div>`;
     return `<div class="jcard" data-jk="d:${id}"><img src="${(it&&it.icon)||""}"><div class="jname">${name}</div><div class="jqty">cooked ×${n}</div></div>`;
   }).join("");
+  if (tab === "collections") return COLLECTION_SETS.map(set => {
+    const [n,t] = setProgress(set), done = n >= t;
+    const cells = set.members.map(mem => { const got = memberGot(mem), ic = memberIcon(mem);
+      return `<div class="jcard${got?"":" unk"}" title="${memberLabel(mem)}"><img src="${ic}"><div class="jname">${got?memberLabel(mem):"???"}</div></div>`; }).join("");
+    const head = done ? `<span style="color:#9fe6a0;font-weight:700">✦ COMPLETE</span>` : `<span style="opacity:.7">reward: ${REWARD_LABEL[set.reward]||"a keepsake"}</span>`;
+    return `<div style="grid-column:1/-1;margin:2px 0 10px"><div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 2px 7px;border-bottom:1px solid rgba(255,220,150,.18);padding-bottom:5px">
+      <b style="font-size:15px;color:#ffe6b0">${set.name}</b> <span style="font-size:12px">${n}/${t} &nbsp; ${head}</span></div>
+      <div class="jgrid" style="margin:0">${cells}</div></div>`;
+  }).join("");
   return treasureCards();
 }
 function renderJournal() {
   const j = document.getElementById("journal");
-  const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["cookbook","Cookbook"],["treasure","Treasure"]];
+  const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["collections","Collections"],["cookbook","Cookbook"],["treasure","Treasure"]];
   const tabHtml = tabs.map(([id,lbl]) => { const [n,t] = journalCount(id);
     return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
   const cleanupLine = `<div class="jstat">🌊 Beach cleanup — <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared</div>`;
@@ -10435,7 +10447,7 @@ function initCottage() {
   }
   if (!best) { const y = surfaceAt(sp.x, sp.z).h; best = { x: sp.x, z: sp.z, y, yaw: sp.yaw }; }
   cottage = { x: best.x, z: best.z, yaw: best.yaw, floorY: best.y - 0.02,
-    doorSwing: 0, cosy: 0, hearthLit: false, disp: {}, trophies: [], lastCatch: null,
+    doorSwing: 0, cosy: 0, hearthLit: false, disp: {}, trophies: [], lastCatch: null, rewards: [],
     aqua: { creatures: [], decor: [], freshAt: 0 } };
   cottage.bodyDyn = makeDynamic(cottageBodyMesh(), 1);
   cottage.roofDyn = makeDynamic(cottageRoofMesh(), 1);
@@ -10462,6 +10474,7 @@ function updateCottage(dt) {
   if (c.doorSwing < 0.001) c.doorSwing = 0;
   if ((c.doorSwing > 0.5) !== before && typeof SND !== "undefined") SND.play("creak", { position:[d[0], c.floorY+1, d[1]], volume:0.45 });
   updateAquarium(dt);
+  c.setT = (c.setT || 0) + dt; if (c.setT > 1.5) { c.setT = 0; if (typeof checkSets === "function") checkSets(); }   // §19F watch for newly-completed collection sets
 }
 function drawCottage(view) {
   if (!cottage) return; const c = cottage;
@@ -10520,7 +10533,7 @@ function trySleepCottage() {
       : "The cottage is your respawn point. A rest here restores your stamina.");
   }
 }
-function saveCottage() { if (!cottage) return; try { localStorage.setItem("bcc_"+SEED_STR, JSON.stringify({ cosy: cottage.cosy, disp: cottage.disp, trophies: cottage.trophies, lastCatch: cottage.lastCatch, aqua: cottage.aqua, flog: findLog })); } catch(e){} }
+function saveCottage() { if (!cottage) return; try { localStorage.setItem("bcc_"+SEED_STR, JSON.stringify({ cosy: cottage.cosy, disp: cottage.disp, trophies: cottage.trophies, lastCatch: cottage.lastCatch, aqua: cottage.aqua, rewards: cottage.rewards, flog: findLog })); } catch(e){} }
 function loadCottage() { if (!cottage) return; try { const o = JSON.parse(localStorage.getItem("bcc_"+SEED_STR)||"null"); if (!o) return;
   if (typeof o.cosy === "number") cottage.cosy = o.cosy;
   if (o.disp && typeof o.disp === "object") cottage.disp = o.disp;
@@ -10528,6 +10541,7 @@ function loadCottage() { if (!cottage) return; try { const o = JSON.parse(localS
   if (o.lastCatch) cottage.lastCatch = o.lastCatch;
   if (o.aqua && typeof o.aqua === "object") { cottage.aqua = Object.assign({ creatures: [], decor: [], freshAt: 0 }, o.aqua);
     if (!Array.isArray(cottage.aqua.creatures)) cottage.aqua.creatures = []; if (!Array.isArray(cottage.aqua.decor)) cottage.aqua.decor = []; }
+  if (Array.isArray(o.rewards)) cottage.rewards = o.rewards;
   if (o.flog && typeof o.flog === "object") Object.assign(findLog, o.flog);
 } catch(e){} }
 
@@ -10754,6 +10768,86 @@ function useAquarium() {
   }
   if (AQUA_DECOR.has(held) && Inv.has(held)) { addAquaDecor(held); Inv.remove(held, 1); if (onDig) onDig("pat"); showCard("Decorated", `Added ${ITEMS[held]?ITEMS[held].name:held} to the tank.`); saveCottage(); return; }
   showCard("Aquarium", `${aq.creatures.length} creature${aq.creatures.length!==1?"s":""} living here.` + (aquaStale() ? " The water's gone murky — pour in a bucket of seawater." : " Water's fresh.") + " Pour bucket creatures in, or decorate with rocks and sea plants.");
+}
+
+/* §19F COLLECTION SETS — group finds/creatures/fish into sets; completing one
+   chimes, sparkles, and drops a decoration into the cottage (which gets cosier). */
+const _mf = (...ids) => ids.filter(id => FINDS[id]).map(id => ({ kind: "find", id }));
+const _mc = (...ids) => ids.filter(id => CREATURES[id]).map(id => ({ kind: "creature", id }));
+const _mfish = () => Object.keys(FISH_SPECIES).map(id => ({ kind: "fish", id }));
+const COLLECTION_SETS = [
+  { id:"glass",    name:"Sea Glass Rainbow",  reward:"floats",      members:_mf("seaglass","agate","glassfloat","float","nautilus","moonsnail") },
+  { id:"shells",   name:"Shells of the Shore", reward:"net",        members:_mf("shell","cockle","mussel","oyster","limpet","sanddollar","clam") },
+  { id:"pool",     name:"Tide Pool Residents", reward:"rug",        members:_mc("crab","anemone","star","urchin","hermit","snail","shrimp","hopper") },
+  { id:"night",    name:"Night Shift",         reward:"chimes",     members:_mc("octopus","jelly","hermit","shrimp") },
+  { id:"angler",   name:"Angler",              reward:"anglerboard",members:_mfish() },
+  { id:"treasure", name:"Treasure Hunter",     reward:"shipbottle", members:_mf("jewelry","porcelain","compass","coin","bell","tin","fossil") },
+  { id:"oddities", name:"Oddities",            reward:"curtains",   members:_mf("bone","seabean","egg","cuttle","feather","glassfloat") },
+];
+const REWARD_LABEL = { floats:"hanging glass floats", net:"a decorative net", rug:"a woven rug", chimes:"wind chimes", anglerboard:"a mounted oar & floats", shipbottle:"a ship in a bottle", curtains:"window curtains" };
+function memberGot(m) { return m.kind === "find" ? discovered.has("f_"+m.id) : m.kind === "creature" ? discovered.has(m.id) : !!rodRecord[m.id]; }
+function memberIcon(m) { return m.kind === "find" ? ((ITEMS[m.id]&&ITEMS[m.id].icon)||(FINDS[m.id]&&FINDS[m.id].icon)||"")
+  : m.kind === "creature" ? ((CREATURES[m.id]&&CREATURES[m.id].icon)||"") : ((FISH_SPECIES[m.id]&&ITEMS[FISH_SPECIES[m.id].item]&&ITEMS[FISH_SPECIES[m.id].item].icon)||""); }
+function memberLabel(m) { return m.kind === "find" ? ((ITEMS[m.id]&&ITEMS[m.id].name)||m.id) : m.kind === "creature" ? CREATURES[m.id].label : FISH_SPECIES[m.id].label; }
+function setProgress(set) { let n = 0; for (const m of set.members) if (memberGot(m)) n++; return [n, set.members.length]; }
+function updateCosy() {
+  if (!cottage) return; const rewards = (cottage.rewards||[]).length, disp = Object.keys(cottage.disp||{}).length,
+    troph = (cottage.trophies||[]).length, aq = (cottage.aqua && cottage.aqua.creatures.length) ? 1 : 0;
+  cottage.cosy = clamp(0.16*rewards + 0.02*disp + 0.03*troph + 0.1*aq, 0, 1);
+}
+function grantReward(set) { if (set.id === "angler") Inv.add("worm", 20); }   // decorations appear via cottage.rewards; angler also tops up bait
+function celebrateSet(set) {
+  if (typeof SND !== "undefined") { SND.play("discover"); setTimeout(() => { try { SND.play("discover"); } catch(e){} }, 170); }
+  showCard("Collection complete!  ✦ " + set.name, "Reward: " + (REWARD_LABEL[set.reward]||"a keepsake") + " has appeared in your cottage.");
+  const w = cotLocalToWorld(0, 0.3); if (typeof sparkle === "function") sparkle(w[0], cottage.floorY+1.4, w[1], [1,0.9,0.5], 26);
+  const j = document.getElementById("journal"); if (j && j.style.display === "block") { j.classList.add("setflash"); setTimeout(() => j.classList.remove("setflash"), 1000); if (journalTab === "collections") renderJournal(); }
+}
+function checkSets() {
+  if (!cottage) return; if (!cottage.rewards) cottage.rewards = [];
+  let changed = false;
+  for (const set of COLLECTION_SETS) { const [n,t] = setProgress(set);
+    if (t > 0 && n >= t && !cottage.rewards.includes(set.reward)) { cottage.rewards.push(set.reward); grantReward(set); celebrateSet(set); changed = true; } }
+  updateCosy();
+  if (changed) saveCottage();
+}
+// ---- reward decorations + cobwebs ----
+function rugMesh() { const m = Mesh(), c1 = [0.62,0.3,0.28], c2 = [0.78,0.62,0.42];
+  mBox(m,0,0,0,0.95,0.012,0.68,c1); mBox(m,0,0.014,0,0.82,0.008,0.56,c2); mBox(m,0,0.018,0,0.52,0.006,0.34,c1); return m; }
+function shipBottleMesh() { const m = Mesh(); mergeMesh(m, bottleMesh()); mBox(m,0,0.4,0,0.012,0.14,0.012,[0.5,0.4,0.3]); mTri(m,[0,0.52,0],[0.1,0.4,0],[0,0.3,0],[0.9,0.88,0.82]); return m; }
+function curtainMesh() { const m = Mesh(), cl = [0.72,0.5,0.46], rod = [0.4,0.32,0.26];
+  mBox(m,0,0.44,0,0.62,0.03,0.04,rod); mBox(m,-0.5,0,0,0.08,0.44,0.03,cl); mBox(m,0.5,0,0,0.08,0.44,0.03,cl); return m; }
+function floatsStrMesh() { const m = Mesh(); for (let i=0;i<5;i++){ const x=(i-2)*0.19; mergeAt(m, glassFloatMesh(), x, -Math.abs(x)*0.12, 0); } return m; }
+function netDecorMesh() { const m = Mesh(), c = [0.56,0.5,0.4]; for (let i=0;i<6;i++) mBox(m,(i-2.5)*0.15,0,0,0.008,0.42,0.008,c); for (let j=0;j<4;j++) mBox(m,0,(j-1.5)*0.2,0,0.42,0.008,0.008,c); return m; }
+function chimesMesh() { const m = Mesh(), met = [0.72,0.74,0.78]; mBox(m,0,0.42,0,0.2,0.02,0.05,[0.4,0.3,0.24]);
+  for (let i=0;i<4;i++){ const x=(i-1.5)*0.09; mBox(m,x,0.16,0,0.016,0.26,0.016,met); } mBox(m,0,0.02,0,0.08,0.03,0.02,[0.6,0.45,0.3]); return m; }
+function anglerBoardMesh() { const m = Mesh(); mergeMesh(m, trophyBoardMesh()); const oar=[0.55,0.42,0.3]; mBox(m,0,0,0.05,0.045,0.5,0.045,oar); mBox(m,0,-0.32,0.05,0.1,0.14,0.03,oar); return m; }
+function cobwebMesh() { const m = Mesh(), w = [0.82,0.82,0.85];
+  for (let k=0;k<3;k++){ const a0=k*0.5, a1=(k+1)*0.5; mTri(m,[0,0,0],[-Math.cos(a0)*0.5,-Math.sin(a0)*0.5,0],[-Math.cos(a1)*0.5,-Math.sin(a1)*0.5,0],w); }
+  return m; }
+const decorDyn = {};
+function drawDecorPiece(id, meshFn, lx, ly, lz, scale, faceYaw, tint) {
+  if (!decorDyn[id]) decorDyn[id] = makeDynamic(meshFn(), 4);
+  const w = cotLocalToWorld(lx, lz), a = cottageScratch;
+  a[0]=w[0];a[1]=cottage.floorY+ly;a[2]=w[1];a[3]=scale;a[4]=cottage.yaw+(faceYaw||0);a[5]=0;a[6]=0;a[7]=tint[0];a[8]=tint[1];a[9]=tint[2];
+  decorDyn[id].draw(a, 1);
+}
+function drawCottageDecor(view) {
+  if (!cottage) return; const r = cottage.rewards || []; propUniforms(view); const wt = [1,1,1];
+  if (r.includes("rug")) drawDecorPiece("rug", rugMesh, 0, 0.03, 0.5, 1, 0, wt);
+  if (r.includes("shipbottle")) drawDecorPiece("shipbottle", shipBottleMesh, C_HEARTH.x+0.55, 1.52, C_HEARTH.z+0.08, 0.45, 0, wt);
+  if (r.includes("curtains")) drawDecorPiece("curtains", curtainMesh, 0, C_WY+0.42, C_ZB+0.1, 1, 0, wt);
+  if (r.includes("floats")) drawDecorPiece("floats", floatsStrMesh, C_XL+0.35, 2.0, 0.81, 0.85, 0, wt);
+  if (r.includes("net")) drawDecorPiece("net", netDecorMesh, 1.7, 1.35, C_ZF-0.11, 1, Math.PI, wt);
+  if (r.includes("chimes")) drawDecorPiece("chimes", chimesMesh, C_DW+0.5, 2.0, C_ZF-0.16, 1, 0, wt);
+  if (r.includes("anglerboard")) drawDecorPiece("anglerboard", anglerBoardMesh, C_XL+0.13, 1.25, 0.0, 1, Math.PI/2, wt);
+  // dust & cobwebs clear as the cottage gets cosier
+  if (cottage.cosy < 0.45) { if (!decorDyn.web) decorDyn.web = makeDynamic(cobwebMesh(), 4);
+    const a = dispScratch; let n = 0;
+    const corners = [[C_IX-0.15, C_IZ-0.15, 0], [-(C_IX-0.15), C_IZ-0.15, Math.PI/2], [C_IX-0.15, -(C_IZ-0.15), -Math.PI/2], [-(C_IX-0.15), -(C_IZ-0.15), Math.PI]];
+    for (const [lx,lz,fy] of corners) { const w = cotLocalToWorld(lx, lz), o = n*10;
+      a[o]=w[0];a[o+1]=cottage.floorY+C_H-0.12;a[o+2]=w[1];a[o+3]=0.9;a[o+4]=cottage.yaw+fy;a[o+5]=0;a[o+6]=0;a[o+7]=0.8;a[o+8]=0.8;a[o+9]=0.82; n++; }
+    decorDyn.web.draw(a, n);
+  }
 }
 
 /* ---- save / load planted trees & stumps (per seed) ---- */
@@ -11816,6 +11910,7 @@ seedChests();
 loadChests();
 loadStorage();
 initCottageFixtures();   // §19B hearth campfire + sea chest (after loadWorld/loadStorage rebuild their arrays)
+if (typeof updateCosy === "function") updateCosy();   // §19G seed cosiness from restored displays/trophies/aquarium/rewards (no celebrate on load)
 // §Cooking guaranteed first cook-pot: once per seed, lay a lit, pot-topped campfire near spawn
 try {
   if (localStorage.getItem("bc_firstfire_" + SEED_STR) !== "1") {
@@ -12166,6 +12261,7 @@ function frame(now) {
   drawCottageDisplays(view);   // §19C placed finds on shelves / cabinet / windowsill
   drawCottageTrophies(view);   // §19D mounted fish trophies
   drawCottageAquarium(view);   // §19E the aquarium tank, residents & decor
+  drawCottageDecor(view);      // §19F/§19G reward decorations + cobwebs that clear as it gets cosy
   drawSalt(view);
   drawLife(view);
   drawGulls(view);
