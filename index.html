@@ -5182,7 +5182,9 @@ function drawLife(view) {
           const overW = waterDepthAt(e.x, e.z) > 0.4, lowAlt = (e.alt || 0) < 1.5;
           const baseY = (overW && lowAlt) ? waterSurfaceAt(e.x, e.z) : g;        // §17.6 float on the surface over water, don't sink to the seabed
           y = baseY + (e.alt || 0) + ((overW && lowAlt) ? 0.1 + Math.sin(e.phase*2)*0.05 : 0.3);
-          const amp = (e.gstate === "soar" || e.gstate === "approach") ? 0.16 : (overW && lowAlt ? 0.12 : 0.42);  // bob gently when afloat
+          // §R4 wings folded (no flutter) while settled on the ground/water/perch; a half-open flap during a ground hop; full beats aloft
+          const settled = (e.gstate === "forage" || e.gstate === "float" || e.gstate === "perch");
+          const amp = settled ? 0 : (e.gstate === "hopflee") ? 0.5 : (e.gstate === "soar" || e.gstate === "approach") ? 0.16 : 0.42;
           // §3 combine the wing-beat flutter + bank (roll about heading) with pitch (nose up/down about the wing line) into one small tilt
           const head = (e.yaw || 0) - 1.57;
           const roll = Math.sin(e.flap || 0) * amp + (e.bank || 0);
@@ -8725,6 +8727,19 @@ function steerGull(e, tx, tz, spd, dt) {
   e.bank = (e.bank || 0) + (bankTarget - (e.bank || 0)) * Math.min(1, dt * 5);
   e.x += Math.cos(nh)*dt*spd; e.z += Math.sin(nh)*dt*spd; e.yaw = nh + 1.57;
 }
+// §R4 a perch near the gull — a conifer/broadleaf top, a boulder, driftwood or a fence post — not already taken
+function pickPerch(e) {
+  const cands = [];
+  for (const o of treeObjs) if (!o.gone && !o.fallen && Math.hypot(o.x-e.x, o.z-e.z) < 60) cands.push({ x: o.x, z: o.z, y: surfaceAt(o.x, o.z).h + (o.scale||1)*(o.species === "palm" ? 0.62 : 0.56) });
+  for (const o of rockObjs) if (!o.gone && Math.hypot(o.x-e.x, o.z-e.z) < 50) cands.push({ x: o.x, z: o.z, y: surfaceAt(o.x, o.z).h + (o.sc||1)*0.5 });
+  for (const o of driftObjs) if (!o.gone && Math.hypot(o.x-e.x, o.z-e.z) < 45) cands.push({ x: o.x, z: o.z, y: surfaceAt(o.x, o.z).h + 0.3 });
+  for (const c of colliders) if (c.kind === "fence" && c.r > 0 && Math.hypot(c.x-e.x, c.z-e.z) < 45) cands.push({ x: c.x, z: c.z, y: surfaceAt(c.x, c.z).h + 0.9 });
+  if (!cands.length) return null;
+  const taken = life.filter(o => o.t === "gull" && o.perch);
+  const free = cands.filter(c => !taken.some(g => Math.hypot(g.perch.x-c.x, g.perch.z-c.z) < 1.2));
+  const pool = free.length ? free : cands;
+  return pool[(rng()*pool.length)|0];
+}
 function initGull(e) {
   if (e.gstate) return;
   e.gstate = "soar";
@@ -8760,9 +8775,10 @@ function updateGulls(dt) {
     e.flap = (e.flap || 0) + dt * (e.gstate === "soar" || e.gstate === "approach" ? 2.6 : 7);   // §13.7 glide more, flap less
     // a landed / approaching gull is wary of the player: it flees when you get close (closer still if you crouch),
     // and a sprint or a tool swing scatters it from further off.
-    if (e.gstate === "forage" || e.gstate === "approach") {
-      const fearR = (sprinting || swung) ? GULL.shooR : (crouching ? 2.4 : 6.0);
-      if (dp < fearR) { e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call"); }
+    if (e.gstate === "forage" || e.gstate === "approach" || e.gstate === "perch") {
+      const takeoffR = (sprinting || swung) ? GULL.shooR : 2.6;     // very close or fast → wings out and up
+      if (dp < takeoffR) { e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call"); }
+      else if (e.gstate === "forage" && dp < (crouching ? 3 : 6.5)) { e.gstate = "hopflee"; e.timer = 0.9 + rng()*0.7; e.hopT = 0; if (onGull) onGull("call"); }   // §R4 the classic hop-away first
     }
     switch (e.gstate) {
       case "soar": {
@@ -8778,6 +8794,8 @@ function updateGulls(dt) {
         }
         // §17.6 with nothing to chase, a gull over the water occasionally drops down to rest on the surface
         else if (!interest && !e.nest && waterDepthAt(e.x, e.z) > 0.6 && rng() < dt*0.03) { e.gstate = "float"; e.timer = 5 + rng()*9; }
+        // §R4 or, over land, it occasionally flies off to perch on a tree top / rock / post (each on its own schedule)
+        else if (!interest && !e.nest && dp > 12 && rng() < dt*0.035) { const pr = pickPerch(e); if (pr) { e.perch = pr; e.gstate = "toperch"; } }
         if (e.nest && e.nest.abandonedUntil <= clock.t && e.nest.eggs > 0 && dp < GULL.nestDefendR && e.nest.defendCd <= 0) {
           e.gstate = "alarm"; e.timer = 1.5 + rng(); e.nest.defendCd = GULL.divebombCd; if (onGull) onGull("screech");   // §R4 circle-and-call before any swoop
         }
@@ -8840,6 +8858,33 @@ function updateGulls(dt) {
         e.x += Math.cos(a)*dt*GULL.fleeSpd; e.z += Math.sin(a)*dt*GULL.fleeSpd; e.yaw = a + 1.57;
         e.alt += (18 - e.alt) * Math.min(1, dt*0.8);
         e.timer -= dt; if (e.timer < 0 && dp > 14) { if (e.carry) gullDrop(e); e.gstate = "soar"; e.home = { x: e.x, z: e.z }; }
+        break;
+      }
+      case "hopflee": {   // §R4 the classic ground hop-away: a few hops with wings half-open, then settle or take off
+        const hdx = e.x - player.x, hdz = e.z - player.z, r = Math.hypot(hdx, hdz) || 1;
+        e.hopT = (e.hopT || 0) - dt;
+        if (e.hopT < 0) { e.hopT = 0.34 + rng()*0.18; e.alt = 0.32; if (onGull) onGull("call"); }   // spring into a hop
+        e.alt = Math.max(0, (e.alt || 0) - dt*1.3);
+        e.x += hdx/r*dt*2.3; e.z += hdz/r*dt*2.3; e.yaw = Math.atan2(hdz, hdx) + 1.57;
+        e.timer -= dt;
+        if (dp < 2.6 || sprinting || swung) { e.gstate = "flee"; e.timer = 1.4 + rng(); }           // pressed → take off
+        else if (dp > 9 || e.timer < 0) { e.gstate = "soar"; }
+        break;
+      }
+      case "toperch": {   // §R4 fly up to a chosen perch and land
+        if (!e.perch) { e.gstate = "soar"; break; }
+        steerGull(e, e.perch.x, e.perch.z, GULL.approachSpd, dt);
+        e.alt += ((e.perch.y - heightAt(e.x, e.z)) - e.alt) * Math.min(1, dt*1.3);
+        if (Math.hypot(e.x - e.perch.x, e.z - e.perch.z) < 1.0) { e.x = e.perch.x; e.z = e.perch.z; e.gstate = "perch"; e.timer = 7 + rng()*16; }   // own schedule
+        break;
+      }
+      case "perch": {   // §R4 sit still (wings folded), look around, then take off on its own clock
+        if (!e.perch) { e.gstate = "soar"; break; }
+        e.alt = e.perch.y - heightAt(e.x, e.z);
+        if (rng() < dt*0.4) e.yaw += (rng()-0.5)*0.5;        // glance around
+        if (rng() < dt*0.15 && onGull) onGull("call");
+        e.timer -= dt;
+        if (e.timer < 0 || dp < 7) { e.perch = null; e.gstate = "soar"; e.home = { x: e.x, z: e.z }; }
         break;
       }
       case "alarm": {   // §R4 nest defense step 1: circle overhead and call; escalate to a swoop if the player stays
