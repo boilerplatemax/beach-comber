@@ -2969,6 +2969,7 @@ function landFish() {
   const sp = FISH_SPECIES[f.species];
   const prev = rodRecord[f.species] || 0; f.record = f.weight > prev;
   if (f.record) { rodRecord[f.species] = f.weight; saveRodRec(); }
+  if (typeof cottage !== "undefined" && cottage) { cottage.lastCatch = { species: f.species, weight: f.weight, record: f.record, day: Math.floor(tideDay)+1 }; saveCottage(); }   // §19D mountable as a wall trophy
   if (sp.creature) discovered.add(sp.creature);                // the rod-caught species also lights up its creature page
   if (typeof sparkle === "function") sparkle(rod.bob.x, rod.bob.surf + 0.2, rod.bob.z, [0.9,0.95,1], 12);
   startCatchCine();   // §fishpolish the epic arc/slow-mo/catch-card sequence (replaces the plain reveal)
@@ -7696,6 +7697,8 @@ function targetAlongRay(r, sticky) {
   if (cottage) { const bw = cotLocalToWorld(C_BED.x, C_BED.z); sphere(cottage, "cotbed", bw[0], bw[1], 0.75, 1.7); }   // §19B the cottage bed
   if (cottage) for (const s of COT_SLOTS) { const w = cotLocalToWorld(s.x, s.z), gy = surfaceAt(w[0], w[1]).h;         // §19C display slots
     sphere(s, "dispslot", w[0], w[1], (cottage.floorY + s.y) - gy, 0.16); }
+  if (cottage) for (const s of TROPHY_SLOTS) { const w = cotLocalToWorld(s.x, s.z), gy = surfaceAt(w[0], w[1]).h;      // §19D fish-trophy mounts
+    sphere(s, "cottrophy", w[0], w[1], (cottage.floorY + s.y) - gy, 0.3); }
   for (const L of placedLanterns) sphere(L, "lantern", L.x, L.z, 0.4, 0.6);   // §tools pick a set-down lantern back up
 
   // stickiness: keep the locked target unless another is clearly closer
@@ -7730,6 +7733,7 @@ function useToolOnTarget(t) {
     case "campfire": doFireAction(t.obj); return true;   // §Cooking one-press world interaction (no modal)
     case "cotbed": trySleepCottage(); return true;       // §19B sleep / set respawn at the cottage
     case "dispslot": toggleDisplaySlot(t.obj); return true;   // §19C place / take a displayed find
+    case "cottrophy": toggleTrophy(t.obj); return true;       // §19D mount / take down a fish trophy
     case "lantern": pickUpLantern(t.obj); return true;   // §tools pick a set-down lantern back up
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
     case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
@@ -10511,11 +10515,12 @@ function trySleepCottage() {
       : "The cottage is your respawn point. A rest here restores your stamina.");
   }
 }
-function saveCottage() { if (!cottage) return; try { localStorage.setItem("bcc_"+SEED_STR, JSON.stringify({ cosy: cottage.cosy, disp: cottage.disp, trophies: cottage.trophies, flog: findLog })); } catch(e){} }
+function saveCottage() { if (!cottage) return; try { localStorage.setItem("bcc_"+SEED_STR, JSON.stringify({ cosy: cottage.cosy, disp: cottage.disp, trophies: cottage.trophies, lastCatch: cottage.lastCatch, flog: findLog })); } catch(e){} }
 function loadCottage() { if (!cottage) return; try { const o = JSON.parse(localStorage.getItem("bcc_"+SEED_STR)||"null"); if (!o) return;
   if (typeof o.cosy === "number") cottage.cosy = o.cosy;
   if (o.disp && typeof o.disp === "object") cottage.disp = o.disp;
   if (Array.isArray(o.trophies)) cottage.trophies = o.trophies;
+  if (o.lastCatch) cottage.lastCatch = o.lastCatch;
   if (o.flog && typeof o.flog === "object") Object.assign(findLog, o.flog);
 } catch(e){} }
 
@@ -10588,6 +10593,68 @@ function drawCottageDisplays(view) {
       arr[o+7]=mi.tint[0]; arr[o+8]=mi.tint[1]; arr[o+9]=mi.tint[2]; n++; }
     if (n) mi.dyn.draw(arr, n);
   }
+}
+
+/* §19D FISH TROPHIES — mount your latest catch on a wall board with its weight;
+   a record catch gets a small brass plaque. Interact again to take it down.    */
+const TROPHY_SLOTS = [
+  { key:"t0", x: 1.55, y: 1.72, z: C_ZB+0.1, nx:0, nz:1, face:0 },                 // back wall, right of the window
+  { key:"t1", x: 2.15, y: 1.08, z: C_ZB+0.1, nx:0, nz:1, face:0 },                 // back wall, lower-right
+  { key:"t2", x: C_XR-0.12, y: 1.78, z: 0.7, nx:-1, nz:0, face:-Math.PI/2 },       // right wall
+  { key:"t3", x: C_XL+0.12, y: 1.78, z: -1.4, nx:1, nz:0, face:Math.PI/2 },        // left wall, above the bed
+];
+const TROPHY_SLOT_MAP = {}; for (const s of TROPHY_SLOTS) TROPHY_SLOT_MAP[s.key] = s;
+let trophyBoardDyn = null, brassDyn = null; const trophyFishCache = {};
+function trophyBoardMesh() { const m = Mesh();
+  mBox(m, 0, 0, 0, 0.56, 0.4, 0.04, CWC.plankDk);                                   // shield board
+  mBox(m, 0, 0.44, 0, 0.5, 0.05, 0.06, CWC.beam); mBox(m, 0, -0.44, 0, 0.5, 0.05, 0.06, CWC.beam);   // trims
+  return m; }
+function brassPlaqueMesh() { const m = Mesh(); mBox(m, 0, 0, 0, 0.26, 0.075, 0.03, [0.72,0.58,0.25]); mBox(m, 0, 0, 0.02, 0.22, 0.05, 0.02, [0.88,0.74,0.42]); return m; }
+function trophyFish(species) {
+  if (trophyFishCache[species] !== undefined) return trophyFishCache[species];
+  let mesh = null; try { mesh = catchSpeciesMesh(species); } catch(e) {}
+  if (!mesh) return (trophyFishCache[species] = null);
+  const bd = meshBounds(mesh), ext = Math.max(bd.b[0]-bd.a[0], bd.b[1]-bd.a[1], bd.b[2]-bd.a[2]) || 1;
+  const scale = 0.6/ext, cy = (bd.a[1]+bd.b[1])/2 * scale;
+  return (trophyFishCache[species] = { dyn: makeDynamic(mesh, TROPHY_SLOTS.length), scale, cy, tint: (typeof SPECIES_HUD_COL !== "undefined" && SPECIES_HUD_COL[species]) || [0.7,0.75,0.8] });
+}
+function fishLabel(sp) { return (FISH_SPECIES[sp] && FISH_SPECIES[sp].label) || sp; }
+function toggleTrophy(slot) {
+  const existing = cottage.trophies.find(t => t.slot === slot.key);
+  if (existing) { cottage.trophies = cottage.trophies.filter(t => t !== existing); if (onDig) onDig("pickup"); saveCottage(); return; }
+  const c = cottage.lastCatch;
+  if (!c) { showCard("Nothing to mount", "Reel in a fish on the rod, then mount it here as a trophy."); return; }
+  cottage.trophies.push({ slot: slot.key, species: c.species, weight: c.weight, record: !!c.record, day: c.day });
+  cottage.lastCatch = null;
+  const w = cotLocalToWorld(slot.x, slot.z);
+  if (typeof sparkle === "function") sparkle(w[0], cottage.floorY+slot.y, w[1], c.record ? [1,0.85,0.4] : [0.8,0.85,0.9], c.record ? 14 : 6);
+  if (typeof SND !== "undefined") SND.play(c.record ? "discover" : "pat");
+  showCard("Mounted!", `${fishLabel(c.species)} — ${c.weight.toFixed(2)} kg` + (c.record ? " — a record! A brass plaque is yours." : "."));
+  saveCottage(); if (typeof checkSets === "function") checkSets();
+}
+function trophyPrompt(slot) {
+  const t = cottage.trophies.find(x => x.slot === slot.key);
+  if (t) return `${fishLabel(t.species)} — ${t.weight.toFixed(2)} kg${t.record ? " (record!)" : ""}` + (IS_TOUCH ? " · tap to remove" : " · F to take down");
+  if (cottage.lastCatch) return (IS_TOUCH ? "tap" : "click/F") + ` to mount your ${fishLabel(cottage.lastCatch.species)}`;
+  return "Trophy mount — catch a fish, then mount it here";
+}
+function drawCottageTrophies(view) {
+  if (!cottage || !cottage.trophies.length) return;
+  if (!trophyBoardDyn) trophyBoardDyn = makeDynamic(trophyBoardMesh(), TROPHY_SLOTS.length);
+  if (!brassDyn) brassDyn = makeDynamic(brassPlaqueMesh(), TROPHY_SLOTS.length);
+  propUniforms(view); const a = dispScratch;
+  let nb = 0; for (const t of cottage.trophies) { const s = TROPHY_SLOT_MAP[t.slot]; if (!s) continue; const w = cotLocalToWorld(s.x, s.z), o = nb*10;
+    a[o]=w[0];a[o+1]=cottage.floorY+s.y;a[o+2]=w[1];a[o+3]=1;a[o+4]=cottage.yaw+s.face;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; nb++; }
+  if (nb) trophyBoardDyn.draw(a, nb);
+  let np = 0; for (const t of cottage.trophies) { if (!t.record) continue; const s = TROPHY_SLOT_MAP[t.slot]; if (!s) continue;
+    const w = cotLocalToWorld(s.x + s.nx*0.05, s.z + s.nz*0.05), o = np*10;
+    a[o]=w[0];a[o+1]=cottage.floorY+s.y-0.33;a[o+2]=w[1];a[o+3]=1;a[o+4]=cottage.yaw+s.face;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; np++; }
+  if (np) brassDyn.draw(a, np);
+  const bySp = {}; for (const t of cottage.trophies) (bySp[t.species] = bySp[t.species] || []).push(t);
+  for (const sp in bySp) { const fm = trophyFish(sp); if (!fm) continue; let n = 0;
+    for (const t of bySp[sp]) { const s = TROPHY_SLOT_MAP[t.slot]; if (!s) continue; const w = cotLocalToWorld(s.x + s.nx*0.16, s.z + s.nz*0.16), o = n*10;
+      a[o]=w[0];a[o+1]=cottage.floorY+s.y-fm.cy+0.03;a[o+2]=w[1];a[o+3]=fm.scale;a[o+4]=cottage.yaw+s.face;a[o+5]=0;a[o+6]=0;a[o+7]=fm.tint[0];a[o+8]=fm.tint[1];a[o+9]=fm.tint[2]; n++; }
+    if (n) fm.dyn.draw(a, n); }
 }
 
 /* ---- save / load planted trees & stumps (per seed) ---- */
@@ -11998,6 +12065,7 @@ function frame(now) {
   drawBuilds(view);        // §16B placed building pieces + the placement ghost
   drawCottage(view);       // §19 the home-base cottage (shell, door, roof, glowing windows)
   drawCottageDisplays(view);   // §19C placed finds on shelves / cabinet / windowsill
+  drawCottageTrophies(view);   // §19D mounted fish trophies
   drawSalt(view);
   drawLife(view);
   drawGulls(view);
@@ -12147,8 +12215,8 @@ function frame(now) {
         promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
         crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block"; }
     }
-    if (!buildMode && curTarget && curTarget.kind === "dispslot") {   // §19C display-slot tooltip overrides the generic prompt
-      promptEl.textContent = displaySlotPrompt(curTarget.obj);
+    if (!buildMode && curTarget && (curTarget.kind === "dispslot" || curTarget.kind === "cottrophy")) {   // §19C/§19D cottage tooltip overrides the generic prompt
+      promptEl.textContent = curTarget.kind === "dispslot" ? displaySlotPrompt(curTarget.obj) : trophyPrompt(curTarget.obj);
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
