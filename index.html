@@ -4392,9 +4392,8 @@ void main() {
   if (uWetBand == 1) {
     float wetb = 1.0 - smoothstep(uWaterLevel, uWetLevel + 1.2, vWorld.y);     // darker below the high-water mark
     col = mix(col, col * 0.58, clamp(wetb, 0.0, 1.0) * 0.8);
-    float band = (1.0 - smoothstep(uWetLevel - 0.2, uWetLevel + 1.0, vWorld.y)) * smoothstep(uWaterLevel - 0.6, uWaterLevel + 0.4, vWorld.y);
-    float sp = fract(sin(dot(floor(vWorld.xz * 7.0), vec2(12.99, 78.23))) * 43758.5);  // barnacle speckle in the splash zone
-    if (band > 0.3 && sp > 0.82) col = mix(col, vec3(0.82, 0.82, 0.78), 0.55);
+    // §gulls removed the procedural splash-zone speckle — it painted white SQUARES on wet rock that read as fake
+    // barnacles. Real barnacles are their own crust objects (drawBarnacles), which look nothing like this.
   }
   if (uLanternI > 0.001) {   // §18/§tools soft warm lantern pool on props (gentle falloff, no white spike)
     float ld = length(vWorld - uLanternPos);
@@ -5468,10 +5467,24 @@ function torchPostMesh() { const m = Mesh(); mCyl(m,0,1.0,0.06,0.05,6,[0.5,0.38,
 // §16.1 merge a sub-mesh translated by (x,y,z) — lets a mesh be built from clustered parts
 function mergeAt(m, n, x, y, z) { for (let i = 0; i < n.pos.length; i += 3) { m.pos.push(n.pos[i]+x, n.pos[i+1]+y, n.pos[i+2]+z); m.col.push(n.col[i], n.col[i+1], n.col[i+2]); } }
 // §16.1 new finds
-function nautilusMesh() { const m = Mesh(); const c=[0.95,0.92,0.86], s=[0.76,0.5,0.4];
-  mCyl(m,0,0.13,0.3,0.3,12,c); mergeMesh(m, discMesh(0.13,0.3,12,0.05,c)); mergeMesh(m, discMesh(0,0.3,12,-0.05,c));
-  for (let i=0;i<7;i++){ const a=i/7*6.283, r=0.07+i*0.03; mBox(m, Math.cos(a)*r, 0.065, Math.sin(a)*r, 0.015, 0.075, 0.05+i*0.008, s); }   // chambered spiral
-  mCyl(m,0,0.15,0.1,0.14,8,s); return m; }
+// §gulls a classic round, coiled (planispiral) nautilus shell — cream with rust stripes across the whorl, standing on its coil
+function nautilusMesh() { const m = Mesh();
+  const cream=[0.94,0.9,0.8], rust=[0.66,0.38,0.26], sides=6;
+  const turns = 2.6, steps = 46, r0 = 0.055, growth = 1.95;
+  const maxR = r0*Math.pow(growth, turns), yOff = maxR * 1.5;         // lift so the shell rests on the ground
+  let prev = null;
+  for (let i = 0; i <= steps; i++) {
+    const t = i/steps*turns, th = t*6.283;
+    const R = r0*Math.pow(growth, t), tube = R*0.52;                  // the whorl fattens as it uncoils
+    const radx = Math.cos(th), rady = Math.sin(th), cx = radx*R, cy = rady*R;
+    const ring = [];
+    for (let s = 0; s < sides; s++) { const a = s/sides*6.283, ca = Math.cos(a)*tube, sa = Math.sin(a)*tube;
+      ring.push([cx + radx*ca, cy + rady*ca + yOff, sa]); }           // cross-section in the (radial, z) plane
+    if (prev) { const col = (Math.floor(t*7) % 2 === 0) ? rust : cream;   // rust / cream stripe bands across the coil
+      for (let s = 0; s < sides; s++) { const s2 = (s+1)%sides; mQuad(m, prev[s], prev[s2], ring[s2], ring[s], col); } }
+    prev = ring;
+  }
+  return m; }
 function oysterMesh() { const m = Mesh(); const c=[0.62,0.62,0.57], c2=[0.74,0.72,0.66];
   mergeMesh(m, discMesh(0,0.27,7,0.11,c)); mergeMesh(m, discMesh(0.11,0.24,7,0.08,c2));
   for (let i=0;i<5;i++){ const a=i/5*6.283; mergeAt(m, (()=>{const d=Mesh(); mBox(d,0,0,0,0.05,0.035,0.05,c); return d;})(), Math.cos(a)*0.13, 0.08, Math.sin(a)*0.13); }
@@ -5711,26 +5724,22 @@ function berryMesh() { const m = Mesh(); const c = [0.62,0.16,0.3]; for (let i =
 // a low inland shrub; ripe=true studs it with berries
 // §13.7 three states: "ripe" (red clusters), "green" (small unripe berries), "bare" (just harvested — none)
 // §4 a rounded leafy mound (overlapping faceted leaf clusters + a few arching sprigs), studded with berry clusters when ripe
+// §gulls bigger, bushier berry bush — puffy cloud-like clusters of leaf domes, with berries spread throughout
 function berryBushMesh(state) { const m = Mesh();
-  const g=[0.3,0.44,0.24], g2=[0.37,0.52,0.28], g3=[0.26,0.4,0.22], twig=[0.4,0.32,0.22];
-  // a couple of woody stems at the base
-  for (let i=0;i<3;i++){ const a=i/3*6.283; mergeAt(m, cylM(0,0.3,0.02,0.015,twig), Math.cos(a)*0.05,0,Math.sin(a)*0.05); }
-  // foliage: a cluster of low domes that overlap into a single rounded shrub
-  const lobes=[[0,0.42,0,0.3],[0.22,0.34,0.05,0.22],[-0.2,0.33,-0.08,0.22],[0.06,0.33,-0.22,0.2],[-0.08,0.35,0.22,0.2],[0.18,0.3,-0.16,0.17]];
-  for (let i=0;i<lobes.length;i++){ const [lx,ly,lz,lr]=lobes[i]; const c=(i%3===0?g:i%3===1?g2:g3);
-    mergeAt(m, discMesh(0,lr,7,lr*0.9,c), lx,ly,lz); mergeAt(m, discMesh(0,lr,7,-lr*0.5,c), lx,ly-0.02,lz); }   // dome + a shallow underside so it reads as a puff
-  // a few leafy sprigs poking out of the top for a natural silhouette
-  for (let i=0;i<4;i++){ const a=i/4*6.283+0.5; bladeLeaf(m, Math.cos(a)*0.12, Math.sin(a)*0.12, a, 0.15, 0.03, 0.05, g2, g, 0.3); }
-  // §polish — a few tidy berry CLUSTERS around the dome (calmer than scattering dozens of single berries)
-  const spots = [[0.28,0.34,0.12],[-0.26,0.32,-0.1],[0.1,0.44,-0.27],[-0.14,0.34,0.27],[0.3,0.28,-0.16],[-0.28,0.3,0.14]];
-  if (state === "ripe") {
-    const berry=[0.66,0.16,0.28], berry2=[0.77,0.24,0.36];
-    for (let i=0;i<spots.length;i++){ const [bx,by,bz]=spots[i];
-      for (let k=0;k<3;k++){ const a=k/3*6.283+i; berryBit(m, bx+Math.cos(a)*0.05, by-(k===2?0.05:0), bz+Math.sin(a)*0.05, 0.05, k%2?berry:berry2); } }   // a small hanging cluster at each spot
-  } else if (state === "green") {
-    const gb=[0.5,0.6,0.34], gb2=[0.44,0.54,0.3];
-    for (let i=0;i<spots.length;i++){ const [bx,by,bz]=spots[i];
-      for (let k=0;k<3;k++){ const a=k/3*6.283+i; berryBit(m, bx+Math.cos(a)*0.04, by-(k===2?0.04:0), bz+Math.sin(a)*0.04, 0.032, k%2?gb:gb2); } }   // small green berries forming
+  const g=[0.3,0.46,0.25], g2=[0.38,0.55,0.3], g3=[0.25,0.4,0.22], g4=[0.34,0.5,0.27], twig=[0.4,0.32,0.22];
+  for (let i=0;i<4;i++){ const a=i/4*6.283; mergeAt(m, cylM(0,0.36,0.026,0.018,twig), Math.cos(a)*0.06,0,Math.sin(a)*0.06); }   // woody stems
+  // a big rounded shrub built from many overlapping domes of varied size — reads as puffy cloud-like foliage
+  const lobes=[[0,0.52,0,0.36],[0.3,0.44,0.08,0.27],[-0.28,0.42,-0.1,0.27],[0.09,0.42,-0.3,0.25],[-0.11,0.46,0.3,0.25],
+    [0.26,0.37,-0.22,0.21],[-0.26,0.35,0.22,0.21],[0.32,0.55,0.0,0.19],[-0.07,0.63,0.07,0.21],[0.15,0.32,0.28,0.18],[-0.22,0.55,-0.15,0.19]];
+  for (let i=0;i<lobes.length;i++){ const [lx,ly,lz,lr]=lobes[i]; const c=[g,g2,g3,g4][i%4];
+    mergeAt(m, discMesh(0,lr,8,lr*0.95,c), lx,ly,lz); mergeAt(m, discMesh(0,lr,8,-lr*0.45,c), lx,ly-0.02,lz); }   // dome + shallow underside = a puff
+  for (let i=0;i<6;i++){ const a=i/6*6.283+0.5; bladeLeaf(m, Math.cos(a)*0.2, Math.sin(a)*0.2, a, 0.18, 0.035, 0.06, g2, g, 0.34); }   // sprigs for a natural silhouette
+  // berries spread THROUGHOUT the canopy (a golden-angle scatter of small clusters, not just a few spots)
+  if (state === "ripe" || state === "green") {
+    const ripe = state === "ripe";
+    const b1 = ripe ? [0.66,0.16,0.28] : [0.5,0.6,0.34], b2 = ripe ? [0.78,0.26,0.38] : [0.44,0.54,0.3], sz = ripe ? 0.05 : 0.034;
+    for (let i=0;i<14;i++){ const a = i*2.399, rr = 0.2 + ((i*7)%10)/10*0.28, bx = Math.cos(a)*rr, by = 0.26 + ((i*5)%9)/9*0.34, bz = Math.sin(a)*rr;
+      for (let k=0;k<2+(i%2);k++){ const aa = k/3*6.283+i; berryBit(m, bx+Math.cos(aa)*0.05, by-(k===2?0.04:0), bz+Math.sin(aa)*0.05, sz, k%2?b1:b2); } }
   }
   return m; }
 function campfireMesh() { const m = Mesh(); const st = [0.5,0.48,0.46];
@@ -8716,7 +8725,7 @@ function seedBerryBushes() {
   berryBushes = [];
   for (let i = 0; i < 48; i++) { const a = rng()*6.283, r = HALF*(0.15 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
     const h = heightAt(x, z); if (h < 9 || h > 34 || surfaceAt(x, z).slope > 0.4 || bigPropBlocking(x, z, 1.5)) continue;
-    berryBushes.push({ x, z, ripe: true, regrowAt: 0, scale: 0.9 + rng()*0.5 });
+    berryBushes.push({ x, z, ripe: true, regrowAt: 0, scale: 1.15 + rng()*0.6 });   // §gulls bigger, bushier
   }
 }
 // §13.7 bushes ripen through a green stage: bare just after picking, then small green berries that redden.
