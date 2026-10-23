@@ -4731,8 +4731,8 @@ function buildProps() {
     if (d < 3.2 || d > 22 || h > SUBMERGE_LINE - 0.5 || !seabedOK(x, z) || nearPOI(x, z, 2)) return;
     const lush = lushAt(x + 7, z - 3); if (lush < 0.52) return;     // kelp clumps into forests, not an even spread
     if (rng() > 0.22 + (lush - 0.52) * 0.95) return;
-    const sc = Math.max(1.6, (TIDE_MID - 0.6 - h) / 2.0);           // crown sits just under the surface (never a tower)
-    pushInst(kelpF, x, h, z, sc, rng()*6.28, 0, 0, vary([0.9,0.96,0.85], 0.12));
+    const sc = Math.max(1.4, (TIDE_MID - 0.6 - h) / 2.0) * (0.78 + rng()*0.32);   // §gulls heights vary per plant; crown reaches toward (not always to) the surface
+    pushInst(kelpF, x, h, z, sc, rng()*6.28, 0, 0, vary([0.52,0.56,0.4], 0.12));   // §gulls olive-brown-green, not near-white (no more white tops)
   });
   // occasional old fence posts (collide)
   const fences = scatter(28, 1.0, 600, (x, z, inst) => {
@@ -5406,13 +5406,15 @@ function wavyRibbon(m, o) {
 // §14B bull kelp: a long wavy stipe, a float near the top, and blades trailing from the float.
 // Modelled ~2.0 tall; placement scales it so the crown sits just under the sea surface.
 function bullKelpMesh() { const m = Mesh();
-  const stalk0=[0.22,0.30,0.17], stalk1=[0.30,0.41,0.23], flo=[0.52,0.46,0.24], blade=[0.26,0.40,0.22];
-  wavyRibbon(m, { h: 1.9, w0: 0.05, w1: 0.035, seg: 10, dir: 0.3, amp: 0.22, freq: 1.6, phase: 0.4, twist: 0.9, c0: stalk0, c1: stalk1 });
-  mCyl(m, 1.82, 1.98, 0.045, 0.085, 7, flo); mergeMesh(m, discMesh(1.98, 0.085, 7, 0.05, flo));   // pneumatocyst float
-  for (let i=0;i<5;i++){ const a=i/5*6.283+0.4;                      // blades trailing from the float
-    wavyRibbon(m, { h: 0.3, w0: 0.11, w1: 0.03, seg: 6, dir: a, amp: 0.5, freq: 1.0, phase: i*1.1,
-      droop: 0.42, y0: 1.8, bx: Math.cos(a)*0.07, bz: Math.sin(a)*0.07, twist: 0.6,
-      c0: blade, c1: [blade[0]+0.07, blade[1]+0.09, blade[2]+0.05] }); }
+  const stalk0=[0.3,0.26,0.16], stalk1=[0.42,0.37,0.22], bulb=[0.5,0.44,0.24], bulb2=[0.42,0.37,0.2], blade=[0.34,0.42,0.22];
+  wavyRibbon(m, { h: 1.82, w0: 0.05, w1: 0.035, seg: 10, dir: 0.3, amp: 0.22, freq: 1.6, phase: 0.4, twist: 0.9, c0: stalk0, c1: stalk1 });
+  // §gulls a smooth olive-brown float bulb (a rounded pneumatocyst, not a white-tipped disc)
+  mCyl(m, 1.74, 1.9, 0.03, 0.12, 9, bulb); mCyl(m, 1.9, 2.08, 0.12, 0.02, 9, bulb2);
+  mergeMesh(m, discMesh(1.74, 0.03, 9, -0.02, bulb));
+  for (let i=0;i<6;i++){ const a=i/6*6.283+0.4;                      // long blades streaming from the float
+    wavyRibbon(m, { h: 0.7, w0: 0.12, w1: 0.03, seg: 8, dir: a, amp: 0.7, freq: 0.9, phase: i*1.1,
+      droop: 0.5, y0: 1.98, bx: Math.cos(a)*0.08, bz: Math.sin(a)*0.08, twist: 0.5,
+      c0: blade, c1: [blade[0]+0.06, blade[1]+0.08, blade[2]+0.05] }); }
   return m; }
 // §14B eelgrass: a tuft of wavy blades fanning from the base, each swaying with its own phase.
 function eelgrassMesh() { const m = Mesh();
@@ -5438,6 +5440,13 @@ function limpetMesh() { const m = Mesh(); mCyl(m,0,0.14,0.2,0.0,8,[0.7,0.64,0.5]
 function wormcastMesh() { const m = Mesh(); for (let i=0;i<5;i++){ const a=i*0.9; mCyl(m, 0.02*i, 0.06+0.02*i, 0.06-0.008*i, 0.055-0.008*i, 6, [0.4,0.33,0.24]); } return m; }
 function pickleweedMesh() { const m = Mesh(); const g=[0.42,0.56,0.33]; for (let i=0;i<4;i++){ const a=i/4*6.283, r=0.06; for(let s=0;s<3;s++) mCyl(m, 0.1+s*0.12, 0.2+s*0.12, 0.04, 0.035, 5, [g[0],g[1]-s*0.03,g[2]]); } return m; }
 function kelpMesh() { const m = Mesh(); mCyl(m,0,1.4,0.04,0.06,6,[0.32,0.26,0.14]); mCyl(m,1.4,1.7,0.12,0.06,7,[0.4,0.34,0.18]); for(let i=0;i<4;i++){const a=i/4*6.283; mBox(m, Math.cos(a)*0.3, 1.8+i*0.05, Math.sin(a)*0.3, 0.5, 0.03, 0.12, [0.34,0.3,0.16]); } return m; }
+// §gulls a tangle of loose bull kelp that drifts flat on the water surface (a float bulb + stipe + blades lying out)
+function looseKelpMesh() { const m = Mesh(); const bulb=[0.5,0.44,0.24], bulb2=[0.42,0.37,0.2], blade=[0.34,0.42,0.22], stipe=[0.34,0.29,0.18];
+  mCyl(m, 0.0, 0.12, 0.02, 0.1, 8, bulb); mCyl(m, 0.12, 0.24, 0.1, 0.02, 8, bulb2);   // float bulb peeking above the surface
+  mBox(m, -0.42, 0.03, 0.02, 0.42, 0.025, 0.045, stipe);                               // stipe lying flat
+  for (let i=0;i<6;i++){ const a=i/6*6.283; mBox(m, Math.cos(a)*0.26, 0.025, Math.sin(a)*0.26, 0.24, 0.015, 0.07, i%2?blade:[blade[0]+0.05,blade[1]+0.06,blade[2]+0.04]); }   // blades fanned out
+  return m; }
+let looseKelpDyn = null;
 function seabeanMesh() { const m = Mesh(); mBox(m,0,0.06,0,0.14,0.08,0.1,[0.4,0.26,0.16]); mBox(m,0,0.08,0,0.1,0.04,0.12,[0.3,0.2,0.12]); return m; }
 // §16 crafted goods
 function stakeMesh() { const m = Mesh(); mCyl(m,0,0.62,0.05,0.045,6,[0.52,0.4,0.26]); mCyl(m,0.6,0.86,0.045,0.0,6,[0.58,0.46,0.3]); return m; }
@@ -6008,6 +6017,7 @@ let lastLowCount = 0;
 const LITTER = ["plasticbottle", "drinkcan", "bottlecap", "plasticbag", "foamchunk", "netscrap", "strawbit"];   // §17.1
 function washUp(initial) {
   const ev = currentEvent;
+  if (ev === "kelp") addFlotsam(3 + (rng()*3|0), 0.95);   // §gulls a kelp storm sets loose bull kelp drifting on the water
   const baseN = initial ? 60 : 30, n = ev === "storm" ? baseN * 2 : baseN;
   for (let i = 0; i < n; i++) {
     const a = rng()*6.283, r = HALF*(0.25 + rng()*0.72), x = Math.sin(a)*r, z = -Math.cos(a)*r;
@@ -6068,9 +6078,10 @@ function flotsamSpawnPoint() {
     const d = waterDepthAt(x, z); if (d > 0.6 && d < 8) return { x, z }; }
   return null;
 }
-function addFlotsam(n) {
+function addFlotsam(n, kelpBias) {
   for (let i = 0; i < n && flotsam.length < FLOTSAM_CAP; i++) { const sp = flotsamSpawnPoint(); if (!sp) continue;
-    flotsam.push({ id: LITTER[(rng()*LITTER.length)|0], x: sp.x, z: sp.z, ph: rng()*6.283, yaw: rng()*6.283, spin: (rng()-0.5)*0.5, lat: (rng()-0.5) }); }
+    const id = rng() < (kelpBias != null ? kelpBias : 0.22) ? "kelp" : LITTER[(rng()*LITTER.length)|0];   // §gulls loose bull kelp drifts among the litter
+    flotsam.push({ id, x: sp.x, z: sp.z, ph: rng()*6.283, yaw: rng()*6.283, spin: (rng()-0.5)*0.5, lat: (rng()-0.5) }); }
 }
 function seedFlotsam() { flotsam = []; addFlotsam(5 + (rng()*4|0)); }
 function updateFlotsam(dt) {
@@ -6092,18 +6103,21 @@ function collectFlotsam(f) {
   if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
   flotsam.splice(i, 1);
   const first = !discovered.has("f_" + f.id); discovered.add("f_" + f.id); notify(f.id, 1, first);
-  beachCleanup++; saveState();
+  if (f.id !== "kelp") beachCleanup++;   // §gulls kelp is a harvest, not litter cleanup
+  saveState();
 }
 function drawFlotsam(view) {
   if (!flotsam.length) return;
   propUniforms(view);
   const px = cam.pos[0], pz = cam.pos[2], byType = {};
   for (const f of flotsam) { const dx = f.x-px, dz = f.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue; (byType[f.id] = byType[f.id] || []).push(f); }
-  for (const id in byType) { const reg = FINDS[id]; if (!reg || !reg.dyn) continue; const arr = byType[id];
+  for (const id in byType) {
+    const dyn = id === "kelp" ? (looseKelpDyn || (looseKelpDyn = makeDynamic(looseKelpMesh(), FLOTSAM_CAP))) : (FINDS[id] && FINDS[id].dyn);   // §gulls loose kelp has its own float mesh
+    if (!dyn) continue; const arr = byType[id];
     let s = _flotScratch[id]; if (!s || s.length < arr.length*10) s = _flotScratch[id] = new Float32Array(Math.max(16, arr.length)*10);
     let n = 0; for (const f of arr) { const o = n*10, y = waterSurfaceAt(f.x, f.z) + 0.02 + Math.sin(f.ph)*0.04;
       s[o]=f.x; s[o+1]=y; s[o+2]=f.z; s[o+3]=1; s[o+4]=f.yaw; s[o+5]=Math.sin(f.ph*0.7)*0.18; s[o+6]=f.yaw; s[o+7]=1; s[o+8]=1; s[o+9]=1; n++; }
-    reg.dyn.draw(s, n); }
+    dyn.draw(s, n); }
 }
 
 /* ===================================================================== *
