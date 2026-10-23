@@ -294,6 +294,12 @@
   #ygraph { position: fixed; left: 10px; top: 120px; z-index: 20; display: none; background: rgba(8,12,16,.72);
     border: 1px solid rgba(160,200,230,.3); border-radius: 4px; image-rendering: pixelated; }
   #critcanvas { position: fixed; inset: 0; z-index: 7; display: none; pointer-events: none; }
+  #soundtest { position: fixed; right: 10px; top: 10px; z-index: 22; display: none; max-height: 86vh; overflow-y: auto;
+    background: rgba(8,12,16,.86); border: 1px solid rgba(160,200,230,.3); border-radius: 4px; padding: 8px; width: 150px; }
+  #soundtest h5 { margin: 0 0 6px; font-size: 11px; letter-spacing: .1em; opacity: .7; text-transform: uppercase; }
+  #soundtest button { display: block; width: 100%; font-size: 10px; padding: 3px 5px; margin: 1px 0; text-align: left;
+    background: rgba(40,60,80,.5); color: #cfe; cursor: pointer; border: none; border-radius: 2px; clip-path: none; letter-spacing: 0; }
+  #soundtest button:hover { background: rgba(60,100,130,.7); }
   /* §17.5 goblin trade panel */
   #tradepanel { position: fixed; z-index: 13; display: none; left: 50%; top: 50%; transform: translate(-50%,-50%);
     width: 300px; max-width: 92vw; max-height: 82vh; overflow-y: auto; padding: 14px 16px 12px; color: #f3e9d6; text-align: center;
@@ -474,6 +480,7 @@
 <div id="tradepanel"></div>
 <canvas id="ygraph" width="260" height="96"></canvas>
 <canvas id="critcanvas"></canvas>
+<div id="soundtest"></div>
 <canvas id="bucketpanel" width="125" height="145"></canvas>
 <div id="ctxmenu"></div>
 <div id="bucketlook">
@@ -1156,30 +1163,314 @@ function drawTideCurve() {
   }
 }
 // Surf: a soft filtered-noise wash whose level rises with the tide (§B). The game's
-// first sound; built lazily on the first user gesture (startAudio) so autoplay rules allow it.
-let surfAudio = null;
-window.startAudio = function () {
-  if (surfAudio) return;
-  try {
-    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
-    const ctx = new AC();
-    const buf = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), d = buf.getChannelData(0);
-    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * 0.5;   // white noise (not the seeded stream)
-    const src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
-    const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 550; bp.Q.value = 0.4;
-    const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 1300;
-    const gain = ctx.createGain(); gain.gain.value = 0;
-    src.connect(bp); bp.connect(lp); lp.connect(gain); gain.connect(ctx.destination); src.start();
-    surfAudio = { ctx, gain };
-  } catch (e) { surfAudio = null; }
+/* ===================================================================== *
+ * § SOUND  — a tiny synthesized audio engine (no files). One AudioContext,
+ *   Master → SFX / Ambience / UI buses, a ZzFX-style one-shot synth pre-rendered
+ *   to buffers, a data-driven registry, spatial panning + distance, a voice cap,
+ *   and an underwater lowpass. Built lazily on the first user gesture.
+ * ===================================================================== */
+// A compact ZzFX-style synth: renders one short mono buffer from a param object.
+// (in the spirit of ZzFX by Frank Force — MIT — reimplemented small and dependency-free)
+function synthRender(ctx, p) {
+  const sr = ctx.sampleRate;
+  const atk = p.atk ?? 0.004, sus = p.sus ?? 0.03, rel = p.rel ?? 0.08, dur = Math.max(0.02, atk + sus + rel);
+  const n = Math.max(1, Math.floor(dur * sr)), buf = ctx.createBuffer(1, n, sr), d = buf.getChannelData(0);
+  const f0 = p.freq ?? 220, f1 = p.freq2 ?? f0, shape = p.shape || "sine", noise = p.noise ?? 0;
+  const vib = p.vib ?? 0, vibf = p.vibf ?? 0, lpf = p.lpf ?? 0.35, gain = p.gain ?? 0.5, curve = p.curve ?? 1, crush = p.crush ?? 0;
+  let phase = 0, lp = 0, hold = 0, held = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / sr, u = t / dur;
+    const f = f0 + (f1 - f0) * u + (vib ? Math.sin(t * vibf * 6.283) * vib : 0);
+    phase += f / sr; const ph = phase - Math.floor(phase);
+    let s;
+    if (shape === "square") s = ph < 0.5 ? 1 : -1;
+    else if (shape === "saw") s = 2 * ph - 1;
+    else if (shape === "tri") s = 4 * Math.abs(ph - 0.5) - 1;
+    else if (shape === "noise") { const r = Math.random() * 2 - 1; lp += (r - lp) * lpf; s = lp; }
+    else s = Math.sin(phase * 6.283);
+    if (noise && shape !== "noise") { const r = Math.random() * 2 - 1; s = s * (1 - noise) + r * noise; }
+    if (crush) { if (--held <= 0) { held = crush; hold = s; } s = hold; }   // bit/sample crush for a rougher tone
+    let env = t < atk ? t / atk : t < atk + sus ? 1 : Math.max(0, 1 - (t - atk - sus) / rel);
+    d[i] = s * Math.pow(env, curve) * gain;
+  }
+  return buf;
+}
+const SND = {
+  ctx: null, master: null, bus: {}, lp: {}, buf: {}, voices: [], amb: {}, _noise: null,
+  reg: {}, unlocked: false, muted: false, underwater: false, lastAt: {},
+  vol: { master: 0.75, sfx: 0.9, ambience: 0.6, ui: 0.7 },
+  MAX_VOICES: 24, MAX_DIST: 48,
+  // register a sound: id → { p: params | [variants], vol, pv (pitch var), vv (vol var), cd (cooldown s), max, bus }
+  def(id, p, o = {}) { this.reg[id] = { p, vol: o.vol ?? 0.5, pv: o.pv ?? 0.06, vv: o.vv ?? 0.12, cd: o.cd ?? 0, max: o.max ?? 4, bus: o.bus || "sfx" }; },
+  loadVol() { try { const s = JSON.parse(localStorage.getItem("bc_audio") || "null"); if (s) { Object.assign(this.vol, s.vol || {}); this.muted = !!s.muted; } } catch (e) {} },
+  saveVol() { try { localStorage.setItem("bc_audio", JSON.stringify({ vol: this.vol, muted: this.muted })); } catch (e) {} },
+  init() {
+    if (this.ctx) { if (this.ctx.state === "suspended") this.ctx.resume(); return; }
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+      const ctx = this.ctx = new AC();
+      this.loadVol();
+      this.master = ctx.createGain(); this.master.gain.value = this.muted ? 0 : this.vol.master; this.master.connect(ctx.destination);
+      for (const b of ["sfx", "ambience", "ui"]) {
+        const g = ctx.createGain(); g.gain.value = this.vol[b];
+        const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 20000;   // opens up; closes underwater
+        g.connect(lp); lp.connect(this.master); this.bus[b] = g; this.lp[b] = lp;
+      }
+      // shared looping white-noise bed for the ambience layers
+      const nb = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), nd = nb.getChannelData(0);
+      for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1; this._noise = nb;
+      // pre-render every registered one-shot to a buffer (variants too)
+      for (const id in this.reg) { const r = this.reg[id];
+        const list = Array.isArray(r.p) ? r.p : [r.p];
+        this.buf[id] = list.map(pp => { try { return synthRender(ctx, pp); } catch (e) { return null; } });
+      }
+      this._startAmbiences();
+      // iOS: a tiny silent blip on the unlocking gesture
+      const s = ctx.createBufferSource(); s.buffer = ctx.createBuffer(1, 1, ctx.sampleRate); s.connect(ctx.destination); s.start();
+      this.unlocked = true;
+    } catch (e) { this.ctx = null; }
+  },
+  _ambLayer(id, filt, freq, q) {
+    const ctx = this.ctx, src = ctx.createBufferSource(); src.buffer = this._noise; src.loop = true;
+    const bq = ctx.createBiquadFilter(); bq.type = filt; bq.frequency.value = freq; if (q) bq.Q.value = q;
+    const g = ctx.createGain(); g.gain.value = 0;
+    src.connect(bq); bq.connect(g); g.connect(this.bus.ambience); src.start();
+    this.amb[id] = { g, bq };
+  },
+  _startAmbiences() {
+    this._ambLayer("surf", "bandpass", 520, 0.5);
+    this._ambLayer("wind", "lowpass", 600);
+    this._ambLayer("crickets", "bandpass", 4600, 8);
+    this._ambLayer("rumble", "lowpass", 170);
+    this._ambLayer("trickle", "bandpass", 2600, 3);
+  },
+  ambGain(id, v) { const a = this.amb[id]; if (a) a.g.gain.value += (v - a.g.gain.value) * 0.05; },
+  setVol(bus, v) { this.vol[bus] = v; if (!this.ctx) { this.saveVol(); return; }
+    if (bus === "master") this.master.gain.value = this.muted ? 0 : v; else if (this.bus[bus]) this.bus[bus].gain.value = v; this.saveVol(); },
+  setMute(m) { this.muted = m; if (this.master) this.master.gain.value = m ? 0 : this.vol.master; this.saveVol(); },
+  setUnderwater(u) { this.underwater = u; if (!this.ctx) return;
+    for (const b of ["sfx", "ambience"]) this.lp[b].frequency.setTargetAtTime(u ? 480 : 20000, this.ctx.currentTime, 0.2); },
+  // the one API everything calls
+  play(id, opt = {}) {
+    if (!this.ctx || this.unlocked === false || this.muted) return;
+    const r = this.reg[id]; const bufs = this.buf[id]; if (!r || !bufs || !bufs.length) return;
+    const now = this.ctx.currentTime;
+    if (r.cd && (now - (this.lastAt[id] || -9)) < r.cd) return;       // per-sound cooldown
+    // voice caps
+    const live = this.voices.filter(v => v.playing);
+    if (live.filter(v => v.id === id).length >= r.max) return;
+    let dist = 0, pan = 0, distGain = 1;
+    if (opt.position) {
+      const dx = opt.position[0] - cam.pos[0], dz = opt.position[2] - cam.pos[2];
+      dist = Math.hypot(dx, dz); if (dist > this.MAX_DIST) return;    // cull distant
+      distGain = 1 / (1 + dist * dist * 0.012);
+      // pan relative to camera facing
+      const f = (typeof camForward === "function") ? camForward() : [0, 0, 1];
+      const rxx = -f[2], rzz = f[0];                                   // camera right
+      pan = Math.max(-1, Math.min(1, (dx * rxx + dz * rzz) / Math.max(1, dist)));
+    }
+    if (live.length >= this.MAX_VOICES) {                             // full → drop the quietest/farthest
+      let worst = null; for (const v of live) if (!worst || v.score < worst.score) worst = v;
+      if (worst && worst.score < distGain * r.vol) { try { worst.src.stop(); } catch (e) {} worst.playing = false; }
+      else return;
+    }
+    this.lastAt[id] = now;
+    const buf = bufs[(Math.random() * bufs.length) | 0]; if (!buf) return;
+    const src = this.ctx.createBufferSource(); src.buffer = buf;
+    src.playbackRate.value = (opt.pitch || 1) * (1 + (Math.random() * 2 - 1) * r.pv);
+    const g = this.ctx.createGain();
+    const vol = r.vol * (opt.volume ?? 1) * (1 + (Math.random() * 2 - 1) * r.vv) * distGain;
+    g.gain.value = Math.max(0, vol);
+    let node = src; src.connect(g); node = g;
+    if (opt.position && this.ctx.createStereoPanner) {
+      const sp = this.ctx.createStereoPanner(); sp.pan.value = pan; g.connect(sp); node = sp;
+    }
+    node.connect(this.bus[r.bus] || this.bus.sfx);
+    const voice = { id, src, playing: true, score: vol };
+    src.onended = () => { voice.playing = false; };
+    try { src.start(); } catch (e) { return; }
+    this.voices.push(voice);
+    if (this.voices.length > 64) this.voices = this.voices.filter(v => v.playing);
+  },
+  activeVoices() { return this.voices.filter(v => v.playing).length; },
 };
+// ---- the sound library (synth params per id) ----
+(function registerSounds() {
+  const D = (id, p, o) => SND.def(id, p, o);
+  // footsteps per surface (quiet; paced by the stepper)
+  D("step_sand",   { shape:"noise", lpf:0.12, atk:0.001, sus:0.008, rel:0.05, gain:0.5 }, { vol:0.22, cd:0.05, pv:0.12 });
+  D("step_wet",    { shape:"noise", lpf:0.2,  atk:0.001, sus:0.01,  rel:0.06, gain:0.55 }, { vol:0.24, cd:0.05, pv:0.12 });
+  D("step_grass",  { shape:"noise", lpf:0.3,  atk:0.001, sus:0.012, rel:0.05, gain:0.45 }, { vol:0.2,  cd:0.05, pv:0.14 });
+  D("step_rock",   { shape:"noise", lpf:0.5,  atk:0.0004,sus:0.004, rel:0.03, gain:0.45 }, { vol:0.2,  cd:0.05, pv:0.14 });
+  D("step_wood",   { freq:200, shape:"tri", atk:0.001, sus:0.01, rel:0.06, noise:0.3, gain:0.4 }, { vol:0.22, cd:0.05, pv:0.1 });
+  D("step_water",  { shape:"noise", lpf:0.28, atk:0.001, sus:0.02, rel:0.08, gain:0.5 }, { vol:0.24, cd:0.05, pv:0.14 });
+  // landing / breath
+  D("land_soft",   { freq:120, freq2:60, shape:"sine", atk:0.001, sus:0.02, rel:0.1, noise:0.3, gain:0.55 }, { vol:0.4 });
+  D("land_hard",   { freq:95,  freq2:45, shape:"sine", atk:0.001, sus:0.03, rel:0.16, noise:0.4, gain:0.7 }, { vol:0.6 });
+  D("breath",      { shape:"noise", lpf:0.07, atk:0.06, sus:0.08, rel:0.22, gain:0.3 }, { vol:0.3, cd:0.5 });
+  D("gasp",        { shape:"noise", lpf:0.12, atk:0.01, sus:0.04, rel:0.14, gain:0.4 }, { vol:0.4 });
+  // eating
+  D("eat_crunch",  { shape:"noise", lpf:0.45, atk:0.001, sus:0.02, rel:0.05, gain:0.5, crush:40 }, { vol:0.35 });
+  D("eat_slurp",   { freq:300, freq2:160, shape:"tri", atk:0.01, sus:0.05, rel:0.1, noise:0.2, gain:0.4 }, { vol:0.32 });
+  D("eat_chew",    { shape:"noise", lpf:0.25, atk:0.002, sus:0.03, rel:0.06, gain:0.4, crush:80 }, { vol:0.3 });
+  // swimming
+  D("swim",        { shape:"noise", lpf:0.22, atk:0.01, sus:0.04, rel:0.1, gain:0.4 }, { vol:0.28, cd:0.2 });
+  D("splash",      { shape:"noise", lpf:0.3, atk:0.001, sus:0.03, rel:0.14, gain:0.6 }, { vol:0.45 });
+  D("bubbles",     { freq:600, freq2:900, shape:"sine", atk:0.005, sus:0.02, rel:0.05, gain:0.25, vib:200, vibf:30 }, { vol:0.2, cd:0.4 });
+  // tools: shovel by material
+  D("dig_sand",    { shape:"noise", lpf:0.18, atk:0.001, sus:0.03, rel:0.08, gain:0.5 }, { vol:0.4 });
+  D("dig_dirt",    { freq:150, shape:"tri", atk:0.001, sus:0.02, rel:0.09, noise:0.5, gain:0.5 }, { vol:0.4 });
+  D("dig_gravel",  { shape:"noise", lpf:0.5, atk:0.001, sus:0.03, rel:0.07, gain:0.5, crush:30 }, { vol:0.4 });
+  D("dig_mud",     { freq:180, freq2:90, shape:"sine", atk:0.002, sus:0.04, rel:0.1, noise:0.4, gain:0.45 }, { vol:0.38 });
+  D("sift",        { shape:"noise", lpf:0.35, atk:0.01, sus:0.06, rel:0.1, gain:0.4 }, { vol:0.35 });
+  // axe / pickaxe
+  D("chop",        { freq:260, freq2:120, shape:"tri", atk:0.001, sus:0.02, rel:0.09, noise:0.4, gain:0.6 }, { vol:0.5, pv:0.08 });
+  D("timber",      { freq:160, freq2:80, shape:"saw", atk:0.02, sus:0.2, rel:0.4, noise:0.3, gain:0.5 }, { vol:0.55 });
+  D("crash",       { shape:"noise", lpf:0.3, atk:0.01, sus:0.2, rel:0.5, gain:0.6 }, { vol:0.6 });
+  D("snap",        { freq:900, freq2:300, shape:"saw", atk:0.0005, sus:0.005, rel:0.04, gain:0.4 }, { vol:0.35 });
+  D("clink",       { freq:1800, freq2:1400, shape:"sine", atk:0.0005, sus:0.006, rel:0.08, gain:0.35 }, { vol:0.4, pv:0.1 });
+  D("clang",       { freq:520, freq2:420, shape:"square", atk:0.0005, sus:0.01, rel:0.18, gain:0.35, noise:0.1 }, { vol:0.45 });
+  D("crack",       { shape:"noise", lpf:0.6, atk:0.0005, sus:0.02, rel:0.1, gain:0.5, crush:20 }, { vol:0.45 });
+  D("scrape",      { shape:"noise", lpf:0.42, atk:0.005, sus:0.05, rel:0.06, gain:0.4, crush:50 }, { vol:0.35 });
+  D("thud",        { freq:120, freq2:70, shape:"sine", atk:0.001, sus:0.02, rel:0.1, noise:0.3, gain:0.5 }, { vol:0.4 });
+  D("fail_thud",   { freq:110, freq2:80, shape:"sine", atk:0.001, sus:0.02, rel:0.09, noise:0.35, gain:0.45 }, { vol:0.38 });
+  // spear
+  D("whoosh",      { shape:"noise", lpf:0.2, atk:0.01, sus:0.04, rel:0.12, gain:0.4, freq:1 }, { vol:0.35 });
+  D("plop",        { freq:500, freq2:160, shape:"sine", atk:0.001, sus:0.02, rel:0.08, gain:0.4, noise:0.2 }, { vol:0.4 });
+  D("hitflesh",    { freq:220, freq2:120, shape:"tri", atk:0.001, sus:0.02, rel:0.07, noise:0.5, gain:0.5 }, { vol:0.4 });
+  // place / swap
+  D("pat",         { freq:200, shape:"sine", atk:0.001, sus:0.01, rel:0.05, noise:0.3, gain:0.35 }, { vol:0.3 });
+  D("swap",        { freq:600, freq2:800, shape:"tri", atk:0.001, sus:0.008, rel:0.04, gain:0.3 }, { vol:0.3, cd:0.05 });
+  // items / UI
+  D("pickup",      { freq:700, freq2:1050, shape:"sine", atk:0.001, sus:0.01, rel:0.06, gain:0.35 }, { vol:0.35, bus:"ui", pv:0.08 });
+  D("sparkle",     { freq:1400, freq2:2100, shape:"sine", atk:0.001, sus:0.01, rel:0.1, gain:0.28 }, { vol:0.3, bus:"ui" });
+  D("tick",        { freq:1200, shape:"square", atk:0.0005, sus:0.003, rel:0.02, gain:0.2 }, { vol:0.18, bus:"ui", cd:0.03 });
+  D("menu_open",   { shape:"noise", lpf:0.3, atk:0.005, sus:0.03, rel:0.08, gain:0.3 }, { vol:0.3, bus:"ui" });
+  D("menu_close",  { shape:"noise", lpf:0.25, atk:0.005, sus:0.025, rel:0.07, gain:0.28 }, { vol:0.28, bus:"ui" });
+  D("menu_tab",    { freq:900, shape:"tri", atk:0.0005, sus:0.004, rel:0.03, gain:0.22 }, { vol:0.22, bus:"ui", cd:0.03 });
+  D("click",       { freq:500, shape:"sine", atk:0.0005, sus:0.004, rel:0.03, gain:0.22 }, { vol:0.22, bus:"ui", cd:0.02 });
+  D("page",        { shape:"noise", lpf:0.4, atk:0.003, sus:0.02, rel:0.06, gain:0.3 }, { vol:0.28, bus:"ui" });
+  D("discover",    { freq:800, freq2:1200, shape:"sine", atk:0.004, sus:0.03, rel:0.18, gain:0.3 }, { vol:0.35, bus:"ui" });
+  // bucket
+  D("glug",        { freq:300, freq2:180, shape:"sine", atk:0.005, sus:0.05, rel:0.12, noise:0.2, gain:0.4, vib:60, vibf:12 }, { vol:0.38 });
+  D("pour",        { shape:"noise", lpf:0.28, atk:0.02, sus:0.15, rel:0.1, gain:0.4 }, { vol:0.38 });
+  // chest
+  D("creak",       { freq:220, freq2:160, shape:"saw", atk:0.03, sus:0.2, rel:0.2, gain:0.3, vib:20, vibf:8 }, { vol:0.35 });
+  D("key",         { freq:1600, freq2:1200, shape:"square", atk:0.0005, sus:0.008, rel:0.05, gain:0.3 }, { vol:0.32 });
+  D("smash",       { shape:"noise", lpf:0.4, atk:0.001, sus:0.06, rel:0.2, gain:0.6, crush:20 }, { vol:0.5 });
+  // creatures (day)
+  D("gull_call",   [{ freq:900, freq2:1300, shape:"saw", atk:0.01, sus:0.05, rel:0.1, gain:0.3, vib:80, vibf:18 },
+                    { freq:1000, freq2:800, shape:"saw", atk:0.01, sus:0.06, rel:0.12, gain:0.3, vib:120, vibf:14 },
+                    { freq:820, freq2:1100, shape:"saw", atk:0.02, sus:0.08, rel:0.1, gain:0.28, vib:60, vibf:22 }], { vol:0.3, cd:0.15, pv:0.1 });
+  D("gull_alarm",  { freq:1200, freq2:1600, shape:"saw", atk:0.005, sus:0.04, rel:0.08, gain:0.35, vib:200, vibf:26 }, { vol:0.38, cd:0.1 });
+  D("gull_whoosh", { shape:"noise", lpf:0.18, atk:0.02, sus:0.08, rel:0.12, gain:0.4, freq:1 }, { vol:0.4 });
+  D("gull_squab",  { freq:700, freq2:1400, shape:"saw", atk:0.003, sus:0.03, rel:0.05, gain:0.3, vib:300, vibf:40 }, { vol:0.3, cd:0.1 });
+  D("peep",        { freq:2200, freq2:2600, shape:"sine", atk:0.002, sus:0.012, rel:0.03, gain:0.25 }, { vol:0.26, cd:0.1 });
+  D("skitter",     { shape:"noise", lpf:0.55, atk:0.001, sus:0.015, rel:0.03, gain:0.3, crush:12 }, { vol:0.22, cd:0.08 });
+  D("squirt",      { freq:1400, freq2:600, shape:"sine", atk:0.001, sus:0.01, rel:0.05, noise:0.3, gain:0.3 }, { vol:0.28 });
+  D("seal_bark",   { freq:300, freq2:220, shape:"saw", atk:0.01, sus:0.08, rel:0.1, gain:0.4, vib:30, vibf:10 }, { vol:0.4, cd:0.2 });
+  D("otter_tap",   { freq:800, freq2:700, shape:"square", atk:0.0005, sus:0.006, rel:0.04, gain:0.25 }, { vol:0.25, cd:0.1 });
+  D("goat_bleat",  [{ freq:360, freq2:300, shape:"saw", atk:0.01, sus:0.12, rel:0.1, gain:0.4, vib:40, vibf:16 },
+                    { freq:420, freq2:260, shape:"saw", atk:0.01, sus:0.1, rel:0.12, gain:0.4, vib:70, vibf:22 },
+                    { freq:300, freq2:340, shape:"saw", atk:0.02, sus:0.14, rel:0.1, gain:0.38, vib:30, vibf:10 }], { vol:0.4, cd:0.2, pv:0.14 });
+  D("goat_bell",   { freq:1500, freq2:1500, shape:"sine", atk:0.0005, sus:0.01, rel:0.2, gain:0.25 }, { vol:0.28, cd:0.1 });
+  D("goat_thump",  { freq:90, freq2:60, shape:"sine", atk:0.001, sus:0.03, rel:0.14, noise:0.4, gain:0.6 }, { vol:0.5 });
+  D("fish_splash", { shape:"noise", lpf:0.3, atk:0.001, sus:0.025, rel:0.1, gain:0.5 }, { vol:0.38 });
+  D("jet",         { shape:"noise", lpf:0.22, atk:0.003, sus:0.05, rel:0.12, gain:0.4, freq:1 }, { vol:0.34 });
+  // creatures (night)
+  D("owl",         { freq:420, freq2:380, shape:"sine", atk:0.03, sus:0.1, rel:0.2, gain:0.3, vib:20, vibf:6 }, { vol:0.34, cd:0.3 });
+  D("bat",         { freq:5000, freq2:6500, shape:"sine", atk:0.001, sus:0.008, rel:0.02, gain:0.18 }, { vol:0.2, cd:0.1 });
+  D("raccoon",     { freq:600, freq2:900, shape:"saw", atk:0.005, sus:0.04, rel:0.06, gain:0.28, vib:120, vibf:30 }, { vol:0.3, cd:0.15 });
+  D("hcrab_scrape",{ shape:"noise", lpf:0.4, atk:0.01, sus:0.08, rel:0.06, gain:0.3, crush:40 }, { vol:0.26, cd:0.1 });
+  D("hcrab_flip",  { freq:260, freq2:180, shape:"tri", atk:0.001, sus:0.02, rel:0.08, noise:0.3, gain:0.4 }, { vol:0.35 });
+  // ambience one-shots
+  D("flame",       { shape:"noise", lpf:0.5, atk:0.001, sus:0.01, rel:0.04, gain:0.25, crush:16 }, { vol:0.14, bus:"ambience", cd:0.1 });
+  D("birdsong",    [{ freq:2400, freq2:2800, shape:"sine", atk:0.003, sus:0.02, rel:0.05, gain:0.22, vib:120, vibf:30 },
+                    { freq:2000, freq2:2600, shape:"sine", atk:0.004, sus:0.03, rel:0.06, gain:0.2, vib:200, vibf:20 }], { vol:0.22, bus:"ambience", cd:0.3 });
+  D("debris_knock",{ freq:180, freq2:150, shape:"tri", atk:0.001, sus:0.02, rel:0.1, noise:0.2, gain:0.35 }, { vol:0.28, bus:"ambience", cd:0.2 });
+})();
+SND.loadVol();   // reflect saved volumes in Settings before the first gesture unlocks audio
+// surfAudio kept as an alias so older checks still read "audio is on"
+let surfAudio = null;
+window.startAudio = function () { SND.init(); if (SND.ctx) surfAudio = SND; };
+// per-frame ambience mix (called from the main loop)
 function updateSurf() {
-  if (!surfAudio) return;
+  if (!SND.ctx || SND.muted) return;
   try {
-    const rel = Math.max(0, Math.min(1, (waterLevel + TIDE_RANGE * 0.6) / (TIDE_RANGE * 1.2)));  // 0 low … 1 high
-    const target = (mode === "walk" ? 0.02 + rel * 0.07 + eventMood() * 0.06 : 0);   // louder surf before a storm
-    surfAudio.gain.gain.value += (target - surfAudio.gain.gain.value) * 0.04;
+    const walk = mode === "walk";
+    const shore = walk ? Math.max(0, 1 - Math.min(1, Math.abs(waterDepthAt(player.x, player.z)) / 8)) : 0;   // near the waterline → louder surf
+    const rel = Math.max(0, Math.min(1, (waterLevel + TIDE_RANGE * 0.6) / (TIDE_RANGE * 1.2)));
+    const uw = walk && player.underwater;
+    SND.setUnderwater(uw);
+    SND.ambGain("surf", walk ? (0.05 + rel * 0.07 + shore * 0.08 + eventMood() * 0.08) * (uw ? 0.3 : 1) : 0);
+    const high = walk ? Math.max(0, Math.min(1, (surfaceAt(player.x, player.z).h - 12) / 30)) : 0;
+    SND.ambGain("wind", walk ? 0.02 + high * 0.1 : 0);
+    const night = walk ? 1 - dayFactor() : 0, inland = walk ? Math.max(0, 1 - shore) : 0;
+    SND.ambGain("crickets", walk && !uw ? night * inland * 0.05 : 0);
+    SND.ambGain("rumble", uw ? 0.16 : 0);
+    // a soft trickle near tide pools / shallow trapped water
+    const nearPool = walk && !uw && waterDepthAt(player.x, player.z) > 0.05 && waterDepthAt(player.x, player.z) < 0.6 ? 0.04 : 0;
+    SND.ambGain("trickle", nearPool);
+    // lantern flame crackle while held, and occasional day birdsong / night cricket chirps
+    if (walk && typeof lanternLit === "function" && lanternLit() && Math.random() < 0.08) SND.play("flame");
+    if (walk && !uw && Math.random() < 0.004) { if (dayFactor() > 0.5) { if (inland > 0.4) SND.play("birdsong", { volume: 0.5 }); } }
   } catch (e) {}
+}
+// pause/hide handling: suspend audio when the tab is hidden or the game is paused
+document.addEventListener("visibilitychange", () => { try { if (!SND.ctx) return; if (document.hidden) SND.ctx.suspend(); else if (!pauseStage) SND.ctx.resume(); } catch (e) {} });
+// which footstep sound for the ground under the player
+function footSurface() {
+  if (typeof waterDepthAt === "function" && waterDepthAt(player.x, player.z) > 0.12) return "step_water";
+  if (typeof trunkHeightAt === "function" && trunkHeightAt(player.x, player.z) > -1e8 && player.feetY > surfaceAt(player.x, player.z).h + 0.3) return "step_wood";
+  const k = (typeof surfaceKind === "function") ? surfaceKind(player.x, player.z) : "sand";
+  if (k === "rock") return "step_rock"; if (k === "wet") return "step_wet";
+  if (surfaceAt(player.x, player.z).h > 11 && k !== "rock") return "step_grass";
+  return "step_sand";
+}
+// footsteps paced by movement (bob phase crossings); quieter crouched, heavier sprinting
+let _lastStepBob = 0;
+function updateFootsteps() {
+  if (!SND.ctx || mode !== "walk" || player.swimming || isPanelOpen()) { _lastStepBob = player.bob || 0; return; }
+  if ((player.walkLen || 0) < 0.05 || player.airborne) { _lastStepBob = player.bob || 0; return; }
+  const bob = player.bob || 0, period = Math.PI;                 // one step per half bob cycle
+  if (Math.floor(bob / period) !== Math.floor(_lastStepBob / period)) {
+    const vol = (crouching ? 0.4 : player.sprinting ? 1.1 : 0.75);
+    SND.play(footSurface(), { volume: vol });
+  }
+  _lastStepBob = bob;
+}
+// occasional positional creature calls from nearby life (spatial soundscape by day/night)
+let _critSndT = 0;
+function updateCreatureSound(dt) {
+  if (!SND.ctx || mode !== "walk") return;
+  _critSndT -= dt; if (_critSndT > 0) return; _critSndT = 0.5 + Math.random()*0.7;
+  const night = typeof dayFactor === "function" ? dayFactor() < 0.35 : false;
+  const near = []; for (const e of life) { if (e.kind !== "creature") continue; const d = Math.hypot(e.x-player.x, e.z-player.z); if (d < SND.MAX_DIST) near.push(e); }
+  if (!near.length) return;
+  const e = near[(Math.random()*near.length)|0]; const pos = [e.x, 0, e.z];
+  const say = (id, chance) => { if (Math.random() < chance) SND.play(id, { position: pos }); };
+  if (e.t === "gull" && (e.gstate === "forage" || e.gstate === "perch" || e.gstate === "soar")) say("gull_call", 0.5);
+  else if (e.t === "piper") say("peep", 0.5);
+  else if (e.t === "crab") say("skitter", 0.25);
+  else if (e.t === "seal") say("seal_bark", 0.3);
+  else if (e.t === "octopus") say("jet", 0.1);
+  else if (e.t === "clam" || e.t === "cockle") say("squirt", 0.1);
+  // night critters (these types arrive in the Night phase; harmless if absent)
+  if (night) { if (e.t === "owl") say("owl", 0.4); else if (e.t === "bat") say("bat", 0.5); else if (e.t === "raccoon") say("raccoon", 0.3); else if (e.t === "horseshoe") say("hcrab_scrape", 0.2); }
+}
+// assign every sound hook once (called after the on* vars are declared)
+function wireSound() {
+  onFootstep = (surf, str) => { const id = surf === "wet" ? "step_wet" : surf === "rock" ? "step_rock" : surf === "grass" ? "step_grass" : surf === "wood" ? "step_wood" : "step_sand"; SND.play(id, { volume: 0.5 + (str||0.5)*0.8 }); };
+  const DIG = { chop:"chop", timber:"timber", clang:"clang", clink:"clink", grind:"scrape", scrape:"scrape", sift:"sift", splash:"splash", eat:"eat_crunch", plant:"pat", mine:"crack", pluck:"pickup", growl:"thud", thud:"thud", cook:"eat_slurp" };
+  onDig = (k) => SND.play(DIG[k] || "thud", { position: [player.x, 0, player.z] });
+  onSpear = (k) => { const pos = [player.x, 0, player.z]; const id = k === "catch" ? "fish_splash" : k === "throw" ? "whoosh" : k === "jab" ? "whoosh" : k === "hitflesh" ? "hitflesh" : k === "thud" ? "thud" : "whoosh"; SND.play(id, { position: pos }); };
+  onClimb = (k) => SND.play(k === "lunge" ? "whoosh" : k === "mantle" ? "pat" : "scrape");
+  onBreath = () => SND.play("breath");
+  onSplash = () => SND.play("splash", { position: [player.x, 0, player.z] });
+  onGull = (k) => SND.play(k === "screech" ? "gull_alarm" : k === "whoosh" ? "gull_whoosh" : k === "squabble" ? "gull_squab" : "gull_call");
+  onGoat = () => SND.play("goat_bleat");
+  onDrown = () => SND.play("gasp");
+  onHeartbeat = () => {};
 }
 
 /* ---- tide events (§C): each high tide rolls what the next low washes up ---- */
@@ -2561,6 +2852,7 @@ addEventListener("keydown", (e) => {
     if (e.code === "KeyY") { dbgYGraph = !dbgYGraph; document.getElementById("ygraph").style.display = dbgYGraph ? "block" : "none"; }   // §P1 feet/cam Y graph
     if (e.code === "KeyK") { crabLog = !crabLog; console.log("crab log " + (crabLog ? "ON" : "OFF")); }   // §1c crab lifecycle log
     if (e.code === "KeyJ") { critDbg = !critDbg; const cc = document.getElementById("critcanvas"); cc.style.display = critDbg ? "block" : "none"; }   // §R4 creature AI state/direction overlay
+    if (e.code === "KeyM") toggleSoundTest();   // §Sound test panel
   }
 });
 addEventListener("keyup", (e) => { keys[e.code] = false; });
@@ -2757,6 +3049,7 @@ function openPause() {
   if (mode !== "walk" || menuIsOpen() || isPanelOpen() || buildMode) return;
   pauseWasClockPaused = clock.paused; clock.paused = true;     // freeze tide / creatures while paused
   if (document.pointerLockElement === canvas) document.exitPointerLock();
+  if (typeof SND !== "undefined") { SND.play("menu_open"); if (SND.ctx) try { SND.ctx.suspend(); } catch (e) {} }   // §Sound pause audio
   showPause();
 }
 function showPause() {
@@ -2779,6 +3072,7 @@ function closePause() {
   pauseStage = null;
   const el = document.getElementById("pausemenu"); el.classList.remove("show"); el.innerHTML = "";
   clock.paused = pauseWasClockPaused;
+  if (typeof SND !== "undefined" && SND.ctx) { try { SND.ctx.resume(); } catch (e) {} SND.play("menu_close"); }   // §Sound resume
   requestLock();
 }
 function wirePause(el) {
@@ -2832,6 +3126,12 @@ function openSettings() {
     ${slider("simRadius","Creature radius", 0.6, 1.4, 0.05, GFX.simRadius)}
     <div class="srow"><label>Pixel-ratio cap</label><button data-gc="dprCap">${GFX.dprCap}×</button></div>
     <div class="srow"><label>FPS cap</label><button data-gc="fpsCap">${FPS_LBL[GFX.fpsCap]||GFX.fpsCap}</button></div>
+    <h4>Sound</h4>
+    <div class="srow"><label>Mute</label><button data-snd="mute">${SND.muted ? "On" : "Off"}</button></div>
+    <div class="srow"><label>Master</label><input data-sv="master" type="range" min="0" max="1" step="0.05" value="${SND.vol.master}"></div>
+    <div class="srow"><label>Effects</label><input data-sv="sfx" type="range" min="0" max="1" step="0.05" value="${SND.vol.sfx}"></div>
+    <div class="srow"><label>Ambience</label><input data-sv="ambience" type="range" min="0" max="1" step="0.05" value="${SND.vol.ambience}"></div>
+    <div class="srow"><label>Interface</label><input data-sv="ui" type="range" min="0" max="1" step="0.05" value="${SND.vol.ui}"></div>
     <button class="closebtn primary">Close</button>`;
   p.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => {
     const k = b.dataset.k;
@@ -2849,6 +3149,8 @@ function openSettings() {
   p.querySelectorAll("input[data-gs]").forEach(inp => inp.onchange = () => openSettings());
   { const sb = p.querySelector("#setBright"); if (sb) sb.oninput = (e) => setBrightness(+e.target.value); }   // §18 brightness
   { const ss = p.querySelector("#setShake"); if (ss) ss.oninput = (e) => setScreenShake(+e.target.value); }   // §R4 screen shake
+  p.querySelectorAll("input[data-sv]").forEach(inp => inp.oninput = (e) => SND.setVol(inp.dataset.sv, +e.target.value));   // §Sound bus volumes
+  { const mb = p.querySelector("button[data-snd=mute]"); if (mb) mb.onclick = () => { SND.setMute(!SND.muted); openSettings(); }; }
   p.querySelectorAll("button[data-gc]").forEach(b => b.onclick = () => {
     const k = b.dataset.gc;
     if (k === "water") setGFXCustom("water", GFX.water > 0 ? 0 : 1);
@@ -2935,7 +3237,9 @@ function feedPlayer(id) {
   if (COOKABLE[id] && nearCampfire(player.x, player.z)) { val *= 2; cooked = true; }
   hunger = Math.min(1, hunger + val);
   applyFoodBoost(id, cooked);                       // §R4 stamina-regen boost (works regardless of hunger setting)
-  chewT = 0.5; camNudge = Math.max(camNudge, 0.03); if (onDig) onDig("eat");
+  chewT = 0.5; camNudge = Math.max(camNudge, 0.03);
+  if (typeof SND !== "undefined") { const slurp = {clam:1,cockle:1,mussel:1,oyster:1,crabmeat:1}, chew = {rawfish:1,kelp:1,seaweed:1}; SND.play(slurp[id] ? "eat_slurp" : chew[id] ? "eat_chew" : "eat_crunch"); }   // §Sound eating by food type
+  else if (onDig) onDig("eat");
   showCard((cooked ? "Ate cooked " : "Ate ") + ITEMS[id].name, "Hunger " + Math.round(hunger * 100) + "%");
   saveState();
 }
@@ -5620,6 +5924,7 @@ function notify(itemId, qty, special) {
   const ex = toasts.find((x) => x.id === itemId && x.t > 0.3 && x.special === !!special);
   if (ex) { ex.qty += qty; ex.t = 3.2; }
   else { toasts.push({ id: itemId, name, qty, t: 3.2, special: !!special }); while (toasts.length > 3) toasts.shift(); }
+  if (typeof SND !== "undefined") { SND.play("pickup"); if (special) SND.play("discover"); }   // §Sound pickup pop + new-find chime
   renderToasts();
 }
 function updateToasts(dt) {
@@ -5764,6 +6069,7 @@ function hideMenuBodies() {
   const j = document.getElementById("journal"); if (j.style.display === "block") j.style.display = "none";
 }
 function openMenu(tab) {
+  if (typeof SND !== "undefined") SND.play(menuIsOpen() ? "menu_tab" : "menu_open");   // §Sound open / switch tab
   if (tab && MENU_TABS.some(t => t[0] === tab)) menuTab = tab;
   try { localStorage.setItem("bc_menutab", menuTab); } catch (e) {}
   hideMenuBodies();
@@ -5773,7 +6079,7 @@ function openMenu(tab) {
   else { renderJournal(); document.getElementById("journal").style.display = "block"; }
   renderMenuTabs();
 }
-function closeMenu() { hideMenuBodies(); renderMenuTabs(); hideTip(); hideContextMenu(); requestLock(); }
+function closeMenu() { if (typeof SND !== "undefined") SND.play("menu_close"); hideMenuBodies(); renderMenuTabs(); hideTip(); hideContextMenu(); requestLock(); }
 function toggleMenu(tab) {
   if (menuIsOpen()) { if (tab && tab !== menuTab) openMenu(tab); else closeMenu(); }
   else openMenu(tab || menuTab);
@@ -6759,6 +7065,17 @@ function drawCritDebug() {
     const w = ctx.measureText(lbl).width + 8; ctx.fillRect(sp[0]-w/2, sp[1]-20, w, 14);
     ctx.fillStyle = "#bfe6c8"; ctx.fillText(lbl, sp[0], sp[1]-9);
   }
+}
+// §Sound debug: a panel listing every registered sound with a play button
+let soundTestOpen = false;
+function toggleSoundTest() {
+  soundTestOpen = !soundTestOpen;
+  const el = document.getElementById("soundtest");
+  if (!soundTestOpen) { el.style.display = "none"; return; }
+  const ids = Object.keys(SND.reg).sort();
+  el.innerHTML = `<h5>Sound test (${ids.length})</h5>` + ids.map(id => `<button data-sid="${id}">${id}</button>`).join("");
+  el.querySelectorAll("button[data-sid]").forEach(b => b.onclick = () => SND.play(b.dataset.sid));
+  el.style.display = "block";
 }
 let dbgYGraph = false; const yHist = []; const Y_HIST = 260;
 function recordY(feetY, camY, airborne) { yHist.push({ f: feetY, c: camY, a: airborne }); if (yHist.length > Y_HIST) yHist.shift(); }
@@ -9645,7 +9962,7 @@ function frame(now) {
   updateSalt();
   updateAutoPickup();
   updateStarRescue();
-  updateSurf();
+  updateSurf(); updateFootsteps(); updateCreatureSound(dt);   // §Sound ambience mix + footsteps + spatial creatures
   updateRipples(dt, gdtTotal);
   if (cardTimer > 0) { cardTimer -= dt; if (cardTimer <= 0) document.getElementById("card").style.display = "none"; }
   if (toasts.length) updateToasts(dt);
@@ -10077,7 +10394,8 @@ function frame(now) {
       `tris  ${(frameTris / 1000).toFixed(0)}k\n` +
       `res   ${fbo.w}x${fbo.h}\n` +
       `pos   ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}\n` +
-      `slope ${_curSlopeDeg.toFixed(0)}°  spd ×${_curSpeedMul.toFixed(2)}${player.sprinting ? " sprint" : ""}`;
+      `slope ${_curSlopeDeg.toFixed(0)}°  spd ×${_curSpeedMul.toFixed(2)}${player.sprinting ? " sprint" : ""}\n` +
+      `voices ${SND.ctx ? SND.activeVoices() : "off"}`;
   } else if (dbgEl.style.display !== "none") {
     dbgEl.style.display = "none";
   }
@@ -10085,6 +10403,7 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 booted = true;
+wireSound();   // §Sound assign every audio hook now that the on* vars are declared
 requestAnimationFrame(frame);
 </script>
 </body>
