@@ -77,6 +77,12 @@
   #settingspanel label { font-size: 13px; letter-spacing: .02em; color: var(--ink); }
   #settingspanel input[type=range] { width: 130px; }
   #settingspanel .closebtn { width: 100%; margin-top: 14px; }
+  /* §tools settings split into tabbed categories (chamfered) */
+  #settingspanel .stabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 14px; }
+  #settingspanel .stab { flex: 1 1 auto; min-width: 54px; font-size: 11px; letter-spacing: .02em; padding: 7px 3px; cursor: pointer; opacity: .62;
+    border: none; background: var(--panel-edge); color: var(--ink);
+    clip-path: polygon(6px 0,calc(100% - 6px) 0,100% 6px,100% calc(100% - 6px),calc(100% - 6px) 100%,6px 100%,0 calc(100% - 6px),0 6px); }
+  #settingspanel .stab.on { opacity: 1; background: var(--facet); color: #ffe6b0; box-shadow: inset 0 0 0 1px rgba(255,220,150,.5); }
   /* §2 unified menu tab-bar (Satchel / Bucket / Journal), floats above whichever panel is open */
   #menutabs { position: fixed; z-index: 26; left: 50%; top: 14px; transform: translateX(-50%); display: none; gap: 8px; }
   #menutabs.show { display: flex; }
@@ -3738,47 +3744,59 @@ document.getElementById("newBtn").addEventListener("click", () => gotoSeed(rando
 document.getElementById("diceBtn").addEventListener("click", () => gotoSeed(randomSeed()));
 document.getElementById("seedInput").addEventListener("keydown", (e) => { if (e.key === "Enter") gotoSeed(e.target.value); });
 document.getElementById("settingsBtn").addEventListener("click", () => openSettings());
+let settingsTab = "graphics";   // §tools settings are split into tabbed categories
 function openSettings() {
   const p = document.getElementById("settingspanel");
   const onoff = (b) => b ? "On" : "Off";
   const WATER_LBL = ["Off", "On"], FPS_LBL = { 0: "Uncapped", 30: "30", 60: "60", 120: "120" };
   const slider = (k, lbl, min, max, step, val) => `<div class="srow"><label>${lbl}</label><input data-gs="${k}" type="range" min="${min}" max="${max}" step="${step}" value="${val}"></div>`;
   const toggle = (k, lbl, v) => `<div class="srow"><label>${lbl}</label><button data-gt="${k}">${onoff(v)}</button></div>`;
+  const TABS = [["graphics","Graphics"],["audio","Audio"],["controls","Controls"],["gameplay","Gameplay"],["access","Access"]];
+  if (!TABS.some(t => t[0] === settingsTab)) settingsTab = "graphics";
+  const sections = {
+    graphics: `
+      <div class="spresets">${["low","medium","high","ultra","custom"].map(n =>
+        `<button class="spreset${GFX.preset===n?" on":""}" data-gp="${n}">${n[0].toUpperCase()+n.slice(1)}</button>`).join("")}</div>
+      ${slider("resScale","Resolution", 0.25, 1, 0.01, GFX.resScale)}
+      ${toggle("dither","Dithering", GFX.dither)}
+      ${toggle("quantize","Palette quantize", GFX.quantize)}
+      ${slider("fog","Fog distance", 0.5, 1.6, 0.05, GFX.fog)}
+      ${slider("propDist","Prop distance", 0.5, 1.5, 0.05, GFX.propDist)}
+      ${slider("foliage","Foliage density", 0, 1, 0.05, GFX.foliage)}
+      <div class="srow"><label>Water quality</label><button data-gc="water">${WATER_LBL[GFX.water>0?1:0]}</button></div>
+      ${toggle("shadows","Sun shadows", GFX.shadows)}
+      ${toggle("aa","Anti-aliasing", GFX.aa)}
+      ${slider("simRadius","Creature radius", 0.6, 1.4, 0.05, GFX.simRadius)}
+      <div class="srow"><label>Pixel-ratio cap</label><button data-gc="dprCap">${GFX.dprCap}×</button></div>
+      <div class="srow"><label>FPS cap</label><button data-gc="fpsCap">${FPS_LBL[GFX.fpsCap]||GFX.fpsCap}</button></div>`,
+    audio: `
+      <div class="srow"><label>Mute</label><button data-snd="mute">${SND.muted ? "On" : "Off"}</button></div>
+      <div class="srow"><label>Master</label><input data-sv="master" type="range" min="0" max="1" step="0.05" value="${SND.vol.master}"></div>
+      <div class="srow"><label>Effects</label><input data-sv="sfx" type="range" min="0" max="1" step="0.05" value="${SND.vol.sfx}"></div>
+      <div class="srow"><label>Ambience</label><input data-sv="ambience" type="range" min="0" max="1" step="0.05" value="${SND.vol.ambience}"></div>
+      <div class="srow"><label>Interface</label><input data-sv="ui" type="range" min="0" max="1" step="0.05" value="${SND.vol.ui}"></div>
+      <div class="srow"><label>Audio status</label><span class="sstat">${SND.ctx ? (SND.ctx.state + (SND.muted ? " · muted" : "")) : "not started"}</span></div>
+      <div class="srow"><label>Test sound</label><button data-snd="test">Play ▶</button></div>`,
+    controls: `
+      <div class="srow"><label>Crouch key</label><button data-k="crouchkey">${crouchKey === "ControlLeft" ? "Ctrl" : "C"}</button></div>
+      <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
+      <div class="srow"><label>Auto tool-switch</label><button data-k="autoswitch">${onoff(autoSwitch)}</button></div>`,
+    gameplay: `
+      <div class="srow"><label>Auto-pickup</label><button data-k="autopick">${onoff(autoPickup)}</button></div>
+      <div class="srow"><label>Hunger</label><button data-k="hunger">${onoff(hungerEnabled)}</button></div>
+      <div class="srow"><label>Day/night cycle</label><button data-k="daynight">${onoff(dayNightEnabled)}</button></div>
+      <div class="srow"><label>Relaxed fishing</label><button data-k="relaxfish">${onoff(relaxedFishing)}</button></div>`,
+    access: `
+      <div class="srow"><label>Brightness</label><input id="setBright" type="range" min="0.6" max="1.8" step="0.05" value="${nightBrightness}"></div>
+      <div class="srow"><label>Screen shake</label><input id="setShake" type="range" min="0" max="1" step="0.05" value="${screenShake}"></div>
+      <div class="srow"><label>First-run hints</label><button data-k="hints">${onoff(hintsOn)}</button></div>
+      <div class="srow"><label>Relaxed fishing</label><button data-k="relaxfish">${onoff(relaxedFishing)}</button></div>`,
+  };
   p.innerHTML = `<h3>Settings</h3>
-    <div class="srow"><label>First-run hints</label><button data-k="hints">${onoff(hintsOn)}</button></div>
-    <div class="srow"><label>Auto-pickup</label><button data-k="autopick">${onoff(autoPickup)}</button></div>
-    <div class="srow"><label>Auto tool-switch</label><button data-k="autoswitch">${onoff(autoSwitch)}</button></div>
-    <div class="srow"><label>Hunger</label><button data-k="hunger">${onoff(hungerEnabled)}</button></div>
-    <div class="srow"><label>Day/night cycle</label><button data-k="daynight">${onoff(dayNightEnabled)}</button></div>
-    <div class="srow"><label>Relaxed fishing</label><button data-k="relaxfish">${onoff(relaxedFishing)}</button></div>
-    <div class="srow"><label>Crouch key</label><button data-k="crouchkey">${crouchKey === "ControlLeft" ? "Ctrl" : "C"}</button></div>
-    <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
-    <h4>Graphics</h4>
-    <div class="spresets">${["low","medium","high","ultra","custom"].map(n =>
-      `<button class="spreset${GFX.preset===n?" on":""}" data-gp="${n}">${n[0].toUpperCase()+n.slice(1)}</button>`).join("")}</div>
-    ${slider("resScale","Resolution", 0.25, 1, 0.01, GFX.resScale)}
-    <div class="srow"><label>Brightness</label><input id="setBright" type="range" min="0.6" max="1.8" step="0.05" value="${nightBrightness}"></div>
-    <div class="srow"><label>Screen shake</label><input id="setShake" type="range" min="0" max="1" step="0.05" value="${screenShake}"></div>
-    ${toggle("dither","Dithering", GFX.dither)}
-    ${toggle("quantize","Palette quantize", GFX.quantize)}
-    ${slider("fog","Fog distance", 0.5, 1.6, 0.05, GFX.fog)}
-    ${slider("propDist","Prop distance", 0.5, 1.5, 0.05, GFX.propDist)}
-    ${slider("foliage","Foliage density", 0, 1, 0.05, GFX.foliage)}
-    <div class="srow"><label>Water quality</label><button data-gc="water">${WATER_LBL[GFX.water>0?1:0]}</button></div>
-    ${toggle("shadows","Sun shadows", GFX.shadows)}
-    ${toggle("aa","Anti-aliasing", GFX.aa)}
-    ${slider("simRadius","Creature radius", 0.6, 1.4, 0.05, GFX.simRadius)}
-    <div class="srow"><label>Pixel-ratio cap</label><button data-gc="dprCap">${GFX.dprCap}×</button></div>
-    <div class="srow"><label>FPS cap</label><button data-gc="fpsCap">${FPS_LBL[GFX.fpsCap]||GFX.fpsCap}</button></div>
-    <h4>Sound</h4>
-    <div class="srow"><label>Mute</label><button data-snd="mute">${SND.muted ? "On" : "Off"}</button></div>
-    <div class="srow"><label>Master</label><input data-sv="master" type="range" min="0" max="1" step="0.05" value="${SND.vol.master}"></div>
-    <div class="srow"><label>Effects</label><input data-sv="sfx" type="range" min="0" max="1" step="0.05" value="${SND.vol.sfx}"></div>
-    <div class="srow"><label>Ambience</label><input data-sv="ambience" type="range" min="0" max="1" step="0.05" value="${SND.vol.ambience}"></div>
-    <div class="srow"><label>Interface</label><input data-sv="ui" type="range" min="0" max="1" step="0.05" value="${SND.vol.ui}"></div>
-    <div class="srow"><label>Audio status</label><span class="sstat">${SND.ctx ? (SND.ctx.state + (SND.muted ? " · muted" : "")) : "not started"}</span></div>
-    <div class="srow"><label>Test sound</label><button data-snd="test">Play ▶</button></div>
+    <div class="stabs">${TABS.map(([id,lbl]) => `<button class="stab${settingsTab===id?" on":""}" data-stab="${id}">${lbl}</button>`).join("")}</div>
+    ${sections[settingsTab]}
     <button class="closebtn primary">Close</button>`;
+  p.querySelectorAll("button[data-stab]").forEach(b => b.onclick = () => { settingsTab = b.dataset.stab; openSettings(); });
   p.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => {
     const k = b.dataset.k;
     if (k === "hints") { hintsOn = !hintsOn; saveHints(); }
