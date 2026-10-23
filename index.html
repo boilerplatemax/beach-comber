@@ -3442,10 +3442,25 @@ function initTitle() {
   loadRecentIslands();
 }
 document.getElementById("startBtn").addEventListener("click", () => {
+  if (typeof window.startAudio === "function") window.startAudio();   // §urgent6 unlock audio on this user gesture (desktop had no unlock before)
   if (mode === "preview") { startIntro(); return; }      // first time: swoop down onto the island
   overlay.classList.add("hidden");                        // resuming from a pause
   if (!IS_TOUCH) canvas.requestPointerLock();
 });
+// §urgent6 belt-and-braces: unlock/resume the AudioContext on the FIRST user gesture of any kind (desktop click/key,
+// mobile touch, iOS). The engine was only being unlocked inside the touch-only mobile controls, so desktop had no sound.
+(function () {
+  let done = false;
+  const unlock = () => {
+    try { if (typeof window.startAudio === "function") window.startAudio();
+      if (typeof SND !== "undefined" && SND.ctx && SND.ctx.state === "suspended") SND.ctx.resume(); } catch (e) {}
+    if (typeof SND !== "undefined" && SND.ctx && SND.ctx.state === "running") {
+      done = true;
+      for (const ev of ["pointerdown", "mousedown", "keydown", "touchstart"]) removeEventListener(ev, unlock, true);
+    }
+  };
+  for (const ev of ["pointerdown", "mousedown", "keydown", "touchstart"]) addEventListener(ev, unlock, true);
+})();
 
 // §2 pause menu (Esc): a chamfered Resume / Settings / Controls / Save & quit panel that freezes the world
 let pauseStage = null;             // null | "menu" | "controls"
@@ -3549,6 +3564,8 @@ function openSettings() {
     <div class="srow"><label>Effects</label><input data-sv="sfx" type="range" min="0" max="1" step="0.05" value="${SND.vol.sfx}"></div>
     <div class="srow"><label>Ambience</label><input data-sv="ambience" type="range" min="0" max="1" step="0.05" value="${SND.vol.ambience}"></div>
     <div class="srow"><label>Interface</label><input data-sv="ui" type="range" min="0" max="1" step="0.05" value="${SND.vol.ui}"></div>
+    <div class="srow"><label>Audio status</label><span class="sstat">${SND.ctx ? (SND.ctx.state + (SND.muted ? " · muted" : "")) : "not started"}</span></div>
+    <div class="srow"><label>Test sound</label><button data-snd="test">Play ▶</button></div>
     <button class="closebtn primary">Close</button>`;
   p.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => {
     const k = b.dataset.k;
@@ -3569,6 +3586,9 @@ function openSettings() {
   { const ss = p.querySelector("#setShake"); if (ss) ss.oninput = (e) => setScreenShake(+e.target.value); }   // §R4 screen shake
   p.querySelectorAll("input[data-sv]").forEach(inp => inp.oninput = (e) => SND.setVol(inp.dataset.sv, +e.target.value));   // §Sound bus volumes
   { const mb = p.querySelector("button[data-snd=mute]"); if (mb) mb.onclick = () => { SND.setMute(!SND.muted); openSettings(); }; }
+  { const tb = p.querySelector("button[data-snd=test]"); if (tb) tb.onclick = () => {   // §urgent6 unlock if needed, then play a clearly-audible test sound
+      try { if (typeof window.startAudio === "function") window.startAudio(); if (SND.ctx && SND.ctx.state === "suspended") SND.ctx.resume(); } catch (e) {}
+      SND.play("discover"); setTimeout(() => SND.play("pickup"), 180); setTimeout(openSettings, 60); }; }
   p.querySelectorAll("button[data-gc]").forEach(b => b.onclick = () => {
     const k = b.dataset.gc;
     if (k === "water") setGFXCustom("water", GFX.water > 0 ? 0 : 1);
@@ -11243,7 +11263,8 @@ function frame(now) {
       `res   ${fbo.w}x${fbo.h}\n` +
       `pos   ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}\n` +
       `slope ${_curSlopeDeg.toFixed(0)}°  spd ×${_curSpeedMul.toFixed(2)}${player.sprinting ? " sprint" : ""}\n` +
-      `voices ${SND.ctx ? SND.activeVoices() : "off"}\n` +
+      `audio ${SND.ctx ? SND.ctx.state : "not started"}${SND.muted ? " muted" : ""}  vox ${SND.ctx ? SND.activeVoices() : 0}\n` +
+      `  bus m${SND.vol.master.toFixed(2)} s${SND.vol.sfx.toFixed(2)} a${SND.vol.ambience.toFixed(2)} u${SND.vol.ui.toFixed(2)}\n` +
       `fish  ${rod.state}${rod.fish ? " " + rod.fish.species + (rod.fish.weight ? " " + rod.fish.weight + "kg" : "") : ""}${rod.fight ? " p" + rod.fight.progress.toFixed(2) + " t" + rod.fight.tension.toFixed(2) + " s" + rod.fight.strain.toFixed(2) : ""}  ${fishForceBite ? "[forceBite]" : ""}${fishOddsLog ? "[odds]" : ""}`;
   } else if (dbgEl.style.display !== "none") {
     dbgEl.style.display = "none";
