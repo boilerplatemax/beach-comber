@@ -2916,6 +2916,9 @@ function gullStealCheck(dt) {
 }
 
 function updateFishSigns(dt) {
+  // §urgent2 — fish-signs are a FISHING aid, not ambient décor. Only show them while the rod is out, so
+  // open-water ripple rings never appear as unexplained "circles in the water" during normal play.
+  if (selectedTool() !== "rod") { if (fishSigns.length) fishSigns.length = 0; return; }
   for (let i = fishSigns.length - 1; i >= 0; i--) { const s = fishSigns[i]; s.age += dt; if (s.age > s.life) fishSigns.splice(i, 1); }
   if (mode !== "walk") return;
   rod.signT -= dt;
@@ -7593,7 +7596,7 @@ function seedDigSpots() {
     const roll = rng();
     let item, band, tell, needed;
     if (roll < 0.55) { item = pick(["clam", "cockle", "shell", "molt", "seaglass", "sanddollar", "limpet", "worm"]); band = 1; needed = 2; tell = rng() < 0.2 ? "gull" : "show"; }
-    else if (roll < 0.85) { item = pick(["bottle", "ceramic", "coin"]); band = 2; needed = 3; tell = rng() < 0.3 ? "bubble" : "show"; }
+    else if (roll < 0.85) { item = pick(["bottle", "ceramic", "coin"]); band = 2; needed = 3; tell = "show"; }   // §urgent2 removed the "bubble" (swash-bubbles) tell
     else { item = pick(["fossil", "bell", "tin"]); band = 3; needed = 5; tell = "dry"; }
     digSpots.push({ x, z, item, band, needed, tell, strikes: 0, revealed: false,
                     razor: item === "clam" && rng() < 0.4, lastStrike: -99, pecked: 0 });
@@ -9097,11 +9100,10 @@ function drawTells(view, dt) {
     let show = 0, col = [0.3, 0.33, 0.3];
     if (s.tell === "dry") { show = 1; col = [0.92, 0.86, 0.68]; }                 // eerie dry patch
     else if (s.tell === "gull") { show = s.pecked > 0 ? 0.8 : 0; col = [0.4, 0.4, 0.42]; }
-    else { // "show" / "bubble": react to footsteps / stomp when on wet sand nearby
+    else { // "show": a faint dimple that reacts to footsteps / stomp when on wet sand nearby
       s.react = Math.max(0, (s.react || 0) - dt * 1.5);
       if (d < 6 && surfaceKind(s.x, s.z) === "wet") s.react = Math.max(s.react, 0.5 + 0.3 * Math.sin(clock.t * 6));
       show = s.react;
-      if (s.tell === "bubble" && tideInfo().rising === false) show = Math.max(show, 0.4);
     }
     if (s.goatTell && s.goatTell > clock.t) { show = Math.max(show, 0.9); col = [0.85, 0.82, 0.55]; }   // a tamed goat pawed here
     if (show <= 0.02 || n >= 60) continue;
