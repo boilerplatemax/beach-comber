@@ -7138,7 +7138,6 @@ function targetAlongRay(r, sticky) {
     consider(obj, kind, cx, cz, (w) => rayCapsule(r.o, r.d, ax, ay, az, bx, by, bz, rad*Math.max(w, TARGET_FORGIVE), STICK_REACH));
 
   for (const e of life) { if (!lifeVisible(e)) continue; sphere(e, e.kind, e.x, e.z, entityCY(e), entityRadius(e)); }
-  for (const g of goats) sphere(g, "goat", g.x, g.z, 0.7, 1.1);
   for (const s of saltSpots) if (s.amt > 0) sphere(s, "salt", s.x, s.z, 0.2, 0.75);
   for (const f of flotsam) { const wy = waterSurfaceAt(f.x, f.z);   // §5 floating debris sits at the water surface, not the seabed
     consider(f, "flotsam", f.x, f.z, (w) => raySphere(r.o, r.d, f.x, wy + 0.1, f.z, FLOTSAM_R*Math.max(w, TARGET_FORGIVE))); }
@@ -7155,7 +7154,6 @@ function targetAlongRay(r, sticky) {
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
   for (const cr of crops) sphere(cr, "crop", cr.x, cr.z, 0.5*cr.scale, 1.0*cr.scale);   // §17 harvestable crops
   for (const sw of seaweedBeds) if (sw.ripe) sphere(sw, "seaweed", sw.x, sw.z, 0.6*sw.scale, 0.9*sw.scale);   // §17.2 pick sea lettuce
-  for (const gb of goblins) sphere(gb, "goblin", gb.x, gb.z, 0.45*gb.size, 1.1*gb.size);   // §17.5 trade
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
   for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
@@ -7185,8 +7183,6 @@ function useToolOnTarget(t) {
     case "bush": harvestBush(t.obj); return true;
     case "crop": harvestCrop(t.obj); return true;
     case "seaweed": harvestSeaweed(t.obj); return true;
-    case "goblin": openGoblinTrade(t.obj); return true;
-    case "goat": offerSaltTo(t.obj); return true;
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "flotsam": collectFlotsam(t.obj); return true;   // §5 scoop floating debris straight from the water
     case "barnacle": scrapeBarnacle(t.obj); return true;   // §5 scrape with the Tool Kit (or a shovel) for bait
@@ -8450,13 +8446,7 @@ function goblinTrades() {   // Minecraft-villager-style: a few simple give → g
   const rest = all.slice(2).sort(() => Math.random()-0.5).slice(0, 3);
   return [litter, ...rest];
 }
-function spawnGoblin(x, z) {
-  const base = GOBLIN_SKINS[(Math.random()*GOBLIN_SKINS.length)|0];
-  const skin = [clamp01(base[0]+(Math.random()-0.5)*0.1), clamp01(base[1]+(Math.random()-0.5)*0.1), clamp01(base[2]+(Math.random()-0.5)*0.08)];
-  const g = { x, z, yaw: Math.random()*6.28, idleYaw: Math.random()*6.28, size: 0.92+Math.random()*0.26, skin,
-    ear: 0.85+Math.random()*0.4, t: Math.random()*6.28, greet: 0, state: "idle", trades: goblinTrades(), restockAt: 0, bodyDyn: null, armDyn: null };
-  goblins.push(g); return g;
-}
+function spawnGoblin(x, z) { return null; }   // §urgent4 goblins/NPCs/trading removed
 function updateGoblins(dt) {
   for (const g of goblins) {
     g.t += dt;
@@ -8491,13 +8481,8 @@ function drawGoblins(view) {
     }
   }
 }
-/* ---- trade panel ---- */
-function openGoblinTrade(g) {
-  tradeOpen = true; tradeGoblin = g; g.greet = 1.6;
-  document.getElementById("tradepanel").style.display = "block";
-  if (document.pointerLockElement === canvas) document.exitPointerLock();
-  renderTrade(g);
-}
+/* ---- §urgent4 trade panel removed (no NPCs / trading) ---- */
+function openGoblinTrade(g) {}   // no-op
 function closeTrade() { tradeOpen = false; tradeGoblin = null; document.getElementById("tradepanel").style.display = "none"; if (typeof requestLock === "function") requestLock(); }
 function renderTrade(g) {
   const p = document.getElementById("tradepanel"); if (!p || !tradeOpen) return;
@@ -10552,18 +10537,7 @@ function loadChests() {
 
 let goats = [], goatDyn, onGoat = null;
 const GOAT_NAMES = ["Biscuit","Pebble","Clover","Juniper","Nutmeg","Thistle","Captain","Waffles","Marbles","Dandelion","Pippin","Gus"];
-function seedGoats() {
-  goats = [];
-  if (HIGH.h < 38) return;                                    // flats-only islands have no goats
-  const n = 3 + (rng()*4|0);                                  // 3–6
-  for (let i = 0; i < n; i++) {
-    let x = 0, z = 0, h = -1, tries = 0;
-    do { const a = rng()*6.283, r = HALF*(0.08 + rng()*0.42); x = Math.sin(a)*r; z = -Math.cos(a)*r; h = heightAt(x, z); tries++; } while ((h < 26 || surfaceAt(x,z).slope < 0.1) && tries < 80);
-    goats.push({ x, z, vx: 0, vz: 0, yaw: rng()*6.283, state: "idle", timer: 1+rng()*3, chew: rng()*6.283,
-      bob: 0, faint: 0, lean: 0, trust: 0, needTame: 3+(rng()*3|0), tamed: false, follow: true, name: null,
-      lastOffer: -999, lastBleat: 0, homeX: x, homeZ: z, tx: x, tz: z, pawT: 0 });
-  }
-}
+function seedGoats() { goats = []; }   // §urgent4 goats removed entirely (taming, salt interaction, goat dig-tell and save data gone); salt stays as a cooking item
 function goatAltTarget(g) {    // pick a new improbable high perch near home (or a boulder top)
   let best = null, bh = -1;
   for (let k = 0; k < 6; k++) { const a = rng()*6.283, r = 6 + rng()*22, x = g.homeX + Math.cos(a)*r, z = g.homeZ + Math.sin(a)*r;
@@ -10651,12 +10625,8 @@ function tameGoat(g) {
   showCard("Tamed " + g.name + "!", "It wears a little bell now, and follows you.");
   saveTamed();
 }
-function saveTamed() {
-  try { localStorage.setItem("bcg_" + SEED_STR, JSON.stringify(goats.map((g, i) => g.tamed ? { i, name: g.name, follow: g.follow } : null).filter(Boolean))); } catch (e) {}
-}
-function loadTamed() {
-  try { const t = JSON.parse(localStorage.getItem("bcg_" + SEED_STR) || "null"); if (!t) return;
-    for (const r of t) if (goats[r.i]) { goats[r.i].tamed = true; goats[r.i].name = r.name; goats[r.i].follow = r.follow; goats[r.i].trust = goats[r.i].needTame; } } catch (e) {}
+function saveTamed() {}   // §urgent4 goats removed — no goat save data
+function loadTamed() { try { localStorage.removeItem("bcg_" + SEED_STR); } catch (e) {}   // drop any old tamed-goat save so old saves load clean
 }
 
 /* --------------------------------------------------------------------- *
@@ -10679,10 +10649,7 @@ seedSeaweedBeds();   // §17.2 after life[], so bed-dwelling critters aren't wip
 recordCensus();      // §R4 remember starting populations for replenishment
 seedForagePatches(); // §17.3 worm soil / buried clusters the gulls gather over
 seedFlotsam();       // §5 a little floating debris already out on the water
-// §17.5 TEST: drop one goblin trader near the player's start spot to play with
-(function () { const s = findSpawn(); const ga = s.yaw + 0.7, gx = s.x + Math.sin(ga)*4, gz = s.z - Math.cos(ga)*4;
-  const ok = surfaceAt(gx, gz).h > 0.5 && !spotUnderwater(gx, gz);
-  spawnGoblin(ok ? gx : s.x + 3, ok ? gz : s.z); })();
+// §urgent4 goblin trader removed (no NPCs / trading)
 const terrain = buildTerrainMesh();
 const water = buildWaterMesh();
 const heightTex = buildHeightTexture();
