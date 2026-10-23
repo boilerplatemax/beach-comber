@@ -1580,38 +1580,11 @@ function eventMood() {
   return (nextEvent === "storm" ? 1 : 0.5) * fall;
 }
 
-// Ripple marks: the ebbing tide leaves ripples in the sand it just uncovered (§B).
-let ripples = [], rippleT = 0, lastWater = 0;
-const RIPPLE_LIFE = 140;                                 // in-game seconds before they smooth away
-function updateRipples(dt, gdt) {
-  const falling = waterLevel < lastWater - 1e-4; lastWater = waterLevel;
-  rippleT += gdt;
-  if (falling && rippleT > 1.5 && mode === "walk") { rippleT = 0;
-    for (let k = 0; k < 3; k++) {
-      const a = cam.yaw + (Math.random() - 0.5) * 1.6, r = 5 + Math.random() * 24;
-      const x = cam.pos[0] + Math.sin(a) * r, z = cam.pos[2] - Math.cos(a) * r, h = surfaceAt(x, z).h;
-      if (h > waterLevel + 0.02 && h < waterLevel + 1.1 && ripples.length < 140)
-        ripples.push({ x, z, born: clock.t, yaw: Math.atan2(groundGradient(x, z).dz, groundGradient(x, z).dx) });   // aligned across-slope
-    }
-  }
-  for (let i = ripples.length - 1; i >= 0; i--) { const rp = ripples[i];
-    if (clock.t - rp.born > RIPPLE_LIFE || surfaceAt(rp.x, rp.z).h < waterLevel - 0.15) ripples.splice(i, 1);
-  }
-}
-// a few thin parallel ridges = a ripple patch (lazy: mesh helpers load later in the file)
-let ripplesDyn = null;
-function drawRipples(view) {
-  if (!ripples.length) return;
-  if (!ripplesDyn) { const m = Mesh(); for (let i = 0; i < 4; i++) mBox(m, 0, 0.0, (i-1.5)*0.28, 0.6, 0.03, 0.08, [1,1,1]); ripplesDyn = makeDynamic(m, 140); }
-  let n = 0; const a = digScratch;
-  for (const rp of ripples) { if (n >= 140) break;
-    const dx = rp.x - cam.pos[0], dz = rp.z - cam.pos[2]; if (dx*dx + dz*dz > 60*60) continue;
-    const fade = 1 - (clock.t - rp.born) / RIPPLE_LIFE, o = n*10, y = surfaceAt(rp.x, rp.z).h + 0.03;
-    const c = 0.5 - 0.12 * fade;
-    a[o]=rp.x; a[o+1]=y; a[o+2]=rp.z; a[o+3]=1; a[o+4]=rp.yaw; a[o+5]=0; a[o+6]=0; a[o+7]=c; a[o+8]=c*0.95; a[o+9]=c*0.85; n++;
-  }
-  if (n) { propUniforms(view); ripplesDyn.draw(a, n); }
-}
+// §urgent1 — the ebb-tide "ripple marks" were removed: four flat parallel bars per mark read as
+// wooden grates/lattices on the intertidal sand. They were purely cosmetic (no loot/tells/save data),
+// so the whole system is gone. updateRipples/drawRipples are kept as no-ops in case anything calls them.
+function updateRipples() {}
+function drawRipples() {}
 
 /* --------------------------------------------------------------------- *
  * § MATH  (column-major mat4)
@@ -10780,7 +10753,6 @@ function frame(now) {
   updateAutoPickup();
   updateStarRescue();
   updateSurf(); updateFootsteps(); updateCreatureSound(dt);   // §Sound ambience mix + footsteps + spatial creatures
-  updateRipples(dt, gdtTotal);
   if (cardTimer > 0) { cardTimer -= dt; if (cardTimer <= 0) document.getElementById("card").style.display = "none"; }
   if (toasts.length) updateToasts(dt);
 
@@ -11040,7 +11012,6 @@ function frame(now) {
   drawGulls(view);
   drawFlotsam(view);   // §5 floating debris on the water surface (drawn before the transparent water)
   drawTells(view, dt);
-  drawRipples(view);
   drawPlaceGhost(view);
   drawParticles(view);
   drawGlints(view);     // §18 shiny finds wink in lantern light at night
