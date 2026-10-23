@@ -7741,7 +7741,13 @@ function hungerTier() { return hunger > H_FULL ? "full" : hunger > H_PECKISH ? "
 function maxStamina() { if (!hungerEnabled) return 1; const t = hungerTier(); return t === "starving" ? 0.55 : t === "hungry" ? 0.8 : 1; }
 function heavyCostMul() { return 1; }    // §Cooking no extra cost when hungry
 function swingRateMul() { return 1; }    // §Cooking no slower swings when hungry
-function spendStamina(a, heavy) { stamina = Math.max(0, stamina - a); if (stamina <= 0.001) exhausted = true; }
+// §tools effort & hunger: labour burns hunger (∝ stamina spent), recovery scales with fullness, and being fed makes heavy jobs land harder
+let EFFORT_HUNGER = 0.05;                 // hunger burned per unit of stamina spent on work (sprint/swim/dig/chop/mine/sift); walking spends ~none
+function hungerRegenMul() { return hungerEnabled ? 0.55 + 0.75 * Math.max(0, Math.min(1, hunger)) : 1; }   // fuller = faster stamina recovery (0.55×…1.3×)
+function jobEffortMul() { if (!hungerEnabled) return 1; const t = hungerTier();   // fed = a few fewer hits to fell/break; hungry = slightly more (never punishing)
+  return t === "full" ? 1.5 : t === "peckish" ? 1.0 : 0.85; }
+function spendStamina(a, heavy) { stamina = Math.max(0, stamina - a); if (stamina <= 0.001) exhausted = true;
+  if (hungerEnabled) hunger = Math.max(0, hunger - a * EFFORT_HUNGER); }   // §tools labour makes you hungrier
 function canHeavyAction() { return !exhausted && stamina > 0.02 && digCommit <= 0; }
 function rootPlayer() { digCommit = COMMIT_TIME; }              // short wind-up: rooted ~0.5s per strike
 function updateHunger(gdt) { if (!hungerEnabled) { hunger = 1; return; }
@@ -7756,7 +7762,7 @@ function updateStamina(dt) {
   // §13.1 sprinting drains fast, and much faster up any incline
   if (player.sprinting) spendStamina(SPRINT_DRAIN * dt * (1 + Math.max(0, player.incline || 0) * 4) * (tier === "hungry" ? 2 : 1));
   if (player.scramble > 0.3) spendStamina(SCRAMBLE_DRAIN * dt * player.scramble);
-  const regen = (resting ? REGEN_REST : (moving ? REGEN_ACTIVE : REGEN_IDLE)) * (tier === "full" ? 1.15 : 1) * staminaBoostMult();   // §R4 food boost
+  const regen = (resting ? REGEN_REST : (moving ? REGEN_ACTIVE : REGEN_IDLE)) * hungerRegenMul() * staminaBoostMult();   // §tools recovery scales with fullness; §R4 food boost
   const cap = maxStamina();
   stamina = Math.min(cap, stamina + regen * dt);
   if (stamina > cap) stamina = cap;
@@ -9756,8 +9762,8 @@ function chopStanding(o) {                                     // one axe strike
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST, true); rootPlayer();
   if (onDig) onDig("chop");
-  o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species)); o.hp--;
-  if (o.hp <= 0) startFall(o);
+  o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species)); o.hp -= jobEffortMul();
+  if (o.hp <= 0.001) startFall(o);
 }
 function chopAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "axe") return false;
@@ -9868,8 +9874,8 @@ function stumpStrike(st) {
   if (st.hp === undefined) st.hp = 4;
   shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
   spawnSand(st.x, surfaceAt(st.x, st.z).h + 0.3, st.z, 5, [0.5, 0.4, 0.28]);
-  st.hp--;
-  if (st.hp <= 0) {
+  st.hp -= jobEffortMul();
+  if (st.hp <= 0.001) {
     for (let i = 0, n = 1 + (rng()*2|0); i < n; i++) spawnFind("log", st.x + (rng()-0.5), st.z + (rng()-0.5));
     if (rng() < 0.6) spawnFind("leaves", st.x + (rng()-0.5), st.z + (rng()-0.5));
     const i = stumps.indexOf(st); if (i >= 0) stumps.splice(i, 1);
@@ -9927,14 +9933,14 @@ function mineObj(o) {                                           // one pickaxe s
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §13.2 too tired: gentle refusal, no swing
   shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST, true); rootPlayer();
   if (onDig) onDig("mine");
-  o.hp--;
+  o.hp -= jobEffortMul();
   const sy = surfaceAt(o.x, o.z).h + o.sc*0.3;
   spawnSand(o.x, sy, o.z, 7, [0.5, 0.48, 0.46]);               // rock chips
   if (!o.split && o.hp <= Math.ceil(o.maxhp/2)) {              // cracks apart, shedding pickable rubble
     o.split = true; o.scale *= 0.62;
     for (let i = 0; i < 2 + (rng()*2|0); i++) dropRubble(o.x+(rng()-0.5)*2.5, o.z+(rng()-0.5)*2.5, 0.5+rng()*0.5);
   }
-  if (o.hp <= 0) {                                             // destroyed completely — nothing left but Stone rubble
+  if (o.hp <= 0.001) {                                         // destroyed completely — nothing left but Stone rubble
     o.gone = true; o.scale = 0; setRockInstance(o);
     if (o.coll) { o.coll.r = 0; rebuildCollHash(); }
     const n = 3 + (rng()*2|0); for (let i = 0; i < n; i++) dropRubble(o.x+(rng()-0.5)*2, o.z+(rng()-0.5)*2, 0.4+rng()*0.4);
