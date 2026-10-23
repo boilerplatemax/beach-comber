@@ -7154,7 +7154,7 @@ function invDrop(idx, one) {
 
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
-  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup,
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup, stonesBack: stonesPutBack,
     recipes: [...knownRecipes], spearHard: spearHardened,   // §16 crafting
     bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, moist: c.moist, caught: c.caught })) } })); } catch (e) {}
 }
@@ -7166,6 +7166,7 @@ function loadState() {
       Inv.selected = Math.min(HOTBAR_SLOTS - 1, s.sel || 0); (s.disc || []).forEach((d) => discovered.add(d));
       starsRescued = s.rescued || 0;
       if (typeof s.cleanup === "number") beachCleanup = s.cleanup;   // §5 beach-cleanup tally
+      if (typeof s.stonesBack === "number") stonesPutBack = s.stonesBack;   // §21 stones put back tally
       if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
       if (Array.isArray(s.recipes)) knownRecipes = new Set(s.recipes);   // §16 crafting
@@ -7765,7 +7766,7 @@ function renderJournal() {
   const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["collections","Collections"],["cookbook","Cookbook"],["treasure","Treasure"]];
   const tabHtml = tabs.map(([id,lbl]) => { const [n,t] = journalCount(id);
     return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
-  const cleanupLine = `<div class="jstat">🌊 Beach cleanup — <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared</div>`;
+  const cleanupLine = `<div class="jstat">🌊 Beach cleanup — <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared · 🪨 Stones put back — <b>${stonesPutBack}</b></div>`;
   j.innerHTML = `<div id="journalbox"><h2>Field Journal</h2>
     <div class="jtabs">${tabHtml}</div>
     ${cleanupLine}
@@ -7970,6 +7971,7 @@ function targetAlongRay(r, sticky) {
   for (const cr of crops) sphere(cr, "crop", cr.x, cr.z, 0.5*cr.scale, 1.0*cr.scale);   // §17 harvestable crops
   for (const sw of seaweedBeds) if (sw.ripe) sphere(sw, "seaweed", sw.x, sw.z, 0.6*sw.scale, 0.9*sw.scale);   // §17.2 pick sea lettuce
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
+  for (const s of flipStones) if (!s.anim) sphere(s, "flipstone", s.x, s.z, 0.4*s.sc, 0.5 + s.sc*0.4);   // §21 flippable stones
   for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
   for (const c of colliders) if (c.kind === "fence" && c.r > 0) { const gy = surfaceAt(c.x, c.z).h; capsule(c, "fence", c.x, c.z, c.x, gy, c.z, c.x, gy+1.0, c.z, 0.32); }   // §13.1 choppable posts
@@ -8005,6 +8007,7 @@ function useToolOnTarget(t) {
       genericHitCreature(t.obj); return true;
     case "find": interactWith(t.obj); return true;
     case "rubble": pickRubble(t.obj); return true;
+    case "flipstone": flipStone(t.obj); return true;   // §21 flip a stone / put it back
     case "bush": harvestBush(t.obj); return true;
     case "crop": harvestCrop(t.obj); return true;
     case "seaweed": harvestSeaweed(t.obj); return true;
@@ -10575,6 +10578,103 @@ function drawTools(view) {
 const palmScratch = new Float32Array(48*10), pineScratch = new Float32Array(48*10), broadleafScratch = new Float32Array(48*10), rockScratch = new Float32Array(200*10);
 
 /* ===================================================================== *
+ * § 21  FLIPPING STONES — the childhood joy of flipping a stone to see what
+ *   hides under it. Flatter, slightly sunken stones with a damp edge; click
+ *   to roll one over (critters scatter / an item / nothing), click again to
+ *   put it back (counts in the journal). Refills after a day or two.
+ * ===================================================================== */
+const FLIP_STONE_N = 110;                 // stones scattered per island (tunable)
+const FLIP_REFILL_MIN = 1, FLIP_REFILL_MAX = 2;   // in-game days before a flipped stone has fresh loot again
+const FLIP_CRITTER_P = 0.48, FLIP_ITEM_P = 0.20;  // rest (0.32) = nothing — a good flip is earned
+const FLIP_SCATTER_TIME = 4.5;            // seconds critters scatter before hiding
+const FLIP_ANIM_SPEED = 3.2;              // flip speed
+const FLIP_AUTORESET_DAYS = 1.5;          // a flipped stone left alone settles back after this
+let flipStones = [], flipStoneDyn = null, dampPatchDyn = null, stonesPutBack = 0;
+const flipScratch = new Float32Array(FLIP_STONE_N * 10), dampScratch = new Float32Array(FLIP_STONE_N * 10);
+function flipStoneMesh() { const m = Mesh(); const dry = [0.54,0.52,0.48], dry2 = [0.48,0.46,0.42], damp = [0.34,0.33,0.3], rim = [0.4,0.38,0.34];
+  const R = 0.5, sides = 8, rr = [];
+  for (let i=0;i<sides;i++) rr.push(R*(0.82 + 0.3*Math.abs(Math.sin(i*2.3+1))));   // perturbed outline
+  for (let i=0;i<sides;i++){ const a0=i/sides*6.2832, a1=(i+1)/sides*6.2832, r0=rr[i], r1=rr[(i+1)%sides];
+    mTri(m, [0,0.15,0], [Math.cos(a0)*r0,0.03,Math.sin(a0)*r0], [Math.cos(a1)*r1,0.03,Math.sin(a1)*r1], i%2?dry:dry2);          // low flat top
+    mQuad(m, [Math.cos(a0)*r0,0.03,Math.sin(a0)*r0], [Math.cos(a1)*r1,0.03,Math.sin(a1)*r1], [Math.cos(a1)*r1,-0.04,Math.sin(a1)*r1], [Math.cos(a0)*r0,-0.04,Math.sin(a0)*r0], rim);   // damp rim
+    mTri(m, [0,-0.07,0], [Math.cos(a1)*r1,-0.04,Math.sin(a1)*r1], [Math.cos(a0)*r0,-0.04,Math.sin(a0)*r0], damp); }           // damp underside
+  return m; }
+function seedFlipStones() {
+  flipStones = []; let beach = 0, forest = 0;
+  for (let k=0;k<5000 && flipStones.length<FLIP_STONE_N;k++){
+    const a = rng()*6.283, r = HALF*(0.06+rng()*0.92), x = Math.sin(a)*r, z = -Math.cos(a)*r, s = surfaceAt(x, z), h = s.h;
+    if (h < waterLevel-0.6 || s.slope > 0.5) continue;
+    if (typeof insideCottage === "function" && insideCottage(x, z)) continue;
+    if (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, 0.8)) continue;
+    const depth = waterDepthAt(x, z); let biome = null;
+    if (h < wetLevel+4 && depth < 0.4) biome = "beach";                 // beach + intertidal
+    else if (depth < 0.03 && h > waterLevel+0.4) biome = "forest";       // inland dry ground / stream banks / forest floor
+    if (!biome) continue;
+    if (biome === "beach") { if (beach >= FLIP_STONE_N*0.62) continue; beach++; } else { if (forest >= FLIP_STONE_N*0.5) continue; forest++; }
+    flipStones.push({ x, z, yaw: rng()*6.283, sc: 0.8+rng()*0.55, biome, flip: 0, target: 0, up: false, anim: false, refillAt: 0, flippedAt: -99, content: null, revealedThisFlip: false, critters: [] });
+  }
+}
+function spawnStoneCritters(s) {
+  const pool = typeof stoneCritterPool === "function" ? stoneCritterPool(s.biome) : (s.biome === "beach" ? ["crab","hopper","star","snail"] : ["hopper","snail"]);
+  const n = 1 + (rng()*2|0);
+  for (let i=0;i<n;i++){ const t = pool[(rng()*pool.length)|0]; if (!CREATURES[t]) continue;
+    const e = spawnCreature(t, s.x+(rng()-0.5)*0.4, s.z+(rng()-0.5)*0.4, { hx: s.x, hz: s.z, hr: 5, fromStone: true, scatterUntil: clock.t + FLIP_SCATTER_TIME });
+    s.critters.push(e); }
+  if (typeof sparkle === "function") sparkle(s.x, surfaceAt(s.x,s.z).h+0.2, s.z, [0.5,0.45,0.4], 4);
+}
+function giveStoneItem(s) {
+  const r = rng();
+  if (r < 0.5) { const n = 1 + (rng()<0.3?1:0), first = !discovered.has("f_worm"); Inv.add("worm", n); discovered.add("f_worm"); notify("worm", n, first); }   // worms → satchel as bait
+  else if (typeof stoneItemFind === "function") stoneItemFind(s);   // §40 richer item table
+  else spawnFind("coin", s.x+(rng()-0.5)*0.3, s.z+(rng()-0.5)*0.3);
+}
+function revealStoneContent(s) {
+  if (s.revealedThisFlip) return; s.revealedThisFlip = true; s.flippedAt = tideDay;
+  if (tideDay < s.refillAt) { s.content = "nothing"; return; }         // recently disturbed → nothing
+  const roll = rng();
+  if (roll < FLIP_CRITTER_P) { s.content = "critters"; spawnStoneCritters(s); }
+  else if (roll < FLIP_CRITTER_P + FLIP_ITEM_P) { s.content = "item"; giveStoneItem(s); }
+  else s.content = "nothing";
+}
+function settleCritters(s) {
+  for (const e of s.critters) { const i = life.indexOf(e); if (i >= 0) { if (typeof spawnSand === "function") spawnSand(e.x, surfaceAt(e.x,e.z).h+0.05, e.z, 4, [0.5,0.45,0.4]); life.splice(i,1); } }
+  s.critters.length = 0;
+}
+function flipStone(s) {
+  if (s.anim) return;
+  if (!s.up) { s.up = true; s.target = 1; s.anim = true; if (onDig) onDig("thud"); if (typeof spawnSand === "function") spawnSand(s.x, surfaceAt(s.x,s.z).h+0.1, s.z, 8, [0.58,0.5,0.4]); }
+  else { s.up = false; s.target = 0; s.anim = true; if (onDig) onDig("thud"); settleCritters(s); s.refillAt = tideDay + FLIP_REFILL_MIN + rng()*(FLIP_REFILL_MAX-FLIP_REFILL_MIN); stonesPutBack++; saveState(); if (typeof checkSets === "function") checkSets(); }
+}
+function updateFlipStones(dt) {
+  for (const s of flipStones) {
+    if (s.anim) {
+      s.flip += (s.target - s.flip) * Math.min(1, dt*FLIP_ANIM_SPEED);
+      if (s.target === 1 && s.flip > 0.6) revealStoneContent(s);
+      if (Math.abs(s.flip - s.target) < 0.02) { s.flip = s.target; s.anim = false;
+        if (s.target === 0) { s.revealedThisFlip = false; s.content = null; } }
+    } else if (s.up && (tideDay - s.flippedAt) > FLIP_AUTORESET_DAYS && Math.hypot(s.x-player.x, s.z-player.z) > 45) {   // settles back on its own
+      settleCritters(s); s.up = false; s.target = 0; s.flip = 0; s.revealedThisFlip = false; s.content = null; s.refillAt = tideDay + FLIP_REFILL_MIN + rng()*(FLIP_REFILL_MAX-FLIP_REFILL_MIN);
+    }
+  }
+}
+function drawFlipStones(view) {
+  if (!flipStones.length) return;
+  if (!flipStoneDyn) flipStoneDyn = makeDynamic(flipStoneMesh(), FLIP_STONE_N);
+  if (!dampPatchDyn) dampPatchDyn = makeDynamic(discMesh(0, 0.46, 9, 0.0, [1,1,1]), FLIP_STONE_N);
+  propUniforms(view); let n = 0, dn = 0;
+  for (const s of flipStones) { const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    const gy = surfaceAt(s.x, s.z).h, f = s.flip, lean = f*Math.PI, fx = Math.sin(s.yaw), fz = Math.cos(s.yaw);
+    const px = s.x + fx*1.35*s.sc*f, pz = s.z + fz*1.35*s.sc*f, py = gy - 0.04 + Math.sin(f*Math.PI)*0.16;
+    const o = n*10; flipScratch[o]=px;flipScratch[o+1]=py;flipScratch[o+2]=pz;flipScratch[o+3]=s.sc;flipScratch[o+4]=s.yaw;flipScratch[o+5]=lean;flipScratch[o+6]=0;flipScratch[o+7]=1;flipScratch[o+8]=1;flipScratch[o+9]=1; n++;
+    if (f > 0.12) { const d = dn*10, dk = Math.min(1, f*1.6); dampScratch[d]=s.x;dampScratch[d+1]=gy+0.02;dampScratch[d+2]=s.z;dampScratch[d+3]=s.sc*0.95;dampScratch[d+4]=0;dampScratch[d+5]=0;dampScratch[d+6]=0;
+      dampScratch[d+7]=0.26*dk+0.3*(1-dk);dampScratch[d+8]=0.24*dk+0.28*(1-dk);dampScratch[d+9]=0.22*dk+0.26*(1-dk); dn++; }
+  }
+  if (dn) dampPatchDyn.draw(dampScratch, dn);
+  if (n) flipStoneDyn.draw(flipScratch, n);
+}
+function flipStonePrompt(s) { return s.up ? (IS_TOUCH ? "tap to put the stone back" : "click to put the stone back") : (IS_TOUCH ? "tap to flip the stone" : "click to flip the stone"); }
+
+/* ===================================================================== *
  * § 19  THE COTTAGE — a weathered home base near spawn: shelter, hearth,
  *        bed, storage, displays, an aquarium & collection-set rewards.
  *        (§19A shell + fixtures; interactivity follows in §19B+.)
@@ -12170,6 +12270,7 @@ initShovelFP();
 initWorldObjs();
 seedBarnacles();   // §5 barnacle crusts on intertidal rocks (needs rockObjs)
 initCottage();     // §19 the home-base cottage near spawn (needs terrain + colliders)
+seedFlipStones();  // §21 flippable stones scattered on beach & forest floor
 loadWorld();
 loadCottage();     // §19 restore cosiness / displays / aquarium for this seed
 saltDyn = makeDynamic(discMesh(0, 0.5, 8, 0.03, [0.94,0.95,0.97]), 60);
@@ -12268,6 +12369,7 @@ function frame(now) {
   updateCampfires(dt);   // §Cooking fuel burns, food roasts, stews simmer
   updateWeather(dt);     // §20 weather state machine, fog/light/wind, lightning, after-storm
   updateCottage(dt);     // §19 door swing + creak
+  updateFlipStones(dt);  // §21 flip animations + refill
   updatePry(dt);
   updateSalt();
   updateAutoPickup();
@@ -12545,6 +12647,7 @@ function frame(now) {
   drawGulls(view);
   drawFlotsam(view);   // §5 floating debris on the water surface (drawn before the transparent water)
   drawTells(view, dt);
+  drawFlipStones(view);   // §21 flippable stones + their damp patches
   drawDigCellDebug(view);   // §urgent3 dig-cell state overlay (debug)
   drawPlaceGhost(view);
   drawParticles(view);
@@ -12689,6 +12792,11 @@ function frame(now) {
         promptEl.textContent = hasUse ? (IS_TOUCH ? "tap: use · crouch+tap: pick up" : "click/F use · crouch+click pick up") : (IS_TOUCH ? "tap to pick up" : "click or F to pick up");
         promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
         crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block"; }
+    }
+    if (!buildMode && curTarget && curTarget.kind === "flipstone") {   // §21 flip-stone tooltip
+      promptEl.textContent = flipStonePrompt(curTarget.obj);
+      promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
+      crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
     if (!buildMode && curTarget && (curTarget.kind === "dispslot" || curTarget.kind === "cottrophy" || curTarget.kind === "aqua")) {   // §19C–E cottage tooltip overrides the generic prompt
       promptEl.textContent = curTarget.kind === "dispslot" ? displaySlotPrompt(curTarget.obj) : curTarget.kind === "cottrophy" ? trophyPrompt(curTarget.obj) : aquaPrompt();
