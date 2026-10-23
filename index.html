@@ -293,6 +293,7 @@
   .makehint { font-size: 12px; opacity: .7; padding: 18px 8px; text-align: center; line-height: 1.4; }
   #ygraph { position: fixed; left: 10px; top: 120px; z-index: 20; display: none; background: rgba(8,12,16,.72);
     border: 1px solid rgba(160,200,230,.3); border-radius: 4px; image-rendering: pixelated; }
+  #critcanvas { position: fixed; inset: 0; z-index: 7; display: none; pointer-events: none; }
   /* §17.5 goblin trade panel */
   #tradepanel { position: fixed; z-index: 13; display: none; left: 50%; top: 50%; transform: translate(-50%,-50%);
     width: 300px; max-width: 92vw; max-height: 82vh; overflow-y: auto; padding: 14px 16px 12px; color: #f3e9d6; text-align: center;
@@ -472,6 +473,7 @@
 <div id="pausemenu"></div>
 <div id="tradepanel"></div>
 <canvas id="ygraph" width="260" height="96"></canvas>
+<canvas id="critcanvas"></canvas>
 <canvas id="bucketpanel" width="125" height="145"></canvas>
 <div id="ctxmenu"></div>
 <div id="bucketlook">
@@ -2515,7 +2517,7 @@ addEventListener("keydown", (e) => {
   if (e.code === crouchKey && mode === "walk" && !isPanelOpen() && !e.repeat) { e.preventDefault(); if (!player.swimming) setCrouch(!crouching); }   // §13.4 toggle crouch (held key = swim down)
   if (e.code === "Tab") { e.preventDefault(); if (!pauseStage && (mode === "walk" || menuIsOpen())) cycleMenuTab(1); }   // §2 switch tabs within the menu (opens it on the last tab if closed)
   if (e.code === "KeyL" && mode === "walk" && !isPanelOpen()) toggleLantern();   // §18 raise / lower the lantern
-  if (e.code === "KeyP" && mode === "walk") toggleAutoPickup();   // auto-pickup on/off
+  if (e.code === "KeyP" && !e.repeat) { if (pauseStage) closePause(); else if (mode === "walk" && !isPanelOpen()) openPause(); }   // §R4 P pauses/resumes (auto-pickup now lives in Settings)
   if (/^Digit[1-8]$/.test(e.code)) selectHotbar(+e.code.slice(5) - 1);
   if (debugMode) {                                    // debug-only shortcuts
     if (e.code === "Backquote") debugOn = !debugOn;
@@ -2523,6 +2525,7 @@ addEventListener("keydown", (e) => {
     if (e.code === "KeyN") forceSpawn = !forceSpawn;   // (moved off B — B now opens the bucket)
     if (e.code === "KeyY") { dbgYGraph = !dbgYGraph; document.getElementById("ygraph").style.display = dbgYGraph ? "block" : "none"; }   // §P1 feet/cam Y graph
     if (e.code === "KeyK") { crabLog = !crabLog; console.log("crab log " + (crabLog ? "ON" : "OFF")); }   // §1c crab lifecycle log
+    if (e.code === "KeyJ") { critDbg = !critDbg; const cc = document.getElementById("critcanvas"); cc.style.display = critDbg ? "block" : "none"; }   // §R4 creature AI state/direction overlay
   }
 });
 addEventListener("keyup", (e) => { keys[e.code] = false; });
@@ -2835,12 +2838,17 @@ function isPanelOpen() {
 function requestLock() {   // re-acquire pointer lock after a gesture (closing a panel); harmless if it fails
   if (!IS_TOUCH && mode === "walk" && !isPanelOpen()) { try { canvas.requestPointerLock(); } catch (e) {} }
 }
+let wasLocked = false;   // §R4 track lock transitions so we only auto-pause on a genuine loss during play
 document.addEventListener("pointerlockchange", () => {
   const locked = document.pointerLockElement === canvas;
   if (!locked) useHeld = false;                   // §13.2 stop auto-swinging when the cursor is freed
+  // §R4 desktop pause: Esc releases pointer lock and the browser often swallows the key, so the pointerlock
+  // loss itself is the signal. If we were playing (locked) and no panel is responsible, open the pause menu.
+  if (wasLocked && !locked && !IS_TOUCH && mode === "walk" && !isPanelOpen() && !pauseStage) openPause();
+  wasLocked = locked;
   const hint = document.getElementById("resumehint");
-  // lost lock mid-game and no panel is responsible (e.g. after Esc) → a minimal resume hint, not the title
-  hint.style.display = (!locked && mode === "walk" && !isPanelOpen()) ? "flex" : "none";
+  // lost lock but a panel/pause is responsible → no title; only show the minimal resume hint if truly idle
+  hint.style.display = (!locked && mode === "walk" && !isPanelOpen() && !pauseStage) ? "flex" : "none";
 });
 document.getElementById("resumehint").addEventListener("click", () => { if (!IS_TOUCH) canvas.requestPointerLock(); });
 initTitle();
@@ -4939,8 +4947,21 @@ function behaveFish(e, dt, d, dx, dz) {
   // keep every fish under the surface; the flounder rests just above the seabed, partly buried
   e.y = Math.max(floor+0.08, Math.min(surf - (e.t === "flounder" ? 0.12 : 0.3), e.y));
 }
+// §R4 per-species top speeds (m/s). `dx,dz` passed to behave() are (entity − player), so they already
+// point AWAY from the player — fleeFrom moves along them. Nothing here moves toward the player.
+const CRIT_SPD = {
+  crab:    { cruise: 2.4, flee: 5.0 }, piper:   { cruise: 3.0, flee: 5.5 }, octopus: { cruise: 0.5, flee: 5.0 },
+  seaduck: { cruise: 1.3, flee: 3.4 }, heron:   { cruise: 0.8, flee: 3.2 }, seal:    { cruise: 0.0, flee: 5.0 },
+  snail:   { cruise: 0.25, flee: 0.25 }, hermit: { cruise: 0.5, flee: 0.5 }, shrimp:  { cruise: 1.8, flee: 5.0 },
+  hopper:  { cruise: 0.5, flee: 2.0 },
+};
+function fleeFrom(e, dx, dz, dt, spd) {        // move directly away from the player (dx,dz already = entity − player)
+  const r = Math.hypot(dx, dz) || 1;
+  e.x += dx/r*dt*spd; e.z += dz/r*dt*spd; e.yaw = Math.atan2(dz, dx) + 1.57;
+}
 function behave(e, dt, d, dx, dz) {
   const g = heightAt(e.x, e.z);
+  if (e.cdState === undefined) e.cdState = "idle";              // §R4 debug: current AI state
   if (FISH[e.t]) { behaveFish(e, dt, d, dx, dz); return; }     // §14C huntable fish / schools
   if (e.returning) {                                           // poured onto dry land → head for the nearest water
     if (waterDepthAt(e.x, e.z) > 0.12) { e.returning = false; e.exposed = 0; e.hx = e.x; e.hz = e.z; return; }
@@ -4973,10 +4994,12 @@ function behave(e, dt, d, dx, dz) {
     // band-follow bias: nudge toward the water if drifting dry, uphill if drifting wet — so it never leaves the visible band
     const grad = groundGradient(e.x, e.z); let bx = 0, bz = 0;
     if (band > -0.4) { bx = -grad.dx; bz = -grad.dz; } else if (band < -2.8) { bx = grad.dx; bz = grad.dz; }
-    if (d < 11) {                                            // flee, but curve ALONG the band rather than straight up the beach
-      const a = Math.atan2(-dz, -dx); let fx = Math.cos(a) + bx*1.6, fz = Math.sin(a) + bz*1.6; const m = Math.hypot(fx, fz) || 1;
-      e.x += fx/m*dt*6; e.z += fz/m*dt*6; e.yaw = Math.atan2(fz, fx)+1.57; return;
+    if (d < 11) {                                            // §R4 flee AWAY from the player, curving ALONG the band (dx,dz already point away)
+      e.cdState = "flee";
+      const r = Math.hypot(dx, dz) || 1; let fx = dx/r + bx*1.6, fz = dz/r + bz*1.6; const m = Math.hypot(fx, fz) || 1;
+      e.x += fx/m*dt*CRIT_SPD.crab.flee; e.z += fz/m*dt*CRIT_SPD.crab.flee; e.yaw = Math.atan2(fz, fx)+1.57; return;
     }
+    e.cdState = "wander";
     e.timer -= dt; if (e.timer < 0) { e.timer = 0.6+rng()*1.4; e.vx = (rng()-0.5); e.vz = (rng()-0.5); }
     const wx = e.vx + bx*1.2, wz = e.vz + bz*1.2;
     e.x += wx*dt*2.5; e.z += wz*dt*2.5; e.yaw = Math.atan2(wz, wx)+1.57;
@@ -4989,24 +5012,28 @@ function behave(e, dt, d, dx, dz) {
     // handled by the dedicated flock controller (§12B updateGulls)
   } else if (e.t === "seal") {
     if (e.state === "gone") return;
-    if (d < 20) { const a = Math.atan2(-dz, -dx); e.x -= Math.cos(a)*dt*5; e.z -= Math.sin(a)*dt*5; if (heightAt(e.x,e.z) < waterLevel) e.state = "gone"; }
+    if (d < 20) { e.cdState = "flee"; fleeFrom(e, dx, dz, dt, CRIT_SPD.seal.flee); if (heightAt(e.x,e.z) < waterLevel) e.state = "gone"; }
   } else if (e.t === "anemone") {
     const exposed = waterLevel < g - 0.05;
     e.closed += ((d < 2.5 || exposed) ? 1 : 0 - e.closed) * 0; // simple target
     e.closed += (((d < 2.5 || exposed) ? 1 : 0) - e.closed) * Math.min(1, dt*4);
   } else if (e.t === "piper") {
-    if (d < (crouching ? 3.5 : 7)) { const a = Math.atan2(-dz, -dx); e.x += Math.cos(a)*dt*7.5; e.z += Math.sin(a)*dt*7.5; e.yaw = a + 1.57; return; }  // §13.4 flee footsteps (closer when crouched)
-    const gh = g, target = waterLevel + 0.2, grad = groundGradient(e.x, e.z);
+    // §R4 sandpiper: runs the swash edge, probes the sand, and keeps its distance (flees AWAY, never toward)
+    if (d < (crouching ? 3.5 : 7)) { e.cdState = "flee"; e.probe = 0; fleeFrom(e, dx, dz, dt, CRIT_SPD.piper.flee); return; }
+    if (e.probe > 0) { e.probe -= dt; e.cdState = "probe"; return; }        // paused, beak down in the sand
+    e.timer -= dt; if (e.timer < 0) { e.timer = 0.5 + rng()*1.3; e.side = rng() < 0.5 ? 1 : -1; if (rng() < 0.35) { e.probe = 0.4 + rng()*0.6; return; } }
+    e.cdState = "run";
+    const target = waterLevel + 0.2, grad = groundGradient(e.x, e.z);
     let mx = 0, mz = 0;
-    if (gh > target + 0.3) { mx = grad.dx; mz = grad.dz; }          // too dry → follow the water down
-    else if (gh < target - 0.1) { mx = -grad.dx; mz = -grad.dz; }  // in the wash → scurry up
-    e.timer -= dt; if (e.timer < 0) { e.timer = 0.5 + rng()*1.3; e.side = rng() < 0.5 ? 1 : -1; }
-    mx += -grad.dz * e.side * 0.8; mz += grad.dx * e.side * 0.8;    // lateral run along the shore
-    const m = Math.hypot(mx, mz) || 1; e.x += mx/m*dt*4.5; e.z += mz/m*dt*4.5; e.yaw = Math.atan2(mz, mx) + 1.57;
+    if (g > target + 0.3) { mx = grad.dx; mz = grad.dz; }           // too dry → follow the water down
+    else if (g < target - 0.1) { mx = -grad.dx; mz = -grad.dz; }    // in the wash → scurry up
+    mx += -grad.dz * e.side * 0.8; mz += grad.dx * e.side * 0.8;     // lateral run along the shore
+    const m = Math.hypot(mx, mz) || 1; e.x += mx/m*dt*CRIT_SPD.piper.cruise; e.z += mz/m*dt*CRIT_SPD.piper.cruise; e.yaw = Math.atan2(mz, mx) + 1.57;
   } else if (e.t === "heron") {
-    if (d < 15) { const a = Math.atan2(-dz, -dx); e.x -= Math.cos(a)*dt*3.2; e.z -= Math.sin(a)*dt*3.2; e.yaw = a + 1.57; return; }  // stalk off, unhurried
+    if (d < 15) { e.cdState = "flee"; fleeFrom(e, dx, dz, dt, CRIT_SPD.heron.flee); return; }   // stalk off, unhurried
+    e.cdState = "stalk";
     e.timer -= dt; if (e.timer < 0) { e.timer = 2.5 + rng()*5; e.tx = e.x + (rng()-0.5)*8; e.tz = e.z + (rng()-0.5)*8; }
-    const a = Math.atan2(e.tz - e.z, e.tx - e.x); e.x += Math.cos(a)*dt*0.8; e.z += Math.sin(a)*dt*0.8; e.yaw = a + 1.57;
+    const a = Math.atan2(e.tz - e.z, e.tx - e.x); e.x += Math.cos(a)*dt*CRIT_SPD.heron.cruise; e.z += Math.sin(a)*dt*CRIT_SPD.heron.cruise; e.yaw = a + 1.57;
   } else if (e.t === "hopper") {
     if (d < 5) { const a = rng()*6.283; e.x += Math.cos(a)*0.45; e.z += Math.sin(a)*0.45; return; }   // startle hop
     e.timer -= dt; if (e.timer < 0) { e.timer = 0.8 + rng()*1.6; const a = rng()*6.283; e.x += Math.cos(a)*0.3; e.z += Math.sin(a)*0.3; }
@@ -5018,14 +5045,17 @@ function behave(e, dt, d, dx, dz) {
     const fast = d < 6 ? 5.5 : 1.8;
     e.timer -= dt; if (e.timer < 0 || d < 5) { e.timer = 0.3 + rng()*0.9; e.tx = e.hx+(rng()-0.5)*(e.hr||3); e.tz = e.hz+(rng()-0.5)*(e.hr||3); }
     const a = Math.atan2(e.tz-e.z, e.tx-e.x); e.x += Math.cos(a)*dt*fast; e.z += Math.sin(a)*dt*fast; e.yaw = a + Math.PI;   // tail-first
-  } else if (e.t === "octopus") {                                 // §16.1 shy: jets away when you crowd it, else drifts
-    if (d < 3.2) { const a = Math.atan2(-dz, -dx); e.x += Math.cos(a)*dt*4.2; e.z += Math.sin(a)*dt*4.2; e.yaw = a; }
-    else { e.timer -= dt; if (e.timer < 0) { e.timer = 2.5 + rng()*3.5; e.vx = (rng()-0.5)*0.4; e.vz = (rng()-0.5)*0.4; } e.x += e.vx*dt; e.z += e.vz*dt; }
-    if (Math.hypot(e.x-e.hx, e.z-e.hz) > (e.hr||3)) { e.vx = (e.hx-e.x)*0.1; e.vz = (e.hz-e.z)*0.1; }
+  } else if (e.t === "octopus") {                                 // §R4 crawls slowly between den & pools; jets fast AWAY only when startled
+    if (e.jet > 0) e.jet -= dt;
+    if (d < 3.2) { e.cdState = "jet"; e.jet = Math.max(e.jet || 0, 0.7); }   // startled → a short fast jet
+    if (e.jet > 0) { fleeFrom(e, dx, dz, dt, CRIT_SPD.octopus.flee * Math.min(1, e.jet/0.5)); }   // the jet eases off
+    else { e.cdState = "crawl"; e.timer -= dt; if (e.timer < 0) { e.timer = 2.5 + rng()*3.5; e.vx = (rng()-0.5)*0.4; e.vz = (rng()-0.5)*0.4; }
+      e.x += e.vx*dt*CRIT_SPD.octopus.cruise*2; e.z += e.vz*dt*CRIT_SPD.octopus.cruise*2; e.yaw = Math.atan2(e.vz||0.01, e.vx||0.01); }
+    if (Math.hypot(e.x-e.hx, e.z-e.hz) > (e.hr||3)) { e.vx = (e.hx-e.x)*0.1; e.vz = (e.hz-e.z)*0.1; }   // tethered to its den
   } else if (e.t === "seaduck") {                                 // §16.1 paddles off the shore, flees, stays on water
-    if (d < (crouching ? 5 : 11)) { const a = Math.atan2(-dz, -dx); e.x += Math.cos(a)*dt*3.6; e.z += Math.sin(a)*dt*3.6; e.yaw = a; }
-    else { e.timer -= dt; if (e.timer < 0) { e.timer = 1.5 + rng()*3; e.tx = e.hx+(rng()-0.5)*e.hr; e.tz = e.hz+(rng()-0.5)*e.hr; }
-      const a = Math.atan2(e.tz-e.z, e.tx-e.x); e.x += Math.cos(a)*dt*1.3; e.z += Math.sin(a)*dt*1.3; e.yaw = a; }
+    if (d < (crouching ? 5 : 11)) { e.cdState = "flee"; fleeFrom(e, dx, dz, dt, CRIT_SPD.seaduck.flee); }
+    else { e.cdState = "paddle"; e.timer -= dt; if (e.timer < 0) { e.timer = 1.5 + rng()*3; e.tx = e.hx+(rng()-0.5)*e.hr; e.tz = e.hz+(rng()-0.5)*e.hr; }
+      const a = Math.atan2(e.tz-e.z, e.tx-e.x); e.x += Math.cos(a)*dt*CRIT_SPD.seaduck.cruise; e.z += Math.sin(a)*dt*CRIT_SPD.seaduck.cruise; e.yaw = a; }
     if (heightAt(e.x, e.z) > waterLevel - 0.2) { const grad = groundGradient(e.x, e.z); e.x += grad.dx*dt*2.2; e.z += grad.dz*dt*2.2; }   // keep to the water
   } else { // star, urchin, hermit, jelly: subtle
     if (e.t === "hermit") { e.timer -= dt; if (e.timer < 0) { e.timer = 1+rng()*2; e.vx=(rng()-0.5); e.vz=(rng()-0.5);} e.x += e.vx*dt*0.5; e.z += e.vz*dt*0.5; }
@@ -6533,6 +6563,28 @@ let shovelSwing = 0, camNudge = 0, toolRecoilT = 0, camShake = 0, lastFailT = -9
 // settles — a "knee-bend" that eases in AND out, and never touches the player's real position.
 let camYOff = 0, camYVel = 0;
 // §P1 debug feet/cam Y graph (toggle with Y in debug mode)
+// §R4 creature-AI debug overlay: each nearby creature's state + a short arrow in its heading/target direction
+let critDbg = false;
+function drawCritDebug() {
+  const cc = document.getElementById("critcanvas"); if (!cc || !critDbg) return;
+  if (cc.width !== innerWidth || cc.height !== innerHeight) { cc.width = innerWidth; cc.height = innerHeight; }
+  const ctx = cc.getContext("2d"); ctx.clearRect(0, 0, cc.width, cc.height);
+  ctx.font = "11px ui-monospace, monospace"; ctx.textAlign = "center"; ctx.lineWidth = 2;
+  for (const e of life) {
+    if (e.kind !== "creature") continue;
+    const dd = Math.hypot(e.x - cam.pos[0], e.z - cam.pos[2]); if (dd > 40) continue;
+    const gy = (e.y !== undefined ? e.y : heightAt(e.x, e.z)) + 0.4;
+    const sp = projectToScreen(e.x, gy, e.z); if (!sp) continue;
+    const head = (e.yaw || 0) - 1.57;                          // most creatures set yaw = heading + 90°
+    const tip = projectToScreen(e.x + Math.cos(head)*1.2, gy, e.z + Math.sin(head)*1.2);
+    ctx.strokeStyle = "rgba(120,230,160,.9)"; ctx.fillStyle = "rgba(120,230,160,.95)";
+    if (tip) { ctx.beginPath(); ctx.moveTo(sp[0], sp[1]); ctx.lineTo(tip[0], tip[1]); ctx.stroke();
+      ctx.beginPath(); ctx.arc(tip[0], tip[1], 2.5, 0, 6.28); ctx.fill(); }
+    ctx.fillStyle = "rgba(10,16,20,.65)"; const lbl = `${e.t}:${e.cdState || e.gstate || "-"}`;
+    const w = ctx.measureText(lbl).width + 8; ctx.fillRect(sp[0]-w/2, sp[1]-20, w, 14);
+    ctx.fillStyle = "#bfe6c8"; ctx.fillText(lbl, sp[0], sp[1]-9);
+  }
+}
 let dbgYGraph = false; const yHist = []; const Y_HIST = 260;
 function recordY(feetY, camY, airborne) { yHist.push({ f: feetY, c: camY, a: airborne }); if (yHist.length > Y_HIST) yHist.shift(); }
 function drawYGraph() {
@@ -9454,6 +9506,7 @@ function frame(now) {
     player.eyeY = renderFeetY + EYE + camSit;                            // stable gameplay eye (rays, lantern, spear)
     cam.pos[0] = player.x; cam.pos[1] = player.eyeY + bobOff + camYOff; cam.pos[2] = player.z;   // + visual bob + landing give
     if (dbgYGraph) { recordY(renderFeetY, cam.pos[1], player.airborne); drawYGraph(); }    // §P1
+    if (critDbg) drawCritDebug();                                                          // §R4 creature AI overlay
    }
   }
 
