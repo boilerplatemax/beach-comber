@@ -3449,7 +3449,7 @@ function placePOIs() {
   const pool = [];
   const add = (t, n) => { for (let i = 0; i < n; i++) pool.push(t); };
   add("lighthouse", 2); add("cairn", 2); add("hut", 1);
-  if (CHARACTER === "lowlands" || CHARACTER === "atoll") { add("pier", 3); add("tidepools", 2); }
+  if (CHARACTER === "lowlands" || CHARACTER === "atoll") { add("tidepools", 4); }   // §4 pier/plank-deck POI removed (read as "wooden grates")
   if (CHARACTER === "highlands") { add("tidepools", 3); add("seacave", 2); }
   if (CHARACTER === "peaks") { add("seacave", 3); add("tidepools", 2); add("lighthouse", 2); }
   const want = 2 + Math.floor(rng() * 3);   // 2–4
@@ -8120,14 +8120,18 @@ function hideFenceInstance(c) {
     gl.bindBuffer(gl.ARRAY_BUFFER, ft.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, (o+3)*4, ft.inst.data, o+3, 1); }
 }
 function chopFence(c) {
+  // §4 a rotten old post: breakable with anything (an axe just topples it faster and yields a little more).
   if (!c || c.r <= 0) return true;
-  if (selectedTool() !== "axe") { if (autoSwitch && autoSwitchTo("axe")) {} else { tooTiredOrCant(c.x, c.z, false); return true; } }
-  if (selectedTool() !== "axe") return true;
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
-  shovelSwing = 1; spendStamina(CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
+  const axe = selectedTool() === "axe";
+  shovelSwing = 1; spendStamina(axe ? CHOP_COST : CHOP_COST * 0.7, true); rootPlayer(); if (onDig) onDig("chop");
+  c.hits = (c.hits || 0) + (axe ? 2 : 1);
+  if (c.hits < 2) {                                   // bare hands / a non-axe tool need a second knock
+    camNudge = Math.max(camNudge, 0.03); spawnSand(c.x, surfaceAt(c.x,c.z).h + 0.6, c.z, 3, [0.5,0.42,0.3]); return true;
+  }
   hideFenceInstance(c); c.r = 0;
-  const n = 1 + (rng()*2|0); Inv.add("stick", n); discovered.add("f_stick");
-  spawnSand(c.x, surfaceAt(c.x,c.z).h + 0.2, c.z, 6, [0.5,0.42,0.3]); showCard("Fence post", "Chopped for " + n + " sticks."); saveWorld();
+  const n = (axe ? 1 : 0) + 1 + (rng()*2|0); Inv.add("stick", n); discovered.add("f_stick");
+  spawnSand(c.x, surfaceAt(c.x,c.z).h + 0.2, c.z, 6, [0.5,0.42,0.3]); showCard("Fence post", "Knocked loose — " + n + " sticks."); saveWorld();
   return true;
 }
 // placeholder hook; §13.2 "Too tired" will refine this
