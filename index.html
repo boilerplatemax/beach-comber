@@ -1676,10 +1676,11 @@ const STORM_BOLT_MIN = 6, STORM_BOLT_MAX = 16;   // seconds between lightning bo
 const WEATHER_BITE_MUL = { clear: 1, overcast: 0.75, fog: 0.95, rain: 0.6, storm: 0.5 };   // lower = bites sooner
 weather = {
   state: "clear", day: -1, forced: null,
-  wind: 0.15, rain: 0, fog: 0, dim: 0, waveMul: 1,     // smoothed live params
+  wind: 0.15, rain: 0, fog: 0, dim: 0, waveMul: 1, windDir: 0.7,     // smoothed live params
   flash: 0, nextBolt: 0, lastStormDay: -99, pendingStormMorning: false,
   wormT: 0,
 };
+function weatherWindDir(d) { return mulberry32((SEED_INT ^ (Math.imul((d|0) + 7, 0x85ebca6b) >>> 0)) >>> 0)() * 6.2831853; }
 function weatherRngForDay(d) { return mulberry32((SEED_INT ^ (Math.imul((d|0) + 1, 0x9e3779b1) >>> 0)) >>> 0); }
 function weatherForDay(d) {
   if (weather.forced) return weather.forced;
@@ -1695,7 +1696,7 @@ function weatherBiteMul() { return WEATHER_BITE_MUL[weather.state] || 1; }
 function weatherIsWet() { return weather.state === "rain" || weather.state === "storm"; }
 function rainAmt() { return weather.rain; }
 function initWeather() {   // set day-0 weather with no transition (no visible blend on load)
-  const d = Math.floor(tideDay); weather.day = d; weather.state = weatherForDay(d);
+  const d = Math.floor(tideDay); weather.day = d; weather.state = weatherForDay(d); weather.windDir = weatherWindDir(d);
   const P = WEATHER_PARAMS[weather.state];
   weather.wind = P.wind; weather.rain = P.rain; weather.dim = P.dim; weather.waveMul = P.wave;
   weather.fog = weather.state === "fog" ? P.fog * fogDaylightCurve() : P.fog;
@@ -1721,7 +1722,7 @@ function updateWeather(dt) {
   const d = Math.floor(tideDay);
   if (d !== weather.day) {
     const yesterday = weather.state;
-    weather.state = weatherForDay(d);
+    weather.state = weatherForDay(d); weather.windDir = weatherWindDir(d);
     if (weather.day >= 0 && yesterday === "storm" && weather.state !== "storm") weather.pendingStormMorning = true;   // §20 after-storm wash-up
     if (weather.state === "storm") weather.lastStormDay = d;
     weather.day = d;
@@ -1736,6 +1737,7 @@ function updateWeather(dt) {
   weather.waveMul += (P.wave - weather.waveMul) * s;
   updateLightning(dt);
   applyWeatherFog();
+  updateRain(dt);
   if (weather.pendingStormMorning && typeof onStormMorning === "function") { weather.pendingStormMorning = false; onStormMorning(); }
   if (typeof updateWeatherGameplay === "function") updateWeatherGameplay(dt);
 }
@@ -1753,6 +1755,71 @@ function debugStormMorning() {   // debug: jump to the morning after a storm (th
   if (typeof onStormMorning === "function") onStormMorning();
   if (typeof syncDebugPanel === "function") syncDebugPanel();
   showCard("The morning after", "The storm has blown through. See what's washed up along the shore.");
+}
+
+/* §20C RAIN — low-poly streaks around the camera, rings on water, dug-hole puddles.
+   Wet ground is handled in the terrain shader (uGroundWet). */
+const RAIN_MAX = 460, RAIN_BOX = 44, RAIN_H = 16, RING_MAX = 64, RING_SPEED = 1.5, PUDDLE_MAX = 40;
+const RING_RATE = 46;                 // rings spawned per second at full rain
+let rainDyn = null, ringDyn = null, puddleDyn = null, ringSpawnT = 0;
+const rainArr = new Float32Array(RAIN_MAX * 10), ringArr = new Float32Array(RING_MAX * 10), puddleArr = new Float32Array(PUDDLE_MAX * 10);
+const rainDrops = [], rainRings = [], weatherPuddles = [];
+function streakMesh() { const m = Mesh(), c = [0.8, 0.86, 0.96]; mQuad(m, [-0.018,0,0],[0.018,0,0],[0.018,0.8,0],[-0.018,0.8,0], c); return m; }
+function ringMesh() { const m = Mesh(), c = [0.9,0.93,0.97], ri = 0.68, ro = 1.0, sides = 12;
+  for (let i=0;i<sides;i++){ const a0=i/sides*6.2832, a1=(i+1)/sides*6.2832;
+    mQuad(m, [Math.cos(a0)*ri,0,Math.sin(a0)*ri],[Math.cos(a1)*ri,0,Math.sin(a1)*ri],[Math.cos(a1)*ro,0,Math.sin(a1)*ro],[Math.cos(a0)*ro,0,Math.sin(a0)*ro], c); }
+  return m; }
+function recordDigHole(x, z) {   // §20 a dug hole can fill with fresh rainwater
+  if (!weather) return;
+  for (const p of weatherPuddles) if (Math.hypot(p.x-x, p.z-z) < 0.8) { p.r = Math.min(1.1, p.r + 0.08); return; }
+  if (weatherPuddles.length >= PUDDLE_MAX) weatherPuddles.shift();
+  weatherPuddles.push({ x, z, r: 0.6, fill: weather.rain > 0.1 ? 0.15 : 0, fresh: true });
+}
+function updateRain(dt) {
+  const amt = weather.rain;
+  if (amt > 0.02) {
+    const n = Math.floor(RAIN_MAX * amt);
+    while (rainDrops.length < n) rainDrops.push({ x:(Math.random()-0.5)*RAIN_BOX, y:Math.random()*RAIN_H, z:(Math.random()-0.5)*RAIN_BOX, s:0.5+Math.random() });
+    const fall = 15 + weather.wind*12, wdx = Math.sin(weather.windDir)*weather.wind*5, wdz = Math.cos(weather.windDir)*weather.wind*5;
+    for (let i=0;i<n;i++){ const d = rainDrops[i]; d.y -= fall*dt; d.x += wdx*dt; d.z += wdz*dt;
+      if (d.y < -3){ d.y += RAIN_H+3; d.x = (Math.random()-0.5)*RAIN_BOX; d.z = (Math.random()-0.5)*RAIN_BOX; } }
+    ringSpawnT += dt * amt * RING_RATE;
+    while (ringSpawnT >= 1) { ringSpawnT -= 1;
+      const a = Math.random()*6.2832, rr = 2 + Math.random()*16, x = player.x + Math.cos(a)*rr, z = player.z + Math.sin(a)*rr;
+      if (rainRings.length < RING_MAX && waterDepthAt(x, z) > 0.05) rainRings.push({ x, z, t: 0, y: waterSurfaceAt(x, z) }); }
+  }
+  for (let i=rainRings.length-1;i>=0;i--){ rainRings[i].t += dt*RING_SPEED; if (rainRings[i].t >= 1) rainRings.splice(i,1); }
+  for (const p of weatherPuddles) { const target = (amt > 0.12 && surfaceAt(p.x,p.z).h > waterLevel+0.15) ? 1 : 0; p.fill += (target - p.fill) * dt * 0.4; }
+}
+function drawRain(view) {
+  if (!weather) return; const amt = weather.rain;
+  if (amt > 0.02 && rainDrops.length) {
+    if (!rainDyn) rainDyn = makeDynamic(streakMesh(), RAIN_MAX);
+    const n = Math.min(rainDrops.length, Math.floor(RAIN_MAX * amt)), lean = Math.min(0.8, weather.wind*0.6), ld = weather.windDir; let k = 0;
+    for (let i=0;i<n;i++){ const d = rainDrops[i], o = k*10;
+      rainArr[o]=cam.pos[0]+d.x; rainArr[o+1]=cam.pos[1]+d.y; rainArr[o+2]=cam.pos[2]+d.z; rainArr[o+3]=d.s; rainArr[o+4]=0; rainArr[o+5]=lean; rainArr[o+6]=ld; rainArr[o+7]=1;rainArr[o+8]=1;rainArr[o+9]=1; k++; }
+    propUniforms(view); gl.uniform1f(propU.uGhost, 1); gl.uniform3fv(propU.uGhostCol, [0.78,0.84,0.95]); gl.uniform1f(propU.uFogDensity, 0);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+    if (k) rainDyn.draw(rainArr, k);
+    gl.depthMask(true); gl.disable(gl.BLEND); gl.uniform1f(propU.uGhost, 0); gl.uniform1f(propU.uFogDensity, FOG_DENSITY);
+  }
+  if (rainRings.length) {
+    if (!ringDyn) ringDyn = makeDynamic(ringMesh(), RING_MAX); let k = 0;
+    for (const r of rainRings){ if (k>=RING_MAX) break; const o = k*10, f = 1-r.t;
+      ringArr[o]=r.x; ringArr[o+1]=r.y+0.02; ringArr[o+2]=r.z; ringArr[o+3]=0.08+r.t*0.5; ringArr[o+4]=0;ringArr[o+5]=0;ringArr[o+6]=0; ringArr[o+7]=f;ringArr[o+8]=f;ringArr[o+9]=f; k++; }
+    propUniforms(view); gl.uniform1f(propU.uGhost, 1); gl.uniform3fv(propU.uGhostCol, [0.9,0.93,0.97]);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+    if (k) ringDyn.draw(ringArr, k);
+    gl.depthMask(true); gl.disable(gl.BLEND); gl.uniform1f(propU.uGhost, 0);
+  }
+  if (weatherPuddles.length) {
+    if (!puddleDyn) puddleDyn = makeDynamic(discMesh(0, 0.5, 10, 0, [1,1,1]), PUDDLE_MAX); let k = 0;
+    for (const p of weatherPuddles){ if (p.fill < 0.04 || k >= PUDDLE_MAX) continue; const dx = p.x-cam.pos[0], dz = p.z-cam.pos[2]; if (dx*dx+dz*dz > 60*60) continue;
+      const o = k*10, y = surfaceAt(p.x,p.z).h + 0.02; puddleArr[o]=p.x;puddleArr[o+1]=y;puddleArr[o+2]=p.z;puddleArr[o+3]=p.r*Math.min(1,p.fill);puddleArr[o+4]=0;puddleArr[o+5]=0;puddleArr[o+6]=0; puddleArr[o+7]=0.46;puddleArr[o+8]=0.56;puddleArr[o+9]=0.7; k++; }
+    if (k){ propUniforms(view); gl.uniform1f(propU.uGhost, 1); gl.uniform3fv(propU.uGhostCol, [0.46,0.56,0.7]);
+      gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+      puddleDyn.draw(puddleArr, k); gl.depthMask(true); gl.disable(gl.BLEND); gl.uniform1f(propU.uGhost, 0); }
+  }
 }
 
 /* --------------------------------------------------------------------- *
@@ -1895,6 +1962,7 @@ out vec4 frag;
 uniform vec3 uSunDir, uCamPos, uZenith, uHorizon, uWarm;
 uniform float uFogDensity, uFogNear, uWaterLevel, uWetLevel;
 uniform float uTime; uniform int uUnderwater;        // §14B animated seabed caustics
+uniform float uGroundWet;                            // §20 rain darkens & slightly cools the ground (0 = dry)
 uniform vec3 uLanternPos; uniform float uLanternI;   // §18 lantern light pool
 uniform sampler2D uFresh;
 uniform sampler2D uMaterial;
@@ -1939,6 +2007,7 @@ void main() {
   // drying back toward dry sand above it (wetLevel lags the tide).
   float wet = (1.0 - smoothstep(uWaterLevel, uWetLevel + 0.6, h)) * (1.0 - smoothstep(0.55, 0.72, slope));
   col = mix(col, col * 0.62, clamp(wet, 0.0, 1.0));
+  if (uGroundWet > 0.001) col = mix(col, col * vec3(0.66, 0.68, 0.74), clamp(uGroundWet, 0.0, 1.0));   // §20 rain-darkened, slightly cool wet ground
 
   // Fresh-dug soil is darker and browner, fading back as the ground heals.
   vec2 fuv = clamp((vWorld.xz + ${HALF.toFixed(1)}) / ${WORLD.toFixed(1)}, 0.0, 1.0);
@@ -8195,6 +8264,7 @@ function applyDig(x, z, amount, holeAng) {
   rebuildRegion(minx, minz, maxx, maxz);
   updateHeightTex(minx, minz, maxx, maxz);
   resnapPropsRegion(x - DIG_R*2.4, z - DIG_R*2.4, x + DIG_R*2.4, z + DIG_R*2.4);
+  if (typeof recordDigHole === "function") recordDigHole(x, z);   // §20 rain can pool in this hole
   if (typeof checkUndermine === "function") checkUndermine(x, z);          // dig out a trunk → it topples
   for (let k = stumps.length - 1; k >= 0; k--) if (Math.hypot(stumps[k].x - x, stumps[k].z - z) < DIG_R) { stumps.splice(k, 1); saveWorld(); }  // dug-out stump won't sprout
 }
@@ -12356,6 +12426,7 @@ function frame(now) {
   gl.uniform1f(terrainU.uWaterLevel, waterLevel);
   gl.uniform1f(terrainU.uWetLevel, wetLevel);
   gl.uniform1f(terrainU.uTime, t); gl.uniform1i(terrainU.uUnderwater, camUnderwater ? 1 : 0);   // §14B caustics
+  if (terrainU.uGroundWet !== undefined) gl.uniform1f(terrainU.uGroundWet, weather ? weather.rain * 0.85 : 0);   // §20 wet ground in rain
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, freshTex);
   gl.uniform1i(terrainU.uFresh, 0);
@@ -12396,6 +12467,7 @@ function frame(now) {
   drawDigCellDebug(view);   // §urgent3 dig-cell state overlay (debug)
   drawPlaceGhost(view);
   drawParticles(view);
+  drawRain(view);       // §20 rain streaks, rings on water, dug-hole puddles
   drawGlints(view);     // §18 shiny finds wink in lantern light at night
   drawPlankton(view);   // §14B drifting marine snow / bioluminescence, underwater only
   drawDeepVisitor(view);   // §14B a large silhouette far off in the deep
