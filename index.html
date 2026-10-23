@@ -1359,11 +1359,12 @@ const SND = {
     this.amb[id] = { g, bq };
   },
   _startAmbiences() {
-    this._ambLayer("surf", "bandpass", 520, 0.5);
+    this._ambLayer("surf", "lowpass", 480);              // §playtest1 dark, brown-ish wash (not a bright bandpass hiss)
+    this._ambLayer("swash", "lowpass", 900);             // §playtest1 a brighter spray layer that opens on the crash
     this._ambLayer("wind", "lowpass", 600);
-    this._ambLayer("crickets", "bandpass", 4600, 8);
+    this._ambLayer("crickets", "bandpass", 2300, 2.2);   // §playtest1 softer, lower, wider band (no piercing 4.6 kHz whine)
     this._ambLayer("rumble", "lowpass", 170);
-    this._ambLayer("trickle", "bandpass", 2600, 3);
+    this._ambLayer("trickle", "bandpass", 1500, 1.6);    // §playtest1 gentler trickle, less of a squeak near pools
   },
   ambGain(id, v) { const a = this.amb[id]; if (a) a.g.gain.value += (v - a.g.gain.value) * 0.05; },
   setVol(bus, v) { this.vol[bus] = v; if (!this.ctx) { this.saveVol(); return; }
@@ -1480,12 +1481,13 @@ const SND = {
   D("key",         { freq:1600, freq2:1200, shape:"square", atk:0.0005, sus:0.008, rel:0.05, gain:0.3 }, { vol:0.32 });
   D("smash",       { shape:"noise", lpf:0.4, atk:0.001, sus:0.06, rel:0.2, gain:0.6, crush:20 }, { vol:0.5 });
   // creatures (day)
-  D("gull_call",   [{ freq:900, freq2:1300, shape:"saw", atk:0.01, sus:0.05, rel:0.1, gain:0.3, vib:80, vibf:18 },
-                    { freq:1000, freq2:800, shape:"saw", atk:0.01, sus:0.06, rel:0.12, gain:0.3, vib:120, vibf:14 },
-                    { freq:820, freq2:1100, shape:"saw", atk:0.02, sus:0.08, rel:0.1, gain:0.28, vib:60, vibf:22 }], { vol:0.3, cd:0.15, pv:0.1 });
-  D("gull_alarm",  { freq:1200, freq2:1600, shape:"saw", atk:0.005, sus:0.04, rel:0.08, gain:0.35, vib:200, vibf:26 }, { vol:0.38, cd:0.1 });
-  D("gull_whoosh", { shape:"noise", lpf:0.18, atk:0.02, sus:0.08, rel:0.12, gain:0.4, freq:1 }, { vol:0.4 });
-  D("gull_squab",  { freq:700, freq2:1400, shape:"saw", atk:0.003, sus:0.03, rel:0.05, gain:0.3, vib:300, vibf:40 }, { vol:0.3, cd:0.1 });
+  // §playtest1 softer, rounder gull calls (triangle not saw — far less of that squeaky edge) and quieter overall
+  D("gull_call",   [{ freq:760, freq2:1020, shape:"tri", atk:0.012, sus:0.05, rel:0.1, gain:0.24, vib:40, vibf:14 },
+                    { freq:840, freq2:700, shape:"tri", atk:0.012, sus:0.06, rel:0.12, gain:0.24, vib:55, vibf:12 },
+                    { freq:700, freq2:940, shape:"tri", atk:0.02, sus:0.08, rel:0.1, gain:0.22, vib:38, vibf:16 }], { vol:0.17, cd:0.2, pv:0.1 });
+  D("gull_alarm",  { freq:1000, freq2:1350, shape:"tri", atk:0.005, sus:0.04, rel:0.08, gain:0.3, vib:140, vibf:22 }, { vol:0.26, cd:0.12 });
+  D("gull_whoosh", { shape:"noise", lpf:0.18, atk:0.02, sus:0.08, rel:0.12, gain:0.4, freq:1 }, { vol:0.34 });
+  D("gull_squab",  { freq:640, freq2:1200, shape:"tri", atk:0.003, sus:0.03, rel:0.05, gain:0.26, vib:180, vibf:30 }, { vol:0.2, cd:0.12 });
   D("peep",        { freq:2200, freq2:2600, shape:"sine", atk:0.002, sus:0.012, rel:0.03, gain:0.25 }, { vol:0.26, cd:0.1 });
   D("skitter",     { shape:"noise", lpf:0.55, atk:0.001, sus:0.015, rel:0.03, gain:0.3, crush:12 }, { vol:0.22, cd:0.08 });
   D("squirt",      { freq:1400, freq2:600, shape:"sine", atk:0.001, sus:0.01, rel:0.05, noise:0.3, gain:0.3 }, { vol:0.28 });
@@ -1514,6 +1516,20 @@ SND.loadVol();   // reflect saved volumes in Settings before the first gesture u
 // surfAudio kept as an alias so older checks still read "audio is on"
 let surfAudio = null;
 window.startAudio = function () { SND.init(); if (SND.ctx) surfAudio = SND; };
+// §playtest1 surf wave cycle: a swell builds, crashes, washes up, retreats, then a quieter gap — looped
+let _surfPhase = Math.random(), _surfT = performance.now();
+const SURF_PERIOD = 8.5;   // seconds per wave (tunable)
+function surfWaveEnv() {
+  const now = performance.now(), dt = Math.min(0.1, (now - _surfT) / 1000); _surfT = now;
+  _surfPhase = (_surfPhase + dt / SURF_PERIOD) % 1;
+  const ph = _surfPhase;
+  let body, spray;
+  if (ph < 0.34) { const u = ph / 0.34; body = 0.12 + 0.88 * u * u; spray = 0.08 * u; }          // swell building
+  else if (ph < 0.44) { const u = (ph - 0.34) / 0.10; body = 1.0; spray = 0.4 + 0.6 * Math.sin(u * Math.PI); }  // the crash — spray peaks
+  else if (ph < 0.72) { const u = (ph - 0.44) / 0.28; body = 1.0 - 0.55 * u; spray = 0.4 * (1 - u); }           // wash up the beach
+  else { const u = (ph - 0.72) / 0.28; body = 0.45 * (1 - u) * (1 - u); spray = 0.05 * (1 - u); }               // retreat → quiet gap
+  return { body, spray };
+}
 // per-frame ambience mix (called from the main loop)
 function updateSurf() {
   if (!SND.ctx || SND.muted) return;
@@ -1523,7 +1539,13 @@ function updateSurf() {
     const rel = Math.max(0, Math.min(1, (waterLevel + TIDE_RANGE * 0.6) / (TIDE_RANGE * 1.2)));
     const uw = walk && player.underwater;
     SND.setUnderwater(uw);
-    SND.ambGain("surf", walk ? (0.05 + rel * 0.07 + shore * 0.08 + eventMood() * 0.08) * (uw ? 0.3 : 1) : 0);
+    // §playtest1 wave-shaped surf, fading to near-silence well inland, louder in a storm surge
+    const wv = surfWaveEnv();
+    const near = Math.max(0, Math.min(1, shore * 1.15));        // 1 at the waterline → 0 well inland
+    const storm = 1 + eventMood() * 1.2;
+    const surfLvl = near * (0.02 + 0.2 * wv.body) * storm * (uw ? 0.35 : 1);
+    SND.ambGain("surf", walk ? surfLvl : 0);
+    SND.ambGain("swash", walk && !uw ? near * 0.14 * wv.spray * storm : 0);
     const high = walk ? Math.max(0, Math.min(1, (surfaceAt(player.x, player.z).h - 12) / 30)) : 0;
     SND.ambGain("wind", walk ? 0.02 + high * 0.1 : 0);
     const night = walk ? 1 - dayFactor() : 0, inland = walk ? Math.max(0, 1 - shore) : 0;
@@ -1570,7 +1592,8 @@ function updateCreatureSound(dt) {
   if (!near.length) return;
   const e = near[(Math.random()*near.length)|0]; const pos = [e.x, 0, e.z];
   const say = (id, chance) => { if (Math.random() < chance) SND.play(id, { position: pos }); };
-  if (e.t === "gull" && (e.gstate === "forage" || e.gstate === "perch" || e.gstate === "soar")) say("gull_call", 0.5);
+  // §playtest1 gulls are quieter and only call from nearby (not from 48 m away) — no constant distant squeaking
+  if (e.t === "gull" && (e.gstate === "forage" || e.gstate === "perch" || e.gstate === "soar")) { if (Math.hypot(e.x-player.x, e.z-player.z) < 26) say("gull_call", 0.3); }
   else if (e.t === "piper") say("peep", 0.5);
   else if (e.t === "crab") say("skitter", 0.25);
   else if (e.t === "seal") say("seal_bark", 0.3);
@@ -3688,6 +3711,7 @@ document.getElementById("startBtn").addEventListener("click", () => {
 
 // §2 pause menu (Esc): a chamfered Resume / Settings / Controls / Save & quit panel that freezes the world
 let pauseStage = null;             // null | "menu" | "controls"
+const PAUSE_VOL_DUCK = 0.3;        // §playtest1 pause keeps 30% volume (ducks by ~70%), tunable
 let pauseWasClockPaused = false;   // remember the debug clock state so Resume restores it
 let settingsFromPause = false;     // Settings opened from the pause menu → closing returns to pause
 function controlsRows() {
@@ -3704,7 +3728,7 @@ function openPause() {
   if (mode !== "walk" || menuIsOpen() || isPanelOpen() || buildMode) return;
   pauseWasClockPaused = clock.paused; clock.paused = true;     // freeze tide / creatures while paused
   if (document.pointerLockElement === canvas) document.exitPointerLock();
-  if (typeof SND !== "undefined") { SND.play("menu_open"); if (SND.ctx) try { SND.ctx.suspend(); } catch (e) {} }   // §Sound pause audio
+  if (typeof SND !== "undefined") { SND.play("menu_open"); if (SND.ctx && SND.master) try { SND.master.gain.value = SND.muted ? 0 : SND.vol.master * PAUSE_VOL_DUCK; } catch (e) {} }   // §playtest1 duck game audio ~70% on pause (don't silence it)
   showPause();
 }
 function showPause() {
@@ -3727,7 +3751,7 @@ function closePause() {
   pauseStage = null;
   const el = document.getElementById("pausemenu"); el.classList.remove("show"); el.innerHTML = "";
   clock.paused = pauseWasClockPaused;
-  if (typeof SND !== "undefined" && SND.ctx) { try { SND.ctx.resume(); } catch (e) {} SND.play("menu_close"); }   // §Sound resume
+  if (typeof SND !== "undefined" && SND.ctx) { try { SND.ctx.resume(); if (SND.master) SND.master.gain.value = SND.muted ? 0 : SND.vol.master; } catch (e) {} SND.play("menu_close"); }   // §playtest1 restore full volume on resume
   requestLock();
 }
 function wirePause(el) {
