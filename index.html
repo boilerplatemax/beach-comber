@@ -134,6 +134,11 @@
     position: fixed; left: 12px; bottom: 76px; z-index: 5; pointer-events: none;
     opacity: .82; filter: drop-shadow(0 1px 2px rgba(0,0,0,.6));
   }
+  /* §Cooking hunger — five faceted scallop shells, drained left-to-right */
+  #hungershells {
+    position: fixed; left: 12px; bottom: 128px; z-index: 5; pointer-events: none;
+    filter: drop-shadow(0 1px 2px rgba(0,0,0,.55)); display: none;
+  }
   #dbg {
     position: fixed; left: 12px; top: 12px; z-index: 5; pointer-events: none;
     font-family: var(--ui); font-size: 12px; letter-spacing: .03em;
@@ -477,6 +482,7 @@
 
 <div id="hud"></div>
 <canvas id="tidecurve" width="150" height="46"></canvas>
+<canvas id="hungershells" width="170" height="34"></canvas>
 <div id="dbg"></div>
 <div id="stamina"></div>
 <div id="hungerArc"></div>
@@ -1177,6 +1183,46 @@ function drawTideCurve() {
     ctx.fillStyle = "#9fe8ff"; ctx.beginPath(); ctx.arc(px, py, 3, 0, 6.3); ctx.fill();
     ctx.font = "8px 'Chakra Petch', monospace"; ctx.fillText("minus", Math.min(W - 28, px + 3), 9);
   }
+}
+// §Cooking — the hunger meter: five faceted scallop shells, drained left-to-right. The last
+// partly-eaten shell shows a vertical fill; starving pulses a warm red. Chamfered = a light bevel
+// along the scalloped rim + dark radial facet lines.
+let hungerCanvas = null, hungerCtx = null;
+function scallopOutline(g, cx, cy, r) {
+  const hx = cx, hy = cy + r * 0.52, ribs = 9, span = Math.PI * 1.06, start = -Math.PI / 2 - span / 2;
+  g.beginPath(); g.moveTo(hx, hy);
+  for (let i = 0; i <= ribs; i++) { const a = start + span * (i / ribs), rr = r * (i % 2 ? 1.0 : 0.9); g.lineTo(hx + Math.cos(a) * rr, hy + Math.sin(a) * rr); }
+  g.closePath();
+}
+function drawShellFill(g, cx, cy, r, warm, frac, starving) {
+  g.save();
+  if (frac < 1) { g.beginPath(); g.rect(cx - r - 1, cy - r - 1, (r * 2 + 2) * frac, r * 2.2 + 2); g.clip(); }
+  scallopOutline(g, cx, cy, r);
+  const grd = g.createLinearGradient(cx, cy - r, cx, cy + r * 0.52);
+  if (warm) { if (starving) { grd.addColorStop(0, "#f0b58a"); grd.addColorStop(1, "#cc6a4a"); } else { grd.addColorStop(0, "#f2d99e"); grd.addColorStop(1, "#cd9f5c"); } }
+  else { grd.addColorStop(0, "#484f55"); grd.addColorStop(1, "#2c3137"); }
+  g.fillStyle = grd; g.fill(); g.restore();
+}
+function drawHungerShells() {
+  const cv = document.getElementById("hungershells"); if (!cv) return;
+  if (!hungerEnabled || mode !== "walk") { if (cv.style.display !== "none") cv.style.display = "none"; return; }
+  cv.style.display = "block";
+  const g = hungerCtx || (hungerCtx = cv.getContext("2d"));
+  g.clearRect(0, 0, cv.width, cv.height);
+  const n = 5, r = 13, gap = 33, x0 = 17, y = 17, filled = Math.max(0, hunger) * n, starving = hungerTier() === "starving";
+  cv.style.opacity = starving ? (0.72 + 0.26 * Math.abs(Math.sin(performance.now() * 0.006))) : "0.95";
+  for (let i = 0; i < n; i++) {
+    const cx = x0 + i * gap, frac = Math.max(0, Math.min(1, filled - i));
+    drawShellFill(g, cx, y, r, false, 1, false);                 // drained base
+    if (frac > 0) drawShellFill(g, cx, y, r, true, frac, starving);   // warm fill up to frac
+    // dark radial facets
+    const hx = cx, hy = cy(y, r), ribs = 9, span = Math.PI * 1.06, start = -Math.PI / 2 - span / 2;
+    g.strokeStyle = "rgba(20,24,28,0.45)"; g.lineWidth = 1;
+    for (let k = 1; k < ribs; k++) { const a = start + span * (k / ribs); g.beginPath(); g.moveTo(hx, hy); g.lineTo(hx + Math.cos(a) * r * 0.94, hy + Math.sin(a) * r * 0.94); g.stroke(); }
+    // chamfered rim bevel
+    scallopOutline(g, cx, y, r); g.strokeStyle = frac > 0.4 ? "rgba(255,246,218,0.75)" : "rgba(120,130,140,0.5)"; g.lineWidth = 1.3; g.stroke();
+  }
+  function cy(yy, rr) { return yy + rr * 0.52; }
 }
 // Surf: a soft filtered-noise wash whose level rises with the tide (§B). The game's
 /* ===================================================================== *
@@ -7161,23 +7207,24 @@ let SPRINT_DRAIN = 0.08, SCRAMBLE_DRAIN = 0.13, REGEN_ACTIVE = 0.05, REGEN_IDLE 
 let BLIND_FIND_CHANCE = 0.05;    // blind digging (no tell) rarely turns up a find; mostly raw material
 /* ---- hunger (§10.5): drains slowly, worse tiers pinch stamina & speed; never fatal ---- */
 let hunger = 1, growlT = 0;
-// §13.8 hunger is off by default now (system kept intact); toggle in settings / debug panel.
-let hungerEnabled = false;
-try { hungerEnabled = localStorage.getItem("bc_hunger") === "1"; } catch (e) {}
+// §Cooking hunger is ON by default now. Its ONLY effect is scaling your maximum stamina — no slower swings,
+// no costlier actions, no extra drain from working. Eat to top it back up; cooked food fills more.
+let hungerEnabled = true;
+try { const hv = localStorage.getItem("bc_hunger"); if (hv !== null) hungerEnabled = hv === "1"; } catch (e) {}
 function setHungerEnabled(on) { hungerEnabled = on; if (!on) hunger = 1; try { localStorage.setItem("bc_hunger", on ? "1" : "0"); } catch (e) {} }
-const HUNGER_DRAIN = 1 / (1.5 * DAY_PERIOD);   // full → empty in ~1.5 in-game days at rest
-const HUNGER_WORK = 0.045;                     // extra hunger per unit of heavy-action stamina spent
-const H_FULL = 0.75, H_PECKISH = 0.4, H_HUNGRY = 0.15;   // tier thresholds
+const HUNGER_DRAIN = 1 / (2.6 * DAY_PERIOD);   // full → empty in ~2.6 in-game days at rest — a slow, gentle drain
+const H_FULL = 0.7, H_PECKISH = 0.4, H_HUNGRY = 0.18;   // tier thresholds
 function hungerTier() { return hunger > H_FULL ? "full" : hunger > H_PECKISH ? "peckish" : hunger > H_HUNGRY ? "hungry" : "starving"; }
-function maxStamina() { const t = hungerTier(); return t === "starving" ? 0.4 : t === "hungry" ? 0.7 : 1; }   // less max stamina when hungry
-function heavyCostMul() { const t = hungerTier(); return t === "starving" ? 1.6 : t === "hungry" ? 1.25 : 1; } // heavy actions cost more
-function swingRateMul() { const t = hungerTier(); return t === "starving" ? 0.45 : t === "hungry" ? 0.72 : 1; }// and swing slower
-function spendStamina(a, heavy) { if (heavy) { if (hungerEnabled) hunger = Math.max(0, hunger - a * HUNGER_WORK); a *= heavyCostMul(); } stamina = Math.max(0, stamina - a); if (stamina <= 0.001) exhausted = true; }
+// §Cooking the one and only hunger penalty: a softer max-stamina cap when hungry (you tire sooner, never slower)
+function maxStamina() { if (!hungerEnabled) return 1; const t = hungerTier(); return t === "starving" ? 0.55 : t === "hungry" ? 0.8 : 1; }
+function heavyCostMul() { return 1; }    // §Cooking no extra cost when hungry
+function swingRateMul() { return 1; }    // §Cooking no slower swings when hungry
+function spendStamina(a, heavy) { stamina = Math.max(0, stamina - a); if (stamina <= 0.001) exhausted = true; }
 function canHeavyAction() { return !exhausted && stamina > 0.02 && digCommit <= 0; }
 function rootPlayer() { digCommit = COMMIT_TIME; }              // short wind-up: rooted ~0.5s per strike
-function updateHunger(gdt) { if (!hungerEnabled) { hunger = 1; return; }   // §13.8 off by default; system kept intact
-  hunger = Math.max(0, hunger - HUNGER_DRAIN * gdt);                       // passive drain (game-time)
-  if (hungerTier() === "starving") { growlT -= gdt; if (growlT <= 0) { growlT = 9 + rng()*6; if (onDig) onDig("growl"); } } }
+function updateHunger(gdt) { if (!hungerEnabled) { hunger = 1; return; }
+  hunger = Math.max(0, hunger - HUNGER_DRAIN * gdt);                       // slow passive drain (game-time)
+  if (hungerTier() === "starving") { growlT -= gdt; if (growlT <= 0) { growlT = 11 + rng()*7; if (onDig) onDig("growl"); } } }
 function updateStamina(dt) {
   if (mode !== "walk") { stamina = 1; resting = false; exhausted = false; digCommit = 0; crouching = false; crouchStillT = 0; return; }
   if (digCommit > 0) digCommit = Math.max(0, digCommit - dt);
@@ -10732,13 +10779,9 @@ function frame(now) {
     staminaEl.style.transform = staminaFlash > 0 ? `scale(${(1 + staminaFlash * 0.45).toFixed(3)})` : "";
     staminaEl.style.opacity = staminaFlash > 0 ? "1" : "";
   } else { staminaEl.style.display = "none"; staminaEl.style.transform = ""; staminaEl.style.opacity = ""; }
-  // hunger arc — a smaller concentric arc, only at Hungry or worse
-  const hTier = hungerTier(), hShow = mode === "walk" && (hTier === "hungry" || hTier === "starving");
-  const hArc = document.getElementById("hungerArc");
-  if (hShow) { const deg = Math.max(0.04, hunger) * 360, col = hTier === "starving" ? "#d05a46" : "#d59a4a";
-    hArc.style.display = "block"; hArc.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.07) ${deg}deg 360deg)`;
-    hArc.style.opacity = hTier === "starving" ? (0.6 + 0.3 * Math.abs(Math.sin(performance.now() * 0.005))) : 0.9;
-  } else hArc.style.display = "none";
+  // §Cooking hunger now shows as five scallop shells (bottom-left); the old crosshair arc is retired
+  const hArc = document.getElementById("hungerArc"); if (hArc.style.display !== "none") hArc.style.display = "none";
+  drawHungerShells();
   // §14A breath arc — outside the stamina ring, only while submerged
   const bArc = document.getElementById("breathArc");
   if (mode === "walk" && player.underwater) {
