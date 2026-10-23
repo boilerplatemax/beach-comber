@@ -6193,6 +6193,9 @@ function respawnOne(t) {
   for (let k = 0; k < 120; k++) {
     const a = rng()*6.283, r = HALF*(0.2 + rng()*0.72), x = Math.sin(a)*r, z = -Math.cos(a)*r;
     if (Math.hypot(x-player.x, z-player.z) < 25) continue;
+    // §gulls (and all life) spawn OUT OF VIEW — never pop into existence on screen
+    { const sdx = x - cam.pos[0], sdz = z - cam.pos[2], sd = Math.hypot(sdx, sdz) || 1;
+      if (sd < DRAW_R) { const f = camForward(); if ((sdx*f[0] + sdz*f[2]) / sd > 0.1) continue; } }   // in front of the camera & within draw range → skip
     const g = heightAt(x, z), band = waterLevel - g;
     const ok = (t === "crab" || t === "piper" || t === "hopper") ? (band < 0.2 && band > -3.2) :
                (t === "gull" || t === "heron" || t === "seaduck" || t === "seal") ? (band < 1.5 && band > -8) :
@@ -6424,6 +6427,7 @@ function drawLife(view) {
   for (const k in FINDS) buckets["f_" + k] = 0;
   // fill per-type scratch and draw (one pass per type to reuse the buffer)
   const drawType = (key, reg, filter) => {
+    if (key === "gull") return;   // §gulls drawn separately with articulated, flapping wings
     let n = 0;
     for (const e of life) {
       if (!filter(e)) continue;
@@ -6439,9 +6443,10 @@ function drawLife(view) {
           lean = e.t === "flounder" ? Math.sin(e.phase*2.2) * (0.05 + 0.1*(e.fleeT>0?1:0)) : Math.sin(e.phase*3)*0.06; ld = e.yaw; }
         else if (e.t === "fish") y = (e.poolRim !== undefined ? Math.max(waterLevel, e.poolRim) : waterLevel) - 0.3 + Math.sin(e.phase*4)*0.05;
         else if (e.t === "gull") {                      // §12B flap-and-glide
-          const overW = waterDepthAt(e.x, e.z) > 0.4, lowAlt = (e.alt || 0) < 1.5;
-          const baseY = (overW && lowAlt) ? waterSurfaceAt(e.x, e.z) : g;        // §17.6 float on the surface over water, don't sink to the seabed
-          y = baseY + (e.alt || 0) + ((overW && lowAlt) ? 0.1 + Math.sin(e.phase*2)*0.05 : 0.3);
+          const overW = waterDepthAt(e.x, e.z) > 0.4, lowAlt = (e.alt || 0) < 1.5, floating = overW && lowAlt;
+          // §gulls height references the SURFACE over water (never the seabed), so a gull never flies through the water and never pops vertically as it descends
+          const baseY = overW ? waterSurfaceAt(e.x, e.z) : g;
+          y = baseY + (e.alt || 0) + (floating ? 0.1 + Math.sin(e.phase*2)*0.05 : 0.3);
           // §R4 wings folded (no flutter) while settled on the ground/water/perch; a half-open flap during a ground hop; full beats aloft
           const settled = (e.gstate === "forage" || e.gstate === "float" || e.gstate === "perch");
           const amp = settled ? 0 : (e.gstate === "hopflee") ? 0.5 : (e.gstate === "soar" || e.gstate === "approach") ? 0.16 : 0.42;
@@ -10262,7 +10267,8 @@ const GULL = {
   soarAlt: 24, soarR: 24, soarSpd: 3.8, approachSpd: 7, fleeSpd: 10, stealSpd: 8.5, bombSpd: 14,
   stealRange: 2.6, chaseDrop: 6, shooR: 7.5, nestDefendR: 11, divebombCd: 3.5,
   eggReplenishDays: 3, abandonDays: 2, lureLife: 14,
-  maxForage: 6, forageSpread: 4.5,   // §17.4 cap how many land on one spot; spread them out so it reads as a flock, not a pile
+  maxForage: 4, forageSpread: 7.5,   // §gulls fewer land on one spot, spread wider — reads as a flock, not a pile
+  floatMin: 20, floatMax: 60,        // §gulls once down on the water, rest 20–60 s before taking off again
   // §3 flight feel: how fast a gull swings onto a new heading, and how hard it banks / pitches doing it
   turnRate: 2.5, maxBank: 0.6, maxPitch: 0.42,
   // §3 finding hint: chance per tide that the flock bothers to gather over a *buried* spot (otherwise they ignore what they can't see)
@@ -10391,8 +10397,9 @@ function steerGull(e, tx, tz, spd, dt) {
 // §R4 a perch near the gull — a conifer/broadleaf top, a boulder, driftwood or a fence post — not already taken
 function pickPerch(e) {
   const cands = [];
-  for (const o of treeObjs) if (!o.gone && !o.fallen && Math.hypot(o.x-e.x, o.z-e.z) < 60) cands.push({ x: o.x, z: o.z, y: surfaceAt(o.x, o.z).h + (o.scale||1)*(o.species === "palm" ? 0.62 : 0.56) });
-  for (const o of rockObjs) if (!o.gone && Math.hypot(o.x-e.x, o.z-e.z) < 50) cands.push({ x: o.x, z: o.z, y: surfaceAt(o.x, o.z).h + (o.sc||1)*0.5 });
+  // §gulls perch on TOP of the canopy/crown, not inside it (trees stand ~1.1× their scale tall)
+  for (const o of treeObjs) if (!o.gone && !o.fallen && Math.hypot(o.x-e.x, o.z-e.z) < 60) cands.push({ x: o.x, z: o.z, y: surfaceAt(o.x, o.z).h + (o.scale||1)*(o.species === "palm" ? 0.98 : o.species === "pine" ? 1.02 : 0.9) });
+  for (const o of rockObjs) if (!o.gone && Math.hypot(o.x-e.x, o.z-e.z) < 50) cands.push({ x: o.x, z: o.z, y: surfaceAt(o.x, o.z).h + (o.sc||1)*0.58 });
   for (const o of driftObjs) if (!o.gone && Math.hypot(o.x-e.x, o.z-e.z) < 45) cands.push({ x: o.x, z: o.z, y: surfaceAt(o.x, o.z).h + 0.3 });
   for (const c of colliders) if (c.kind === "fence" && c.r > 0 && Math.hypot(c.x-e.x, c.z-e.z) < 45) cands.push({ x: c.x, z: c.z, y: surfaceAt(c.x, c.z).h + 0.9 });
   if (!cands.length) return null;
@@ -10454,7 +10461,7 @@ function updateGulls(dt) {
           e.gstate = "approach"; e.target = { x: interest.x, z: interest.z, ref: interest.ref, kind: interest.kind, ox, oz };
         }
         // §17.6 with nothing to chase, a gull over the water occasionally drops down to rest on the surface
-        else if (!interest && !e.nest && waterDepthAt(e.x, e.z) > 0.6 && rng() < dt*0.03) { e.gstate = "float"; e.timer = 5 + rng()*9; }
+        else if (!interest && !e.nest && waterDepthAt(e.x, e.z) > 0.6 && rng() < dt*0.03) { e.gstate = "float"; e.timer = GULL.floatMin + rng()*(GULL.floatMax-GULL.floatMin); }
         // §R4 or, over land, it occasionally flies off to perch on a tree top / rock / post (each on its own schedule)
         else if (!interest && !e.nest && dp > 12 && rng() < dt*0.035) { const pr = pickPerch(e); if (pr) { e.perch = pr; e.gstate = "toperch"; } }
         if (e.nest && e.nest.abandonedUntil <= clock.t && e.nest.eggs > 0 && dp < GULL.nestDefendR && e.nest.defendCd <= 0) {
@@ -10469,7 +10476,8 @@ function updateGulls(dt) {
         if (e.target.kind === "find" && e.target.ref && life.indexOf(e.target.ref) < 0) { e.gstate = "soar"; break; }   // the morsel's gone — back up
         if (Math.hypot(e.x - tx, e.z - tz) < 1.6 && e.alt < 1.6) {
           // §17.6 over water a gull settles on the surface to float, not peck the seabed; on land it forages
-          e.gstate = waterDepthAt(e.x, e.z) > 0.4 ? "float" : "forage"; e.timer = 3 + rng()*4;
+          if (waterDepthAt(e.x, e.z) > 0.4) { e.gstate = "float"; e.timer = GULL.floatMin + rng()*(GULL.floatMax-GULL.floatMin); }   // §gulls rest on the water a good while
+          else { e.gstate = "forage"; e.timer = 3 + rng()*4; }
         }
         break;
       }
@@ -10477,6 +10485,9 @@ function updateGulls(dt) {
         e.alt += (0.0 - e.alt) * Math.min(1, dt*2); e.timer -= dt;
         e.wt = (e.wt || 0) - dt; if (e.wt < 0) { e.wt = 1 + rng()*2.5; e.wvx = (rng()-0.5)*0.4; e.wvz = (rng()-0.5)*0.4; }
         e.x += (e.wvx||0)*dt; e.z += (e.wvz||0)*dt; e.yaw += (rng()-0.5)*dt*0.6;
+        for (const o of gulls) if (o !== e && o.gstate === "float") {   // §gulls rafting birds keep their distance
+          const ddx = e.x-o.x, ddz = e.z-o.z, dd = Math.hypot(ddx, ddz);
+          if (dd > 0.01 && dd < 2.2) { e.x += ddx/dd*dt*1.4; e.z += ddz/dd*dt*1.4; } }
         if (dp < (crouching ? 3 : 7)) { e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call"); }
         if (e.timer < 0 || waterDepthAt(e.x, e.z) < 0.3) e.gstate = "soar";
         break;
@@ -10490,9 +10501,9 @@ function updateGulls(dt) {
         if (!stillGood && !morselNear) e.timer -= dt*3.5;
         e.wt = (e.wt || 0) - dt; if (e.wt < 0) { e.wt = 0.5 + rng(); e.wvx = (rng()-0.5); e.wvz = (rng()-0.5); }
         e.x += (e.wvx||0)*dt*1.3; e.z += (e.wvz||0)*dt*1.3; e.yaw = Math.atan2(e.wvz||0.01, e.wvx||0.01) + 1.57;
-        for (const o of gulls) if (o !== e && o.gstate === "forage") {   // squabble: shove apart
+        for (const o of gulls) if (o !== e && o.gstate === "forage") {   // §gulls squabble: shove apart harder and from further, so they stay spread
           const ddx = e.x - o.x, ddz = e.z - o.z, dd = Math.hypot(ddx, ddz);
-          if (dd > 0.01 && dd < 1.3) { e.x += ddx/dd*dt*1.6; e.z += ddz/dd*dt*1.6; if (rng() < dt*0.4 && onGull) onGull("squabble"); }
+          if (dd > 0.01 && dd < 2.2) { e.x += ddx/dd*dt*2.4; e.z += ddz/dd*dt*2.4; if (dd < 1.3 && rng() < dt*0.4 && onGull) onGull("squabble"); }
         }
         // steal a nearby wanted item if you're too slow to beat the gull to it
         for (const it of life) { if (it.kind !== "find" || !GULL_WANTS[it.t]) continue;
@@ -10586,7 +10597,10 @@ function updateGulls(dt) {
         if (e.gstate === "forage" && rng() < 0.4) { e.hop = 0.26; if (rng() < 0.3 && onGull) onGull("call"); } }
       if (e.hop > 0) { e.hop = Math.max(0, e.hop - dt); e.alt += Math.sin((0.26 - e.hop) / 0.26 * Math.PI) * 0.12; }   // a brief bob
     }
-    e.y = heightAt(e.x, e.z) + e.alt;          // world height from live ground + altitude
+    // §gulls world height references the water SURFACE over water (never the seabed) — no flying-through-water, no vertical pop
+    { const overW = waterDepthAt(e.x, e.z) > 0.4, floating = overW && (e.alt || 0) < 1.5;
+      const baseY = overW ? waterSurfaceAt(e.x, e.z) : heightAt(e.x, e.z);
+      e.y = baseY + (e.alt || 0) + (floating ? 0.1 + Math.sin(e.phase*2)*0.05 : 0.3); }
   }
 }
 // Take an egg from a nest; the last one abandons it for a while.
@@ -10601,6 +10615,23 @@ function takeEgg(nest) {
   if (onGull) onGull("call");
   saveNests();
 }
+// §gulls an articulated gull: a rigid body (beak-first, never rolling) + two wings that flap up/down.
+// Drawn as three instanced batches (body / right wing / left wing). The wing flap is a Rodrigues "lean"
+// about the body's forward axis (leanDir = +z); the body's "lean" is its pitch about the body-right axis.
+const GULL_DRAW_MAX = 28;
+function gullBodyMesh() { const m = Mesh(), white=[0.95,0.95,0.96], dark=[0.2,0.21,0.24], yellow=[0.96,0.78,0.24];
+  mBox(m, 0,0,0, 0.17,0.14,0.42, white);            // body (forward = +z)
+  mBox(m, 0,0.17,0.30, 0.12,0.12,0.14, white);      // head
+  mBox(m, 0,0.17,0.48, 0.05,0.05,0.12, yellow);     // beak
+  mTri(m, [0.16,0.03,-0.36],[0,0.04,-0.56],[-0.16,0.03,-0.36], dark);        // tail
+  for (const s of [1,-1]) mBox(m, s*0.1,0.21,0.35, 0.02,0.02,0.02, dark);    // eyes
+  return m; }
+function gullWingMesh(side) { const m = Mesh(), grey=[0.6,0.62,0.67], dark=[0.2,0.21,0.24];
+  mTri(m, [side*0.06,0.08,0.12],[side*0.8,0.12,-0.02],[side*0.1,0.06,-0.28], grey);
+  mTri(m, [side*0.8,0.12,-0.02],[side*1.05,0.1,-0.16],[side*0.5,0.09,-0.34], dark);
+  return m; }
+let gullBodyDyn = null, gullWingRDyn = null, gullWingLDyn = null;
+const _gullBody = new Float32Array(GULL_DRAW_MAX*10), _gullWR = new Float32Array(GULL_DRAW_MAX*10), _gullWL = new Float32Array(GULL_DRAW_MAX*10);
 function drawGulls(view) {
   drawGullShadows(view);   // §3 soft, elongated, height-aware contact shadows (no night shadows)
   propUniforms(view);
@@ -10610,6 +10641,29 @@ function drawGulls(view) {
     const d = Math.hypot(e.x - player.x, e.z - player.z); if (d > 90) continue;
     digScratch.set([e.x, (e.y||0) - 0.22, e.z, 0.5, e.yaw||0, 0, 0, 1,1,1], 0); reg.dyn.draw(digScratch, 1);
   }
+  if (!gullBodyDyn) { gullBodyDyn = makeDynamic(gullBodyMesh(), GULL_DRAW_MAX); gullWingRDyn = makeDynamic(gullWingMesh(1), GULL_DRAW_MAX); gullWingLDyn = makeDynamic(gullWingMesh(-1), GULL_DRAW_MAX); }
+  let n = 0; const px = cam.pos[0], pz = cam.pos[2];
+  for (const e of life) {
+    if (e.t !== "gull" || e.gstate === undefined || e.dying !== undefined || e.fade !== undefined) continue;
+    const dx = e.x - px, dz = e.z - pz; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
+    if (!lifeVisible(e)) continue;
+    if (n >= GULL_DRAW_MAX) break;
+    const settled = (e.gstate === "forage" || e.gstate === "float" || e.gstate === "perch");
+    let base, amp;                                           // wing-beat: folded at rest, slight when gliding, full in powered flight
+    if (settled) { base = -0.32; amp = 0; }
+    else if (e.gstate === "soar" || e.gstate === "approach") { base = 0.1; amp = 0.16; }
+    else if (e.gstate === "hopflee") { base = 0.04; amp = 0.35; }
+    else { base = 0.0; amp = 0.62; }
+    const flapAng = base + Math.sin(e.flap || 0) * amp;
+    const sc = e.scale * 1.5 * (e.gtrait ? e.gtrait.size : 1);
+    const o = n*10, yaw = e.yaw || 0, pit = e.pitch || 0, ey = e.y || 0;
+    const set = (arr, lean, ld) => { arr[o]=e.x; arr[o+1]=ey; arr[o+2]=e.z; arr[o+3]=sc; arr[o+4]=yaw; arr[o+5]=lean; arr[o+6]=ld; arr[o+7]=1; arr[o+8]=1; arr[o+9]=1; };
+    set(_gullBody, pit, 0);               // body pitch about the body-right axis (+x) — no roll, so it never tumbles
+    set(_gullWR, flapAng, 1.5708);        // right wing flaps about the forward axis (+z)
+    set(_gullWL, -flapAng, 1.5708);       // left wing mirrors it
+    n++;
+  }
+  if (n) { gullBodyDyn.draw(_gullBody, n); gullWingRDyn.draw(_gullWR, n); gullWingLDyn.draw(_gullWL, n); }
 }
 function drawNests(view) {
   propUniforms(view);
