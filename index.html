@@ -3766,9 +3766,9 @@ addEventListener("keydown", (e) => {
   if (e.code === "Escape" && pauseStage) { if (pauseStage === "controls") { showPause(); } else closePause(); return; }   // §2 controls → pause; pause → resume
   if (e.code === "Escape" && menuIsOpen()) { closeMenu(); return; }   // §2 Esc closes the Satchel/Bucket/Journal menu
   if (e.code === "Escape" && mode === "walk") { openPause(); return; }   // §2 Esc opens the pause menu
-  if (typeof pry !== "undefined" && pry) {                                   // §12C mini-game captures space / esc
-    if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); pryStrike(); return; }
-    if (e.code === "Escape") { cancelPry(); return; }
+  if ((typeof pry !== "undefined" && pry) || (typeof heave !== "undefined" && heave)) {   // §12C / §21D mini-game captures space / esc
+    if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); if (heave) heaveStrike(); else pryStrike(); return; }
+    if (e.code === "Escape") { if (heave) cancelHeave(); else cancelPry(); return; }
   }
   if (buildMode) {                                              // §16B placement controls
     if (e.code === "Escape") { exitBuildMode(); return; }
@@ -6993,7 +6993,7 @@ function tooTired() {
   staminaFlash = Math.max(staminaFlash, 0.9);   // flash the ring on every blocked attempt, even inside the throttle window
 }
 const WORK_LOCK_TIME = 1.5;
-const WORK_KINDS = { tree: 1, fallentree: 1, rock: 1, stump: 1, fence: 1, chest: 1 };   // multi-strike targets
+const WORK_KINDS = { tree: 1, fallentree: 1, rock: 1, stump: 1, fence: 1, chest: 1, heaveboulder: 1 };   // multi-strike targets
 function workLockActive() { return !!(workLock && clock.t < workLock.until && workLock.obj && !workLock.obj.gone && !(workLock.kind === "fence" && workLock.obj.r <= 0)); }
 function setWorkLock(t) { if (!t || !WORK_KINDS[t.kind]) return; workLock = { obj: t.obj, kind: t.kind, tool: selectedTool(), until: clock.t + WORK_LOCK_TIME }; lastEntityHitT = clock.t; }
 function workLockReach() { const o = workLock.obj; return Math.hypot(o.x - player.x, o.z - player.z) <= REACH + 2; }
@@ -7216,6 +7216,7 @@ function invDrop(idx, one) {
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
   try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup, stonesBack: stonesPutBack, variants: variantsSeen,
+    heaves: heaveBoulders.map((b,i)=>b.flipped?[i,+b.refillAt.toFixed(2),+b.flippedAt.toFixed(2)]:0).filter(e=>e),   // §21D heaved boulders (index, refillAt, flippedAt)
     recipes: [...knownRecipes], spearHard: spearHardened,   // §16 crafting
     bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, moist: c.moist, caught: c.caught })) } })); } catch (e) {}
 }
@@ -7229,6 +7230,7 @@ function loadState() {
       if (typeof s.cleanup === "number") beachCleanup = s.cleanup;   // §5 beach-cleanup tally
       if (typeof s.stonesBack === "number") stonesPutBack = s.stonesBack;   // §21 stones put back tally
       if (s.variants && typeof s.variants === "object") variantsSeen = s.variants;   // §22 variant sightings per species
+      if (Array.isArray(s.heaves)) _savedHeave = s.heaves;   // §21D heaved boulders (applied in seedHeaveBoulders)
       if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
       if (Array.isArray(s.recipes)) knownRecipes = new Set(s.recipes);   // §16 crafting
@@ -7251,7 +7253,7 @@ function saveAutoPick() { try { localStorage.setItem("bc_autopick", autoPickup ?
 let autoSwitch = true;
 try { if (localStorage.getItem("bc_autoswitch") === "0") autoSwitch = false; } catch (e) {}
 function saveAutoSwitch() { try { localStorage.setItem("bc_autoswitch", autoSwitch ? "1" : "0"); } catch (e) {} }
-const TOOLS_FOR_KIND = { tree: ["axe"], fallentree: ["axe"], stump: ["axe", "shovel"], rock: ["pickaxe"] };
+const TOOLS_FOR_KIND = { tree: ["axe"], fallentree: ["axe"], stump: ["axe", "shovel"], rock: ["pickaxe"], heaveboulder: ["shovel"] };
 function autoSwitchTo(id) {                 // select the belt slot holding `id` (or set the Tool Kit to it)
   if (selectedTool() === id) return true;
   let i = Inv.hotbar.findIndex((s) => s && s.id === id);
@@ -7752,7 +7754,7 @@ function DBG_SET(k, v) { switch (k) {
 /* ---- drop an item back onto the ground near the player ---- */
 
 // E interacts with whatever the crosshair is on (same target as a click).
-function interact() { if (pry) { pryStrike(); return; }
+function interact() { if (heave) { heaveStrike(); return; } if (pry) { pryStrike(); return; }
   if (mode === "walk" && buildMode) { placeBuildAtGhost(); return; }      // §16B E also places the ghost
   if (mode === "walk" && !isPanelOpen()) { const b = buildInFront(); if (b) {   // §16B use a piece, or crouch+E to pick it up
     const def = BUILD_DEFS[b.type], hasUse = def.storage || def.dry || def.shelter;
@@ -8035,6 +8037,7 @@ function targetAlongRay(r, sticky) {
   for (const sw of seaweedBeds) if (sw.ripe) sphere(sw, "seaweed", sw.x, sw.z, 0.6*sw.scale, 0.9*sw.scale);   // §17.2 pick sea lettuce
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
   for (const s of flipStones) if (!s.anim) sphere(s, "flipstone", s.x, s.z, 0.4*s.sc, 0.5 + s.sc*0.4);   // §21 flippable stones
+  if (typeof heaveBoulders !== "undefined") for (const b of heaveBoulders) if (!b.anim && !b.flipped) sphere(b, "heaveboulder", b.x, b.z, 0.5*b.sc, 0.7 + b.sc*0.5);   // §21D heavy boulders to lever over
   for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
   for (const c of colliders) if (c.kind === "fence" && c.r > 0) { const gy = surfaceAt(c.x, c.z).h; capsule(c, "fence", c.x, c.z, c.x, gy, c.z, c.x, gy+1.0, c.z, 0.32); }   // §13.1 choppable posts
@@ -8072,6 +8075,7 @@ function useToolOnTarget(t) {
     case "find": interactWith(t.obj); return true;
     case "rubble": pickRubble(t.obj); return true;
     case "flipstone": flipStone(t.obj); return true;   // §21 flip a stone / put it back
+    case "heaveboulder": return heaveBoulderAction(t.obj);   // §21D lever a heavy boulder over (shovel)
     case "bush": harvestBush(t.obj); return true;
     case "crop": harvestCrop(t.obj); return true;
     case "seaweed": harvestSeaweed(t.obj); return true;
@@ -8101,6 +8105,7 @@ function useToolOnTarget(t) {
 function interactTarget(t) { if (!t) return; if (reachForTool(t) === "fail") return; if (useToolOnTarget(t)) setWorkLock(t); }   // the bare interact key (E)
 function clickAt(ndcx, ndcy) {
   if (mode !== "walk") return;
+  if (heave) { heaveStrike(); return; }             // §21D a click is a heave strike while the boulder mini-game is up
   if (pry) { pryStrike(); return; }                 // §12C a click is a pry strike while the mini-game is up
   const r = rayFromNDC(ndcx, ndcy);
   const tgt = (ndcx === 0 && ndcy === 0) ? effectiveTarget() : targetAlongRay(r);   // §13.2 work lock keeps the locked entity
@@ -10780,6 +10785,154 @@ function inspectCritter(e) {
 }
 
 /* ===================================================================== *
+ * § 21D  HEAVY BOULDERS — too big to flip by hand. Lever one over with the
+ *   shovel in a stamina-draining heave (the pry dial, more strikes). Under it:
+ *   a buried cache (coins + sometimes a sealed tin), a fossil, or rarer critters.
+ *   Rolls back on its own after a few days; fresh loot after a couple more.
+ * ===================================================================== */
+const HEAVE_BOULDER_N = 14;                      // heavy boulders per island (tunable)
+const HEAVE_NEED = 5;                            // sweet-spot strikes to lever it over (tunable)
+const HEAVE_STRIKE_COST = 0.09;                  // stamina per strike, hit or miss (tunable)
+const HEAVE_REFILL_MIN = 2, HEAVE_REFILL_MAX = 3;// in-game days before a heaved boulder has fresh loot
+const HEAVE_RESET_DAYS = 3;                      // a heaved boulder left alone rolls back after this
+const HEAVE_CRITTER_P = 0.42, HEAVE_CACHE_P = 0.40;  // rest (0.18) = a fossil
+let heaveBoulders = [], heaveBoulderDyn = null, heave = null, _savedHeave = null;
+const heaveScratch = new Float32Array(HEAVE_BOULDER_N * 10), heaveDampScratch = new Float32Array(HEAVE_BOULDER_N * 10);
+function heaveBoulderMesh() { const m = Mesh(); mRock(m, mulberry32(0x5bd1 ^ SEED_INT), [0.5, 0.48, 0.45]); return m; }
+function seedHeaveBoulders() {
+  heaveBoulders = [];
+  for (let k = 0; k < 4000 && heaveBoulders.length < HEAVE_BOULDER_N; k++) {
+    const a = rng()*6.283, r = HALF*(0.1+rng()*0.85), x = Math.sin(a)*r, z = -Math.cos(a)*r, s = surfaceAt(x, z), h = s.h;
+    if (s.slope > 0.4) continue;
+    if (typeof insideCottage === "function" && insideCottage(x, z)) continue;
+    if (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, 1.8)) continue;   // clear of trees / rocks / POIs
+    const depth = waterDepthAt(x, z);
+    if (!(h < wetLevel+5 && depth < 0.5)) continue;                     // beaches, intertidal & rocky shores
+    let near = false; for (const b of heaveBoulders) if (Math.hypot(b.x-x, b.z-z) < 8) { near = true; break; } if (near) continue;
+    const sc = 1.5 + rng()*0.9;
+    const b = { x, z, yaw: rng()*6.283, sc, biome: "beach", flipped: false, flip: 0, target: 0, anim: false, refillAt: 0, flippedAt: -99, content: null, critters: [] };
+    heaveBoulders.push(b);
+    colliders.push({ x, z, r: sc*0.5, kind: "heaveboulder", obj: b });   // a solid obstacle until levered aside
+  }
+  if (_savedHeave) for (const e of _savedHeave) { const b = heaveBoulders[e[0]]; if (b) { b.flipped = true; b.flip = 1; b.target = 1; b.refillAt = e[1]; b.flippedAt = e[2]; b.content = "spent"; } }
+  rebuildCollHash();
+}
+function spawnBoulderCritters(b) {
+  const pool = (typeof stoneCritterPool === "function" ? stoneCritterPool(b.biome) : ["crab","hopper","star"]);
+  const rare = pool.filter(t => t==="gunnel" || t==="chiton" || t==="star");   // the prize-of-the-dig species
+  const n = 1 + (rng()*2|0);
+  for (let i = 0; i < n; i++) {
+    const useRare = rng() < 0.6 && rare.length, src = useRare ? rare : pool, t = src[(rng()*src.length)|0];
+    if (!CREATURES[t]) continue;
+    const e = spawnCreature(t, b.x+(rng()-0.5)*0.6, b.z+(rng()-0.5)*0.6, { hx: b.x, hz: b.z, hr: 6, fromStone: true, scatterUntil: clock.t + FLIP_SCATTER_TIME });
+    e.scale *= 1.25; b.critters.push(e);
+  }
+  if (typeof sparkle === "function") sparkle(b.x, surfaceAt(b.x,b.z).h+0.2, b.z, [0.5,0.45,0.4], 5);
+}
+function giveBoulderCache(cx, cz) {
+  const coins = 3 + (rng()*5|0);
+  for (let i = 0; i < coins; i++) spawnFind("coin", cx+(rng()-0.5)*1.0, cz+(rng()-0.5)*1.0);
+  let extra = "";
+  if (rng() < 0.5) { spawnFind("tin", cx+(rng()-0.5)*0.6, cz+(rng()-0.5)*0.6); extra = " A sealed tin's tucked in with them, too."; }
+  if (typeof stoneItemFind === "function" && rng() < 0.4) stoneItemFind({ x: cx, z: cz });   // §40 may salt in a rarer treasure
+  if (typeof sparkle === "function") sparkle(cx, surfaceAt(cx,cz).h+0.25, cz, [0.95,0.85,0.5], 14);
+  showCard("A buried cache!", coins + " old coins spill from the hollow under the boulder." + extra);
+}
+function revealBoulderContent(b) {
+  b.flippedAt = tideDay;
+  const fx = Math.sin(b.yaw), fz = Math.cos(b.yaw), cx = b.x + fx*1.1*b.sc, cz = b.z + fz*1.1*b.sc;   // the bared ground ahead
+  if (tideDay < b.refillAt) { b.content = "nothing"; showCard("Already turned", "You levered this one not long ago — nothing new has crept under yet."); return; }
+  const roll = rng();
+  if (roll < HEAVE_CRITTER_P) { b.content = "critters"; spawnBoulderCritters(b); showCard("Under the boulder", "Something bolts from the cold hollow — quick, look before it's gone!"); }
+  else if (roll < HEAVE_CRITTER_P + HEAVE_CACHE_P) { b.content = "cache"; giveBoulderCache(cx, cz); }
+  else { b.content = "fossil"; spawnFind("fossil", cx+(rng()-0.5)*0.4, cz+(rng()-0.5)*0.4); if (typeof sparkle === "function") sparkle(cx, surfaceAt(cx,cz).h+0.2, cz, [0.8,0.7,0.5], 10); showCard("A fossil!", "Pressed into the boulder's cold underside — an " + FINDS.fossil.label.toLowerCase() + ", older than the beach itself."); }
+  if (typeof checkSets === "function") checkSets();
+  saveState();
+}
+function heaveOver(b) {
+  b.flipped = true; b.target = 1; b.anim = true;
+  if (onDig) onDig("thud");
+  if (typeof spawnSand === "function") spawnSand(b.x, surfaceAt(b.x,b.z).h+0.15, b.z, 14, [0.55,0.48,0.4]);
+  revealBoulderContent(b);
+}
+function startHeave(b) {
+  if (b.flipped || b.anim) return;
+  heave = { b, pos: rng(), dir: rng()<0.5?1:-1, speed: 0.85, hits: 0, need: HEAVE_NEED, cool: 0, sweetC: 0.3+rng()*0.4, sweetW: 0.26 };
+  const el = document.getElementById("pryoverlay"); el.style.display = "flex";
+  const hint = document.getElementById("pryhint"); if (hint) hint.textContent = "Heave the boulder — strike the glowing arc";
+  if (document.pointerLockElement === canvas) document.exitPointerLock();
+}
+function cancelHeave() { heave = null; document.getElementById("pryoverlay").style.display = "none"; const hint = document.getElementById("pryhint"); if (hint) hint.textContent = "Shovel the latch — strike the glowing arc"; }
+function updateHeave(dt) {
+  if (!heave) return;
+  const b = heave.b;
+  if (b.flipped || b.anim || Math.hypot(b.x-player.x, b.z-player.z) > REACH+4) { cancelHeave(); return; }
+  heave.cool = Math.max(0, heave.cool - dt);
+  heave.pos += heave.dir * heave.speed * dt;
+  if (heave.pos > 1) { heave.pos = 1; heave.dir = -1; } if (heave.pos < 0) { heave.pos = 0; heave.dir = 1; }
+  drawHeave();
+}
+function heaveStrike() {
+  if (!heave || heave.cool > 0) return;
+  if (exhausted || stamina <= 0.02) { cancelHeave(); if (typeof tooTired === "function") tooTired(); return; }   // ran out of puff → give up the heave
+  heave.cool = 0.24; spendStamina(HEAVE_STRIKE_COST);   // costs stamina, but no root (repeated strikes, pry-style)
+  const b = heave.b, hit = Math.abs(heave.pos - heave.sweetC) < heave.sweetW/2;
+  if (hit) {
+    heave.hits++; shovelSwing = 1; if (onDig) onDig("clink");
+    if (typeof sparkle === "function") sparkle(b.x, surfaceAt(b.x,b.z).h+0.4, b.z, [0.8,0.75,0.6], 6);
+    heave.sweetC = 0.2 + rng()*0.6; heave.speed += 0.14; camNudge = Math.max(camNudge, 0.02);
+    if (heave.hits >= heave.need) { cancelHeave(); heaveOver(b); }
+  } else { if (onDig) onDig("thud"); }
+}
+function updateHeaveBoulders(dt) {
+  for (const b of heaveBoulders) {
+    if (b.anim) {
+      b.flip += (b.target - b.flip) * Math.min(1, dt*2.6);
+      if (Math.abs(b.flip - b.target) < 0.02) b.flip = b.target, b.anim = false;
+    } else if (b.flipped && (tideDay - b.flippedAt) > HEAVE_RESET_DAYS && Math.hypot(b.x-player.x, b.z-player.z) > 50) {
+      settleCritters(b); b.flipped = false; b.flip = 0; b.target = 0; b.content = null;
+      b.refillAt = tideDay + HEAVE_REFILL_MIN + rng()*(HEAVE_REFILL_MAX-HEAVE_REFILL_MIN);
+    }
+  }
+}
+function drawHeaveBoulders(view) {
+  if (!heaveBoulders.length) return;
+  if (!heaveBoulderDyn) heaveBoulderDyn = makeDynamic(heaveBoulderMesh(), HEAVE_BOULDER_N);
+  if (!dampPatchDyn) dampPatchDyn = makeDynamic(discMesh(0, 0.46, 9, 0.0, [1,1,1]), FLIP_STONE_N);
+  propUniforms(view); let n = 0, dn = 0;
+  for (const b of heaveBoulders) {
+    const dx = b.x-cam.pos[0], dz = b.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    const gy = surfaceAt(b.x, b.z).h, f = b.flip, lean = f*2.0, fx = Math.sin(b.yaw), fz = Math.cos(b.yaw);
+    const px = b.x + fx*1.1*b.sc*f, pz = b.z + fz*1.1*b.sc*f, py = gy - 0.28*b.sc*(1-f) + Math.sin(f*Math.PI)*0.24*b.sc;   // sunk at rest, rises as it rolls
+    const o = n*10; heaveScratch[o]=px;heaveScratch[o+1]=py;heaveScratch[o+2]=pz;heaveScratch[o+3]=b.sc;heaveScratch[o+4]=b.yaw;heaveScratch[o+5]=lean;heaveScratch[o+6]=0;heaveScratch[o+7]=1;heaveScratch[o+8]=1;heaveScratch[o+9]=1; n++;
+    if (f > 0.15) { const d = dn*10; heaveDampScratch[d]=b.x;heaveDampScratch[d+1]=gy+0.02;heaveDampScratch[d+2]=b.z;heaveDampScratch[d+3]=b.sc*0.9;heaveDampScratch[d+4]=0;heaveDampScratch[d+5]=0;heaveDampScratch[d+6]=0;
+      heaveDampScratch[d+7]=0.24;heaveDampScratch[d+8]=0.22;heaveDampScratch[d+9]=0.2; dn++; }
+  }
+  if (dn) dampPatchDyn.draw(heaveDampScratch, dn);
+  if (n) heaveBoulderDyn.draw(heaveScratch, n);
+}
+function drawHeave() {
+  const cv = document.getElementById("prycv"); if (!pryCtx) pryCtx = cv.getContext("2d");
+  const c = pryCtx, W = cv.width, H = cv.height, cx = W/2, cy = H*0.62, R = 86;
+  c.clearRect(0,0,W,H);
+  const a0 = Math.PI*1.15, a1 = Math.PI*1.85, span = a1 - a0; c.lineCap = "round";
+  c.strokeStyle = "rgba(255,255,255,.14)"; c.lineWidth = 14; c.beginPath(); c.arc(cx, cy, R, a0, a1); c.stroke();
+  const sA = a0 + span*(heave.sweetC - heave.sweetW/2), sB = a0 + span*(heave.sweetC + heave.sweetW/2);
+  c.strokeStyle = "#d8b47a"; c.lineWidth = 14; c.beginPath(); c.arc(cx, cy, R, sA, sB); c.stroke();
+  c.shadowColor = "rgba(216,180,122,.7)"; c.shadowBlur = 10; c.beginPath(); c.arc(cx, cy, R, sA, sB); c.stroke(); c.shadowBlur = 0;
+  const mA = a0 + span*heave.pos;
+  c.strokeStyle = "#ffe6b0"; c.lineWidth = 4; c.beginPath(); c.moveTo(cx+Math.cos(mA)*(R-14), cy+Math.sin(mA)*(R-14)); c.lineTo(cx+Math.cos(mA)*(R+12), cy+Math.sin(mA)*(R+12)); c.stroke();
+  for (let i=0;i<heave.need;i++){ c.fillStyle = i < heave.hits ? "#d8b47a" : "rgba(255,255,255,.2)"; c.beginPath(); c.arc(cx - (heave.need-1)*9 + i*18, cy+26, 5, 0, 6.283); c.fill(); }
+}
+function heaveBoulderAction(b) {
+  if (b.flipped || b.anim) return true;
+  if (selectedTool() !== "shovel") { showCard("Too heavy to budge", "A boulder this size needs a lever under its lip — equip the shovel and heave."); return true; }
+  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
+  startHeave(b); return true;
+}
+function heaveBoulderPrompt(b) { return b.flipped ? "levered aside" : (selectedTool()==="shovel" ? (IS_TOUCH?"hold to heave it over":"heave it over") : "needs the shovel to lever"); }
+
+/* ===================================================================== *
  * § 19  THE COTTAGE — a weathered home base near spawn: shelter, hearth,
  *        bed, storage, displays, an aquarium & collection-set rewards.
  *        (§19A shell + fixtures; interactivity follows in §19B+.)
@@ -12376,6 +12529,7 @@ initWorldObjs();
 seedBarnacles();   // §5 barnacle crusts on intertidal rocks (needs rockObjs)
 initCottage();     // §19 the home-base cottage near spawn (needs terrain + colliders)
 seedFlipStones();  // §21 flippable stones scattered on beach & forest floor
+seedHeaveBoulders();  // §21D heavy boulders to lever over (needs colliders + cottage)
 loadWorld();
 loadCottage();     // §19 restore cosiness / displays / aquarium for this seed
 saltDyn = makeDynamic(discMesh(0, 0.5, 8, 0.03, [0.94,0.95,0.97]), 60);
@@ -12475,6 +12629,8 @@ function frame(now) {
   updateWeather(dt);     // §20 weather state machine, fog/light/wind, lightning, after-storm
   updateCottage(dt);     // §19 door swing + creak
   updateFlipStones(dt);  // §21 flip animations + refill
+  updateHeaveBoulders(dt);  // §21D heavy-boulder roll + reset
+  updateHeave(dt);       // §21D the boulder heave mini-game
   updatePry(dt);
   updateSalt();
   updateAutoPickup();
@@ -12753,6 +12909,7 @@ function frame(now) {
   drawFlotsam(view);   // §5 floating debris on the water surface (drawn before the transparent water)
   drawTells(view, dt);
   drawFlipStones(view);   // §21 flippable stones + their damp patches
+  drawHeaveBoulders(view);   // §21D heavy boulders (and their bared ground)
   drawDigCellDebug(view);   // §urgent3 dig-cell state overlay (debug)
   drawPlaceGhost(view);
   drawParticles(view);
@@ -12900,6 +13057,11 @@ function frame(now) {
     }
     if (!buildMode && curTarget && curTarget.kind === "flipstone") {   // §21 flip-stone tooltip
       promptEl.textContent = flipStonePrompt(curTarget.obj);
+      promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
+      crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
+    }
+    if (!buildMode && curTarget && curTarget.kind === "heaveboulder") {   // §21D heavy-boulder tooltip
+      promptEl.textContent = heaveBoulderPrompt(curTarget.obj);
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
