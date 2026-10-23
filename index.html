@@ -8259,6 +8259,21 @@ function revealSpot(x, z, sift) {
    you still get raw material to your pack every strike (handled in digAt); underwater a depleted cell gives
    nothing. Depleted cells persist in the save so reloading can't refill them early. */
 const DIG_CELL = 1.0;                 // dig-cell size (metres)
+// §playtest1 worms: common in wet sand at the water's edge, and very abundant in ground the tide has just uncovered.
+// The "freshly uncovered" window is the wet band between the current water level and the slowly-drying wetLevel,
+// so it naturally lasts a few in-game minutes after the water pulls back and then fades.
+let WORM_EDGE_BAND = 0.7;             // how far above the waterline still counts as the wet edge (m)
+let WORM_FRESH_EXTRA = 0.9;           // extra height above wetLevel that still counts as freshly uncovered (m)
+let WORM_EDGE_CHANCE = 0.45;          // worm chance per dig in wet-edge sand
+let WORM_FRESH_CHANCE = 0.85;         // worm chance per dig in freshly uncovered sand (very abundant)
+function wormZone(x, z) {             // 0 none · 1 wet edge (common) · 2 freshly uncovered (abundant)
+  const db = typeof digBiome === "function" ? digBiome(x, z) : "sand";
+  if (db !== "wet" && db !== "sand" && db !== "mud") return 0;        // worms live in sand/mud, not rock/grass
+  const h = surfaceAt(x, z).h;
+  if (h > waterLevel && h < wetLevel + WORM_FRESH_EXTRA) return 2;    // recently under water → still damp → abundant
+  if (h > waterLevel - 0.1 && h < waterLevel + WORM_EDGE_BAND) return 1;   // right at the wet edge
+  return 0;
+}
 let DIG_FIND_ODDS = 0.22;             // fraction of cells that hold a diggable find at all
 let DIG_REFILL_DAYS = 1.5;            // a spent land cell refills after ~1.5 in-game days
 let DIG_REFILL_TIDAL = 0.55;          // intertidal cells refill faster (the tide restocks them)
@@ -8287,7 +8302,16 @@ function digCellAt(x, z) {
 // separately in digAt; underwater sifting of a cell with no (or spent) find yields nothing.
 function blindDig(x, z, sift) {
   const c = digCellAt(x, z);
-  if (c.loot && !c.depleted) {
+  if (c.depleted) return;
+  // §playtest1 worms first: wet-edge sand is wormy, freshly uncovered sand is very wormy (several). Still depletes the cell + refills on the next tide.
+  const wz = wormZone(x, z);
+  if (wz > 0 && rng() < (wz === 2 ? WORM_FRESH_CHANCE : WORM_EDGE_CHANCE)) {
+    const n = wz === 2 ? 1 + (rng() < 0.6 ? 1 : 0) : 1;
+    for (let i = 0; i < n; i++) spawnFind("worm", x + (rng()-0.5), z + (rng()-0.5));
+    c.depleted = true; c.refillAt = clock.t + DIG_REFILL_TIDAL * DAY_PERIOD;   // the tide restocks the wet band
+    return;
+  }
+  if (c.loot) {
     spawnFind(c.loot, x + (rng()-0.5), z + (rng()-0.5));
     c.depleted = true;
     c.refillAt = clock.t + (digBiome(x, z) === "wet" ? DIG_REFILL_TIDAL : DIG_REFILL_DAYS) * DAY_PERIOD;
