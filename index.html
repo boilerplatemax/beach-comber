@@ -1378,6 +1378,7 @@ const SND = {
     this._ambLayer("crickets", "bandpass", 2300, 2.2);   // §playtest1 softer, lower, wider band (no piercing 4.6 kHz whine)
     this._ambLayer("rumble", "lowpass", 170);
     this._ambLayer("trickle", "bandpass", 1500, 1.6);    // §playtest1 gentler trickle, less of a squeak near pools
+    this._ambLayer("rain", "lowpass", 1500);             // §20 rain on sand & water — a soft wash, not a bright hiss
   },
   ambGain(id, v) { const a = this.amb[id]; if (a) a.g.gain.value += (v - a.g.gain.value) * 0.05; },
   setVol(bus, v) { this.vol[bus] = v; if (!this.ctx) { this.saveVol(); return; }
@@ -1491,6 +1492,7 @@ const SND = {
   D("pour",        { shape:"noise", lpf:0.28, atk:0.02, sus:0.15, rel:0.1, gain:0.4 }, { vol:0.38 });
   // chest
   D("creak",       { freq:220, freq2:160, shape:"saw", atk:0.03, sus:0.2, rel:0.2, gain:0.3, vib:20, vibf:8 }, { vol:0.35 });
+  D("thunder",     { shape:"noise", lpf:0.08, atk:0.03, sus:0.4, rel:2.2, gain:0.6 }, { vol:0.6, bus:"ambience" });   // §20 a deep, rolling rumble
   D("key",         { freq:1600, freq2:1200, shape:"square", atk:0.0005, sus:0.008, rel:0.05, gain:0.3 }, { vol:0.32 });
   D("smash",       { shape:"noise", lpf:0.4, atk:0.001, sus:0.06, rel:0.2, gain:0.6, crush:20 }, { vol:0.5 });
   // creatures (day)
@@ -1555,12 +1557,13 @@ function updateSurf() {
     // §playtest1 wave-shaped surf, fading to near-silence well inland, louder in a storm surge
     const wv = surfWaveEnv();
     const near = Math.max(0, Math.min(1, shore * 1.15));        // 1 at the waterline → 0 well inland
-    const storm = 1 + eventMood() * 1.2;
+    const storm = (1 + eventMood() * 1.2) * (weather ? 1 + (weather.waveMul - 1) * 0.8 : 1);   // §20 bigger waves → louder surf
     const surfLvl = near * (0.02 + 0.2 * wv.body) * storm * (uw ? 0.35 : 1);
     SND.ambGain("surf", walk ? surfLvl : 0);
     SND.ambGain("swash", walk && !uw ? near * 0.14 * wv.spray * storm : 0);
     const high = walk ? Math.max(0, Math.min(1, (surfaceAt(player.x, player.z).h - 12) / 30)) : 0;
-    SND.ambGain("wind", walk ? 0.02 + high * 0.1 : 0);
+    SND.ambGain("wind", walk ? (0.02 + high * 0.1) + (weather ? weather.wind * 0.18 : 0) : 0);   // §20 wind gusts rise with the weather
+    SND.ambGain("rain", walk && weather ? weather.rain * (uw ? 0.1 : 0.38) : 0);                 // §20 rain on sand & water
     const night = walk ? 1 - dayFactor() : 0, inland = walk ? Math.max(0, 1 - shore) : 0;
     SND.ambGain("crickets", walk && !uw ? night * inland * 0.05 : 0);
     SND.ambGain("rumble", uw ? 0.16 : 0);
@@ -1693,6 +1696,10 @@ function fogDaylightCurve() {   // fog rolls in at dawn & dusk, burns off midday
   return Math.min(1, dawn + dusk + 0.08);
 }
 function weatherBiteMul() { return WEATHER_BITE_MUL[weather.state] || 1; }
+function onThunder(delay) {   // §20 distant thunder follows the flash after a delay (sound travels)
+  if (typeof SND === "undefined") return;
+  setTimeout(() => { try { SND.play("thunder", { volume: 0.45 + Math.random()*0.4 }); } catch (e) {} }, Math.max(100, (delay || 1) * 1000));
+}
 function weatherIsWet() { return weather.state === "rain" || weather.state === "storm"; }
 function rainAmt() { return weather.rain; }
 function initWeather() {   // set day-0 weather with no transition (no visible blend on load)
@@ -1868,6 +1875,28 @@ function onStormMorning() {
   gatherStormGulls();                                                              // gulls gather on the beach
   const finds = life.filter((e) => e.kind === "find"); if (finds.length > 520) life = life.filter((e) => e.kind !== "find").concat(finds.slice(-520));
   showCard("After the storm", "The beach is strewn with wrack and driftwood, and the gulls have gathered.");
+}
+
+/* §20E LIGHT GAMEPLAY EFFECTS — fish bite more (bite multiplier, set in rollBite);
+   worms surface in rain; in a storm gulls sit on the water facing the wind
+   (crabs burrowing is handled in the crab AI). Weather never causes damage. */
+const WORM_SURFACE_INT = 2.2, WORM_SURFACE_CAP = 7;
+function updateWeatherGameplay(dt) {
+  if (weather.rain > 0.2) {                                     // worms come up to the surface in the rain
+    weather.wormT += dt * weather.rain;
+    if (weather.wormT > WORM_SURFACE_INT) { weather.wormT = 0;
+      let n = 0; for (const e of life) if (e.kind === "find" && e.t === "worm") n++;
+      if (n < WORM_SURFACE_CAP) {
+        const a = rng()*6.283, r = 4 + rng()*12, x = player.x + Math.cos(a)*r, z = player.z + Math.sin(a)*r, h = heightAt(x, z);
+        if (h > waterLevel + 0.4 && waterDepthAt(x, z) < 0.02) { spawnFind("worm", x, z); if (typeof discovered !== "undefined") discovered.add("f_worm"); }
+      }
+    }
+  }
+  if (weather.state === "storm") {                              // gulls sit on the water, facing into the wind
+    for (const e of life) { if (e.t !== "gull") continue; if (Math.hypot(e.x-player.x, e.z-player.z) > UPDATE_R) continue;
+      if (waterDepthAt(e.x, e.z) > 0.6 && e.gstate !== "flee") { if (e.gstate !== "float") { e.gstate = "float"; e.timer = Math.max(e.timer||0, 3); } e.yaw = weather.windDir + Math.PI; }
+    }
+  }
 }
 
 /* --------------------------------------------------------------------- *
@@ -6647,9 +6676,13 @@ function behave(e, dt, d, dx, dz) {
   if (e.t === "crab") {
     if (e.burrow === undefined) e.burrow = 0;
     const shy = crouching ? 1.2 : 2.4;                       // §13.4 less skittish when the player crouches
+    if (e.state === "stormburied") { e.burrow = 1; if (!weather || weather.state !== "storm") e.state = "emerging"; return; }   // §20 stay dug in until the storm passes
+    if (weather && weather.state === "storm" && e.state !== "sinking" && e.state !== "emerging" && waterDepthAt(e.x, e.z) < 0.1) {   // §20 crabs burrow in a storm
+      e.state = "sinking"; e.burrow = 0; if (lifeVisible(e)) spawnSand(e.x, heightAt(e.x,e.z)+0.1, e.z, 6, [0.82,0.76,0.58]); return; }
     if (e.state === "sinking") {                             // §13.1 sink into the sand (animated); relocate only once hidden
       e.burrow = Math.min(1, e.burrow + dt*1.8);
-      if (e.burrow >= 1) { const sp = wetBandSpot(e.hx, e.hz) || wetBandSpot(e.x, e.z); if (sp) { e.x = sp[0]; e.z = sp[1]; } e.state = "emerging"; if (crabLog) console.log(`crab#${e.id} buried → re-emerge ${e.x.toFixed(1)},${e.z.toFixed(1)}`); }
+      if (e.burrow >= 1) { if (weather && weather.state === "storm") { e.state = "stormburied"; return; }   // §20 ride out the storm underground
+        const sp = wetBandSpot(e.hx, e.hz) || wetBandSpot(e.x, e.z); if (sp) { e.x = sp[0]; e.z = sp[1]; } e.state = "emerging"; if (crabLog) console.log(`crab#${e.id} buried → re-emerge ${e.x.toFixed(1)},${e.z.toFixed(1)}`); }
       return;
     }
     if (e.state === "emerging") {                            // rise back up elsewhere, but wait if the player is on top of it
