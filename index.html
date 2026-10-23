@@ -4882,7 +4882,50 @@ function crabMesh(col) {
     mTri(m, [0.0, 0.1, s*0.4], [0.3 + k*0.2, 0.0, s*0.72], [0.1 + k*0.2, 0.1, s*0.45], col);
   return m;
 }
-function fishMesh(col) { const m = Mesh(); mTri(m,[0.4,0.05,0],[-0.2,0.05,0.14],[-0.2,0.05,-0.14],col); mTri(m,[-0.2,0.05,0.14],[-0.2,0.05,-0.14],[-0.45,0.05,0],[col[0]*0.8,col[1]*0.8,col[2]*0.8]); return m; }
+// §fishpolish detailed low-poly fish: rounded body (6-sided lathe) + forked tail, dorsal, paired pectorals, eye, mouth.
+// Convention: nose at +x, tail at -x, back = +y. All species share this builder so icons, in-hand and swimming models match.
+function finFishMesh(col, o) {
+  o = o || {}; const m = Mesh();
+  const len = o.len != null ? o.len : 0.5, tail = o.tail != null ? o.tail : -0.42;
+  const H = o.h || 0.16, W = o.wz || 0.085, sides = o.sides || 6;
+  // profile stations [t, ry, rz] from tail-base (t=0) to nose (t=1); r multipliers of H / W
+  const prof = o.prof || [[1,0.12,0.12],[0.82,0.64,0.68],[0.58,1,1],[0.32,0.82,0.74],[0.1,0.34,0.26],[0,0.14,0.1]];
+  const topMul = o.top || 1.1, bellyMul = o.belly || 0.72;
+  const stripes = o.stripes || null, stripeCol = o.stripeCol || [col[0]*0.66,col[1]*0.66,col[2]*0.7];
+  const tcol = o.tailCol || [col[0]*0.86,col[1]*0.86,col[2]*0.9], finCol = o.finCol || tcol;
+  const X = t => tail + t * (len - tail);
+  const tint = (x, a) => { const up = Math.sin(a); const s = up > 0 ? (1 + (topMul - 1) * up) : (1 + (1 - bellyMul) * up);
+    if (stripes) for (const sx of stripes) if (Math.abs(x - sx) < (o.stripeW || 0.05)) return [stripeCol[0]*s, stripeCol[1]*s, stripeCol[2]*s];
+    return [col[0]*s, col[1]*s, col[2]*s]; };
+  for (let i = 0; i < prof.length - 1; i++) {
+    const A = prof[i], B = prof[i+1], ax = X(A[0]), bx = X(B[0]);
+    for (let sd = 0; sd < sides; sd++) {
+      const a0 = (sd/sides)*6.283 - 1.5708, a1 = ((sd+1)/sides)*6.283 - 1.5708;
+      const p0 = [ax, Math.sin(a0)*H*A[1], Math.cos(a0)*W*A[2]], p1 = [ax, Math.sin(a1)*H*A[1], Math.cos(a1)*W*A[2]];
+      const p2 = [bx, Math.sin(a1)*H*B[1], Math.cos(a1)*W*B[2]], p3 = [bx, Math.sin(a0)*H*B[1], Math.cos(a0)*W*B[2]];
+      mQuad(m, p0, p1, p2, p3, tint((ax+bx)/2, (a0+a1)/2));
+    }
+  }
+  // forked tail fin in the vertical plane
+  const tf = o.tailH || H*1.5, fork = o.fork != null ? o.fork : 0.08, tlen = o.tlen || 0.2;
+  mTri(m, [tail+0.02,0,0], [tail-tlen, tf, 0], [tail-tlen+fork, 0, 0], tcol);
+  mTri(m, [tail+0.02,0,0], [tail-tlen,-tf, 0], [tail-tlen+fork, 0, 0], tcol);
+  // dorsal fin — spiny row (dorsalN) or a soft ridge
+  const dF = o.dorFront != null ? o.dorFront : 0.62, dB = o.dorBack != null ? o.dorBack : 0.2;
+  if (o.dorsalN) { for (let i = 0; i < o.dorsalN; i++) { const t = o.dorsalN>1 ? i/(o.dorsalN-1) : 0.5, x = X(dF + (dB-dF)*t), by = H*(o.dorBase||0.72);
+    mTri(m, [x+0.03, by, 0], [x-(o.spineL||0.02), by+(o.spineH||0.16), 0], [x-0.06, by, 0], o.spineCol || finCol); } }
+  else { const x0 = X(dF), x1 = X(dB), by = H*(o.dorBase||0.75);
+    mTri(m, [x0, by, 0], [X((dF+dB)/2), by+(o.finH||0.14), 0], [x1, by, 0], finCol); }
+  // paired pectoral fins, low on the sides, swept back
+  const px = X(o.pecT != null ? o.pecT : 0.6), pzB = (o.pecZ || W*0.85);
+  for (const s of [1,-1]) mTri(m, [px, -H*0.12, pzB*s], [px-0.16, -H*0.6, pzB*s*1.1], [px-0.03, H*0.12, pzB*s*0.9], finCol);
+  // eye + mouth near the nose
+  const ex = X(o.eyeT != null ? o.eyeT : 0.86), eH = H*(o.eyeY||0.28);
+  for (const s of [1,-1]) { mBox(m, ex, eH, s*W*0.7, 0.028, 0.028, 0.01, o.eyeCol || [0.95,0.95,0.6]); mBox(m, ex-0.004, eH, s*W*0.72, 0.014, 0.014, 0.012, [0.08,0.08,0.1]); }
+  mBox(m, X(0.97), -H*0.06, 0, 0.03, 0.012, W*0.6, o.mouthCol || [col[0]*0.5,col[1]*0.42,col[2]*0.45]);
+  return m;
+}
+function fishMesh(col) { return finFishMesh(col || [0.7,0.75,0.8], { h: 0.15, wz: 0.08 }); }
 function anemoneMesh(col) { const m = Mesh(); mCyl(m,0,0.2,0.28,0.24,7,[col[0]*0.7,col[1]*0.7,col[2]*0.7]); for(let i=0;i<9;i++){const a=i/9*6.283; mTri(m,[Math.cos(a)*0.2,0.2,Math.sin(a)*0.2],[Math.cos(a)*0.32,0.52,Math.sin(a)*0.32],[Math.cos(a+0.35)*0.2,0.2,Math.sin(a+0.35)*0.2],col);} return m; }
 function starMesh(col) { const m = Mesh(); for(let i=0;i<5;i++){const a0=i/5*6.283,a1=(i+0.5)/5*6.283,a2=(i+1)/5*6.283; mTri(m,[0,0.06,0],[Math.cos(a0)*0.2,0.05,Math.sin(a0)*0.2],[Math.cos(a1)*0.5,0.08,Math.sin(a1)*0.5],col); mTri(m,[0,0.06,0],[Math.cos(a1)*0.5,0.08,Math.sin(a1)*0.5],[Math.cos(a2)*0.2,0.05,Math.sin(a2)*0.2],col);} return m; }
 function urchinMesh(col) { const m = discMesh(0.1,0.3,6,0.15,col); const sp=[col[0]*1.3,col[1]*1.3,col[2]*1.3]; for(let i=0;i<10;i++){const a=i/10*6.283; mTri(m,[Math.cos(a)*0.25,0.1,Math.sin(a)*0.25],[Math.cos(a)*0.5,0.45,Math.sin(a)*0.5],[Math.cos(a+0.25)*0.25,0.1,Math.sin(a+0.25)*0.25],sp);} return m; }
@@ -4892,16 +4935,23 @@ function flounderMesh(col) { const m = Mesh(); col = col||[0.62,0.56,0.42];   //
   mergeMesh(m, discMesh(0.02, 0.5, 9, 0.04, col)); mergeMesh(m, discMesh(0.0, 0.5, 9, -0.03, [col[0]*0.8,col[1]*0.8,col[2]*0.8]));
   mTri(m, [-0.42,0.02,0.12], [-0.42,0.02,-0.12], [-0.62,0.02,0], [col[0]*0.9,col[1]*0.9,col[2]*0.9]);   // tail
   mBox(m, 0.3, 0.07, 0.12, 0.03, 0.03, 0.03, [0.1,0.1,0.1]); return m; }   // an eye on top
-function rockfishMesh(col) { const m = Mesh(); col = col||[0.82,0.3,0.18];   // bright orange-red, spiny dorsal
-  mTri(m,[0.42,0.05,0],[-0.2,0.05,0.16],[-0.2,0.05,-0.16],col); mTri(m,[-0.2,0.05,0.16],[-0.2,0.05,-0.16],[-0.5,0.05,0],[col[0]*0.8,col[1]*0.8,col[2]*0.8]);
-  for (let i=0;i<4;i++){ const x=0.1-i*0.12; mTri(m,[x,0.1,0],[x-0.05,0.3,0],[x-0.12,0.1,0],[col[0]*0.7,col[1]*0.5,col[2]*0.4]); }   // dorsal spines
-  return m; }
-function lingcodMesh(col) { const m = Mesh(); col = col||[0.4,0.42,0.33];    // large, mottled, elongated
-  mBox(m, 0, 0.06, 0, 0.5, 0.14, 0.1, col); mTri(m,[0.5,0.06,0],[0.72,0.06,0.08],[0.72,0.06,-0.08],[col[0]*1.1,col[1]*1.1,col[2]*1.0]);   // head
-  mTri(m,[-0.5,0.06,0],[-0.8,0.06,0.18],[-0.8,0.06,-0.18],[col[0]*0.85,col[1]*0.85,col[2]*0.8]);   // broad tail
-  for (let i=0;i<5;i++){ const x=0.3-i*0.16; mTri(m,[x,0.18,0],[x-0.04,0.34,0],[x-0.1,0.18,0],[col[0]*0.8,col[1]*0.8,col[2]*0.7]); }   // long dorsal
-  return m; }
-function minnowMesh(col) { return fishMesh(col||[0.7,0.75,0.82]); }   // small schooling fish
+// bright orange-red, deep body, spiny dorsal, pale belly — the classic rockfish
+function rockfishMesh(col) { col = col || [0.84,0.3,0.18];
+  return finFishMesh(col, { len: 0.52, tail: -0.5, h: 0.22, wz: 0.1, top: 1.12, belly: 0.6,
+    prof: [[1,0.14,0.14],[0.84,0.72,0.74],[0.6,1,1],[0.34,0.8,0.7],[0.1,0.32,0.24],[0,0.12,0.09]],
+    dorsalN: 7, dorFront: 0.68, dorBack: 0.22, spineH: 0.2, spineL: 0.03, spineCol: [col[0]*0.72,col[1]*0.5,col[2]*0.42],
+    tailH: 0.3, tlen: 0.22, fork: 0.07, eyeCol: [0.98,0.85,0.3], stripes: [0.12,-0.1], stripeW: 0.055 }); }
+// large mottled ambush predator: long body, big head, broad tail, long soft dorsal — the prize
+function lingcodMesh(col) { col = col || [0.4,0.44,0.34];
+  return finFishMesh(col, { len: 0.72, tail: -0.78, h: 0.18, wz: 0.12, top: 1.08, belly: 0.74,
+    prof: [[1,0.3,0.3],[0.88,0.82,0.9],[0.66,1,1],[0.38,0.78,0.72],[0.12,0.42,0.3],[0,0.2,0.12]],
+    dorsalN: 9, dorFront: 0.78, dorBack: 0.16, spineH: 0.12, spineL: 0.04, dorBase: 0.82, spineCol: [col[0]*0.82,col[1]*0.82,col[2]*0.72],
+    tailH: 0.3, tlen: 0.26, fork: 0.05, pecT: 0.64, stripes: [0.3,0.0,-0.34], stripeW: 0.07, stripeCol: [col[0]*0.6,col[1]*0.58,col[2]*0.45], eyeCol: [0.9,0.85,0.55] }); }
+// small silvery schooling fish — slim, forked tail, bright flank
+function minnowMesh(col) { col = col || [0.72,0.77,0.84];
+  return finFishMesh(col, { len: 0.42, tail: -0.4, h: 0.1, wz: 0.05, top: 1.16, belly: 0.82,
+    prof: [[1,0.14,0.14],[0.8,0.6,0.64],[0.55,1,1],[0.3,0.78,0.72],[0.08,0.3,0.22],[0,0.12,0.08]],
+    tailH: 0.17, tlen: 0.16, fork: 0.07, dorFront: 0.58, dorBack: 0.34, finH: 0.08, eyeCol: [0.95,0.95,0.95] }); }
 // §12B bigger, high-contrast gull: white body, grey wings, dark wingtips, yellow beak.
 function gullMesh() {
   const m = Mesh(), white=[0.95,0.95,0.96], grey=[0.55,0.57,0.62], dark=[0.18,0.19,0.22], yellow=[0.96,0.78,0.24];
@@ -5015,12 +5065,13 @@ function rodIconMesh() {
   for (let i=0;i<5;i++) mBox(m, x1-0.02, y1-0.12-i*0.13, 0, 0.013,0.065,0.013, line);   // line hanging from the tip
   mBox(m, x1-0.02, y1-0.12-5*0.13, 0, 0.035,0.025,0.013, mtl);                  // a little hook
   return m; }
-function ratfishMesh(col) { const m = Mesh(); col = col||[0.55,0.58,0.6];   // big-headed chimaera: blunt snout, tall first dorsal, whip tail, huge eye
-  mBox(m, 0.08, 0.06, 0, 0.3, 0.13, 0.09, col);                                               // stout head/body
-  mTri(m,[0.38,0.06,0],[0.5,0.13,0.06],[0.5,0.13,-0.06],[col[0]*1.1,col[1]*1.1,col[2]*1.1]);  // blunt snout
-  mBox(m, -0.35, 0.06, 0, 0.3, 0.025, 0.02, [col[0]*0.8,col[1]*0.8,col[2]*0.8]);              // whip tail
-  for (let i=0;i<3;i++){ const x=0.16-i*0.13; mTri(m,[x,0.18,0],[x-0.03,0.34,0],[x-0.08,0.18,0],[col[0]*0.7,col[1]*0.72,col[2]*0.78]); }   // tall first dorsal
-  for (const s of [1,-1]) mBox(m, 0.26, 0.11, s*0.085, 0.035, 0.035, 0.01, [0.92,0.92,0.55]); // big silver eyes
+// big-headed chimaera: deep blunt head tapering to a long whip tail, tall first dorsal, huge silver eye
+function ratfishMesh(col) { col = col || [0.56,0.59,0.62];
+  const m = finFishMesh(col, { len: 0.46, tail: -0.5, h: 0.2, wz: 0.11, top: 1.1, belly: 0.66,
+    prof: [[1,0.26,0.3],[0.9,0.9,0.95],[0.72,1,1],[0.5,0.64,0.58],[0.26,0.32,0.26],[0,0.1,0.08]],
+    dorsalN: 3, dorFront: 0.74, dorBack: 0.6, spineH: 0.26, spineL: 0.03, dorBase: 0.86, spineCol: [col[0]*0.72,col[1]*0.74,col[2]*0.82],
+    tailH: 0.1, tlen: 0.12, fork: 0.03, pecT: 0.66, pecZ: 0.11, eyeT: 0.82, eyeY: 0.3, eyeCol: [0.93,0.93,0.6] });
+  mBox(m, -0.68, 0.0, 0, 0.26, 0.02, 0.015, [col[0]*0.8,col[1]*0.8,col[2]*0.84]);   // long whip tail
   return m; }
 function mergeMesh(m, n) { for (let i = 0; i < n.pos.length; i++) { m.pos.push(n.pos[i]); m.col.push(n.col[i]); } }
 function bellMesh() { const m = Mesh(); mCyl(m,0,0.8,0.5,0.25,8,[0.42,0.55,0.4]); mergeMesh(m, discMesh(0.8,0.25,8,0.05,[0.42,0.55,0.4])); mBox(m,0,0.95,0,0.1,0.15,0.1,[0.42,0.55,0.4]); mCyl(m,-0.2,0.1,0.08,0.08,5,[0.3,0.4,0.3]); return m; }
@@ -5545,7 +5596,7 @@ const CREATURES = {
   heron:    { mesh: () => heronMesh(),                base: 1.0, max: 30,  label: "Grey Heron", desc: "Stalks the shallows of the flats, dead still, then stabs." },
   // §14C huntable fish (spearable) + schooling minnows (atmosphere / bucket)
   flounder: { mesh: () => flounderMesh(),             base: 0.6, max: 70,  label: "Flounder", desc: "Lies flat and camouflaged on the sandy shallows — spot it before it bursts away.", fish: 1 },
-  rockfish: { mesh: () => rockfishMesh(),             base: 0.55,max: 90,  label: "Rockfish", desc: "Bright orange-red, hovering among the kelp. Curious, but skittish if you rush it.", fish: 1 },
+  rockfish: { mesh: () => rockfishMesh(),             base: 0.72,max: 90,  label: "Rockfish", desc: "Bright orange-red, hovering among the kelp. Curious, but skittish if you rush it.", fish: 1 },
   lingcod:  { mesh: () => lingcodMesh(),              base: 1.1, max: 30,  label: "Lingcod", desc: "A big mottled ambush predator lurking on the reef drop-off. The prize catch.", fish: 1 },
   minnow:   { mesh: () => minnowMesh(),               base: 0.35,max: 200, label: "Silverside", desc: "A small fish that moves in flashing schools through the shallows.", fish: 1 },
   // §16.1 new tide-pool & nearshore life
