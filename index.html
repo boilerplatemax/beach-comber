@@ -1976,6 +1976,7 @@ function landJump(g, fall) {
   camYVel = Math.min(camYVel, -Math.min(LAND_IMPACT_CAP * (1 + fall*0.06), fall * LAND_IMPACT_K * 1.4) * 11);
   camNudge = Math.max(camNudge, Math.min(0.14, 0.02 + fall * 0.01));          // a pitch nod on top
   if (onFootstep) onFootstep(surfaceType(g.h, g.slope), Math.min(1, 0.4 + fall * 0.08));   // landing thud
+  if (fall > 6) camShake = Math.max(camShake, Math.min(0.3, (fall - 6) * 0.03));   // §R4 the one remaining shake: a subtle hard-landing jolt
   if (fall > 9) { player.landStun = Math.min(0.8, (fall - 9) * 0.08);        // §15 hard landing: a stagger…
     if (fall > 10) { stamina = 0; exhausted = true; } }                       // …that empties stamina
   // §15 a very big fall: fade to black and wake at the base (nothing is lost)
@@ -2485,6 +2486,10 @@ function setGFXCustom(k, v) { GFX[k] = v; GFX.preset = "custom"; applyGFX(); sav
 let nightBrightness = 1.0;
 try { const b = parseFloat(localStorage.getItem("bc_bright")); if (!isNaN(b)) nightBrightness = Math.max(0.6, Math.min(1.8, b)); } catch (e) {}
 function setBrightness(v) { nightBrightness = Math.max(0.6, Math.min(1.8, v)); try { localStorage.setItem("bc_bright", nightBrightness.toFixed(2)); } catch (e) {} }
+// §R4 screen-shake amount (0..1), default low. Scales the one remaining (hard-landing) shake.
+let screenShake = 0.25;
+try { const s = parseFloat(localStorage.getItem("bc_shake")); if (!isNaN(s)) screenShake = Math.max(0, Math.min(1, s)); } catch (e) {}
+function setScreenShake(v) { screenShake = Math.max(0, Math.min(1, v)); try { localStorage.setItem("bc_shake", screenShake.toFixed(2)); } catch (e) {} }
 let debugOn = false;             // ` toggles the perf overlay (within debug mode)
 let debugMode = new URLSearchParams(location.search).get("debug") === "1";  // hidden in normal play
 
@@ -2785,6 +2790,7 @@ function openSettings() {
       `<button class="spreset${GFX.preset===n?" on":""}" data-gp="${n}">${n[0].toUpperCase()+n.slice(1)}</button>`).join("")}</div>
     ${slider("resScale","Resolution", 0.25, 1, 0.01, GFX.resScale)}
     <div class="srow"><label>Brightness</label><input id="setBright" type="range" min="0.6" max="1.8" step="0.05" value="${nightBrightness}"></div>
+    <div class="srow"><label>Screen shake</label><input id="setShake" type="range" min="0" max="1" step="0.05" value="${screenShake}"></div>
     ${toggle("dither","Dithering", GFX.dither)}
     ${toggle("quantize","Palette quantize", GFX.quantize)}
     ${slider("fog","Fog distance", 0.5, 1.6, 0.05, GFX.fog)}
@@ -2812,6 +2818,7 @@ function openSettings() {
   p.querySelectorAll("input[data-gs]").forEach(inp => inp.oninput = (e) => setGFXCustom(inp.dataset.gs, +e.target.value));
   p.querySelectorAll("input[data-gs]").forEach(inp => inp.onchange = () => openSettings());
   { const sb = p.querySelector("#setBright"); if (sb) sb.oninput = (e) => setBrightness(+e.target.value); }   // §18 brightness
+  { const ss = p.querySelector("#setShake"); if (ss) ss.oninput = (e) => setScreenShake(+e.target.value); }   // §R4 screen shake
   p.querySelectorAll("button[data-gc]").forEach(b => b.onclick = () => {
     const k = b.dataset.gc;
     if (k === "water") setGFXCustom("water", GFX.water > 0 ? 0 : 1);
@@ -6618,8 +6625,7 @@ function spawnSparks(x, y, z, n) {
 // The universal "that didn't work" reaction: swing, recoil + camera jolt, brief
 // stagger, a clink (hard) or thud (soft), sparks or a dust puff, and a small cost (§10.1).
 function failStrike(hard, x, y, z) {
-  shovelSwing = Math.max(shovelSwing, 0.7); toolRecoilT = 1;
-  camShake = Math.max(camShake, hard ? 0.5 : 0.34);
+  shovelSwing = Math.max(shovelSwing, 0.7); toolRecoilT = 1;   // §R4 no screen shake here any more — just the tool recoil
   player.landStun = Math.max(player.landStun, 0.18);          // brief stagger
   rootPlayer(); spendStamina(FAIL_COST); lastFailT = clock.t;
   if (onDig) onDig(hard ? "clink" : "thud");
@@ -8647,7 +8653,7 @@ function updateGulls(dt) {
         // §17.6 with nothing to chase, a gull over the water occasionally drops down to rest on the surface
         else if (!interest && !e.nest && waterDepthAt(e.x, e.z) > 0.6 && rng() < dt*0.03) { e.gstate = "float"; e.timer = 5 + rng()*9; }
         if (e.nest && e.nest.abandonedUntil <= clock.t && e.nest.eggs > 0 && dp < GULL.nestDefendR && e.nest.defendCd <= 0) {
-          e.gstate = "divebomb"; e.timer = 1.4; e.nest.defendCd = GULL.divebombCd; if (onGull) onGull("screech");
+          e.gstate = "alarm"; e.timer = 1.5 + rng(); e.nest.defendCd = GULL.divebombCd; if (onGull) onGull("screech");   // §R4 circle-and-call before any swoop
         }
         break;
       }
@@ -8710,13 +8716,29 @@ function updateGulls(dt) {
         e.timer -= dt; if (e.timer < 0 && dp > 14) { if (e.carry) gullDrop(e); e.gstate = "soar"; e.home = { x: e.x, z: e.z }; }
         break;
       }
-      case "divebomb": {
-        steerGull(e, player.x, player.z, GULL.bombSpd, dt);
-        const targetAlt = Math.max(2, 10 - (1.4 - e.timer)*12);
-        e.alt += (targetAlt - e.alt) * Math.min(1, dt*3);
+      case "alarm": {   // §R4 nest defense step 1: circle overhead and call; escalate to a swoop if the player stays
+        e.sp += dt*0.8;
+        steerGull(e, player.x + Math.cos(e.sp)*7, player.z + Math.sin(e.sp)*7, GULL.soarSpd*1.4, dt);
+        e.alt += (12 - e.alt) * Math.min(1, dt*0.8);
+        if (rng() < dt*0.8 && onGull) onGull("screech");
         e.timer -= dt;
-        if (dp < 4.5) { camShake = Math.max(camShake, 0.3); camNudge = Math.max(camNudge, 0.05); }   // flinch, no damage
-        if (e.timer < 0) { e.gstate = "soar"; e.home = { x: e.nest.x, z: e.nest.z }; }
+        if (!e.nest || e.nest.eggs <= 0 || dp > GULL.nestDefendR + 4) { e.gstate = "soar"; e.home = { x: e.nest ? e.nest.x : e.x, z: e.nest ? e.nest.z : e.z }; break; }   // player left → stand down
+        if (e.timer < 0) {   // commit a swoop: aim at a point just PAST the player, offset to one side so it passes by, not onto
+          const a = Math.atan2(player.z - e.z, player.x - e.x) + (rng() < 0.5 ? 0.6 : -0.6);
+          e.target = { x: player.x + Math.cos(a)*6, z: player.z + Math.sin(a)*6 }; e.whoosh = 0;
+          e.gstate = "swoop"; e.timer = 1.6;
+        }
+        break;
+      }
+      case "swoop": {   // §R4 step 2: a fast near-miss past the head (never landing), whoosh, then climb away and go again
+        steerGull(e, e.target.x, e.target.z, GULL.bombSpd, dt);
+        const floor = dp < 5 ? 2.2 : 1.4;                    // a hard altitude floor near the player → it never lands on you
+        const targetAlt = Math.max(floor, 3.0 - (1.6 - e.timer)*2.2 + (dp > 8 ? 7 : 0));
+        e.alt += (targetAlt - e.alt) * Math.min(1, dt*3.5);
+        if (dp < 4.5) e.alt = Math.max(e.alt, 2.2);          // absolute clearance over the player
+        if (dp < 5.5 && !e.whoosh) { e.whoosh = 1; if (onGull) onGull("whoosh"); }
+        e.timer -= dt;
+        if (e.timer < 0 || Math.hypot(e.x - e.target.x, e.z - e.target.z) < 2.5) { e.gstate = "alarm"; e.timer = 1.0 + rng()*1.2; }
         break;
       }
     }
@@ -8904,7 +8926,7 @@ function openChestAction(c) {
 }
 function smashChest(c) {
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
-  spendStamina(MINE_COST, true); rootPlayer(); camShake = Math.max(camShake, 0.4); if (onDig) onDig("clang");
+  spendStamina(MINE_COST, true); rootPlayer(); if (onDig) onDig("clang");   // §R4 no screen shake on mining
   c.smashHits++; c.open = Math.min(0.8, c.smashHits / CHEST_TUNE.smashNeed * 0.8);
   sparkle(c.x, surfaceAt(c.x,c.z).h+0.6, c.z, [0.6,0.5,0.35], 8);
   if (c.smashHits >= CHEST_TUNE.smashNeed) openChestLoot(c, "smash");
@@ -8956,7 +8978,7 @@ function pryStrike() {
     pry.sweetC = 0.22 + rng()*0.56; pry.speed += 0.16;
     if (pry.hits >= pry.need) { const c = pry.c; cancelPry(); openChestLoot(c, "pry"); }
   } else {
-    spendStamina(0.08); if (onDig) onDig("thud"); camShake = Math.max(camShake, 0.22);
+    spendStamina(0.08); if (onDig) onDig("thud");   // §R4 no screen shake on a thud
   }
 }
 function drawPry() {
@@ -9518,7 +9540,7 @@ function frame(now) {
   let f = camForward();
   const breathe = (resting || stamina < 0.35) ? Math.sin(t * 1.6) * (resting ? 0.03 : (0.35 - stamina) * 0.11) : 0;
   // a bounced-tool jolt: a fast jitter on yaw & pitch that decays (§10.1)
-  const shk = camShake > 0.001 ? camShake * 0.09 : 0;
+  const shk = camShake > 0.001 ? camShake * 0.09 * screenShake : 0;   // §R4 scaled by the Screen shake setting
   const shakeYaw = shk ? Math.sin(t * 90) * shk : 0, shakePit = shk ? Math.cos(t * 83) * shk : 0;
   if (mode === "walk" && (player.scramble > 0.01 || camNudge > 0.001 || breathe !== 0 || shk !== 0)) {   // dip + breathe + dig kick + jolt
     const dip = player.scramble * 0.14 + Math.sin(t * 2.2) * player.scramble * 0.025 + camNudge + breathe + shakePit;
