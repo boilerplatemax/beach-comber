@@ -313,40 +313,18 @@
   #fishrevealbox .frkeep { background: var(--facet); color: #ffe6b0; }
   #fishrevealbox .frrel { background: rgba(120,140,150,.25); color: var(--ink); }
   #fishrevealbox .frhint { font-size: 11px; opacity: .55; }
-  /* §Cooking campfire panel */
-  #firepanel { position: fixed; inset: 0; z-index: 14; display: none; align-items: center; justify-content: center; pointer-events: auto; }
-  #firebox { background: rgba(12,16,20,.95); border: 1px solid rgba(180,140,90,.4); border-radius: 8px;
-    padding: 18px 22px; width: 340px; max-height: 86vh; overflow-y: auto; box-shadow: 0 12px 44px rgba(0,0,0,.55); }
-  #firebox h2 { margin: 0 0 12px; font-size: 20px; color: #ffcf8a; text-align: center; }
-  #firebox .fsec { border-top: 1px solid rgba(180,140,90,.2); padding: 11px 0; }
-  #firebox .fsec > label { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; opacity: .6; display: block; margin-bottom: 7px; }
-  #firebox .frow { display: flex; align-items: center; gap: 8px; }
-  #firebox .frow label { font-size: 13px; opacity: .8; width: 34px; }
-  #firebox .fbar { flex: 1; height: 12px; background: rgba(0,0,0,.4); border-radius: 3px; overflow: hidden; position: relative; }
-  #firebox .fbar span { position: absolute; left: 0; top: 0; bottom: 0; display: block; }
-  #firebox .fbar .fzone { position: absolute; left: 50%; right: 0; top: 0; bottom: 0; background: rgba(120,220,130,.18); }
-  #firebox .frow b { font-size: 12px; width: 34px; text-align: right; opacity: .85; }
-  #firebox .fbtns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
-  #firebox button { font: 600 13px var(--ui); padding: 7px 13px; cursor: pointer; border: 0; border-radius: 4px; background: var(--facet); color: #ffe6b0; }
-  #firebox button:disabled { opacity: .4; cursor: default; }
-  #firebox .closebtn { width: 100%; margin-top: 12px; }
-  #firebox .fchips { display: flex; flex-wrap: wrap; gap: 6px; }
-  #firebox .fchip { background: rgba(120,140,150,.22); color: var(--ink); font-weight: 500; padding: 5px 10px; }
-  #firebox .fchip i { opacity: .6; font-style: normal; font-size: 11px; }
-  #firebox .fnone { font-size: 12px; opacity: .45; font-style: italic; }
-  #firebox .froast { display: flex; align-items: center; gap: 8px; }
-  #firebox .froast span { font-size: 13px; width: 90px; }
-  #firebox .froast em { font-size: 11px; opacity: .8; width: 86px; font-style: normal; }
-  #firebox .fslots { display: flex; gap: 6px; margin-bottom: 8px; }
-  #firebox .fslot { flex: 1; min-height: 34px; display: flex; align-items: center; justify-content: center; text-align: center;
-    font-size: 11px; background: rgba(0,0,0,.3); border: 1px dashed rgba(180,140,90,.3); border-radius: 4px; padding: 4px; }
-  #firebox .fslot.on { background: rgba(180,140,90,.25); border-style: solid; color: #ffe6b0; }
-  #firebox .ftoggle { display: flex; gap: 8px; margin-bottom: 9px; flex-wrap: wrap; }
-  #firebox .ftoggle span { font-size: 12px; padding: 5px 10px; border-radius: 4px; cursor: pointer; background: rgba(120,140,150,.18); }
-  #firebox .ftoggle span.on { background: rgba(110,180,120,.4); color: #e8ffe0; }
-  #firebox .fcooking em, #firebox .fdone { font-size: 13px; }
-  #firebox .fdone { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  #firebox .fhint { font-size: 11px; opacity: .5; margin-top: 10px; text-align: center; }
+  /* §Cooking campfire HUD — a compact, non-modal readout shown while looking at a fire */
+  #firehud { position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 6; display: none;
+    pointer-events: none; text-align: center; background: rgba(12,16,20,.82); border: 1px solid rgba(180,140,90,.34);
+    border-radius: 7px; padding: 9px 16px; min-width: 210px; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+  #firehud .fh-row { font: 500 12px var(--ui); letter-spacing: .02em; }
+  #firehud .fh-fire { color: #ffcf8a; }
+  #firehud .fh-mid { color: var(--ink); opacity: .9; margin-top: 2px; }
+  #firehud .fh-mid b { color: #ffe6b0; }
+  #firehud .fh-act { margin-top: 6px; font: 600 13px var(--ui); color: #bfe6a6; }
+  #firehud .fh-act b { display: inline-block; min-width: 18px; padding: 1px 5px; margin-right: 3px; border-radius: 3px;
+    background: rgba(191,230,166,.2); color: #e8ffe0; }
+  #firehud .fh-wait { color: #d6a24a; }
   #soundtest { position: fixed; right: 10px; top: 10px; z-index: 22; display: none; max-height: 86vh; overflow-y: auto;
     background: rgba(8,12,16,.86); border: 1px solid rgba(160,200,230,.3); border-radius: 4px; padding: 8px; width: 150px; }
   #soundtest h5 { margin: 0 0 6px; font-size: 11px; letter-spacing: .1em; opacity: .7; text-transform: uppercase; }
@@ -536,7 +514,7 @@
 <canvas id="critcanvas"></canvas>
 <canvas id="fishcanvas"></canvas>
 <div id="fishreveal"></div>
-<div id="firepanel"></div>
+<div id="firehud"></div>
 <div id="soundtest"></div>
 <canvas id="bucketpanel" width="125" height="145"></canvas>
 <div id="ctxmenu"></div>
@@ -3265,7 +3243,6 @@ addEventListener("keydown", (e) => {
   keys[e.code] = true;
   if (e.code === "Escape" && typeof inspect !== "undefined" && inspect.open) { closeInspect(); return; }   // close the close-up first
   if (e.code === "Escape" && typeof tradeOpen !== "undefined" && tradeOpen) { closeTrade(); return; }
-  if (e.code === "Escape" && typeof fireUI !== "undefined" && fireUI.open) { closeFirePanel(); return; }   // §Cooking close the fire panel first
   if (e.code === "Escape" && document.getElementById("settingspanel").style.display === "block") { closeSettings(); return; }   // §2 settings → back to pause (or game)
   if (e.code === "Escape" && pauseStage) { if (pauseStage === "controls") { showPause(); } else closePause(); return; }   // §2 controls → pause; pause → resume
   if (e.code === "Escape" && menuIsOpen()) { closeMenu(); return; }   // §2 Esc closes the Satchel/Bucket/Journal menu
@@ -3621,7 +3598,6 @@ function isPanelOpen() {
       || document.getElementById("journal").style.display === "block"
       || document.getElementById("settingspanel").style.display === "block"
       || (typeof fishReveal !== "undefined" && fishReveal.open)
-      || (typeof fireUI !== "undefined" && fireUI.open)
       || (typeof pauseStage !== "undefined" && !!pauseStage);
 }
 function requestLock() {   // re-acquire pointer lock after a gesture (closing a panel); harmless if it fails
@@ -7216,7 +7192,7 @@ function useToolOnTarget(t) {
     case "fence": return chopFence(t.obj);
     case "openchest": pickUpChest(t.obj); return true;
     case "storagebox": openStash(storageBoxes.indexOf(t.obj)); return true;
-    case "campfire": openFirePanel(t.obj); return true;   // §Cooking open the fire/roast/pot panel
+    case "campfire": doFireAction(t.obj); return true;   // §Cooking one-press world interaction (no modal)
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
     case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
     case "rock": if (tool === "pickaxe") { mineObj(t.obj); return true; } return false;
@@ -8591,7 +8567,6 @@ function updateCampfires(dt) {
       if (c.roast) { c.roast.t += dt * (fireInstantCook ? 20 : 1); if (Math.random() < dt * 1.2) { const y = surfaceAt(c.x,c.z).h + 0.4; sparkle(c.x, y, c.z, [0.95,0.8,0.4], 1); } }
       if (c.pot && c.pot.cooking && !c.pot.done) { c.pot.t += dt * (fireInstantCook ? 20 : 1); if (c.pot.t >= POT_COOK_TIME) { c.pot.done = true; if (typeof SND !== "undefined") SND.play("glug", { position:[c.x,surfaceAt(c.x,c.z).h,c.z] }); } }
     }
-    if (fireUI.open && fireUI.fire === c) renderFirePanel();   // live-refresh the open panel
   }
 }
 function drawCampfires(view) {
@@ -8620,7 +8595,6 @@ function drawCampfires(view) {
 const POT_COOK_TIME = 20;   // game-seconds for a stew to simmer
 
 /* ---- §Cooking — the campfire action panel: fuel, roasting, and pot stews; plus the cookbook ---- */
-let fireUI = { open: false, fire: null };
 let cookbook = new Set(), cookRecord = {};
 try { cookbook = new Set(JSON.parse(localStorage.getItem("bc_cookbook") || "[]")); } catch (e) {}
 try { cookRecord = JSON.parse(localStorage.getItem("bc_cookrec") || "{}"); } catch (e) {}
@@ -8631,30 +8605,30 @@ function roastDoneness(r) { if (!r) return "none"; if (r.t < ROAST_DONE) return 
 function roastColor(r) { const d = roastDoneness(r); return d === "raw" ? [0.8,0.5,0.4] : d === "cooked" ? [0.7,0.46,0.26] : [0.14,0.12,0.11]; }
 function addRoast(c, id) { if (c.roast) { showCard("Fire's full", "Pull off what's roasting first."); return; }
   if (!c.lit || c.fuel <= 0) { showCard("Light the fire first", "A cold fire won't cook."); return; }
-  if (Inv.count(id) < 1) return; Inv.remove(id, 1); c.roast = { id, t: 0 }; if (onDig) onDig("eat"); renderFirePanel(); }
+  if (Inv.count(id) < 1) return; Inv.remove(id, 1); c.roast = { id, t: 0 }; if (onDig) onDig("eat"); }
 function collectRoast(c) { const r = c.roast; if (!r) return; const d = roastDoneness(r);
   const out = d === "cooked" ? (COOKED_OF[r.id] || r.id) : d === "raw" ? r.id : "charcoal";
   c.roast = null; Inv.add(out, 1);
   showCard(d === "burnt" ? "Burnt to a crisp" : d === "cooked" ? "Roasted " + (ITEMS[r.id] ? ITEMS[r.id].name : r.id) : "Pulled it off early",
     d === "cooked" ? (ITEMS[out].name + " — double the nourishment.") : d === "burnt" ? "Only burnt scraps left." : "Still raw — leave it longer next time.");
-  if (typeof SND !== "undefined") SND.play(d === "burnt" ? "thud" : "pickup"); renderFirePanel(); }
+  if (typeof SND !== "undefined") SND.play(d === "burnt" ? "thud" : "pickup"); }
 // pots
-function placePot(c) { if (c.pot) return; if (Inv.count("pot") < 1) { showCard("No pot", "You need a Cook-Pot to set on the fire. Mine rocks to turn one up."); return; } Inv.remove("pot", 1); c.pot = { ingredients: [], water: false, salt: false, cooking: 0, t: 0, done: false, dish: null }; if (onDig) onDig("clang"); renderFirePanel(); }
+function placePot(c) { if (c.pot) return; if (Inv.count("pot") < 1) { showCard("No pot", "You need a Cook-Pot to set on the fire. Mine rocks to turn one up."); return; } Inv.remove("pot", 1); c.pot = { ingredients: [], water: false, salt: false, cooking: 0, t: 0, done: false, dish: null }; if (onDig) onDig("clang"); }
 function takePot(c) { if (!c.pot) return; const p = c.pot;
   if (p.cooking && !p.done) { showCard("Still simmering", "Wait for the stew, or it'll be wasted."); return; }
   if (p.done) { collectDish(c); }
   for (const id of p.ingredients) Inv.add(id, 1);   // hand back anything not yet cooked
-  Inv.add("pot", 1); c.pot = null; renderFirePanel(); }
+  Inv.add("pot", 1); c.pot = null; }
 function potAdd(c, id) { const p = c.pot; if (!p || p.cooking || p.done) return;
   if (p.ingredients.length >= 4) { showCard("Pot's full", "Four ingredients is the most it'll hold."); return; }
-  if (!isPotIngredient(id) || Inv.count(id) < 1) return; Inv.remove(id, 1); p.ingredients.push(id); if (onDig) onDig("plop"); renderFirePanel(); }
-function potRemoveLast(c) { const p = c.pot; if (!p || p.cooking || p.done || !p.ingredients.length) return; Inv.add(p.ingredients.pop(), 1); renderFirePanel(); }
+  if (!isPotIngredient(id) || Inv.count(id) < 1) return; Inv.remove(id, 1); p.ingredients.push(id); if (onDig) onDig("plop"); }
+function potRemoveLast(c) { const p = c.pot; if (!p || p.cooking || p.done || !p.ingredients.length) return; Inv.add(p.ingredients.pop(), 1); }
 function potWater(c) { const p = c.pot; if (!p || p.cooking || p.done || p.water) return;
   if (bucket.water) { bucket.water = false; p.water = true; if (onDig) onDig("pour"); }
   else if (haveWaterNear()) { p.water = true; if (onDig) onDig("pour"); }
   else { showCard("No water", "Stand near the sea or a pond, or carry a full bucket."); return; }
-  renderFirePanel(); }
-function potSalt(c) { const p = c.pot; if (!p || p.cooking || p.done || p.salt) return; if (Inv.count("salt") < 1) { showCard("No salt", "Scrape sea salt from a dried pool rim."); return; } Inv.remove("salt", 1); p.salt = true; renderFirePanel(); }
+  }
+function potSalt(c) { const p = c.pot; if (!p || p.cooking || p.done || p.salt) return; if (Inv.count("salt") < 1) { showCard("No salt", "Scrape sea salt from a dried pool rim."); return; } Inv.remove("salt", 1); p.salt = true; }
 function pickDish(cats, n, salt) {
   const c = { sea: 0, root: 0, fruit: 0, egg: 0 }; for (const k of cats) c[k] = (c[k] || 0) + 1;
   const kinds = ["sea","root","fruit","egg"].filter(k => c[k] > 0).length;
@@ -8679,7 +8653,7 @@ function cookPot(c) { const p = c.pot; if (!p) return;
   p.cooking = 1; p.t = 0; p.done = false;
   p.dish = pickDish(p.ingredients.map(id => FOOD_CAT[id]), p.ingredients.length, p.salt);
   if (typeof SND !== "undefined") SND.play("glug", { position: [c.x, surfaceAt(c.x,c.z).h, c.z] });
-  renderFirePanel(); }
+  }
 function collectDish(c) { const p = c.pot; if (!p || !p.done) return;
   const name = dishDisplayName(p), dish = DISH_SET[p.dish];
   Inv.add(p.dish, 1);
@@ -8688,63 +8662,69 @@ function collectDish(c) { const p = c.pot; if (!p || !p.done) return;
   showCard("Cooked: " + name, dish.name + " — a filling meal. " + (firstTime ? "New recipe saved to your cookbook!" : "In your cookbook."));
   if (typeof notify === "function") notify(p.dish, 1, firstTime);
   p.ingredients = []; p.water = false; p.salt = false; p.cooking = 0; p.t = 0; p.done = false; p.dish = null;
-  renderFirePanel(); }
-
-function openFirePanel(c) { fireUI.open = true; fireUI.fire = c; if (!IS_TOUCH && document.pointerLockElement === canvas) document.exitPointerLock(); renderFirePanel(); document.getElementById("firepanel").style.display = "flex"; }
-function closeFirePanel() { fireUI.open = false; fireUI.fire = null; const el = document.getElementById("firepanel"); if (el) el.style.display = "none"; if (!IS_TOUCH && mode === "walk") { try { canvas.requestPointerLock(); } catch (e) {} } }
-function foodChips(ids, handlerName) {   // build clickable chips for inventory foods matching ids filter
-  return ids.filter(id => Inv.count(id) > 0).map(id => `<button class="fchip" data-food="${id}" data-fn="${handlerName}">${ITEMS[id] ? ITEMS[id].name : id} <i>×${Inv.count(id)}</i></button>`).join("") || `<span class="fnone">nothing to add</span>`;
-}
-function renderFirePanel() {
-  const c = fireUI.fire; if (!c) return; const el = document.getElementById("firepanel"); if (!el) return;
-  const lit = c.lit && c.fuel > 0;
-  const fuelPct = Math.round(c.fuel * 100);
-  let html = `<div id="firebox"><h2>Campfire</h2>`;
-  // fuel
-  html += `<div class="fsec"><div class="frow"><label>Fire</label><div class="fbar"><span style="width:${fuelPct}%;background:${lit ? "#e8904a" : "#596069"}"></span></div><b>${lit ? fuelPct + "%" : "out"}</b></div>
-    <div class="fbtns">${lit ? "" : `<button data-act="light">Light</button>`}<button data-act="refuel">Add firewood</button></div></div>`;
-  // roast
-  html += `<div class="fsec"><label>Roast on the coals</label>`;
-  if (c.roast) { const d = roastDoneness(c.roast), pct = Math.min(100, Math.round(c.roast.t / ROAST_BURN * 100));
-    const col = d === "raw" ? "#c98" : d === "cooked" ? "#7bc06a" : "#c05a46";
-    html += `<div class="froast"><span>${ITEMS[c.roast.id] ? ITEMS[c.roast.id].name : c.roast.id}</span>
-      <div class="fbar"><span style="width:${pct}%;background:${col}"></span><i class="fzone"></i></div>
-      <em>${d === "raw" ? "raw…" : d === "cooked" ? "cooked — take it!" : "burnt!"}</em>
-      <button data-act="takeroast">Take</button></div>`;
-  } else { const raw = Object.keys(COOKABLE).filter(id => Inv.count(id) > 0);
-    html += `<div class="fchips">${lit ? foodChips(raw, "roast") : `<span class="fnone">light the fire to roast</span>`}</div>`; }
-  html += `</div>`;
-  // pot
-  html += `<div class="fsec"><label>Cook-Pot</label>`;
-  if (!c.pot) { html += `<div class="fbtns"><button data-act="placepot"${Inv.count("pot") < 1 ? " disabled" : ""}>Set a pot on the fire${Inv.count("pot") < 1 ? " (none)" : ""}</button></div>`; }
-  else { const p = c.pot;
-    if (p.done) { html += `<div class="fdone">Stew's ready — <b>${DISH_SET[p.dish].name}</b><button data-act="serve">Serve it up</button></div>`; }
-    else if (p.cooking) { const pct = Math.min(100, Math.round(p.t / POT_COOK_TIME * 100));
-      html += `<div class="fcooking"><div class="fbar"><span style="width:${pct}%;background:#d6a24a"></span></div><em>simmering… ${pct}%</em></div>`; }
-    else {
-      html += `<div class="fpot"><div class="fslots">`;
-      for (let i = 0; i < 4; i++) { const id = p.ingredients[i]; html += `<div class="fslot${id ? " on" : ""}">${id ? (ITEMS[id] ? ITEMS[id].name : id) : "+"}</div>`; }
-      html += `</div><div class="ftoggle"><span class="${p.water ? "on" : ""}" data-act="water">💧 Water${p.water ? " ✓" : ""}</span><span class="${p.salt ? "on" : ""}" data-act="salt">🧂 Salt${p.salt ? " ✓" : ""}</span>${p.ingredients.length ? `<span data-act="unpot">⟲ Remove last</span>` : ""}</div>`;
-      const addable = Object.keys(FOOD_CAT);
-      html += `<div class="fchips">${foodChips(addable, "pot")}</div>`;
-      const ready = lit && p.ingredients.length >= 1 && p.water;
-      html += `<div class="fbtns"><button data-act="cook"${ready ? "" : " disabled"}>Simmer${!p.water ? " (add water)" : !lit ? " (light fire)" : !p.ingredients.length ? " (add food)" : ""}</button><button data-act="takepot">Take pot off</button></div>`;
-    }
   }
-  html += `</div>`;
-  html += `<div class="fhint">Look away or press Esc to step back from the fire.</div><button class="closebtn primary" data-act="close">Done</button></div>`;
-  el.innerHTML = html;
-  el.querySelectorAll("[data-act]").forEach(b => b.onclick = () => {
-    const a = b.dataset.act, c2 = fireUI.fire; if (!c2) return;
-    if (a === "light") lightCampfire(c2); else if (a === "refuel") refuelCampfire(c2);
-    else if (a === "takeroast") collectRoast(c2);
-    else if (a === "placepot") placePot(c2); else if (a === "takepot") takePot(c2);
-    else if (a === "water") potWater(c2); else if (a === "salt") potSalt(c2); else if (a === "unpot") potRemoveLast(c2);
-    else if (a === "cook") cookPot(c2); else if (a === "serve") collectDish(c2);
-    else if (a === "close") closeFirePanel();
-    if (a === "light" || a === "refuel") renderFirePanel();
-  });
-  el.querySelectorAll(".fchip").forEach(b => b.onclick = () => { const c2 = fireUI.fire; if (!c2) return; const id = b.dataset.food; if (b.dataset.fn === "roast") addRoast(c2, id); else potAdd(c2, id); });
+
+// §Cooking simplified — no modal. Look at the fire and press F (or tap on mobile): the action is chosen from
+// what you're holding and the fire/pot state, Don't-Starve crock-pot style. A small HUD shows the state + prompt.
+function haveFirewood(held) { return held === "log" || held === "driftwood" || Inv.has("log") || Inv.has("driftwood") || Inv.count("stick") >= 2; }
+function fireActionFor(c) {
+  const held = selectedItem(), lit = c.lit && c.fuel > 0, p = c.pot;
+  if (p && p.done) return { id: "serve", label: "take the " + DISH_SET[p.dish].name };
+  if (c.roast && roastDoneness(c.roast) !== "raw") return { id: "takeroast", label: roastDoneness(c.roast) === "burnt" ? "clear the burnt scraps" : "take the cooked " + (ITEMS[c.roast.id] ? ITEMS[c.roast.id].name : "food") };
+  if (p && p.cooking && !p.done) return { id: "wait", label: "simmering…" };
+  if (held === "pot" && !p) return { id: "placepot", label: "set the pot on the fire" };
+  if (p && held && isPotIngredient(held) && p.ingredients.length < 4) return { id: "add", label: "add " + ITEMS[held].name + " to the pot" };
+  if (p && held === "bucket" && bucket.water && !p.water) return { id: "water", label: "pour water into the pot" };
+  if (p && held === "salt" && !p.salt) return { id: "salt", label: "season with a pinch of salt" };
+  if (!p && lit && held && COOKABLE[held]) return { id: "roast", label: "roast the " + ITEMS[held].name + " on the coals" };
+  if (!lit && haveFirewood(held)) return { id: "light", label: "light the fire" };
+  if (p && !p.cooking && !p.done && p.ingredients.length >= 1 && p.water && lit) return { id: "cook", label: "simmer the pot (" + p.ingredients.length + ")" };
+  if (p && !p.cooking && !p.done && p.ingredients.length >= 1 && !p.water) return { id: "needwater", label: "add water first (hold a full bucket)" };
+  if (p && !p.cooking && !p.done && p.ingredients.length >= 1 && !lit) return { id: "needlight", label: "light the fire to cook" };
+  if (haveFirewood(held) && c.fuel < 0.98) return { id: "fuel", label: "feed the fire" };
+  if (p && !p.ingredients.length && !p.cooking && !p.done && !held) return { id: "takepot", label: "take the pot back" };
+  if (!lit) return { id: "needwood", label: "needs firewood — a log, driftwood or 2 sticks" };
+  return { id: "info", label: p ? "hold food, a full bucket or salt to add" : (Inv.count("pot") ? "hold the pot to set it on" : "hold raw food to roast") };
+}
+function doFireAction(c) {
+  const a = fireActionFor(c), held = selectedItem();
+  switch (a.id) {
+    case "serve": collectDish(c); break;
+    case "takeroast": collectRoast(c); break;
+    case "placepot": placePot(c); break;
+    case "add": potAdd(c, held); break;
+    case "water": potWater(c); break;
+    case "salt": potSalt(c); break;
+    case "roast": addRoast(c, held); break;
+    case "light": lightCampfire(c); break;
+    case "cook": cookPot(c); break;
+    case "fuel": refuelCampfire(c); break;
+    case "takepot": takePot(c); break;
+    case "needwater": showCard("Needs water", "Fill the bucket at the sea or a pond, hold it, and press " + (IS_TOUCH ? "Use" : "F") + "."); break;
+    case "needlight": showCard("Cold fire", "Add firewood and light it before cooking."); break;
+    case "needwood": showCard("No firewood", "You need a Log, Driftwood, or 2 Sticks to light it."); break;
+    case "wait": break;
+    default: showCard("Campfire", a.label);
+  }
+}
+// the compact, non-modal readout shown while looking at a fire
+function updateFireHud() {
+  const el = document.getElementById("firehud"); if (!el) return;
+  const c = (curTarget && curTarget.kind === "campfire") ? curTarget.obj : null;
+  if (!c || mode !== "walk" || isPanelOpen()) { if (el.style.display !== "none") el.style.display = "none"; return; }
+  const lit = c.lit && c.fuel > 0, p = c.pot, a = fireActionFor(c);
+  let fire = lit ? `🔥 fire ${Math.round(c.fuel * 100)}%` : (c.fuel > 0 ? "🪵 laid, unlit" : "◦ cold embers");
+  let mid;
+  if (p) {
+    if (p.done) mid = `pot: <b>${DISH_SET[p.dish].name}</b> ready`;
+    else if (p.cooking) mid = `pot: simmering ${Math.min(100, Math.round(p.t / POT_COOK_TIME * 100))}%`;
+    else { const items = p.ingredients.map(id => ITEMS[id] ? ITEMS[id].name : id);
+      mid = `pot: ${items.length ? items.join(", ") : "empty"}${p.water ? " · water" : ""}${p.salt ? " · salt" : ""} (${p.ingredients.length}/4)`; }
+  } else if (c.roast) { const d = roastDoneness(c.roast); mid = `coals: ${ITEMS[c.roast.id] ? ITEMS[c.roast.id].name : "food"} — ${d === "raw" ? "roasting…" : d === "cooked" ? "cooked!" : "burnt"}`; }
+  else mid = Inv.count("pot") ? "no pot set" : "roast food, or find a pot";
+  el.innerHTML = `<div class="fh-row fh-fire">${fire}</div><div class="fh-row fh-mid">${mid}</div>` +
+    (a.id === "wait" ? `<div class="fh-act fh-wait">${a.label}</div>` : `<div class="fh-act"><b>${IS_TOUCH ? "Use" : "F"}</b> — ${a.label}</div>`);
+  el.style.display = "block";
 }
 
 /* ===================================================================== *
@@ -11193,6 +11173,7 @@ function frame(now) {
   updateBucketLook();
   updateInspectView();
   drawFishHUD();                       // §Fishing line, bobber marker, reel gauge, fish-signs (2D overlay)
+  updateFireHud();                     // §Cooking compact readout while looking at a campfire
 
   if (debugOn) {
     dbgEl.style.display = "block";
