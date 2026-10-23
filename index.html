@@ -294,6 +294,20 @@
   #ygraph { position: fixed; left: 10px; top: 120px; z-index: 20; display: none; background: rgba(8,12,16,.72);
     border: 1px solid rgba(160,200,230,.3); border-radius: 4px; image-rendering: pixelated; }
   #critcanvas { position: fixed; inset: 0; z-index: 7; display: none; pointer-events: none; }
+  #fishcanvas { position: fixed; inset: 0; z-index: 7; display: none; pointer-events: none; }
+  #fishreveal { position: fixed; inset: 0; z-index: 14; display: none; align-items: center; justify-content: center; pointer-events: auto; }
+  #fishrevealbox { background: rgba(10,16,20,.92); border: 1px solid rgba(160,200,230,.35); border-radius: 8px;
+    padding: 22px 30px; text-align: center; min-width: 260px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
+  #fishrevealbox .frtitle { font-size: 12px; letter-spacing: .14em; text-transform: uppercase; opacity: .6; }
+  #fishrevealbox h2 { margin: 4px 0 2px; font-size: 24px; color: #ffe6b0; }
+  #fishrevealbox .frrec { font-size: 11px; letter-spacing: .1em; color: #0d1216; background: #ffd06a; padding: 2px 7px; border-radius: 3px; vertical-align: middle; }
+  #fishrevealbox .frweight { font-size: 32px; font-weight: 700; margin: 6px 0; }
+  #fishrevealbox .frsub { font-size: 12px; opacity: .7; min-height: 16px; }
+  #fishrevealbox .frbtns { display: flex; gap: 12px; justify-content: center; margin: 16px 0 8px; }
+  #fishrevealbox .frbtns button { font: 600 14px var(--ui); padding: 9px 22px; cursor: pointer; border: 0; border-radius: 4px; }
+  #fishrevealbox .frkeep { background: var(--facet); color: #ffe6b0; }
+  #fishrevealbox .frrel { background: rgba(120,140,150,.25); color: var(--ink); }
+  #fishrevealbox .frhint { font-size: 11px; opacity: .55; }
   #soundtest { position: fixed; right: 10px; top: 10px; z-index: 22; display: none; max-height: 86vh; overflow-y: auto;
     background: rgba(8,12,16,.86); border: 1px solid rgba(160,200,230,.3); border-radius: 4px; padding: 8px; width: 150px; }
   #soundtest h5 { margin: 0 0 6px; font-size: 11px; letter-spacing: .1em; opacity: .7; text-transform: uppercase; }
@@ -480,6 +494,8 @@
 <div id="tradepanel"></div>
 <canvas id="ygraph" width="260" height="96"></canvas>
 <canvas id="critcanvas"></canvas>
+<canvas id="fishcanvas"></canvas>
+<div id="fishreveal"></div>
 <div id="soundtest"></div>
 <canvas id="bucketpanel" width="125" height="145"></canvas>
 <div id="ctxmenu"></div>
@@ -2650,6 +2666,351 @@ function drawThrownSpears(view) {
   if (n) spearDyn.draw(a, n);
 }
 
+/* ===================================================================== *
+ * § FISHING  — rod + reel. Bait the hook, charge & aim a cast at open
+ *   water, wait for a nibble then a bite, set the hook, and win the
+ *   reel mini-game (keep the line tension in the zone through the fish's
+ *   runs). Reveal the catch's species & weight, keep or release it.
+ *   Mobile: a Cast / Reel hold-button; desktop: hold left-mouse (or F).
+ * ===================================================================== */
+let relaxedFishing = false;
+try { relaxedFishing = localStorage.getItem("bc_relaxfish") === "1"; } catch (e) {}
+function setRelaxedFishing(v) { relaxedFishing = v; try { localStorage.setItem("bc_relaxfish", v ? "1" : "0"); } catch (e) {} }
+let fishForceBite = false, fishOddsLog = false;        // debug toggles (O / U in debug mode)
+let rodRecord = {};                                    // species → biggest weight landed (kg)
+try { rodRecord = JSON.parse(localStorage.getItem("bc_rodrec") || "{}"); } catch (e) {}
+function saveRodRec() { try { localStorage.setItem("bc_rodrec", JSON.stringify(rodRecord)); } catch (e) {} }
+
+// bait the player might have, best → worst. q = quality (0..2): better bait bites faster and lands rarer fish.
+const ROD_BAIT = [ ["clam", 2, "Clam"], ["barnacle", 1, "Barnacles"], ["worm", 0, "Earthworm"] ];
+// rod species — weights in kg, strength drives the fight, rare steers the odds, dmin = min water depth it favours
+const FISH_SPECIES = {
+  surfperch: { label: "Surfperch", item: "surfperch", w: [0.2,1.3],  strength: 0.55, fight: 6,  dmin: 0.5 },
+  rockfish:  { label: "Rockfish",  item: "rockfish",  w: [0.5,2.8],  strength: 0.9,  fight: 9,  dmin: 1.2, creature: "rockfish" },
+  lingcod:   { label: "Lingcod",   item: "lingcod",   w: [2.0,11.0], strength: 1.5,  fight: 14, dmin: 2.2, creature: "lingcod" },
+  ratfish:   { label: "Ratfish",   item: "ratfish",   w: [0.7,2.4],  strength: 1.15, fight: 12, dmin: 3.0 },
+};
+const JUNK_POOL = ["drinkcan","plasticbottle","bottle","netscrap","kelp","rope","seabean"];   // snagged odds-and-ends
+const JUNK_META = { label: "Junk", strength: 0.35, fight: 3 };
+
+const rod = {
+  state: "idle",           // idle · charging · casting · waiting · nibble · bite · fighting · reveal
+  charge: 0, chargeT: 0, press: false, pulse: 0, cd: 0, bend: 0,
+  baitId: null, baitQ: 0,
+  bob: { x: 0, y: 0, z: 0, sx: 0, sz: 0, tx: 0, tz: 0, cast: 0, surf: 0, sink: 0, splash: 0 },
+  biteAt: 0, nibbleUntil: 0, hookUntil: 0,
+  fish: null, fight: null, spotQ: 0, signT: 2,
+};
+let fishSigns = [];
+let fishReveal = { open: false };
+
+function rodEquipped() { return mode === "walk" && selectedTool() === "rod" && !isPanelOpen(); }
+function bestBait() { for (const b of ROD_BAIT) if (Inv.has(b[0])) return b; return null; }
+function ensureBait() { if (bestBait()) return true; showCard("No bait", "Dig earthworms from dark soil, or scrape barnacles off a tidal rock."); return false; }
+
+// where a cast at this charge would land: straight out along the look direction, distance scaled by charge
+function castTarget(charge) {
+  const dist = 4 + charge * 20, dx = Math.sin(cam.yaw), dz = -Math.cos(cam.yaw);
+  const x = player.x + dx * dist, z = player.z + dz * dist;
+  return { x, z, dist };
+}
+function spotQuality(x, z) {                                    // 0..1 — deeper water & nearby fish-signs fish better
+  const d = waterDepthAt(x, z); if (d < 0.35) return -1;        // not water enough
+  let q = Math.min(1, (d - 0.35) / 4);
+  for (const s of fishSigns) if (Math.hypot(s.x - x, s.z - z) < 5) { q = Math.min(1, q + 0.35); break; }
+  return q;
+}
+
+function rodPressStart() {
+  if (!rodEquipped() || fishReveal.open) return;
+  switch (rod.state) {
+    case "idle": if (rod.cd <= 0 && ensureBait()) { rod.state = "charging"; rod.charge = 0; rod.chargeT = clock.t; } break;
+    case "nibble": missBite(); break;                          // struck too early → spooked
+    case "bite":   setHook(); break;
+    case "fighting": rod.press = true; break;                  // hold to reel
+  }
+}
+function rodPressEnd() {
+  if (rod.state === "charging") castRod(rod.charge);
+  rod.press = false;
+}
+function rodTap() {                                            // single-press path (F key / mobile Use button)
+  if (!rodEquipped() || fishReveal.open || rod.cd > 0 && rod.state === "idle") return;
+  switch (rod.state) {
+    case "idle": if (ensureBait()) castRod(0.6); break;
+    case "charging": castRod(rod.charge); break;
+    case "waiting": reelInEmpty(); break;
+    case "nibble": missBite(); break;
+    case "bite": setHook(); break;
+    case "fighting": rod.pulse = Math.max(rod.pulse, 0.24); break;   // a reel pulse
+  }
+}
+
+function castRod(charge) {
+  const b = bestBait(); if (!b) { rod.state = "idle"; ensureBait(); return; }
+  const tgt = castTarget(Math.max(0.12, charge));
+  if (waterDepthAt(tgt.x, tgt.z) < 0.35) { showCard("Cast at the water", "Face open water and try again."); rod.state = "idle"; rod.charge = 0; return; }
+  Inv.remove(b[0], 1); rod.baitId = b[0]; rod.baitQ = b[1];
+  rod.bob.sx = player.x + Math.sin(cam.yaw) * 0.8; rod.bob.sz = player.z - Math.cos(cam.yaw) * 0.8;
+  rod.bob.tx = tgt.x; rod.bob.tz = tgt.z; rod.bob.cast = 0; rod.bob.surf = waterSurfaceAt(tgt.x, tgt.z);
+  rod.bob.x = rod.bob.sx; rod.bob.z = rod.bob.sz; rod.bob.y = player.eyeY - 0.3; rod.bob.sink = 0; rod.bob.splash = 0;
+  rod.state = "casting"; rod.charge = 0; rod.bend = 0.25;
+  if (typeof SND !== "undefined") SND.play("whoosh");
+}
+function onBobberLanded() {
+  rod.state = "waiting"; rod.bob.splash = 1;
+  rod.spotQ = Math.max(0, spotQuality(rod.bob.tx, rod.bob.tz));
+  const q = rod.spotQ;
+  let delay = (fishForceBite ? 0.4 : (3.5 + Math.random() * 7) * (1 - 0.3 * rod.baitQ) * (1 - 0.45 * q));
+  rod.biteAt = clock.t + Math.max(0.4, delay);
+  if (typeof SND !== "undefined") SND.play("plop", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz] });
+  if (typeof spawnSand === "function") spawnSand(rod.bob.tx, rod.bob.surf, rod.bob.tz, 5, [0.8,0.86,0.92]);
+}
+function rollSpecies() {                                       // weighted by spot quality (depth+signs) & bait quality
+  const q = rod.spotQ, bq = rod.baitQ;
+  const w = {
+    junk:      20 * (1 - q * 0.6) * (bq === 0 ? 1.4 : bq === 1 ? 1.0 : 0.65),
+    surfperch: 42 * (1 - q * 0.25) * (bq === 0 ? 1.15 : 1.0),
+    rockfish:  22 * (0.7 + q * 0.9) * (1 + bq * 0.14),
+    lingcod:    9 * (0.25 + q * 1.9) * (1 + bq * 0.4),
+    ratfish:    3 * (0.1 + q * 2.6) * (1 + bq * 0.5),
+  };
+  // species that want deeper water than this spot get damped
+  const d = waterDepthAt(rod.bob.tx, rod.bob.tz);
+  for (const k in FISH_SPECIES) if (d < FISH_SPECIES[k].dmin) w[k] *= 0.25;
+  let total = 0; for (const k in w) total += w[k];
+  if (fishOddsLog) { const pct = {}; for (const k in w) pct[k] = +(w[k] / total * 100).toFixed(1); console.log("[fish] depth", d.toFixed(2), "spotQ", q.toFixed(2), "baitQ", bq, "odds%", pct); }
+  if (fishForceBite) { delete w.junk; total = 0; for (const k in w) total += w[k]; }   // debug: never junk on a forced bite
+  let r = Math.random() * total;
+  for (const k in w) { r -= w[k]; if (r <= 0) return k; }
+  return "surfperch";
+}
+function rollWeight(sp) { const [a, b] = sp.w; const r = Math.random() * Math.random(); return +(a + (b - a) * r).toFixed(2); }
+function beginBite() {                                         // fish takes the bait: a nibble, then the plunge
+  const species = rollSpecies();
+  if (species === "junk") { rod.fish = { species: "junk", junkId: JUNK_POOL[(Math.random() * JUNK_POOL.length) | 0], weight: 0 }; }
+  else { const sp = FISH_SPECIES[species]; rod.fish = { species, weight: rollWeight(sp) }; }
+  rod.state = "nibble"; rod.nibbleUntil = clock.t + (0.5 + Math.random() * 0.5);
+  if (typeof SND !== "undefined") SND.play("tick", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz] });
+}
+function toBite() {
+  rod.state = "bite"; rod.hookUntil = clock.t + (relaxedFishing ? 1.7 : 1.05); rod.bob.sink = 1;
+  if (typeof SND !== "undefined") SND.play("plop", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz] });
+}
+function missBite() {                                          // struck during the nibble, or let the bite window lapse
+  showCard("It got away", "The fish spat the hook. Wait for the full bite next time.");
+  loseBaitMaybe(); endCast(0.6);
+}
+function setHook() {
+  const f = rod.fish; const meta = f.species === "junk" ? JUNK_META : FISH_SPECIES[f.species];
+  rod.fight = { progress: 0, tension: 0.42, strain: 0, slack: 0, run: 0, runActive: false, runUntil: 0,
+    runCd: 1.6 + Math.random() * 2, land: (meta.fight + f.weight * 1.3) * (relaxedFishing ? 0.75 : 1), str: meta.strength + f.weight * 0.04 };
+  rod.state = "fighting"; rod.bend = 0.5;
+  if (typeof SND !== "undefined") SND.play("whoosh");
+}
+function updateFight(dt) {
+  const fg = rod.fight, relaxed = relaxedFishing;
+  // runs: the fish surges, driving the needle up — ease off the reel or the line strains
+  if (fg.runActive) { if (clock.t > fg.runUntil) { fg.runActive = false; fg.runCd = 1.4 + Math.random() * 2.6; } }
+  else { fg.runCd -= dt; if (fg.runCd <= 0) { fg.runActive = true; fg.runUntil = clock.t + 0.7 + Math.random() * 1.1; if (typeof SND !== "undefined") SND.play("scrape", { position: [rod.bob.x, rod.bob.surf, rod.bob.z] }); } }
+  const runTgt = fg.runActive ? (0.65 + fg.str * 0.3) : 0;
+  fg.run += (runTgt - fg.run) * Math.min(1, dt * 4);
+  // the safe zone drifts, and shifts up during a run
+  const half = relaxed ? 0.2 : 0.13, bandC = 0.5 + Math.sin(clock.t * 0.8) * 0.1 + fg.run * 0.26;
+  const lo = Math.max(0.02, Math.min(0.98 - 2 * half, bandC - half)), hi = lo + 2 * half;
+  const reeling = rod.press || rod.pulse > 0; if (rod.pulse > 0) rod.pulse = Math.max(0, rod.pulse - dt);
+  fg.tension += (reeling ? 0.85 : -0.72) * dt + fg.run * 0.75 * dt;
+  fg.tension = Math.max(0, Math.min(1, fg.tension));
+  if (fg.tension > hi)      { fg.strain += (fg.tension - hi) * (relaxed ? 1.5 : 3.4) * dt; fg.slack = Math.max(0, fg.slack - 0.5 * dt); }
+  else if (fg.tension < lo) { fg.slack  += (lo - fg.tension) * (relaxed ? 1.2 : 2.2) * dt; fg.strain = Math.max(0, fg.strain - 0.8 * dt); }
+  else                      { fg.progress += dt / fg.land; fg.strain = Math.max(0, fg.strain - 1.3 * dt); fg.slack = Math.max(0, fg.slack - 1.0 * dt); }
+  if (relaxed) { fg.strain = Math.min(fg.strain, 0.9); fg.slack = Math.min(fg.slack, 0.9); }   // relaxed: can't lose, only takes effort
+  fg.lo = lo; fg.hi = hi;
+  rod.bend = 0.4 + fg.tension * 0.5 + fg.run * 0.3;
+  if (fg.progress >= 1) return landFish();
+  if (fg.strain >= 1) return lineSnap();
+  if (fg.slack >= 1) return fishEscape();
+}
+function landFish() {
+  const f = rod.fish;
+  if (f.species === "junk") {                                  // a snagged odd — just goes in the satchel
+    const added = Inv.add(f.junkId, 1); if (added) { discovered.add("f_" + f.junkId); if (ITEMS[f.junkId] && FINDS[f.junkId] && FINDS[f.junkId].litter && typeof beachCleanup !== "undefined") beachCleanup++; }
+    showCard("Snagged some junk", (ITEMS[f.junkId] ? ITEMS[f.junkId].name : "junk") + " — not a fish, but off the seabed at least.");
+    if (typeof SND !== "undefined") SND.play("plop"); endCast(0.6); return;
+  }
+  const sp = FISH_SPECIES[f.species];
+  const prev = rodRecord[f.species] || 0; f.record = f.weight > prev;
+  if (f.record) { rodRecord[f.species] = f.weight; saveRodRec(); }
+  if (sp.creature) discovered.add(sp.creature);                // the rod-caught species also lights up its creature page
+  if (typeof sparkle === "function") sparkle(rod.bob.x, rod.bob.surf + 0.2, rod.bob.z, [0.9,0.95,1], 12);
+  if (typeof SND !== "undefined") SND.play("fish_splash", { position: [rod.bob.x, rod.bob.surf, rod.bob.z] });
+  openFishReveal();
+}
+function lineSnap() { showCard("The line snapped!", "Too much strain — ease off the reel when the fish runs."); loseBaitMaybe(); if (typeof SND !== "undefined") SND.play("crack"); endCast(0.9); }
+function fishEscape() { showCard("It threw the hook", "You gave it too much slack — keep reeling to stay tight."); loseBaitMaybe(); endCast(0.8); }
+function reelInEmpty() { if (rod.baitId && Math.random() < 0.6) Inv.add(rod.baitId, 1); endCast(0.3); if (typeof SND !== "undefined") SND.play("plop"); }
+function loseBaitMaybe() { /* the bait is already off the hook — spent on the attempt */ }
+function endCast(cd) { rod.state = "idle"; rod.fish = null; rod.fight = null; rod.press = false; rod.pulse = 0; rod.bend = 0; rod.cd = cd || 0.4; }
+
+// gulls will dive on a floating bait if one ventures near while you wait
+function gullStealCheck(dt) {
+  if (rod.state !== "waiting" && rod.state !== "nibble") return;
+  for (const e of life) {
+    if (e.kind !== "creature" || e.t !== "gull" || e.dying !== undefined) continue;
+    if (Math.hypot(e.x - rod.bob.x, e.z - rod.bob.z) > 11) continue;
+    if (Math.random() < dt * (0.03 + rod.baitQ * 0.015)) {
+      e.gstate = "flee"; e.timer = 1.8 + Math.random();
+      showCard("A gull took your bait!", "Keep the bobber away from the birds — or shoo them off first.");
+      if (typeof onGull === "function") onGull("call");
+      endCast(0.7); return;
+    }
+  }
+}
+
+function updateFishSigns(dt) {
+  for (let i = fishSigns.length - 1; i >= 0; i--) { const s = fishSigns[i]; s.age += dt; if (s.age > s.life) fishSigns.splice(i, 1); }
+  if (mode !== "walk") return;
+  rod.signT -= dt;
+  if (rod.signT <= 0) {
+    rod.signT = 3 + Math.random() * 4;
+    for (let k = 0; k < 12; k++) { const a = Math.random() * 6.283, r = 7 + Math.random() * 22;
+      const x = player.x + Math.sin(a) * r, z = player.z - Math.cos(a) * r;
+      if (waterDepthAt(x, z) > 1.0 && fishSigns.length < 10) { fishSigns.push({ x, z, age: 0, life: 4.5 + Math.random() * 4 }); break; } }
+  }
+}
+
+function updateFishing(dt) {
+  if (rod.cd > 0) rod.cd = Math.max(0, rod.cd - dt);
+  updateFishSigns(dt);
+  // put the rod away mid-cast → quietly reel in
+  if (rod.state !== "idle" && rod.state !== "reveal" && selectedTool() !== "rod") { if (rod.state === "fighting" || rod.state === "bite") { /* lose it */ } endCast(0.3); return; }
+  if (rod.state === "charging") rod.charge = Math.min(1, (clock.t - rod.chargeT) / 1.0);
+  if (rod.state === "casting") {
+    rod.bob.cast = Math.min(1, rod.bob.cast + dt / 0.6); const t = rod.bob.cast;
+    rod.bob.x = rod.bob.sx + (rod.bob.tx - rod.bob.sx) * t;
+    rod.bob.z = rod.bob.sz + (rod.bob.tz - rod.bob.sz) * t;
+    const y0 = player.eyeY - 0.3, arc = 2.6 + rod.bob.cast * 0;
+    rod.bob.y = y0 + (rod.bob.surf - y0) * t + Math.sin(t * Math.PI) * arc;     // a lob
+    rod.bend = 0.25 * (1 - t);
+    if (t >= 1) { rod.bob.y = rod.bob.surf; onBobberLanded(); }
+    return;
+  }
+  if (rod.state === "waiting") { gullStealCheck(dt); if (clock.t >= rod.biteAt) beginBite(); }
+  else if (rod.state === "nibble") { gullStealCheck(dt); if (clock.t >= rod.nibbleUntil) toBite(); }
+  else if (rod.state === "bite") { if (clock.t >= rod.hookUntil) missBite(); }
+  else if (rod.state === "fighting") updateFight(dt);
+  // bobber bob / sink settle
+  if (rod.bob.splash > 0) rod.bob.splash = Math.max(0, rod.bob.splash - dt * 2.5);
+  const wantSink = rod.state === "bite" ? 0.55 : rod.state === "fighting" ? 0.22 : 0;
+  rod.bob.sink += (wantSink - rod.bob.sink) * Math.min(1, dt * 9);
+  if (rod.state === "waiting" || rod.state === "nibble" || rod.state === "bite" || rod.state === "fighting") {
+    const twitch = rod.state === "nibble" ? Math.sin(clock.t * 30) * 0.05 : 0;
+    rod.bob.y = rod.bob.surf + Math.sin(clock.t * 2.2 + rod.bob.tx) * 0.04 - rod.bob.sink + twitch;
+  }
+}
+
+// ---- the reveal card (keep / release) ----
+function openFishReveal() {
+  const f = rod.fish, sp = FISH_SPECIES[f.species];
+  rod.state = "reveal"; fishReveal.open = true;
+  if (!IS_TOUCH && document.pointerLockElement === canvas) document.exitPointerLock();
+  const el = document.getElementById("fishreveal");
+  el.innerHTML = `<div id="fishrevealbox">
+      <div class="frtitle">You landed a</div>
+      <h2>${sp.label}${f.record ? ` <span class="frrec">NEW RECORD</span>` : ""}</h2>
+      <div class="frweight">${f.weight.toFixed(2)} kg</div>
+      <div class="frsub">${f.record ? "Your biggest ever." : (rodRecord[f.species] ? `Your record: ${rodRecord[f.species].toFixed(2)} kg` : "")}</div>
+      <div class="frbtns"><button class="frkeep">Keep</button><button class="frrel">Release</button></div>
+      <div class="frhint">Keep it for food, or release it (the catch still goes in your journal).</div>
+    </div>`;
+  el.style.display = "flex";
+  el.querySelector(".frkeep").onclick = () => keepFish();
+  el.querySelector(".frrel").onclick = () => releaseFish();
+}
+function closeFishReveal() {
+  fishReveal.open = false; const el = document.getElementById("fishreveal"); if (el) el.style.display = "none";
+  endCast(0.6);
+  if (!IS_TOUCH && mode === "walk") { try { canvas.requestPointerLock(); } catch (e) {} }
+}
+function keepFish() {
+  const f = rod.fish, sp = FISH_SPECIES[f.species];
+  const added = Inv.add(sp.item, 1);
+  if (added) { if (typeof notify === "function") notify(sp.item, 1, false); }
+  else showCard("Satchel full", "No room — the fish was released.");
+  closeFishReveal();
+}
+function releaseFish() { const sp = FISH_SPECIES[rod.fish.species]; showCard("Released", `The ${sp.label} slipped back into the water.`); closeFishReveal(); }
+
+// ---- bobber (3D) + fishing HUD (2D overlay: line, bite marker, reel gauge, fish-signs) ----
+let bobberDyn = null;
+function drawBobber(view) {
+  if (!["casting","waiting","nibble","bite","fighting"].includes(rod.state)) return;
+  if (!bobberDyn) bobberDyn = makeDynamic(bobberMesh(), 1);
+  const dx = rod.bob.x - cam.pos[0], dz = rod.bob.z - cam.pos[2]; if (dx*dx + dz*dz > DRAW_R*DRAW_R) return;
+  propUniforms(view); const a = rockScratch;
+  a[0] = rod.bob.x; a[1] = rod.bob.y; a[2] = rod.bob.z; a[3] = 0.6; a[4] = 0; a[5] = 0; a[6] = 0; a[7] = 1; a[8] = 1; a[9] = 1;
+  bobberDyn.draw(a, 1);
+}
+function drawFishHUD() {
+  const cv = document.getElementById("fishcanvas"); if (!cv) return;
+  const showing = mode === "walk" && (fishSigns.length || ["casting","waiting","nibble","bite","fighting"].includes(rod.state));
+  if (!showing) { if (cv.style.display !== "none") cv.style.display = "none"; return; }
+  if (cv.width !== innerWidth || cv.height !== innerHeight) { cv.width = innerWidth; cv.height = innerHeight; }
+  cv.style.display = "block";
+  const g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height);
+  // fish-sign ripple rings on the water
+  for (const s of fishSigns) { const p = projectToScreen(s.x, waterSurfaceAt(s.x, s.z) + 0.05, s.z); if (!p) continue;
+    const t = s.age / s.life, rad = 5 + t * 26; g.strokeStyle = `rgba(175,215,232,${(1 - t) * 0.5})`; g.lineWidth = 2;
+    g.beginPath(); g.arc(p[0], p[1], rad, 0, 6.283); g.stroke(); }
+  // line + bobber + bite marker
+  if (["casting","waiting","nibble","bite","fighting"].includes(rod.state)) {
+    const bp = projectToScreen(rod.bob.x, rod.bob.y + 0.25, rod.bob.z);
+    const tip = [innerWidth * (IS_TOUCH ? 0.6 : 0.63), innerHeight * 0.46];
+    if (bp) {
+      g.strokeStyle = "rgba(240,245,250,0.55)"; g.lineWidth = 1.5;
+      const tens = rod.fight ? rod.fight.tension : 0.4, sag = (rod.state === "fighting" ? 4 : 16) * (1 - tens);
+      g.beginPath(); g.moveTo(tip[0], tip[1]); g.quadraticCurveTo((tip[0] + bp[0]) / 2, (tip[1] + bp[1]) / 2 + sag, bp[0], bp[1]); g.stroke();
+      if (rod.state === "bite") { const pulse = 0.6 + 0.4 * Math.sin(clock.t * 18); g.fillStyle = `rgba(255,90,70,${pulse})`; g.font = "bold 30px sans-serif"; g.textAlign = "center"; g.fillText("!", bp[0], bp[1] - 20);
+        g.font = "600 13px system-ui,sans-serif"; g.fillStyle = "rgba(255,230,210,0.95)"; g.fillText("STRIKE!", bp[0], bp[1] - 44); }
+      else if (rod.state === "nibble") { g.fillStyle = "rgba(255,220,160,0.8)"; g.font = "18px sans-serif"; g.textAlign = "center"; g.fillText("…", bp[0], bp[1] - 16); }
+    }
+  }
+  if (rod.state === "fighting") drawReelGauge(g);
+  else if (rod.state === "charging") drawCastMeter(g);
+  g.textAlign = "left";
+}
+function drawCastMeter(g) {
+  const w = 220, h = 12, x = (innerWidth - w) / 2, y = innerHeight - 150;
+  g.fillStyle = "rgba(10,16,20,0.6)"; g.fillRect(x - 3, y - 3, w + 6, h + 6);
+  g.fillStyle = "rgba(120,200,210,0.9)"; g.fillRect(x, y, w * rod.charge, h);
+  g.strokeStyle = "rgba(255,255,255,0.4)"; g.lineWidth = 1; g.strokeRect(x, y, w, h);
+  g.fillStyle = "rgba(230,240,245,0.9)"; g.font = "600 12px system-ui,sans-serif"; g.textAlign = "center"; g.fillText("CAST — release to throw", innerWidth / 2, y - 8);
+}
+function drawReelGauge(g) {
+  const fg = rod.fight; const w = 300, h = 20, x = (innerWidth - w) / 2, y = innerHeight - 150;
+  g.save(); g.textAlign = "center";
+  // tension track
+  g.fillStyle = "rgba(10,16,20,0.62)"; g.fillRect(x - 4, y - 24, w + 8, h + 54);
+  g.fillStyle = "rgba(40,50,56,0.9)"; g.fillRect(x, y, w, h);
+  // safe zone
+  g.fillStyle = fg.run > 0.3 ? "rgba(90,200,120,0.55)" : "rgba(90,200,120,0.75)"; g.fillRect(x + fg.lo * w, y, (fg.hi - fg.lo) * w, h);
+  // danger ends tint
+  g.fillStyle = "rgba(200,70,60,0.35)"; g.fillRect(x + fg.hi * w, y, (1 - fg.hi) * w, h);
+  // needle
+  const nx = x + Math.max(0, Math.min(1, fg.tension)) * w;
+  g.fillStyle = fg.tension > fg.hi ? "#ff6a52" : fg.tension < fg.lo ? "#ffd06a" : "#eaf2f7";
+  g.fillRect(nx - 2, y - 5, 4, h + 10);
+  // progress
+  g.fillStyle = "rgba(10,16,20,0.5)"; g.fillRect(x, y + h + 6, w, 7);
+  g.fillStyle = "rgba(130,200,235,0.95)"; g.fillRect(x, y + h + 6, w * Math.min(1, fg.progress), 7);
+  // strain pips (red bar top)
+  if (fg.strain > 0.02) { g.fillStyle = `rgba(230,60,50,${0.4 + fg.strain * 0.6})`; g.fillRect(x, y - 7, w * Math.min(1, fg.strain), 4); }
+  g.fillStyle = "rgba(230,240,245,0.92)"; g.font = "600 12px system-ui,sans-serif";
+  const label = fg.run > 0.3 ? "IT'S RUNNING — ease off!" : "REEL — keep the needle in the green";
+  g.fillText(label, innerWidth / 2, y - 12);
+  g.restore();
+}
+
 // debug: drop the player into the deepest open water we can find
 function teleportToDeepWater() {
   let best = null, bd = 0;
@@ -2853,6 +3214,8 @@ addEventListener("keydown", (e) => {
     if (e.code === "KeyK") { crabLog = !crabLog; console.log("crab log " + (crabLog ? "ON" : "OFF")); }   // §1c crab lifecycle log
     if (e.code === "KeyJ") { critDbg = !critDbg; const cc = document.getElementById("critcanvas"); cc.style.display = critDbg ? "block" : "none"; }   // §R4 creature AI state/direction overlay
     if (e.code === "KeyM") toggleSoundTest();   // §Sound test panel
+    if (e.code === "KeyO") { fishForceBite = !fishForceBite; showCard("Debug: force bite", fishForceBite ? "Casts bite almost instantly (never junk)." : "Off."); }   // §Fishing force a quick bite
+    if (e.code === "KeyU") { fishOddsLog = !fishOddsLog; console.log("fish odds log " + (fishOddsLog ? "ON" : "OFF")); }   // §Fishing log catch odds per cast
   }
 });
 addEventListener("keyup", (e) => { keys[e.code] = false; });
@@ -2870,9 +3233,10 @@ canvas.addEventListener("mousedown", (e) => {
       if (crouching) { pickUpBuild(b); return; } }
   }
   if (mode === "walk" && selectedTool() === "spear" && !isPanelOpen()) { spearPressStart(); return; }   // §14C charge → thrust/throw
+  if (mode === "walk" && selectedTool() === "rod" && !isPanelOpen()) { rodPressStart(); return; }        // §Fishing charge/hook/reel
   useHeld = true; clickAt(0, 0);                 // §13.2 hold to keep swinging at a work target
 });
-addEventListener("mouseup", (e) => { if (e.button === 0) { useHeld = false; if (spear.charging) spearRelease(); } });
+addEventListener("mouseup", (e) => { if (e.button === 0) { useHeld = false; if (spear.charging) spearRelease(); rodPressEnd(); } });
 // §13.2 scroll wheel cycles belt slots (skips empties)
 addEventListener("wheel", (e) => {
   if (mode !== "walk" || isPanelOpen()) return;
@@ -3107,6 +3471,7 @@ function openSettings() {
     <div class="srow"><label>Auto tool-switch</label><button data-k="autoswitch">${onoff(autoSwitch)}</button></div>
     <div class="srow"><label>Hunger</label><button data-k="hunger">${onoff(hungerEnabled)}</button></div>
     <div class="srow"><label>Day/night cycle</label><button data-k="daynight">${onoff(dayNightEnabled)}</button></div>
+    <div class="srow"><label>Relaxed fishing</label><button data-k="relaxfish">${onoff(relaxedFishing)}</button></div>
     <div class="srow"><label>Crouch key</label><button data-k="crouchkey">${crouchKey === "ControlLeft" ? "Ctrl" : "C"}</button></div>
     <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
     <h4>Graphics</h4>
@@ -3140,6 +3505,7 @@ function openSettings() {
     else if (k === "autoswitch") { autoSwitch = !autoSwitch; saveAutoSwitch(); }
     else if (k === "hunger") { setHungerEnabled(!hungerEnabled); }   // §13.8
     else if (k === "daynight") { setDayNight(!dayNightEnabled); }     // §13.9
+    else if (k === "relaxfish") { setRelaxedFishing(!relaxedFishing); }   // §Fishing forgiving reel mini-game
     else if (k === "crouchkey") { crouchKey = crouchKey === "KeyC" ? "ControlLeft" : "KeyC"; try { localStorage.setItem("bc_crouchKey", crouchKey); } catch (e) {} }
     openSettings();
   });
@@ -3172,6 +3538,7 @@ function isPanelOpen() {
       || (typeof tradeOpen !== "undefined" && tradeOpen)
       || document.getElementById("journal").style.display === "block"
       || document.getElementById("settingspanel").style.display === "block"
+      || (typeof fishReveal !== "undefined" && fishReveal.open)
       || (typeof pauseStage !== "undefined" && !!pauseStage);
 }
 function requestLock() {   // re-acquire pointer lock after a gesture (closing a panel); harmless if it fails
@@ -3375,6 +3742,7 @@ if (IS_TOUCH) (function mobileControls() {
        <div class="mBtn" data-act="swimdown" data-hold="1">▼ Down</div>
        <div class="mBtn" data-act="climb" data-hold="1">Climb</div>
        <div class="mBtn" data-act="lantern">Lantern</div>
+       <div class="mBtn mrod" data-act="rod" data-hold="1" style="display:none">Cast / Reel</div>
        <div class="mBtn" data-key="KeyE">Bag</div>
        <div class="mBtn" data-act="pause">Pause</div>
        <div class="mBtn mbuild" data-act="brotate" style="display:none">Rotate</div>
@@ -3417,6 +3785,7 @@ if (IS_TOUCH) (function mobileControls() {
       else if (btn.dataset.act === "swimup") { mobileSwimUp = true; btn.style.background = "rgba(60,120,130,.8)"; }   // §14A hold to swim up
       else if (btn.dataset.act === "swimdown") { mobileSwimDown = true; btn.style.background = "rgba(60,120,130,.8)"; }
       else if (btn.dataset.act === "climb") { mobileClimb = true; tryGrabClimb(); btn.style.background = "rgba(60,120,130,.8)"; }   // §15 hold to climb
+      else if (btn.dataset.act === "rod") { rodPressStart(); btn.style.background = "rgba(60,120,130,.8)"; }   // §Fishing hold to charge cast / reel in a fight
       else if (btn.dataset.act === "jump") tryJump();
       else if (btn.dataset.act === "lantern") { toggleLantern(); btn.style.background = lanternLit() ? "rgba(200,150,60,.8)" : ""; }   // §18
       else if (btn.dataset.act === "brotate") rotateBuild();           // §16B mobile placement
@@ -3428,6 +3797,7 @@ if (IS_TOUCH) (function mobileControls() {
       const rel = (e) => { e.preventDefault();
         if (btn.dataset.act === "swimup") mobileSwimUp = false; else if (btn.dataset.act === "swimdown") mobileSwimDown = false;
         else if (btn.dataset.act === "climb") mobileClimb = false;
+        else if (btn.dataset.act === "rod") rodPressEnd();   // §Fishing release → cast / stop reeling
         btn.style.background = ""; };
       btn.addEventListener("touchend", rel, { passive: false });
       btn.addEventListener("touchcancel", rel, { passive: false });
@@ -4471,6 +4841,33 @@ function crabMeatMesh() { const m = Mesh(); const pink=[0.92,0.8,0.74], pink2=[0
   for (let i=0;i<lumps.length;i++){ const [x,z,r]=lumps[i]; const d=Mesh(); mergeMesh(d, discMesh(0, r, 6, r*0.9, i%2?pink:pink2)); mergeMesh(d, discMesh(0, r, 6, -r*0.5, i%2?pink:pink2)); mergeAt(m, d, x, 0.04, z); }
   return m; }
 function coinMesh() { return discMesh(0.04,0.4,10,0.03,[0.7,0.6,0.32]); }
+// §Fishing — first-person rod, the drifting bobber float, and the odd deep-water ratfish
+function rodMesh() {   // cork grip, a reel hung below the seat, and a long tapered blank with line guides
+  const m = Mesh(); const cork=[0.74,0.58,0.36], blankD=[0.38,0.3,0.26], blankL=[0.56,0.46,0.4];
+  mCyl(m, 0.0, 0.16, 0.05, 0.042, 7, cork);                       // cork grip (hand grips here)
+  mCyl(m, 0.16, 0.2, 0.05, 0.034, 7, TM_DK);                      // reel seat
+  const reel = Mesh(); mergeMesh(reel, discMesh(0, 0.08, 10, 0.045, TM_HI)); mergeMesh(reel, discMesh(0, 0.08, 10, -0.045, TM_MD));
+  mergeAt(m, reel, 0, 0.13, 0.09);                                // round reel face, toward +z
+  mBox(m, 0, 0.1, 0.14, 0.012, 0.012, 0.05, TM_DK);               // reel handle stem
+  mBox(m, 0.045, 0.1, 0.17, 0.03, 0.013, 0.013, cork);            // handle knob
+  mCyl(m, 0.2, 1.62, 0.022, 0.005, 6, blankD);                    // tapered blank
+  mBox(m, 0.013, 0.9, 0, 0.004, 0.68, 0.004, blankL);             // highlight strip down the blank
+  for (let i=0;i<5;i++){ const y=0.42+i*0.25; mBox(m, 0, y, 0.028-i*0.004, 0.009-i*0.001, 0.007, 0.012, TM_HI); }   // line guides
+  return m; }
+function bobberMesh() {   // a classic red-over-white float with a slim antenna
+  const m = Mesh();
+  mergeMesh(m, discMesh(0.0, 0.13, 10, 0.14, [0.88,0.26,0.2]));   // red upper dome
+  mergeMesh(m, discMesh(0.0, 0.13, 10, -0.14, [0.93,0.93,0.95])); // white lower dome
+  mBox(m, 0, 0.24, 0, 0.012, 0.11, 0.012, [0.1,0.1,0.12]);        // antenna
+  mBox(m, 0, 0.3, 0, 0.022, 0.03, 0.022, [0.95,0.5,0.15]);        // orange tip
+  return m; }
+function ratfishMesh(col) { const m = Mesh(); col = col||[0.55,0.58,0.6];   // big-headed chimaera: blunt snout, tall first dorsal, whip tail, huge eye
+  mBox(m, 0.08, 0.06, 0, 0.3, 0.13, 0.09, col);                                               // stout head/body
+  mTri(m,[0.38,0.06,0],[0.5,0.13,0.06],[0.5,0.13,-0.06],[col[0]*1.1,col[1]*1.1,col[2]*1.1]);  // blunt snout
+  mBox(m, -0.35, 0.06, 0, 0.3, 0.025, 0.02, [col[0]*0.8,col[1]*0.8,col[2]*0.8]);              // whip tail
+  for (let i=0;i<3;i++){ const x=0.16-i*0.13; mTri(m,[x,0.18,0],[x-0.03,0.34,0],[x-0.08,0.18,0],[col[0]*0.7,col[1]*0.72,col[2]*0.78]); }   // tall first dorsal
+  for (const s of [1,-1]) mBox(m, 0.26, 0.11, s*0.085, 0.035, 0.035, 0.01, [0.92,0.92,0.55]); // big silver eyes
+  return m; }
 function mergeMesh(m, n) { for (let i = 0; i < n.pos.length; i++) { m.pos.push(n.pos[i]); m.col.push(n.col[i]); } }
 function bellMesh() { const m = Mesh(); mCyl(m,0,0.8,0.5,0.25,8,[0.42,0.55,0.4]); mergeMesh(m, discMesh(0.8,0.25,8,0.05,[0.42,0.55,0.4])); mBox(m,0,0.95,0,0.1,0.15,0.1,[0.42,0.55,0.4]); mCyl(m,-0.2,0.1,0.08,0.08,5,[0.3,0.4,0.3]); return m; }
 function tinMesh() { const m = Mesh(); mCyl(m,0,0.5,0.5,0.5,10,[0.6,0.55,0.48]); mergeMesh(m, discMesh(0.5,0.5,10,0.03,[0.65,0.6,0.52])); return m; }
@@ -5632,6 +6029,19 @@ ITEMS.rawfish = { id: "rawfish", name: "Raw Fish", category: "find", rarity: "co
                   desc: "A fresh-speared fish. Good food, and better cooked at a campfire.", model: () => fishMesh([0.7,0.72,0.66]), tint: [1,1,1] };
 ITEMS.lantern = { id: "lantern", name: "Lantern", category: "tool", rarity: "tool", stackable: false, maxStack: 1,   // §18
                   desc: "A warm belt lantern. Hold it (select it) for a pool of light — shiny finds glint from farther at night, and creatures notice.", model: () => lanternMesh(), tint: [1,1,1] };
+// §Fishing — the rod, and the fish you reel in from open water (foods, like the speared rawfish)
+ITEMS.rod = { id: "rod", name: "Fishing Rod", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
+              desc: "A cork-gripped rod and reel. Bait the hook from your satchel, aim at open water, hold to cast — then set the hook on a bite and reel your catch in.", model: () => rodMesh(), tint: [1,1,1] };
+[["surfperch","Surfperch",[0.72,0.74,0.62],0.18,"common"],
+ ["rockfish","Rockfish",[0.82,0.3,0.18],0.22,"common"],
+ ["lingcod","Lingcod",[0.4,0.42,0.33],0.26,"uncommon"],
+ ["ratfish","Ratfish",[0.55,0.58,0.6],0.2,"uncommon"],
+].forEach(([id,name,col,ev,rar]) => {
+  ITEMS[id] = { id, name, category: "consumable", rarity: rar, stackable: true, maxStack: 99,
+    desc: "A fish caught on the rod. Good food, and better still cooked over a campfire.",
+    model: () => id==="rockfish" ? rockfishMesh() : id==="lingcod" ? lingcodMesh() : id==="ratfish" ? ratfishMesh() : fishMesh(col), tint: [1,1,1] };
+  EDIBLE[id] = ev; COOKABLE[id] = 1; });
+FOOD_BOOST.surfperch={m:1.6,d:30}; FOOD_BOOST.rockfish={m:1.75,d:42}; FOOD_BOOST.lingcod={m:1.95,d:54}; FOOD_BOOST.ratfish={m:1.7,d:40};
 // §13.2 one Tool Kit replaces the three tool slots; Auto picks the right tool as you aim.
 ITEMS.toolkit = { id: "toolkit", name: "Tool Kit", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
                   desc: "Shovel, axe and pickaxe in one. Auto mode picks the right one as you aim; press its slot again (or middle-click) to lock Shovel, Axe or Pickaxe.", model: () => shovelMesh(), tint: [1,1,1] };
@@ -6034,6 +6444,10 @@ function renderHotbar() {
     s.addEventListener("contextmenu", (e) => {   // §13.3 right-click the bucket on the belt → Look inside
       const c = Inv.hotbar[+s.dataset.h]; if (c && c.id === "bucket") { e.preventDefault(); e.stopPropagation(); Inv.selected = +s.dataset.h; renderHotbar(); openMenu("bucket"); } });
   });
+  updateRodButton();
+}
+function updateRodButton() {   // §Fishing mobile: show the Cast / Reel hold-button only when the rod is in hand
+  const b = document.querySelector(".mrod"); if (b) b.style.display = (selectedItem() === "rod") ? "flex" : "none";
 }
 function slotHTML(cell, idx, hk) {
   const key = hk !== undefined ? `<i class="hk">${hk}</i>` : "";
@@ -6318,6 +6732,7 @@ function interact() { if (pry) { pryStrike(); return; }
     const def = BUILD_DEFS[b.type], hasUse = def.storage || def.dry || def.shelter;
     if (hasUse && !crouching) interactBuild(b); else pickUpBuild(b); return; } }
   if (mode === "walk" && selectedTool() === "spear" && !isPanelOpen()) { thrustSpear(); return; }   // §14C E / mobile Use = jab
+  if (rodEquipped()) { rodTap(); return; }   // §Fishing F / mobile Use = cast / set hook / reel pulse
   const t = curTarget || targetAlongRay(rayFromNDC(0, 0));
   if (t) { interactTarget(t); return; }
   if (mode === "walk" && !isPanelOpen()) { if (isFood(selectedItem())) eatSelected(); else punch(null); }   // §15 nothing in reach → eat or punch
@@ -6344,6 +6759,7 @@ let journalTab = "creatures";
 function journalCount(tab) {
   if (tab === "creatures") { let n = 0; for (const k in CREATURES) if (discovered.has(k)) n++; return [n, Object.keys(CREATURES).length]; }
   if (tab === "finds") { let n = 0; for (const k in FINDS) if (discovered.has("f_" + k)) n++; return [n, Object.keys(FINDS).length]; }
+  if (tab === "angling") { let n = 0; for (const k in FISH_SPECIES) if (rodRecord[k]) n++; return [n, Object.keys(FISH_SPECIES).length]; }
   const opened = chests.filter(c => c.opened).length; return [opened, chests.length];
 }
 function journalGrid(tab) {
@@ -6358,11 +6774,16 @@ function journalGrid(tab) {
     if (!got) return `<div class="jcard unk"><img src="${(it&&it.icon)||""}"><div class="jname">??? </div></div>`;
     return `<div class="jcard" data-jk="f:${k}"><img src="${(it&&it.icon)||""}"><div class="jname">${it?it.name:k}</div>${cnt?`<div class="jqty">×${cnt}</div>`:""}</div>`;
   }).join("");
+  if (tab === "angling") return Object.keys(FISH_SPECIES).map((k) => {
+    const sp = FISH_SPECIES[k], it = ITEMS[sp.item], rec = rodRecord[k];
+    if (!rec) return `<div class="jcard unk"><img src="${(it&&it.icon)||""}"><div class="jname">??? </div></div>`;
+    return `<div class="jcard" data-jk="a:${sp.item}"><img src="${(it&&it.icon)||""}"><div class="jname">${sp.label}</div><div class="jqty">record ${rec.toFixed(2)} kg</div></div>`;
+  }).join("");
   return treasureCards();
 }
 function renderJournal() {
   const j = document.getElementById("journal");
-  const tabs = [["creatures","Creatures"],["finds","Finds"],["treasure","Treasure"]];
+  const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["treasure","Treasure"]];
   const tabHtml = tabs.map(([id,lbl]) => { const [n,t] = journalCount(id);
     return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
   const cleanupLine = `<div class="jstat">🌊 Beach cleanup — <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared</div>`;
@@ -6375,7 +6796,7 @@ function renderJournal() {
   j.querySelectorAll(".jcard[data-jk]").forEach(card => card.onclick = () => {
     const [kind, k] = card.dataset.jk.split(":");
     if (kind === "c") openInspect({ t: k, scale: CREATURES[k].base, tint: [1,1,1], moist: 1 }, "journal");
-    else openInspect(k, "item");
+    else openInspect(k, "item");   // f: and a: both inspect the item model
   });
 }
 function toggleJournal() {
@@ -8384,7 +8805,7 @@ function makeToolFP(id, mesh) {
   gl.bindVertexArray(null);
   TOOL_FP[id] = { mesh, vao, posBuf, vc: mesh.pos.length / 3, world: new Float32Array(mesh.pos.length) };
 }
-function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("spear", spearMesh()); makeToolFP("climbhands", climbHandsMesh()); makeToolFP("bucket", bucketItemMesh()); makeToolFP("lantern", lanternMesh()); }   // §R4 bucket & lantern held too
+function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("spear", spearMesh()); makeToolFP("climbhands", climbHandsMesh()); makeToolFP("bucket", bucketItemMesh()); makeToolFP("lantern", lanternMesh()); makeToolFP("rod", rodMesh()); }   // §R4 bucket & lantern; §Fishing rod held too
 // §15 render the two gripping hands while climbing, with a hand-over-hand sway
 function drawClimbHands(view) {
   const fp = TOOL_FP["climbhands"]; if (!fp) return;
@@ -8417,7 +8838,7 @@ function drawShovel(view) {
   const upx = -rz*f[1], upy = rz*f[0] - rx*f[2], upz = rx*f[1];                           // camera up = right × forward
   const sw = Math.sin(Math.min(1, shovelSwing) * Math.PI);                               // 0→1→0 swing arc
   const rec = toolRecoilT * toolRecoilT;                                                 // recoil kick on a bounced hit
-  const isSpear = id === "spear", held = (id === "bucket" || id === "lantern");
+  const isSpear = id === "spear", isRod = id === "rod", held = (id === "bucket" || id === "lantern");
   const jab = isSpear ? Math.sin(Math.min(1, (spear.thrustT/0.3)) * Math.PI) : 0;        // §14C spear thrust
   const chg = isSpear && spear.charging ? spear.charge : 0;
   const t = clock.t;
@@ -8426,7 +8847,13 @@ function drawShovel(view) {
   const sway = Math.sin(t*1.1)*0.01, swayR = Math.sin(t*0.9)*0.03;                        // idle sway
   const swap = toolSwapT*toolSwapT;                                                       // swap dip
   let ox, oy, oz, roll, pitch, scale;
-  if (held) {                                                                             // bucket / lantern: carried upright in the lower-right
+  if (isRod) {                                                                            // §Fishing rod: gripped low-right, blank angled up-and-across; the tip bends with the line
+    const chg = (rod && rod.state === "charging") ? rod.charge : 0, bend = (rod ? rod.bend : 0) || 0;
+    scale = 0.34;
+    ox = 0.34 + sway; oy = -0.5 - swap*0.5 + bob; oz = 1.08 - chg*0.12;
+    roll = -0.62 + swayR + chg*0.18;                                                       // blank leans across the view: butt lower-right, tip upper-left
+    pitch = -0.72 - chg*0.28 + bend*0.8;                                                   // angled forward; charge draws it back; a bite/run dips the tip
+  } else if (held) {                                                                      // bucket / lantern: carried upright in the lower-right
     scale = id === "bucket" ? 0.46 : 0.6;
     ox = 0.26 + sway; oy = -0.52 - swap*0.5 + bob; oz = 0.92;
     roll = 0.08 + swayR; pitch = -0.08;
@@ -9873,6 +10300,8 @@ for (let i = 0; i < Inv.main.length; i++) { const s = Inv.main[i]; if (s && (s.i
 if (!Inv.hotbarHasId("toolkit")) Inv.hotbar[0] = { id: "toolkit", qty: 1 };   // slots: tool kit, bucket, spear
 if (!Inv.hotbarHasId("bucket")) Inv.hotbar[1] = { id: "bucket", qty: 1 };
 if (!Inv.hotbarHasId("spear")) Inv.hotbar[2] = { id: "spear", qty: 1 };        // §14C the fishing spear (its own slot)
+if (!Inv.hotbarHasId("rod") && !Inv.has("rod")) { const ri = Inv.hotbar.indexOf(null); if (ri >= 0) Inv.hotbar[ri] = { id: "rod", qty: 1 }; else Inv.add("rod", 1);   // §Fishing start with a rod
+  try { if (localStorage.getItem("bc_rodintro") !== "1") { Inv.add("worm", 3); localStorage.setItem("bc_rodintro", "1"); } } catch (e) {} }   // and a few starter worms, once
 if (!Inv.hotbarHasId("lantern")) { const li = Inv.hotbar.indexOf(null); if (li >= 0) Inv.hotbar[li] = { id: "lantern", qty: 1 }; }   // §18 start with a lantern on the belt
 renderHotbar();
 syncDebugPanel();
@@ -10112,7 +10541,7 @@ function frame(now) {
    }
   }
 
-  if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateSpear(dt); }   // §14A/B/C
+  if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateSpear(dt); updateFishing(dt); }   // §14A/B/C + §Fishing
   updateFade(dt);
   safetyCheck(dt);
 
@@ -10230,6 +10659,7 @@ function frame(now) {
   drawPlankton(view);   // §14B drifting marine snow / bioluminescence, underwater only
   drawDeepVisitor(view);   // §14B a large silhouette far off in the deep
   drawThrownSpears(view);  // §14C spears stuck in the ground / sinking
+  drawBobber(view);        // §Fishing the cast bobber floating on the water
   drawBounds(view);
 
   // water
@@ -10385,6 +10815,7 @@ function frame(now) {
   updateBucketPanel();
   updateBucketLook();
   updateInspectView();
+  drawFishHUD();                       // §Fishing line, bobber marker, reel gauge, fish-signs (2D overlay)
 
   if (debugOn) {
     dbgEl.style.display = "block";
@@ -10395,7 +10826,8 @@ function frame(now) {
       `res   ${fbo.w}x${fbo.h}\n` +
       `pos   ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}\n` +
       `slope ${_curSlopeDeg.toFixed(0)}°  spd ×${_curSpeedMul.toFixed(2)}${player.sprinting ? " sprint" : ""}\n` +
-      `voices ${SND.ctx ? SND.activeVoices() : "off"}`;
+      `voices ${SND.ctx ? SND.activeVoices() : "off"}\n` +
+      `fish  ${rod.state}${rod.fish ? " " + rod.fish.species + (rod.fish.weight ? " " + rod.fish.weight + "kg" : "") : ""}${rod.fight ? " p" + rod.fight.progress.toFixed(2) + " t" + rod.fight.tension.toFixed(2) + " s" + rod.fight.strain.toFixed(2) : ""}  ${fishForceBite ? "[forceBite]" : ""}${fishOddsLog ? "[odds]" : ""}`;
   } else if (dbgEl.style.display !== "none") {
     dbgEl.style.display = "none";
   }
