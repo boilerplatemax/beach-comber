@@ -2696,6 +2696,16 @@ function hurtCreature(e, hx, hz) {
   sparkle(e.x, (e.y !== undefined ? e.y : heightAt(e.x,e.z)+0.3), e.z, [0.8,0.3,0.3], 5);
   if (e.hp <= 0) { e.dying = 0; e.deathYaw = e.yaw; e.lingerT = 30 + rng()*30; }   // §urgent5 topple, lie still ~30–60s, then dither-dissolve
 }
+// §playtest1 a generic hit on a creature with whatever's in hand (Minecraft-style) — logs it to the journal, swings, deals small damage
+const WEAPON_DMG = { spear: 3, axe: 2, pickaxe: 2, shovel: 1 };   // a real weapon/tool hits harder than a bare hand
+function genericHitCreature(e) {
+  if (!e || e.dying !== undefined) return;
+  discovered.add(e.t);                                            // first contact still lights up its journal page
+  const dmg = WEAPON_DMG[selectedTool()] || 1;                    // bare hand / random item = 1
+  shovelSwing = Math.max(shovelSwing, 0.5); punchT = Math.max(punchT, 0.2);
+  for (let k = 0; k < dmg; k++) hurtCreature(e, player.x, player.z);
+  if (onSpear) onSpear("jab");
+}
 // a spear strike: catch a fish, else wound a creature; returns true if it hit something living
 function spearStrike(x, y, z, r) {
   const fish = fishAt(x, y, z, r); if (fish) { catchFish(fish, x, y, z); return true; }
@@ -5225,14 +5235,15 @@ function spearMesh() { const m = Mesh(); const char=[0.18,0.15,0.14], char2=[0.3
   mTri(m, [-0.035,1.02,0.02],[-0.035,1.02,-0.02],[0,1.26,0], char);
   return m; }
 // §tools a compact diagonal spear emblem for the belt/satchel icon (the real spear is too long & thin to read at 64px)
+// §playtest1 a chunkier, larger spear emblem — thick shaft + big leaf blade, kept compact so it fills the 64px slot
 function spearIconMesh() { const m = Mesh();
-  const wood=[0.56,0.42,0.28], woodD=[0.44,0.32,0.2], lash=[0.3,0.24,0.18], steel=[0.74,0.77,0.82], steelD=[0.5,0.53,0.58];
-  const x0=-0.56, y0=-0.62, x1=0.24, y1=0.36, N=11;                      // chunky shaft, lower-left → upper-right
-  for (let i=0;i<N;i++){ const t=i/(N-1); mBox(m, x0+(x1-x0)*t, y0+(y1-y0)*t, 0, 0.05, 0.06, 0.05, i%2?wood:woodD); }
-  mBox(m, x0+(x1-x0)*0.84, y0+(y1-y0)*0.84, 0, 0.075, 0.05, 0.07, lash);  // lashing band below the head
-  const tip=[0.6,0.86], base=[0.2,0.34], px=-0.78, py=0.63, w=0.15;       // leaf blade along the shaft diagonal
-  const mid=[0.4,0.6], lm=[mid[0]+px*w, mid[1]+py*w], rm=[mid[0]-px*w, mid[1]-py*w];
-  for (const z of [0.03,-0.03]) { const c = z>0?steel:steelD;
+  const wood=[0.58,0.44,0.29], woodD=[0.45,0.33,0.21], lash=[0.3,0.24,0.18], steel=[0.78,0.81,0.87], steelD=[0.54,0.57,0.63];
+  const x0=-0.5, y0=-0.54, x1=0.16, y1=0.28, N=9;                        // shorter, thicker shaft so it reads big
+  for (let i=0;i<N;i++){ const t=i/(N-1); mBox(m, x0+(x1-x0)*t, y0+(y1-y0)*t, 0, 0.075, 0.085, 0.075, i%2?wood:woodD); }
+  mBox(m, x0+(x1-x0)*0.82, y0+(y1-y0)*0.82, 0, 0.1, 0.06, 0.095, lash);   // lashing band below the head
+  const tip=[0.58,0.84], base=[0.08,0.2], px=-0.78, py=0.63, w=0.22;      // big leaf blade along the shaft diagonal
+  const mid=[0.33,0.52], lm=[mid[0]+px*w, mid[1]+py*w], rm=[mid[0]-px*w, mid[1]-py*w];
+  for (const z of [0.045,-0.045]) { const c = z>0?steel:steelD;
     mTri(m,[base[0],base[1],0],[lm[0],lm[1],z],[tip[0],tip[1],0],c);
     mTri(m,[base[0],base[1],0],[rm[0],rm[1],z],[tip[0],tip[1],0],c); }
   return m; }
@@ -5263,16 +5274,19 @@ function bobberMesh() {   // a classic red-over-white float with a slim antenna
   mBox(m, 0, 0.3, 0, 0.022, 0.03, 0.022, [0.95,0.5,0.15]);        // orange tip
   return m; }
 // §fishpolish a chunky, diagonal rod emblem for the belt/satchel icon (the thin FP rod rendered as a sliver/dot)
+// §playtest1 rebuilt rod icon: a clear tapering blank (cork grip → thin tip), a round reel, and a line dropping to a red bobber
 function rodIconMesh() {
-  const m = Mesh(); const cork=[0.76,0.58,0.34], blank=[0.5,0.4,0.3], blankHi=[0.64,0.52,0.42], mtl=[0.5,0.5,0.56], mtlHi=[0.74,0.76,0.82], line=[0.92,0.94,0.97];
-  const x0=-0.55, y0=-0.55, x1=0.6, y1=0.95, N=13;
-  for (let i=0;i<N;i++){ const t=i/(N-1), x=x0+(x1-x0)*t, y=y0+(y1-y0)*t, r=0.09*(1-t*0.72)*(t<0.2?1.6:1);
-    mBox(m, x, y, 0, r, r, r, i < N*0.22 ? cork : (i%2?blank:blankHi)); }
-  const rx=x0+(x1-x0)*0.2, ry=y0+(y1-y0)*0.2;                                   // prominent reel near the grip
-  const d=Mesh(); mergeMesh(d, discMesh(0,0.2,10,0.075,mtlHi)); mergeMesh(d, discMesh(0,0.2,10,-0.075,mtl)); mergeAt(m, d, rx, ry, 0.13);
-  mBox(m, rx+0.08, ry, 0.19, 0.06,0.022,0.022, cork);                           // reel handle knob
-  for (let i=0;i<5;i++) mBox(m, x1-0.02, y1-0.12-i*0.13, 0, 0.013,0.065,0.013, line);   // line hanging from the tip
-  mBox(m, x1-0.02, y1-0.12-5*0.13, 0, 0.035,0.025,0.013, mtl);                  // a little hook
+  const m = Mesh(); const cork=[0.8,0.62,0.37], blank=[0.46,0.37,0.28], blankHi=[0.64,0.52,0.42], mtl=[0.54,0.54,0.6], mtlHi=[0.78,0.8,0.86], line=[0.95,0.97,0.99], bob=[0.86,0.3,0.26], bobW=[0.95,0.95,0.97];
+  const x0=-0.5, y0=-0.48, x1=0.5, y1=0.74, N=12;                               // tapering blank, lower-left (grip) → upper-right (tip)
+  for (let i=0;i<N;i++){ const t=i/(N-1), x=x0+(x1-x0)*t, y=y0+(y1-y0)*t, grip = t<0.24, r = grip ? 0.1 : 0.08*(1-t*0.62);
+    mBox(m, x, y, 0, r, r, r, grip ? cork : (i%2?blank:blankHi)); }
+  const rx=x0+(x1-x0)*0.26, ry=y0+(y1-y0)*0.26;                                 // round reel just above the grip
+  const d=Mesh(); mergeMesh(d, discMesh(0,0.18,11,0.075,mtlHi)); mergeMesh(d, discMesh(0,0.18,11,-0.075,mtl)); mergeAt(m, d, rx, ry, 0.12);
+  mBox(m, rx+0.11, ry, 0.17, 0.075,0.026,0.026, cork);                          // reel handle
+  const tx=x1, ty=y1;                                                          // line drops from the tip to a bobber
+  for (let i=0;i<6;i++) mBox(m, tx+0.004*i, ty-0.1-i*0.12, 0, 0.013,0.07,0.013, line);
+  const by=ty-0.1-6*0.12;
+  mBox(m, tx+0.024, by+0.04, 0, 0.055,0.045,0.05, bob); mBox(m, tx+0.024, by-0.02, 0, 0.055,0.03,0.05, bobW);   // red-and-white bobber
   return m; }
 // big-headed chimaera: deep blunt head tapering to a long whip tail, tall first dorsal, huge silver eye
 function ratfishMesh(col) { col = col || [0.56,0.59,0.62];
@@ -7680,7 +7694,9 @@ function useToolOnTarget(t) {
   if (!t) return false;
   const tool = selectedTool();
   switch (t.kind) {
-    case "creature": if (tool === "bucket" && bucketScoop(t.obj)) return true; interactWith(t.obj); return true;
+    case "creature": if (tool === "bucket" && bucketScoop(t.obj)) return true;                                 // bucket scoops; otherwise any item hits it
+      if (t.obj.stranded) { interactWith(t.obj); return true; }                                                // a stranded star is still picked up by hand
+      genericHitCreature(t.obj); return true;
     case "find": interactWith(t.obj); return true;
     case "rubble": pickRubble(t.obj); return true;
     case "bush": harvestBush(t.obj); return true;
@@ -9742,7 +9758,7 @@ function drawShovel(view) {
   const bob = Math.sin((player.bob || 0) * 2.6) * 0.02 * bobA + Math.cos((player.bob||0)*1.3)*0.01*bobA;
   const sway = Math.sin(t*1.1)*0.01, swayR = Math.sin(t*0.9)*0.03;                        // idle sway
   const swap = toolSwapT*toolSwapT;                                                       // swap dip
-  let ox, oy, oz, roll, pitch, scale, toolSpin = 0;
+  let ox, oy, oz, roll, pitch, scale, toolSpin = 0, flipEnd = false;
   if (isRod) {                                                                            // §fishpolish rod: smaller, gripped low-right, blank pointing FORWARD (away from the player), not leaning across
     const chg = (rod && rod.state === "charging") ? rod.charge : 0, bend = (rod ? rod.bend : 0) || 0;
     scale = 0.3;
@@ -9764,12 +9780,14 @@ function drawShovel(view) {
     roll = -0.4 + swayR - sw*0.12;
     pitch = (isPoke ? (-0.95 + jab*0.3 - chg*0.3) : -0.2) - sw*1.05 + rec*0.65;           // chop sweeps the head down & forward; spear/stake thrust straight ahead
     if (bladed) toolSpin = -0.785;                                                        // §tools2 45° CW about the shaft (local Y) so the blade faces outward — not the roll axis
+    if (id === "shovel") { flipEnd = true; oy = -0.26 - sw*0.08 + rec*0.2 - swap*0.5 + bob; oz = 0.78 + sw*0.5 - rec*0.35; pitch = -0.5 - sw*0.9 + rec*0.6; }   // §playtest1 flip 180°: D-grip up in the hand, spade at the far end pointing down & away
   }
   const cr = Math.cos(roll), sr = Math.sin(roll), cp = Math.cos(pitch), sp2 = Math.sin(pitch);
   const cS = Math.cos(toolSpin), sS = Math.sin(toolSpin);
   const src = fp.mesh.pos, world = fp.world; let p = 0;
   for (let i = 0; i < src.length; i += 3) {
     let vx = src[i] * scale, vy = src[i+1] * scale, vz = src[i+2] * scale;
+    if (flipEnd) { vy = -vy; vz = -vz; }                                                   // §playtest1 180° end-for-end flip (shovel)
     if (toolSpin) { const nx = vx*cS - vz*sS, nz = vx*sS + vz*cS; vx = nx; vz = nz; }      // §tools2 spin about the shaft (local Y)
     const x2 = vx*cr - vy*sr, y2 = vx*sr + vy*cr;                                          // roll about the view forward
     const y3 = y2*cp - vz*sp2, z3 = y2*sp2 + vz*cp;                                        // pitch about the view right
@@ -11471,11 +11489,11 @@ function frame(now) {
       if (waterLevel - sZ.h <= WADE_INTO && sZ.h - h0 <= maxRise) nz = player.z + wz*dist;
       [nx, nz] = slideCircles(nx, nz);
       player.x = nx; player.z = nz;
-      player.bob += dist;
-      const stepLen = scrambleTarget > 0.5 ? 1.5 : 1.15;
+      player.bob += dist * (player.sprinting ? 0.6 : 1);   // §playtest1 sprinting = longer strides → the bob (and head-bob) advances slower
+      const stepLen = scrambleTarget > 0.5 ? 1.5 : player.sprinting ? 1.7 : 1.15;   // §playtest1 fewer, longer footfalls while sprinting
       if (player.bob - _stepPhase >= stepLen) {
         _stepPhase = player.bob;
-        if (onFootstep) onFootstep(surfaceType(here.h, here.slope), scrambleTarget > 0.5 ? 1 : (player.sprinting ? 0.85 : 0.55));
+        if (onFootstep) onFootstep(surfaceType(here.h, here.slope), scrambleTarget > 0.5 ? 1 : (player.sprinting ? 0.9 : 0.55));
       }
     }
     player.scramble += (scrambleTarget - player.scramble) * Math.min(1, dt * 4);
