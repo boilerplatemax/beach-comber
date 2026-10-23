@@ -493,12 +493,20 @@
     font-size: 12px; opacity: .55; text-align: right; line-height: 1.5;
     text-shadow: 0 1px 2px rgba(0,0,0,.6);
   }
+  /* §music a small, quiet speaker toggle in the title's corner (drawn glyph, no emoji) */
+  #musicToggle { position: absolute; top: 16px; right: 18px; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;
+    background: rgba(18,26,28,.32); border: 1px solid rgba(255,220,150,.22); border-radius: 9px; cursor: pointer; color: #e9dcc0;
+    opacity: .55; transition: opacity .15s ease, background .15s ease; z-index: 6; padding: 0; }
+  #musicToggle:hover { opacity: 1; background: rgba(18,26,28,.6); }
+  #musicToggle.off { color: #9a9684; opacity: .5; }
+  #musicToggle svg { width: 19px; height: 19px; display: block; }
 </style>
 </head>
 <body>
 <canvas id="gl"></canvas>
 
 <div id="overlay">
+  <button id="musicToggle" aria-label="Toggle music"></button>
   <canvas id="wordmark" width="720" height="150"></canvas>
   <div id="islandName">…</div>
   <div id="titlemenu">
@@ -1331,14 +1339,14 @@ function synthRender(ctx, p) {
 }
 const SND = {
   ctx: null, master: null, bus: {}, lp: {}, buf: {}, voices: [], amb: {}, _noise: null,
-  reg: {}, unlocked: false, muted: false, underwater: false, lastAt: {},
+  reg: {}, unlocked: false, muted: false, musicEnabled: true, underwater: false, lastAt: {},
   vol: { master: 0.75, sfx: 0.9, ambience: 0.6, ui: 0.7, music: 0.55 },
   music: { el: null, node: null, fade: null, src: null, url: null, want: 0 },
   MAX_VOICES: 24, MAX_DIST: 48,
   // register a sound: id → { p: params | [variants], vol, pv (pitch var), vv (vol var), cd (cooldown s), max, bus }
   def(id, p, o = {}) { this.reg[id] = { p, vol: o.vol ?? 0.5, pv: o.pv ?? 0.06, vv: o.vv ?? 0.12, cd: o.cd ?? 0, max: o.max ?? 4, bus: o.bus || "sfx" }; },
-  loadVol() { try { const s = JSON.parse(localStorage.getItem("bc_audio") || "null"); if (s) { Object.assign(this.vol, s.vol || {}); this.muted = !!s.muted; } } catch (e) {} },
-  saveVol() { try { localStorage.setItem("bc_audio", JSON.stringify({ vol: this.vol, muted: this.muted })); } catch (e) {} },
+  loadVol() { try { const s = JSON.parse(localStorage.getItem("bc_audio") || "null"); if (s) { Object.assign(this.vol, s.vol || {}); this.muted = !!s.muted; if (typeof s.musicEnabled === "boolean") this.musicEnabled = s.musicEnabled; } } catch (e) {} },
+  saveVol() { try { localStorage.setItem("bc_audio", JSON.stringify({ vol: this.vol, muted: this.muted, musicEnabled: this.musicEnabled })); } catch (e) {} },
   init() {
     if (this.ctx) { if (this.ctx.state === "suspended") this.ctx.resume(); return; }
     try {
@@ -1399,11 +1407,14 @@ const SND = {
     } catch (e) { this.music.el = this.music.el || null; }
   },
   playMusic(url, vol) {
-    if (!this.ctx) return;
+    if (!this.ctx || this.musicEnabled === false) return;
+    try { this.ctx.resume(); } catch (e) {}                       // iOS: the ctx can start suspended
     this.initMusic(url);
     const m = this.music; if (!m.el) return;
+    clearTimeout(m._stopT);
     m.want = (vol == null ? 1 : vol);
-    const p = m.el.play(); if (p && p.catch) p.catch(() => {});
+    const p = m.el.play();                                        // must be called inside the user gesture on iOS
+    if (p && p.catch) p.catch(() => { setTimeout(() => { try { m.el.play().catch(() => {}); } catch (e) {} }, 120); });   // one retry if the first is raced
     if (m.fade) m.fade.gain.setTargetAtTime(m.want, this.ctx.currentTime, 0.5);   // ~1.5s ease-in
   },
   fadeOutMusic() {
@@ -1559,7 +1570,8 @@ SND.loadVol();   // reflect saved volumes in Settings before the first gesture u
 let surfAudio = null;
 const MUSIC_URL = "beachcombing_theme.mp3";   // §music the title theme (sits beside index.html)
 window.startAudio = function () { SND.init(); if (SND.ctx) surfAudio = SND;
-  if (SND.ctx && !SND.muted && (mode === "preview" || mode === "intro")) SND.playMusic(MUSIC_URL); };   // §music start the title theme on the first gesture, while still on the menu
+  if (SND.ctx && (mode === "preview" || mode === "intro")) SND.playMusic(MUSIC_URL);   // §music start the title theme on the first gesture, while still on the menu
+  if (typeof refreshMusicToggle === "function") refreshMusicToggle(); };
 // §playtest1 surf wave cycle: a swell builds, crashes, washes up, retreats, then a quieter gap — looped
 let _surfPhase = Math.random(), _surfT = performance.now();
 const SURF_PERIOD = 8.5;   // seconds per wave (tunable)
@@ -4020,6 +4032,31 @@ document.getElementById("startBtn").addEventListener("click", () => {
     }
   };
   for (const ev of ["pointerdown", "mousedown", "keydown", "touchstart"]) addEventListener(ev, unlock, true);
+})();
+// §music the title-screen speaker toggle (drawn glyph, no emoji). Reflects the music preference; a click is also a valid gesture to start audio.
+function musicGlyph(on) {
+  const body = '<path d="M2.5 7.5v5h3.1l4.4 3.6V3.9L5.6 7.5H2.5z" fill="currentColor"/>';
+  const extra = on
+    ? '<path d="M12.4 6.6a4.8 4.8 0 0 1 0 6.8M12.4 8.9a2.2 2.2 0 0 1 0 2.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
+    : '<path d="M12.6 8.2l3.6 3.6m0-3.6l-3.6 3.6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>';
+  return '<svg viewBox="0 0 20 20" aria-hidden="true">' + body + extra + '</svg>';
+}
+function refreshMusicToggle() {
+  const el = document.getElementById("musicToggle"); if (!el) return;
+  const on = (typeof SND !== "undefined") ? SND.musicEnabled !== false : true;
+  el.classList.toggle("off", !on); el.innerHTML = musicGlyph(on); el.title = on ? "Music on" : "Music off";
+}
+(function () {
+  const el = document.getElementById("musicToggle"); if (!el) return;
+  refreshMusicToggle();
+  el.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (typeof window.startAudio === "function") window.startAudio();   // this click is a valid gesture to unlock/resume audio
+    const m = SND.music, playing = !!(m && m.el && !m.el.paused && m.want > 0);
+    if (!playing) { SND.musicEnabled = true; SND.saveVol(); if (mode === "preview" || mode === "intro") SND.playMusic(MUSIC_URL); }
+    else { SND.musicEnabled = false; SND.saveVol(); SND.fadeOutMusic(); }
+    refreshMusicToggle();
+  });
 })();
 
 // §2 pause menu (Esc): a chamfered Resume / Settings / Controls / Save & quit panel that freezes the world
