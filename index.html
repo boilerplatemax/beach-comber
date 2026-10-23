@@ -7495,14 +7495,15 @@ function targetAlongRay(r, sticky) {
     consider(f, "flotsam", f.x, f.z, (w) => raySphere(r.o, r.d, f.x, wy + 0.1, f.z, FLOTSAM_R*Math.max(w, TARGET_FORGIVE))); }
   for (const bc of barnacles) if (bc.amt > 0 && barnacleExposed(bc))   // §5 barnacle crusts on exposed intertidal rock
     consider(bc, "barnacle", bc.x, bc.z, (w) => raySphere(r.o, r.d, bc.x, barnTop(bc) + 0.12, bc.z, (0.4 + bc.rsc*0.4)*Math.max(w, TARGET_FORGIVE)));
-  // big objects: a fat vertical capsule (trunk + lower canopy) / lying trunk / sphere
+  // §tools big objects read generously — any part of the trunk OR the crown within reach grabs the whole tree
   for (const o of treeObjs) { if (o.gone || o.falling) continue; const gy = surfaceAt(o.x, o.z).h;
-    if (o.fallen) { const [cx, cz] = fallenCrownPos(o);
-      capsule(o, "fallentree", (o.x+cx)/2, (o.z+cz)/2, o.x, gy+0.3, o.z, cx, surfaceAt(cx, cz).h+0.3, cz, 0.9); }
-    else capsule(o, "tree", o.x, o.z, o.x, gy-0.2, o.z, o.x, gy+o.scale*0.62, o.z, 0.8 + o.scale*0.05); }
+    if (o.fallen) { const [cx, cz] = fallenCrownPos(o);                                   // the whole lying length: stump end → crown end
+      capsule(o, "fallentree", (o.x+cx)/2, (o.z+cz)/2, o.x, gy+0.3, o.z, cx, surfaceAt(cx, cz).h+0.4, cz, 1.1 + o.scale*0.02); }
+    else { capsule(o, "tree", o.x, o.z, o.x, gy-0.3, o.z, o.x, gy+o.scale*1.05, o.z, 1.0 + o.scale*0.07);   // tall, fat trunk capsule (full height)
+      sphere(o, "tree", o.x, o.z, o.scale*0.92, o.scale*0.5); } }                          // + a generous crown sphere up top
   for (const o of rockObjs) { if (o.gone) continue; const gy = surfaceAt(o.x, o.z).h;
-    capsule(o, "rock", o.x, o.z, o.x, gy, o.z, o.x, gy+o.sc*0.5, o.z, 0.5 + o.sc*0.45); }
-  for (const s of stumps) { const gy = surfaceAt(s.x, s.z).h; capsule(s, "stump", s.x, s.z, s.x, gy, s.z, s.x, gy+0.8, s.z, 1.0); }
+    capsule(o, "rock", o.x, o.z, o.x, gy-0.1, o.z, o.x, gy+o.sc*0.55, o.z, 0.6 + o.sc*0.5); }
+  for (const s of stumps) { const gy = surfaceAt(s.x, s.z).h; capsule(s, "stump", s.x, s.z, s.x, gy-0.1, s.z, s.x, gy+0.9, s.z, 1.15); }
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
   for (const cr of crops) sphere(cr, "crop", cr.x, cr.z, 0.5*cr.scale, 1.0*cr.scale);   // §17 harvestable crops
   for (const sw of seaweedBeds) if (sw.ripe) sphere(sw, "seaweed", sw.x, sw.z, 0.6*sw.scale, 0.9*sw.scale);   // §17.2 pick sea lettuce
@@ -9586,13 +9587,18 @@ function drawShovel(view) {
     scale = id === "bucket" ? 0.46 : 0.6;
     ox = 0.26 + sway; oy = -0.52 - swap*0.5 + bob; oz = 0.92;
     roll = 0.08 + swayR; pitch = -0.08;
-  } else {                                                                                // shovel / axe / pickaxe / spear: angled, head up & in
+  } else {                                                                                // shovel / axe / pickaxe / spear / stake: angled, head up & in
+    const isPoke = isSpear || id === "stake";                                             // §tools spear & stake point forward and thrust away
+    const bladed = id === "axe" || id === "pickaxe";
     scale = isSpear ? 0.5 : 0.46;
-    ox = 0.16 + sway;
-    oy = -0.42 - sw*0.18 + rec*0.2 - swap*0.5 + bob + chg*0.1;
-    oz = 0.82 + sw*0.22 - rec*0.35 + jab*0.5 - chg*0.3;
-    roll = -0.4 + swayR - sw*0.28;                                                        // top leans toward centre; the swing rolls it over
-    pitch = (isSpear ? (-0.9 + jab*0.3 - chg*0.3) : -0.35) - sw*0.9 + rec*0.65;           // swing sweeps the head down & forward; spear points ahead
+    ox = (bladed ? 0.08 : 0.16) + sway;                                                   // the 45° roll swings the head right, so sit bladed tools further left
+    // §tools the swing drives the tool FORWARD, away from the player (an overhand chop), not just down
+    oy = (bladed ? -0.54 : -0.42) - sw*0.08 + rec*0.2 - swap*0.5 + bob + chg*0.1;
+    oz = 0.82 + sw*0.6 - rec*0.35 + jab*0.5 - chg*0.3;
+    let baseRoll = -0.4;
+    if (bladed) baseRoll = -0.4 - 0.78;                                                   // §tools rotate 45° clockwise so the blade / points face outward
+    roll = baseRoll + swayR - sw*0.12;
+    pitch = (isPoke ? (-0.95 + jab*0.3 - chg*0.3) : -0.2) - sw*1.05 + rec*0.65;           // chop sweeps the head down & forward; spear/stake thrust straight ahead
   }
   const cr = Math.cos(roll), sr = Math.sin(roll), cp = Math.cos(pitch), sp2 = Math.sin(pitch);
   const src = fp.mesh.pos, world = fp.world; let p = 0;
