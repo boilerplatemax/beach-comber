@@ -2922,7 +2922,10 @@ function aimAffordable(info) {
   if (!info) return false;
   const n = info.need;
   if (n === "hand" || n === "self") return true;
-  if (info.kind === "creature") return true;                 // inspecting always works
+  if (info.kind === "creature") {
+    if (selectedTool() === "bucket" && !isBucketable(info.obj && info.obj.t)) return false;   // §R4 bucket aimed at an ineligible creature → dimmed ring
+    return true;                                              // otherwise inspecting always works
+  }
   if (info.kind === "stump") return ownsTool("axe") || ownsTool("shovel");
   if (n === "bucket") return Inv.hotbarHasId("bucket") || selectedTool() === "bucket";
   return ownsTool(n);
@@ -4502,6 +4505,10 @@ const CREATURES = {
   octopus:  { mesh: () => octopusMesh(),              base: 0.5, max: 60,  label: "Tiny Octopus", desc: "A little octopus tucked in a crevice — it jets away if you crowd it." },
   seaduck:  { mesh: () => seaDuckMesh(),              base: 0.7, max: 70,  label: "Little Sea Duck", desc: "A small diving duck riding the swell just off the shore." },
 };
+// §R4 explicit per-creature bucketability — small aquatic & intertidal life only. Never birds (gull, piper,
+// heron, seaduck), mammals (seal, otter, raccoon, goat), or large/game fish (flounder, rockfish, lingcod).
+const BUCKETABLE_TYPES = { crab:1, hermit:1, fish:1, minnow:1, star:1, urchin:1, anemone:1, jelly:1, shrimp:1, snail:1, hopper:1, octopus:1, horseshoe:1, sculpin:1, nudibranch:1 };
+for (const k in CREATURES) CREATURES[k].bucketable = !!BUCKETABLE_TYPES[k];
 const FINDS = {
   shell:    { mesh: () => shellMesh(),               base: 0.5, max: 200, label: "Spiral Shell", desc: "An empty whelk, worn smooth.", rare: 0 },
   seaglass: { mesh: () => glassMesh([0.4,0.7,0.6]),  base: 0.35,max: 200, label: "Sea Glass", desc: "A frosted shard, tumbled by the waves.", rare: 0 },
@@ -5406,7 +5413,7 @@ function groundAutoDig(pt) {
   if (!autoSwitch || surfaceKind(pt[0], pt[1]) === "rock" || !ownsTool("shovel")) return false;
   autoSwitchTo("shovel"); digAt(pt[0], pt[1]); return true;
 }
-function toggleAutoPickup() { autoPickup = !autoPickup; saveAutoPick(); showCard("Auto-pickup " + (autoPickup ? "on" : "off"), "Loose items within reach collect themselves. Toggle with P."); }
+function toggleAutoPickup() { autoPickup = !autoPickup; saveAutoPick(); showCard("Auto-pickup " + (autoPickup ? "on" : "off"), "Loose items within reach collect themselves."); }
 function updateAutoPickup() {
   if (!autoPickup || mode !== "walk" || resting) return;
   const R2 = AUTO_PICK_R * AUTO_PICK_R;
@@ -6759,11 +6766,11 @@ function catchBiomeLabel(x, z) {
 }
 function catchTideLabel() { return isMinusTideNow() ? "a minus tide" : (tideInfo().rising ? "a rising tide" : "an ebbing tide"); }
 // §13.1 every small shore/pool creature is scoopable (seals/gulls/herons are too big for a pail)
-const BUCKETABLE = { crab: 1, fish: 1, star: 1, hermit: 1, anemone: 1, urchin: 1, jelly: 1, hopper: 1, piper: 1, minnow: 1,
-  snail: 1, shrimp: 1, octopus: 1 };   // §16.1 the new pool critters are scoopable too (ducks are too big for a pail)
+// §R4 the single source of truth is the registry flag set above
+function isBucketable(t) { return !!(CREATURES[t] && CREATURES[t].bucketable); }
 function bucketScoop(e) {                                       // bucket used on a creature
+  if (!isBucketable(e.t)) return false;                        // §R4 ineligible (bird/mammal/large fish) → normal inspect, dimmed ring
   if (bucket.creatures.length >= BUCKET_CAP) { showCard("Bucket full", `It holds ${BUCKET_CAP} creatures.`); return true; }
-  if (!BUCKETABLE[e.t]) return false;                          // not scoopable → let the normal inspect happen
   // §13.3 creatures can always be scooped, with or without water; a fresh catch starts fully moist
   bucket.creatures.push({ t: e.t, scale: e.scale, tint: e.tint || [1,1,1], special: !!e.special, name: e.name, poolRim: e.poolRim,
     moist: 1, caught: { biome: catchBiomeLabel(e.x, e.z), tide: catchTideLabel() } });
@@ -8052,9 +8059,33 @@ function spawnLeaves(x, z, top, col) {
   for (let i = 0; i < 8 && particles.length < 200; i++) { const a = rng()*6.283, s = 0.4 + rng()*1.4;
     particles.push({ x: x+Math.cos(a)*1.2, y: top - rng()*1.4, z: z+Math.sin(a)*1.2, vx: Math.cos(a)*s, vy: -0.3-rng()*0.8, vz: Math.sin(a)*s, t: 0, life: 1.1+rng(), col }); }
 }
+// §R4 the height a boulder / stump / already-fallen trunk offers under the crown, so a tree can come to rest ON it
+function propRestHeight(x, z) {
+  let h = -1e9;
+  for (const r of rockObjs) if (!r.gone) { const rr = 0.6 + (r.sc || 1) * 0.5; if (Math.hypot(r.x - x, r.z - z) < rr) h = Math.max(h, surfaceAt(r.x, r.z).h + (r.sc || 1) * 0.5); }
+  for (const s of stumps) if (Math.hypot(s.x - x, s.z - z) < 0.8) h = Math.max(h, surfaceAt(s.x, s.z).h + 0.6);
+  return h;
+}
+// §R4 compute the lean (from vertical) at which the toppling trunk comes to rest along the terrain/props in its
+// fall direction — so it lies on the ground on slopes instead of driving straight into the hill.
+function fallRestLean(o) {
+  const ang = o.leanDir + Math.PI / 2;                         // the direction the crown topples toward
+  const fx = Math.cos(ang), fz = Math.sin(ang);
+  const L = (o.treeScale || o.scale || 1) * 0.72;              // crown reach when flat
+  const by = surfaceAt(o.x, o.z).h;
+  // the resting line runs from the base to the ground (or a prop top) under the crown; the highest obstacle
+  // along the way is what the trunk comes to rest on, so take the max to avoid penetrating it
+  let tipGround = -1e9;
+  for (let t = 0.6; t <= 1.0; t += 0.2) { const px = o.x + fx*L*t, pz = o.z + fz*L*t;
+    tipGround = Math.max(tipGround, surfaceAt(px, pz).h, propRestHeight(px, pz)); }
+  const lean = Math.atan2(L, tipGround - by);                  // flat → π/2; downhill → more; uphill → less
+  return Math.max(0.5, Math.min(Math.PI/2 + 0.9, lean - 0.06));   // a hair short so it rests on its underside, not its centre
+}
 function startFall(o) {
   o.falling = true; o.fall = 0;
   o.leanDir = Math.atan2(o.z - player.z, o.x - player.x);      // topple away from the player
+  o.treeScale = o.scale;
+  o.restLean = fallRestLean(o);                                // §R4 precompute the resting pose before animating
   if (onDig) onDig("timber");
 }
 // The REAL toppled tree mesh stays lying on the ground — no swap to spawned logs.
@@ -8065,9 +8096,12 @@ function finishFall(o) {
   o.crownChops = o.species === "palm" ? 0 : 2;                 // palms have no woody crown
   o.trunkChops = 3 + (rng()*2|0);
   o.bornFall = clock.t; o.sink = 0;
-  o.leanAdd = 1.5; setTreeInstance(o);
+  o.leanAdd = (o.restLean !== undefined ? o.restLean : 1.5); setTreeInstance(o);   // §R4 rest along the terrain, not into it
   if (o.coll) { o.coll.r = 0; rebuildCollHash(); }             // standing collider off
   fallenTrees.push(o);
+  // §R4 impact: a leaf burst and dust puff at the crown contact point
+  const [ccx, ccz] = fallenCrownPos(o); spawnLeaves(ccx, ccz, surfaceAt(ccx, ccz).h + 1.2, leafCol(o.species));
+  spawnSand(ccx, surfaceAt(ccx, ccz).h + 0.1, ccz, 10, [0.82, 0.74, 0.56]);
   if (onDig) onDig("thud");
   const seed = o.species === "palm" ? "coconut" : o.species === "pine" ? "pinecone" : "nut";
   for (let i = 0, n = 1 + (rng()*3|0); i < n; i++) spawnFind(seed, o.x + (rng()-0.5)*2.5, o.z + (rng()-0.5)*2.5);  // 1-3 species seeds
@@ -8208,7 +8242,7 @@ let rockfallT = 0;
 function updateTools(dt, gdt) {
   for (const o of treeObjs) {
     if (o.gone) continue;
-    if (o.falling) { o.fall = Math.min(1, o.fall + dt/1.1); o.leanAdd = (o.fall*o.fall)*1.5; setTreeInstance(o); if (o.fall >= 1) finishFall(o); }
+    if (o.falling) { o.fall = Math.min(1, o.fall + dt/1.1); o.leanAdd = (o.fall*o.fall)*(o.restLean !== undefined ? o.restLean : 1.5); setTreeInstance(o); if (o.fall >= 1) finishFall(o); }   // §R4 ease into the resting pose
     else if (o.shake > 0) { o.shake = Math.max(0, o.shake - dt*3); o.leanAdd = Math.sin(clock.t*40)*0.05*o.shake; setTreeInstance(o); }
   }
   // stumps sprout saplings after a while, unless dug out
@@ -8241,7 +8275,9 @@ function useLeavesAt(x, z) {        // compost: a leaf speeds a nearby young sap
 // The real toppled tree mesh weathers over a few in-game days: settles, then slowly sinks and vanishes.
 function updateFallen(dt, gdt) {
   for (let k = fallenTrees.length - 1; k >= 0; k--) { const o = fallenTrees[k]; if (o.gone) { fallenTrees.splice(k, 1); continue; }
-    if (o.settle > 0) { o.settle = Math.max(0, o.settle - dt); o.leanAdd = 1.5 + Math.sin(o.settle * 22) * o.settle * 0.14; setTreeInstance(o); }   // land with a little bounce
+    if (o.settle > 0) { o.settle = Math.max(0, o.settle - dt); const rl = (o.restLean !== undefined ? o.restLean : 1.5); o.leanAdd = rl + Math.sin(o.settle * 22) * o.settle * 0.14; setTreeInstance(o);
+      // §R4 on a slope the trunk slides/rolls a short way downhill before settling
+      const grad = groundGradient(o.x, o.z); if (grad.slope > 0.12) { o.x += grad.dx*dt*grad.slope*1.6; o.z += grad.dz*dt*grad.slope*1.6; } }
     const age = clock.t - o.bornFall;
     if (age > GROW_DAYS * DAY_PERIOD * 1.5) { o.sink += 0.0025 * healMul * gdt; setTreeInstance(o);
       if (o.sink > 1.4) { removeFallen(o); stumps.push({ x: o.x, z: o.z, species: o.species, hp: 4, sproutAt: clock.t + SPROUT_DAYS * DAY_PERIOD }); saveWorld(); } }
@@ -8381,7 +8417,7 @@ function loadWorld() {
     for (const f of (w.fallen||[])) {
       const o = treeObjs.find(t => t.i === f[0] && t.species === f[1]); if (!o || o.gone) continue;
       o.fallen = true; o.treeScale = f[2]; o.scale = f[3]; o.crownChops = f[4]; o.trunkChops = f[5];
-      o.leanDir = f[6]; o.ang = o.leanDir + Math.PI/2; o.settle = 0; o.leanAdd = 1.5;
+      o.leanDir = f[6]; o.ang = o.leanDir + Math.PI/2; o.settle = 0; o.restLean = fallRestLean(o); o.leanAdd = o.restLean;   // §R4 rest along the terrain
       o.bornFall = clock.t - (f[7]||0); o.sink = 0;
       setTreeInstance(o); if (o.coll) o.coll.r = 0;
       fallenTrees.push(o);
