@@ -7000,6 +7000,7 @@ function notify(itemId, qty, special) {
   if (ex) { ex.qty += qty; ex.t = 3.2; }
   else { toasts.push({ id: itemId, name, qty, t: 3.2, special: !!special }); while (toasts.length > 3) toasts.shift(); }
   if (typeof SND !== "undefined") { SND.play("pickup"); if (special) SND.play("discover"); }   // §Sound pickup pop + new-find chime
+  if (special && typeof recordFind === "function") recordFind(itemId);   // §19C log where & when a find was first discovered
   renderToasts();
 }
 function updateToasts(dt) {
@@ -7693,6 +7694,8 @@ function targetAlongRay(r, sticky) {
   for (let i = 0; i < storageBoxes.length; i++) sphere(storageBoxes[i], "storagebox", storageBoxes[i].x, storageBoxes[i].z, 0.3, 0.8);
   for (const c of campfires) sphere(c, "campfire", c.x, c.z, 0.35, 1.0);   // §Cooking look at a fire + F to cook
   if (cottage) { const bw = cotLocalToWorld(C_BED.x, C_BED.z); sphere(cottage, "cotbed", bw[0], bw[1], 0.75, 1.7); }   // §19B the cottage bed
+  if (cottage) for (const s of COT_SLOTS) { const w = cotLocalToWorld(s.x, s.z), gy = surfaceAt(w[0], w[1]).h;         // §19C display slots
+    sphere(s, "dispslot", w[0], w[1], (cottage.floorY + s.y) - gy, 0.16); }
   for (const L of placedLanterns) sphere(L, "lantern", L.x, L.z, 0.4, 0.6);   // §tools pick a set-down lantern back up
 
   // stickiness: keep the locked target unless another is clearly closer
@@ -7726,6 +7729,7 @@ function useToolOnTarget(t) {
     case "storagebox": openStash(storageBoxes.indexOf(t.obj)); return true;
     case "campfire": doFireAction(t.obj); return true;   // §Cooking one-press world interaction (no modal)
     case "cotbed": trySleepCottage(); return true;       // §19B sleep / set respawn at the cottage
+    case "dispslot": toggleDisplaySlot(t.obj); return true;   // §19C place / take a displayed find
     case "lantern": pickUpLantern(t.obj); return true;   // §tools pick a set-down lantern back up
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
     case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
@@ -10347,6 +10351,7 @@ function cotBedMesh() { const m = Mesh();
 function cotCabinetMesh() { const m = Mesh();
   mBox(m, 0, 0.48, 0, 0.42, 0.48, 0.3, CWC.cab);                 // lower cupboard
   mBox(m, -0.4, 1.28, 0, 0.03, 0.44, 0.28, CWC.cab); mBox(m, 0.4, 1.28, 0, 0.03, 0.44, 0.28, CWC.cab);  // corner posts
+  mBox(m, 0, 0.98, 0, 0.4, 0.02, 0.28, CWC.cab); mBox(m, 0, 1.4, 0, 0.4, 0.02, 0.28, CWC.cab);          // two glass-shelf boards
   mBox(m, 0, 1.74, 0, 0.42, 0.03, 0.3, CWC.cab);                 // top board
   return m; }
 function cotShelfMesh(w) { const m = Mesh(); mBox(m, 0, 0, 0, w/2, 0.03, 0.16, CWC.plankDk);
@@ -10506,8 +10511,84 @@ function trySleepCottage() {
       : "The cottage is your respawn point. A rest here restores your stamina.");
   }
 }
-function saveCottage() { if (!cottage) return; try { localStorage.setItem("bcc_"+SEED_STR, JSON.stringify({ cosy: cottage.cosy })); } catch(e){} }
-function loadCottage() { if (!cottage) return; try { const o = JSON.parse(localStorage.getItem("bcc_"+SEED_STR)||"null"); if (o && typeof o.cosy==="number") cottage.cosy = o.cosy; } catch(e){} }
+function saveCottage() { if (!cottage) return; try { localStorage.setItem("bcc_"+SEED_STR, JSON.stringify({ cosy: cottage.cosy, disp: cottage.disp, trophies: cottage.trophies, flog: findLog })); } catch(e){} }
+function loadCottage() { if (!cottage) return; try { const o = JSON.parse(localStorage.getItem("bcc_"+SEED_STR)||"null"); if (!o) return;
+  if (typeof o.cosy === "number") cottage.cosy = o.cosy;
+  if (o.disp && typeof o.disp === "object") cottage.disp = o.disp;
+  if (Array.isArray(o.trophies)) cottage.trophies = o.trophies;
+  if (o.flog && typeof o.flog === "object") Object.assign(findLog, o.flog);
+} catch(e){} }
+
+/* §19C DISPLAYS — place any find from the satchel onto a shelf/cabinet/sill slot.
+   It shows the real 3D model and stays put; interact again to take it back.
+   Hovering a placed find shows its name and where & when it was found.      */
+const findLog = {};   // itemId → { day, where } recorded on first discovery (for display tooltips)
+function findWhereLabel() {
+  if (waterDepthAt(player.x, player.z) > 0.3) return "in the shallows";
+  const k = (typeof surfaceKind === "function") ? surfaceKind(player.x, player.z) : "sand";
+  if (k === "wet") return "at the waterline";
+  if (k === "rock") return "among the rocks";
+  if (k === "grass") return "up in the grass";
+  return "on the beach";
+}
+function recordFind(id) { if (!id || findLog[id]) return; findLog[id] = { day: Math.floor(tideDay) + 1, where: findWhereLabel() }; }
+const COT_NOT_DISPLAY = new Set(["toolkit","shovel","axe","pickaxe","bucket","spear","rod","lantern","chestbox","pot"]);
+function isDisplayable(id) { const it = ITEMS[id]; return !!(it && it.model) && !COT_NOT_DISPLAY.has(id); }
+// slot anchors (local): back-wall shelves, front-wall shelves, glass cabinet, windowsill
+const COT_SLOTS = (function () { const s = []; let i = 0;
+  const add = (x, y, z, face, surf) => s.push({ key: "s" + (i++), x, y, z, face: face || 0, surf });
+  for (let k = 0; k < 3; k++) { const y = 0.98 + 0.5*k + 0.05; for (const dx of [-0.42,0,0.42]) add(-1.72+dx, y, C_ZB+0.13, 0, "shelf"); }
+  for (let k = 0; k < 2; k++) { const y = 1.05 + 0.55*k + 0.05; for (const dx of [-0.3,0.3]) add(-1.55+dx, y, C_ZF-0.13, Math.PI, "shelf"); }
+  for (const y of [1.02, 1.44]) for (const dz of [-0.16, 0.16]) add(C_CAB.x-0.06, y, C_CAB.z+dz, Math.PI/2, "cabinet");
+  for (const dz of [-0.3, 0, 0.3]) add(C_XL+0.2, C_WY+0.03, 0.81+dz, -Math.PI/2, "sill");
+  return s;
+})();
+const COT_SLOT_MAP = {}; for (const s of COT_SLOTS) COT_SLOT_MAP[s.key] = s;
+const dispScratch = new Float32Array(COT_SLOTS.length * 10);
+const dispCache = {};
+function meshBounds(m) { let a = [1e9,1e9,1e9], b = [-1e9,-1e9,-1e9];
+  for (let i = 0; i < m.pos.length; i += 3) for (let j = 0; j < 3; j++) { a[j] = Math.min(a[j], m.pos[i+j]); b[j] = Math.max(b[j], m.pos[i+j]); }
+  return { a, b }; }
+function dispModel(id) {   // cached normalized drawer: fits each find to a consistent display size
+  if (dispCache[id] !== undefined) return dispCache[id];
+  const it = ITEMS[id]; if (!it || !it.model) return (dispCache[id] = null);
+  const m = it.model(), bd = meshBounds(m), ext = Math.max(bd.b[0]-bd.a[0], bd.b[1]-bd.a[1], bd.b[2]-bd.a[2]) || 1;
+  const scale = 0.33 / ext, yOff = -bd.a[1] * scale;
+  return (dispCache[id] = { dyn: makeDynamic(m, COT_SLOTS.length), scale, yOff, tint: it.tint || [1,1,1] });
+}
+function toggleDisplaySlot(slot) {
+  const cur = cottage.disp[slot.key];
+  if (cur) {
+    if (Inv.add(cur.id, 1) > 0) { delete cottage.disp[slot.key]; if (onDig) onDig("pickup"); saveCottage(); if (typeof checkSets === "function") checkSets(); }
+    else { showCard("Pack full", "No room to take it back."); }
+    return;
+  }
+  const sel = selectedItem();
+  if (!isDisplayable(sel)) { showCard("Nothing to display", "Hold a find (not a tool) and aim at a shelf to place it."); return; }
+  const fl = findLog[sel] || { day: Math.floor(tideDay)+1, where: findWhereLabel() };
+  cottage.disp[slot.key] = { id: sel, day: fl.day, where: fl.where };
+  Inv.remove(sel, 1); if (onDig) onDig("pat"); if (typeof SND !== "undefined") SND.play("discover", { volume: 0.25 });
+  saveCottage(); if (typeof checkSets === "function") checkSets();
+}
+function displaySlotPrompt(slot) {
+  const cur = cottage.disp[slot.key];
+  if (cur) { const nm = ITEMS[cur.id] ? ITEMS[cur.id].name : cur.id; return `${nm} — found Day ${cur.day}, ${cur.where}` + (IS_TOUCH ? " · tap to take" : " · F to take back"); }
+  const sel = selectedItem();
+  if (isDisplayable(sel)) { const nm = ITEMS[sel] ? ITEMS[sel].name : sel; return (IS_TOUCH ? "tap" : "click/F") + ` to display ${nm}`; }
+  return "Display spot — hold a find to place it here";
+}
+function drawCottageDisplays(view) {
+  if (!cottage) return; const byId = {};
+  for (const k in cottage.disp) { const d = cottage.disp[k]; if (d) (byId[d.id] = byId[d.id] || []).push(k); }
+  let any = false;
+  for (const id in byId) { const mi = dispModel(id); if (!mi) continue; if (!any) { propUniforms(view); any = true; }
+    const arr = dispScratch; let n = 0;
+    for (const k of byId[id]) { const s = COT_SLOT_MAP[k]; if (!s) continue; const w = cotLocalToWorld(s.x, s.z), o = n*10;
+      arr[o]=w[0]; arr[o+1]=cottage.floorY+s.y+mi.yOff; arr[o+2]=w[1]; arr[o+3]=mi.scale; arr[o+4]=cottage.yaw+s.face; arr[o+5]=0; arr[o+6]=0;
+      arr[o+7]=mi.tint[0]; arr[o+8]=mi.tint[1]; arr[o+9]=mi.tint[2]; n++; }
+    if (n) mi.dyn.draw(arr, n);
+  }
+}
 
 /* ---- save / load planted trees & stumps (per seed) ---- */
 function saveWorld() {
@@ -11916,6 +11997,7 @@ function frame(now) {
   drawStorage(view);
   drawBuilds(view);        // §16B placed building pieces + the placement ghost
   drawCottage(view);       // §19 the home-base cottage (shell, door, roof, glowing windows)
+  drawCottageDisplays(view);   // §19C placed finds on shelves / cabinet / windowsill
   drawSalt(view);
   drawLife(view);
   drawGulls(view);
@@ -12064,6 +12146,11 @@ function frame(now) {
         promptEl.textContent = hasUse ? (IS_TOUCH ? "tap: use · crouch+tap: pick up" : "click/F use · crouch+click pick up") : (IS_TOUCH ? "tap to pick up" : "click or F to pick up");
         promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
         crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block"; }
+    }
+    if (!buildMode && curTarget && curTarget.kind === "dispslot") {   // §19C display-slot tooltip overrides the generic prompt
+      promptEl.textContent = displaySlotPrompt(curTarget.obj);
+      promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
+      crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
   } else { promptEl.style.display = "none"; crossEl.className = ""; crossEl.style.display = "none"; curTarget = null; }
   const titleUp = (mode === "preview" || mode === "intro");       // hide in-world readouts behind the title
