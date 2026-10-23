@@ -1677,7 +1677,7 @@ const WEATHER_BITE_MUL = { clear: 1, overcast: 0.75, fog: 0.95, rain: 0.6, storm
 weather = {
   state: "clear", day: -1, forced: null,
   wind: 0.15, rain: 0, fog: 0, dim: 0, waveMul: 1, windDir: 0.7,     // smoothed live params
-  flash: 0, nextBolt: 0, lastStormDay: -99, pendingStormMorning: false,
+  flash: 0, reflashAt: 0, nextBolt: 0, lastStormDay: -99, pendingStormMorning: false,
   wormT: 0,
 };
 function weatherWindDir(d) { return mulberry32((SEED_INT ^ (Math.imul((d|0) + 7, 0x85ebca6b) >>> 0)) >>> 0)() * 6.2831853; }
@@ -1709,12 +1709,14 @@ function applyWeatherFog() {
   FOG_NEAR = baseFogNear * (1 - 0.45 * Math.min(1, weather.fog));
 }
 function updateLightning(dt) {
-  weather.flash = Math.max(0, weather.flash - dt * 3.2);                      // flashes decay fast
+  weather.flash = Math.max(0, weather.flash - dt * 3.4);                      // flashes decay fast
+  if (weather.reflashAt && clock.t >= weather.reflashAt) { weather.flash = 0.65 + Math.random() * 0.3; weather.reflashAt = 0; }   // the flicker of a bolt
   if (weather.state !== "storm") return;
   if (clock.t >= weather.nextBolt) {
-    weather.flash = 0.8 + Math.random() * 0.4;                               // sky lights up
+    weather.flash = 0.85 + Math.random() * 0.5;                              // the sky lights up over the sea
     weather.nextBolt = clock.t + STORM_BOLT_MIN + Math.random() * (STORM_BOLT_MAX - STORM_BOLT_MIN);
-    if (typeof onThunder === "function") onThunder(0.6 + Math.random() * 1.6);  // thunder follows after a delay (set up in audio hooks)
+    if (Math.random() < 0.6) weather.reflashAt = clock.t + 0.08 + Math.random() * 0.12;   // a quick second flicker
+    if (typeof onThunder === "function") onThunder(0.5 + Math.random() * 2.0);            // distant thunder follows after a delay (audio hooks)
   }
 }
 function updateWeather(dt) {
@@ -1820,6 +1822,52 @@ function drawRain(view) {
       gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
       puddleDyn.draw(puddleArr, k); gl.depthMask(true); gl.disable(gl.BLEND); gl.uniform1f(propU.uGhost, 0); }
   }
+}
+
+/* §20D AFTER A STORM — the morning after a storm day brings the best wash-up:
+   more & rarer finds, kelp piles, bigger driftwood, maybe a chest, and gulls. */
+const STORM_RARE = ["agate","nautilus","glassfloat","bone","seabean","bell","tin","fossil","float","egg","moonsnail","sanddollar"];
+function spawnWashedChest() {
+  let spot = null;
+  for (let k=0;k<40 && !spot;k++){ const a = rng()*6.283, r = HALF*(0.3+rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z);
+    if (h > waterLevel+0.4 && h < wetLevel+2.5 && waterDepthAt(x, z) < 0.05) spot = { x, z }; }
+  if (!spot) return;
+  const id = 1000 + chests.length; registerChestItems(id);
+  const loot = [], rolls = 3 + (rng()*3|0);
+  for (let r=0;r<rolls;r++){ const L = wpick(TREASURE_LOOT); loot.push({ id: L.id, qty: L.min + (rng()*(L.max-L.min+1)|0), fragile: L.fragile }); }
+  chests.push({ id, x: spot.x, z: spot.z, intertidal: false, expose: 1, exposed: true, barnacles: 0, scrapes: 0, smashHits: 0,
+    opened: false, open: 0, looted: false, loot, keyX: spot.x, keyZ: spot.z, tell: "plank", placed: true, washedIn: true });
+  if (typeof sparkle === "function") sparkle(spot.x, heightAt(spot.x, spot.z)+0.5, spot.z, [0.9,0.8,0.4], 12);
+  if (typeof saveChests === "function") saveChests();
+}
+function gatherStormGulls() {
+  for (let i=0;i<8;i++){ let x, z, ok = false;
+    for (let k=0;k<20 && !ok;k++){ const a = rng()*6.283, r = HALF*(0.3+rng()*0.4); x = Math.sin(a)*r; z = -Math.cos(a)*r; const h = heightAt(x, z); if (h > waterLevel+0.3 && h < wetLevel+3) ok = true; }
+    if (!ok) continue;
+    spawnCreature("gull", x, z, { cxx: x, czz: z }); const e = life[life.length-1];
+    if (e && e.t === "gull") { if (typeof initGull === "function") initGull(e); e.gstate = "forage"; e.timer = 4 + rng()*5; e.alt = 0; e.y = heightAt(x, z); }
+  }
+}
+function onStormMorning() {
+  let spawned = 0;
+  for (let i=0;i<110 && spawned<75;i++){
+    const a = rng()*6.283, r = HALF*(0.25+rng()*0.7), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z);
+    if (!(h > waterLevel+0.2 && h < wetLevel+4)) continue;
+    const roll = rng();
+    if (roll < 0.22) spawnFind("kelp", x, z);                                      // kelp
+    else if (roll < 0.42) spawnFind(STORM_RARE[(rng()*STORM_RARE.length)|0], x, z);  // more & rarer finds
+    else { const cb = COAST_BIOMES[coastBiomeAt(x, z)], pick = cb.finds[(rng()*cb.finds.length)|0]; if (FINDS[pick]) spawnFind(pick, x, z); }
+    spawned++;
+  }
+  for (let c=0;c<3;c++){ const a = rng()*6.283, r = HALF*(0.3+rng()*0.5), cx = Math.sin(a)*r, cz = -Math.cos(a)*r, h = heightAt(cx, cz);   // kelp piles
+    if (h > waterLevel+0.2 && h < wetLevel+3) for (let k=0;k<5;k++) spawnFind("kelp", cx+(rng()-0.5)*2.2, cz+(rng()-0.5)*2.2); }
+  for (let i=0;i<6;i++){ const a = rng()*6.283, r = HALF*(0.3+rng()*0.55), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z);   // bigger driftwood
+    if (h > waterLevel+0.2 && h < wetLevel+3) { const v = 1+(rng()-0.5)*0.15; driftObjs.push({ x, z, scale: 2.4+rng()*1.5, yaw: rng()*6.28, roll:(rng()-0.5)*0.4, tint:[0.6*v,0.55*v,0.48*v], gone:false, big:true }); } }
+  if (typeof addFlotsam === "function") addFlotsam(5, 0.7);                         // loose kelp & flotsam drifting in
+  if (rng() < 0.45) spawnWashedChest();                                            // occasionally a chest
+  gatherStormGulls();                                                              // gulls gather on the beach
+  const finds = life.filter((e) => e.kind === "find"); if (finds.length > 520) life = life.filter((e) => e.kind !== "find").concat(finds.slice(-520));
+  showCard("After the storm", "The beach is strewn with wrack and driftwood, and the gulls have gathered.");
 }
 
 /* --------------------------------------------------------------------- *
