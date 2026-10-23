@@ -1104,12 +1104,14 @@ function setDayNight(on) { dayNightEnabled = on; if (!on) { timeOfDay = MORNING_
 const BASE_FOG_DENSITY = 0.0016, BASE_FOG_NEAR = 50.0;   // §13.6 base; graphics settings scale these live
 let FOG_DENSITY = BASE_FOG_DENSITY;   // see far across the big landscape, still hazy
 let FOG_NEAR = BASE_FOG_NEAR;         // clear band before fog ramps in
+let baseFogDensity = BASE_FOG_DENSITY, baseFogNear = BASE_FOG_NEAR;   // §20 GFX-scaled base; weather adds fog on top each frame
 
 // Day & night palettes; SKY is the blended current state (uploaded each frame).
 const SKY_DAY = { zenith: [0.42, 0.54, 0.63], horizon: [0.78, 0.77, 0.72], warm: [1.00, 0.92, 0.78] };
 // §18 a deep moonlit blue, never black — brighter toward the horizon so silhouettes stay readable
 const SKY_NIGHT = { zenith: [0.06, 0.09, 0.19], horizon: [0.15, 0.19, 0.31], warm: [0.42, 0.48, 0.64] };
 const SKY = { zenith: [0,0,0], horizon: [0,0,0], warm: [0,0,0], sun: [0,0,0], moon: [0,0,0] };
+let weather = null;   // §20 the weather state (assigned in the §20 module below); null until then
 // §18 MOON — a full lunar cycle over twice the tide's spring/neap cycle, so full & new moon both land on spring tides
 let NIGHT_EDGE = -0.5;              // tunable: more negative → shorter night. -0.5 ≈ night is ~1/3 of the day
 function moonPhase() { return (tideDay / (TIDE_CYCLE_DAYS * 2)) % 1; }    // 0 = new moon, 0.5 = full moon (both land on spring tides)
@@ -1141,6 +1143,15 @@ function updateSun() {
   if (mood > 0) { const grey = [0.5, 0.52, 0.55];
     for (const k of ["zenith", "horizon"]) SKY[k] = SKY[k].map((v, i) => v * (1 - mood * 0.6) + grey[i] * mood * 0.6);
     SKY.warm = SKY.warm.map(v => v * (1 - mood * 0.45));
+  }
+  // §20 weather: overcast/rain/storm flatten & grey the sky; a lightning flash lights it up
+  if (weather) {
+    if (weather.dim > 0.001) { const grey = [0.47, 0.5, 0.54];
+      for (const k of ["zenith", "horizon"]) SKY[k] = SKY[k].map((v, i) => v * (1 - weather.dim * 0.55) + grey[i] * weather.dim * 0.55);
+      SKY.warm = SKY.warm.map(v => v * (1 - weather.dim * 0.5));
+    }
+    if (weather.flash > 0.001) { const fl = weather.flash * 0.6;
+      for (const k of ["zenith", "horizon", "warm"]) SKY[k] = SKY[k].map(v => v + fl); }
   }
 }
 updateSun();
@@ -1640,6 +1651,109 @@ function eventMood() {
 // so the whole system is gone. updateRipples/drawRipples are kept as no-ops in case anything calls them.
 function updateRipples() {}
 function drawRipples() {}
+
+/* ===================================================================== *
+ * § 20  WEATHER — one state per in-game day, rolled deterministically from
+ *   the seed, with smooth transitions. Drives fog, light, wind, waves, rain,
+ *   storms, after-storm wash-up, and light gameplay effects. Never damages.
+ * ===================================================================== */
+const WEATHER_STATES = ["clear", "overcast", "fog", "rain", "storm"];
+// §20 odds per in-game day (sum = 1.00). Clear is most common; storm is rare.
+const WEATHER_ODDS = { clear: 0.46, overcast: 0.22, fog: 0.12, rain: 0.15, storm: 0.05 };
+// per-state targets the live params ease toward (wind 0..1, rain 0..1, fog 0..1, dim 0..1, wave multiplier)
+const WEATHER_PARAMS = {
+  clear:    { wind: 0.15, rain: 0,    fog: 0.00, dim: 0.00, wave: 1.00 },
+  overcast: { wind: 0.30, rain: 0,    fog: 0.10, dim: 0.26, wave: 1.10 },
+  fog:      { wind: 0.10, rain: 0,    fog: 1.00, dim: 0.16, wave: 0.95 },
+  rain:     { wind: 0.50, rain: 0.65, fog: 0.28, dim: 0.40, wave: 1.28 },
+  storm:    { wind: 1.00, rain: 1.00, fog: 0.34, dim: 0.58, wave: 1.75 },
+};
+const WEATHER_LABEL = { clear: "Clear", overcast: "Overcast", fog: "Fog", rain: "Rain", storm: "Storm" };
+const WEATHER_TRANSITION = 55;        // seconds (time-constant) to ease between days' weather — smooth, not instant
+const WEATHER_FOG_MAX = 0.019;        // fog density added at fog=1 (thick sea fog)
+const WIND_SWAY_MUL = 2.6;            // extra foliage sway per unit wind (uWind = 1 + wind*this)
+const STORM_BOLT_MIN = 6, STORM_BOLT_MAX = 16;   // seconds between lightning bolts in a storm
+const WEATHER_BITE_MUL = { clear: 1, overcast: 0.75, fog: 0.95, rain: 0.6, storm: 0.5 };   // lower = bites sooner
+weather = {
+  state: "clear", day: -1, forced: null,
+  wind: 0.15, rain: 0, fog: 0, dim: 0, waveMul: 1,     // smoothed live params
+  flash: 0, nextBolt: 0, lastStormDay: -99, pendingStormMorning: false,
+  wormT: 0,
+};
+function weatherRngForDay(d) { return mulberry32((SEED_INT ^ (Math.imul((d|0) + 1, 0x9e3779b1) >>> 0)) >>> 0); }
+function weatherForDay(d) {
+  if (weather.forced) return weather.forced;
+  let x = weatherRngForDay(d)(), acc = 0;
+  for (const s of WEATHER_STATES) { acc += WEATHER_ODDS[s]; if (x < acc) return s; }
+  return "clear";
+}
+function fogDaylightCurve() {   // fog rolls in at dawn & dusk, burns off midday
+  const t = timeOfDay, dawn = Math.exp(-Math.pow((t - 0.26) / 0.075, 2)), dusk = Math.exp(-Math.pow((t - 0.80) / 0.075, 2));
+  return Math.min(1, dawn + dusk + 0.08);
+}
+function weatherBiteMul() { return WEATHER_BITE_MUL[weather.state] || 1; }
+function weatherIsWet() { return weather.state === "rain" || weather.state === "storm"; }
+function rainAmt() { return weather.rain; }
+function initWeather() {   // set day-0 weather with no transition (no visible blend on load)
+  const d = Math.floor(tideDay); weather.day = d; weather.state = weatherForDay(d);
+  const P = WEATHER_PARAMS[weather.state];
+  weather.wind = P.wind; weather.rain = P.rain; weather.dim = P.dim; weather.waveMul = P.wave;
+  weather.fog = weather.state === "fog" ? P.fog * fogDaylightCurve() : P.fog;
+  if (weather.state === "storm") weather.lastStormDay = d;
+  weather.nextBolt = (typeof clock !== "undefined" ? clock.t : 0) + STORM_BOLT_MIN;
+  applyWeatherFog();
+}
+function applyWeatherFog() {
+  FOG_DENSITY = baseFogDensity + weather.fog * WEATHER_FOG_MAX;
+  FOG_NEAR = baseFogNear * (1 - 0.45 * Math.min(1, weather.fog));
+}
+function updateLightning(dt) {
+  weather.flash = Math.max(0, weather.flash - dt * 3.2);                      // flashes decay fast
+  if (weather.state !== "storm") return;
+  if (clock.t >= weather.nextBolt) {
+    weather.flash = 0.8 + Math.random() * 0.4;                               // sky lights up
+    weather.nextBolt = clock.t + STORM_BOLT_MIN + Math.random() * (STORM_BOLT_MAX - STORM_BOLT_MIN);
+    if (typeof onThunder === "function") onThunder(0.6 + Math.random() * 1.6);  // thunder follows after a delay (set up in audio hooks)
+  }
+}
+function updateWeather(dt) {
+  if (typeof clock === "undefined") return;
+  const d = Math.floor(tideDay);
+  if (d !== weather.day) {
+    const yesterday = weather.state;
+    weather.state = weatherForDay(d);
+    if (weather.day >= 0 && yesterday === "storm" && weather.state !== "storm") weather.pendingStormMorning = true;   // §20 after-storm wash-up
+    if (weather.state === "storm") weather.lastStormDay = d;
+    weather.day = d;
+  }
+  const P = WEATHER_PARAMS[weather.state] || WEATHER_PARAMS.clear;
+  let fogT = P.fog; if (weather.state === "fog") fogT = P.fog * fogDaylightCurve();
+  const s = Math.min(1, dt / WEATHER_TRANSITION);                            // exponential ease toward targets → smooth transitions
+  weather.wind    += (P.wind - weather.wind) * s;
+  weather.rain    += (P.rain - weather.rain) * s;
+  weather.fog     += (fogT   - weather.fog)  * s;
+  weather.dim     += (P.dim  - weather.dim)  * s;
+  weather.waveMul += (P.wave - weather.waveMul) * s;
+  updateLightning(dt);
+  applyWeatherFog();
+  if (weather.pendingStormMorning && typeof onStormMorning === "function") { weather.pendingStormMorning = false; onStormMorning(); }
+  if (typeof updateWeatherGameplay === "function") updateWeatherGameplay(dt);
+}
+function forceWeather(state) {   // debug: pin a state (or null to resume the rolled sequence)
+  weather.forced = state;
+  if (state) { weather.state = state; if (state === "storm") weather.lastStormDay = Math.floor(tideDay); }
+  else weather.state = weatherForDay(Math.floor(tideDay));
+}
+function debugStormMorning() {   // debug: jump to the morning after a storm (the best wash-up)
+  weather.lastStormDay = Math.floor(tideDay);
+  tideDay = Math.floor(tideDay) + 1; timeOfDay = MORNING_TIME; tideT = 0.1;   // next day, dawn, tide coming up
+  weather.forced = null; weather.day = Math.floor(tideDay); weather.state = weatherForDay(weather.day);
+  const P = WEATHER_PARAMS[weather.state]; weather.wind = P.wind; weather.rain = P.rain; weather.dim = P.dim; weather.waveMul = P.wave; weather.fog = 0;
+  updateSun();
+  if (typeof onStormMorning === "function") onStormMorning();
+  if (typeof syncDebugPanel === "function") syncDebugPanel();
+  showCard("The morning after", "The storm has blown through. See what's washed up along the shore.");
+}
 
 /* --------------------------------------------------------------------- *
  * § MATH  (column-major mat4)
@@ -2886,7 +3000,7 @@ function onBobberLanded() {
   rod.spotQ = Math.max(0, spotQuality(rod.bob.tx, rod.bob.tz));
   const q = rod.spotQ, hot = hotspotNear(rod.bob.tx, rod.bob.tz) ? 1 : 0;
   // wide bite variance; a hotspot cuts the wait sharply
-  let delay = fishForceBite ? 0.4 : (BITE_MIN + Math.random() * (BITE_MAX - BITE_MIN)) * (hot ? HOTSPOT_BITE_MUL : 1) * (1 - 0.25 * q);
+  let delay = fishForceBite ? 0.4 : (BITE_MIN + Math.random() * (BITE_MAX - BITE_MIN)) * (hot ? HOTSPOT_BITE_MUL : 1) * (1 - 0.25 * q) * (typeof weatherBiteMul === "function" ? weatherBiteMul() : 1);   // §20 fish bite sooner in rain/overcast
   rod.biteAt = clock.t + Math.max(0.4, delay);
   if (typeof SND !== "undefined") SND.play("plop", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz] });
   if (typeof spawnSand === "function") spawnSand(rod.bob.tx, rod.bob.surf, rod.bob.tz, 6, [0.8,0.86,0.92]);
@@ -4391,6 +4505,7 @@ const propVS = `#version 300 es
 precision highp float;
 uniform mat4 uProj, uView;
 uniform float uTime, uSway;      // §14B gentle current sway for foliage/kelp (uSway 0 = off)
+uniform float uWind;             // §20 weather wind multiplies the sway (1 = calm)
 uniform float uClampY; uniform int uClampTop;   // §14B pin ocean plants at/under the sea surface
 in vec3 aPos;
 in vec3 aCol;
@@ -4412,7 +4527,9 @@ void main() {
   // like kelp in a current. The -r.y term phases the wave along the height (classic wavy seaweed).
   float ph = uTime*0.9 + iOff.x*0.14 + iOff.z*0.11 - r.y*0.6;
   float hy = max(0.0, r.y);
-  float sway = uSway * (sin(ph) * 0.045 + sin(ph*2.3 + 1.7) * 0.015) * hy;
+  float wind = uWind > 0.001 ? uWind : 1.0;                                     // §20 weather wind strengthens the sway
+  float sway = uSway * wind * (sin(ph) * 0.045 + sin(ph*2.3 + 1.7) * 0.015) * hy;
+  sway += uSway * max(0.0, wind - 1.0) * sin(uTime*2.3 + iOff.x*0.3) * 0.015 * hy;  // gusty extra wobble in strong wind
   wp.x += sway; wp.z += sway*0.6;
   // §14B keep ocean plants under the surface: any vertex above the waterline is pinned to it, so
   // kelp/eelgrass reaches up to the sea surface and lies along it instead of spearing out of the water.
@@ -4914,6 +5031,7 @@ function drawProps(view) {
   gl.uniform3fv(propU.uWarm, SKY.warm);
   gl.uniform1f(propU.uFogDensity, FOG_DENSITY);
   gl.uniform1f(propU.uFogNear, FOG_NEAR);
+  if (propU.uWind !== undefined) gl.uniform1f(propU.uWind, 1 + (weather ? weather.wind : 0.15) * WIND_SWAY_MUL);   // §20 wind sway
   gl.uniform1i(propU.uWetBand, 1);                         // §13.7 wet band + barnacles near the waterline
   gl.uniform1f(propU.uWetLevel, wetLevel); gl.uniform1f(propU.uWaterLevel, waterLevel);
   gl.uniform1f(propU.uTime, clock.t);                                 // §14B sway clock
@@ -7343,6 +7461,9 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgHunger">${hungerEnabled ? "Hunger: on" : "Hunger: off"}</button><button id="dbgBreath">${infiniteBreath ? "Breath: ∞" : "Breath: norm"}</button></div>
     <div class="dbgrow"><button id="dbgDeep">To deep water</button><button id="dbgAlert">${showAlert ? "Alertness: on" : "Alertness: off"}</button></div>
     <div class="dbgrow"><button id="dbgCook">${fireInstantCook ? "Cook: instant" : "Cook: normal"}</button><button id="dbgFuel">${fireFreeFuel ? "Fuel: ∞" : "Fuel: normal"}</button><button id="dbgGivePot">Give pot+bait</button></div>
+    <h3>Weather — ${weather ? (weather.forced ? "forced " : "") + WEATHER_LABEL[weather.state] : "—"}</h3>
+    <div class="dbgrow"><button data-wx="clear">Clear</button><button data-wx="overcast">Overcast</button><button data-wx="fog">Fog</button><button data-wx="rain">Rain</button><button data-wx="storm">Storm</button><button data-wx="">Auto</button></div>
+    <div class="dbgrow"><button id="dbgStormMorn">Skip to post-storm morning</button></div>
     <h3>Camera (jump-snap hunt)</h3>
     <div class="dbgrow"><button id="dbgCamRaw" style="${camFx.raw?'background:#b5503a':''}">Raw camera: ${camFx.raw?"ON":"off"}</button><button id="dbgYG">Y graph (Y)</button></div>
     <div class="dbgrow">
@@ -7375,6 +7496,8 @@ function syncDebugPanel() {
   p.querySelector("#dbgCook").onclick = () => { fireInstantCook = !fireInstantCook; syncDebugPanel(); };   // §Cooking instant roast/stew
   p.querySelector("#dbgFuel").onclick = () => { fireFreeFuel = !fireFreeFuel; syncDebugPanel(); };         // §Cooking fires never burn out
   p.querySelector("#dbgGivePot").onclick = () => { Inv.add("pot", 2); Inv.add("worm", 5); Inv.add("salt", 3); Inv.add("clam", 4); Inv.add("cassava", 2); showCard("Debug", "+2 pots, bait, salt & ingredients."); };
+  p.querySelectorAll("[data-wx]").forEach(btn => btn.onclick = () => { forceWeather(btn.dataset.wx || null); syncDebugPanel(); showCard("Weather", btn.dataset.wx ? "Forced: " + WEATHER_LABEL[btn.dataset.wx] : "Weather resumed (rolls per day)."); });   // §20 debug force weather
+  p.querySelector("#dbgStormMorn").onclick = () => { debugStormMorning(); };   // §20 jump to the morning after a storm (best wash-up)
   // §urgent7 camera-effect toggles for the jump-snap hunt
   p.querySelector("#dbgCamRaw").onclick = () => { camFx.raw = !camFx.raw; syncDebugPanel(); };
   p.querySelector("#dbgYG").onclick = () => { dbgYGraph = !dbgYGraph; document.getElementById("ygraph").style.display = dbgYGraph ? "block" : "none"; };
@@ -11911,6 +12034,7 @@ loadChests();
 loadStorage();
 initCottageFixtures();   // §19B hearth campfire + sea chest (after loadWorld/loadStorage rebuild their arrays)
 if (typeof updateCosy === "function") updateCosy();   // §19G seed cosiness from restored displays/trophies/aquarium/rewards (no celebrate on load)
+initWeather();   // §20 roll today's weather from the seed (no transition on load)
 // §Cooking guaranteed first cook-pot: once per seed, lay a lit, pot-topped campfire near spawn
 try {
   if (localStorage.getItem("bc_firstfire_" + SEED_STR) !== "1") {
@@ -11937,8 +12061,9 @@ function resize() {
 // §13.6 apply the current graphics settings to the live engine knobs (no reload needed).
 function applyGFX() {
   ditherOn = GFX.dither;
-  FOG_DENSITY = BASE_FOG_DENSITY / Math.max(0.3, GFX.fog);   // higher "fog distance" = thinner fog, see farther
-  FOG_NEAR = BASE_FOG_NEAR * GFX.fog;
+  baseFogDensity = BASE_FOG_DENSITY / Math.max(0.3, GFX.fog);   // higher "fog distance" = thinner fog, see farther
+  baseFogNear = BASE_FOG_NEAR * GFX.fog;
+  FOG_DENSITY = baseFogDensity; FOG_NEAR = baseFogNear;
   DRAW_R = BASE_DRAW_R * GFX.propDist;
   UPDATE_R = BASE_UPDATE_R * GFX.simRadius;
   resize();                                                  // picks up dprCap; forces the FBO to the new resolution/filter
@@ -11990,6 +12115,7 @@ function frame(now) {
   updateBarnacles();   // §5 barnacles regrow over time
   updateChests(dt);
   updateCampfires(dt);   // §Cooking fuel burns, food roasts, stews simmer
+  updateWeather(dt);     // §20 weather state machine, fog/light/wind, lightning, after-storm
   updateCottage(dt);     // §19 door swing + creak
   updatePry(dt);
   updateSalt();
@@ -12293,7 +12419,7 @@ function frame(now) {
   gl.uniform1f(waterU.uFogDensity, FOG_DENSITY);
   gl.uniform1f(waterU.uFogNear, FOG_NEAR);
   gl.uniform1f(waterU.uWaterLevel, waterLevel);
-  gl.uniform1f(waterU.uWaterQ, GFX.water <= 0 ? 0.2 : 1);   // §13.6 flatter, foam-free water at low quality
+  gl.uniform1f(waterU.uWaterQ, (GFX.water <= 0 ? 0.2 : 1) * (weather ? weather.waveMul : 1));   // §13.6 flatter at low quality · §20 bigger waves in wind/storm
   // snap the water sheet to the camera so wave detail stays nearby
   const wsnap = (WATER_HALF * 2) / 256;
   gl.uniform2f(waterU.uCenter, Math.round(cam.pos[0] / wsnap) * wsnap,
