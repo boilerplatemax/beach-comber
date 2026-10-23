@@ -2937,8 +2937,9 @@ function landFish() {
   if (typeof sparkle === "function") sparkle(rod.bob.x, rod.bob.surf + 0.2, rod.bob.z, [0.9,0.95,1], 12);
   startCatchCine();   // §fishpolish the epic arc/slow-mo/catch-card sequence (replaces the plain reveal)
 }
-function lineSnap() { showCard("The line snapped!", "Too much strain — ease off the reel when the fish runs."); loseBaitMaybe(); if (typeof SND !== "undefined") SND.play("crack"); endCast(0.9); }
-function fishEscape() { showCard("It threw the hook", "You gave it too much slack — keep reeling to stay tight."); loseBaitMaybe(); endCast(0.8); }
+// §playtest1 result messages draw on the top crosshair-prompt layer (above everything, outside the mini-game) and fade; no "fish runs" subtitle
+function lineSnap() { hintText = "The line snapped!"; hintT = 2.0; loseBaitMaybe(); if (typeof SND !== "undefined") SND.play("crack"); endCast(0.9); }
+function fishEscape() { hintText = "It threw the hook"; hintT = 2.0; loseBaitMaybe(); endCast(0.8); }
 function reelInEmpty() { if (rod.baitTaken && rod.baitId) { Inv.add(rod.baitId, 1); rod.baitTaken = false; }   // §fishpolish reeled in before a nibble → full worm refund
   endCast(0.3); if (typeof SND !== "undefined") SND.play("plop"); }
 function loseBaitMaybe() { /* the bait is already off the hook — spent on the attempt */ }
@@ -2977,9 +2978,12 @@ function hotspotJump(s) {   // a brief fish flash/jump at the surface: a splash 
   if (typeof sparkle === "function") sparkle(jx, surf + 0.3, jz, [0.85, 0.9, 0.96], 5);
   if (typeof SND !== "undefined" && Math.hypot(jx - cam.pos[0], jz - cam.pos[2]) < 40) SND.play("fish_splash", { position: [jx, surf, jz], volume: 0.5 });
 }
+const HOTSPOT_MIN_DEPTH = 1.0;         // §playtest1 a hotspot is only valid while the water here is at least this deep
 function updateFishSigns(dt) {
   for (let i = fishSigns.length - 1; i >= 0; i--) { const s = fishSigns[i];
     s.age += dt; if (s.age > s.life) { fishSigns.splice(i, 1); continue; }
+    // §playtest1 if the tide drops the water here below the threshold, the hotspot fades out (a new one spawns in proper water)
+    if (waterDepthAt(s.x, s.z) < HOTSPOT_MIN_DEPTH) { fishSigns.splice(i, 1); continue; }
     const near = Math.hypot(s.x - cam.pos[0], s.z - cam.pos[2]) < 70;
     if (near) {
       s.bubT -= dt; if (s.bubT <= 0) { s.bubT = 0.1 + Math.random() * 0.16; spawnHotspotBubble(s); if (Math.random() < 0.5) spawnHotspotBubble(s); }
@@ -6307,8 +6311,26 @@ function behaveFish(e, dt, d, dx, dz) {
     const ty = e.t === "flounder" ? floor+0.12 : floor + (e.t === "lingcod" ? 0.9 : 1.6) + Math.sin(e.phase*0.8)*0.3;
     e.y += (ty - e.y) * Math.min(1, dt*1.5);
   }
+  clampFishWater(e, dt);     // §playtest1 fish never swim onto land — kept in water at least their species minimum depth
   // keep every fish under the surface; the flounder rests just above the seabed, partly buried
-  e.y = Math.max(floor+0.08, Math.min(surf - (e.t === "flounder" ? 0.12 : 0.3), e.y));
+  const floor2 = heightAt(e.x, e.z), surf2 = waterSurfaceAt(e.x, e.z);
+  e.y = Math.max(floor2+0.08, Math.min(surf2 - (e.t === "flounder" ? 0.12 : 0.3), e.y));
+}
+// §playtest1 per-species minimum swimming depth (m)
+function fishMinDepth(t) { return t === "flounder" ? 0.3 : t === "lingcod" ? 2.0 : t === "rockfish" ? 1.1 : t === "ratfish" ? 2.6 : 0.5; }
+// keep a fish in deep-enough water: push it down-slope toward deeper water, and never let it beach. As the tide
+// drops the whole seabed shallows, so this also walks fish out toward deeper water over time.
+function clampFishWater(e, dt) {
+  if (e.poolRim !== undefined) return;                       // tide-pool fish are bounded by their pool
+  const minD = fishMinDepth(e.t);
+  let depth = waterDepthAt(e.x, e.z);
+  if (depth >= minD) return;
+  const grad = groundGradient(e.x, e.z);                     // points downhill → toward deeper water
+  const push = (minD - depth) * 4 + 1.0;
+  e.x += grad.dx * dt * push; e.z += grad.dz * dt * push;
+  for (let k = 0; k < 8 && waterDepthAt(e.x, e.z) < Math.min(0.25, minD*0.6); k++) {   // hard guard: step it back to real water so it can't strand
+    const g2 = groundGradient(e.x, e.z); e.x += g2.dx * 0.5; e.z += g2.dz * 0.5;
+  }
 }
 // §R4 per-species top speeds (m/s). `dx,dz` passed to behave() are (entity − player), so they already
 // point AWAY from the player — fleeFrom moves along them. Nothing here moves toward the player.
@@ -7810,7 +7832,8 @@ function updateStamina(dt) {
   // §13.1 sprinting drains fast, and much faster up any incline
   if (player.sprinting) spendStamina(SPRINT_DRAIN * dt * (1 + Math.max(0, player.incline || 0) * 4) * (tier === "hungry" ? 2 : 1));
   if (player.scramble > 0.3) spendStamina(SCRAMBLE_DRAIN * dt * player.scramble);
-  const regen = (resting ? REGEN_REST : (moving ? REGEN_ACTIVE : REGEN_IDLE)) * hungerRegenMul() * staminaBoostMult();   // §tools recovery scales with fullness; §R4 food boost
+  // §playtest1 don't regen while actively sprinting — otherwise regen cancels the drain and sprint is effectively infinite
+  const regen = player.sprinting ? 0 : (resting ? REGEN_REST : (moving ? REGEN_ACTIVE : REGEN_IDLE)) * hungerRegenMul() * staminaBoostMult();
   const cap = maxStamina();
   stamina = Math.min(cap, stamina + regen * dt);
   if (stamina > cap) stamina = cap;
@@ -11382,7 +11405,8 @@ function frame(now) {
     const uphillGrade = Math.max(0, fwdGrade);
     player.incline = uphillGrade;
     player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01 && hungerTier() !== "starving"
-                       && uphillGrade < SPRINT_SLOPE_MAX && !crouching;  // §13.1 no sprint up a steep pitch; §13.4 or while crouched
+                       && uphillGrade < SPRINT_SLOPE_MAX && !crouching
+                       && !exhausted && stamina > 0.02;  // §playtest1 sprint needs stamina — no more infinite sprint; §13.1 no sprint up a steep pitch; §13.4 or while crouched
     let scrambleTarget = 0;
     _curSpeedMul = 1; _curSlopeDeg = gg.slope * 180 / Math.PI;
 
