@@ -6047,6 +6047,32 @@ function ropeMesh() { const m = Mesh(); const c = [0.66,0.56,0.36]; for (let i =
 function crateMesh() { const m = Mesh(); const w = [0.5,0.37,0.24], e = [0.4,0.29,0.18]; mBox(m,0,0.2,0,0.22,0.2,0.22,w);
   for (const s of [-0.21,0.21]) { mBox(m,s,0.2,0,0.02,0.22,0.22,e); mBox(m,0,0.2,s,0.22,0.22,0.02,e); } mBox(m,0,0.2,0,0.23,0.04,0.23,e); mBox(m,0,0.38,0,0.23,0.04,0.23,e); return m; }
 function hopperMesh() { const m = Mesh(); mBox(m,0,0.05,0,0.08,0.05,0.06,[0.72,0.68,0.55]); mBox(m,-0.05,0.04,0.03,0.015,0.06,0.015,[0.6,0.55,0.4]); mBox(m,-0.05,0.04,-0.03,0.015,0.06,0.015,[0.6,0.55,0.4]); return m; }
+// §21C critters that hide under stones (scaled up ~2-3x so they read at a glance)
+function gunnelMesh() { const m = Mesh(), c = [0.44,0.54,0.4], c2 = [0.37,0.46,0.33];
+  for (let i=0;i<6;i++){ const x=(i-2.5)*0.11, w=0.055*(1-Math.abs(i-2.5)/4)+0.02; mBox(m, x, 0.03, Math.sin(i*1.1)*0.05, 0.055, 0.03, w, i%2?c:c2); }
+  mBox(m, 0.34, 0.04, 0, 0.045, 0.04, 0.04, c); mBox(m, 0.38, 0.055, 0.02, 0.012,0.012,0.012,[0.1,0.1,0.1]); mBox(m, 0.38, 0.055, -0.02, 0.012,0.012,0.012,[0.1,0.1,0.1]); return m; }
+function chitonMesh() { const m = Mesh(), c = [0.5,0.48,0.45]; mergeMesh(m, discMesh(0.0, 0.3, 7, 0.1, c));
+  for (let i=0;i<4;i++) mBox(m, (i-1.5)*0.13, 0.11, 0, 0.045, 0.06, 0.24, [0.42+i*0.015,0.4,0.38]); return m; }
+function pillbugMesh() { const m = Mesh(), c = [0.43,0.44,0.47]; mergeMesh(m, discMesh(0.0, 0.14, 7, 0.13, c));
+  for (let i=0;i<5;i++) mBox(m, (i-2)*0.05, 0.08, 0, 0.012, 0.09, 0.14, [0.34,0.35,0.38]);
+  mBox(m, 0.14, 0.05, 0, 0.03, 0.04, 0.09, [0.38,0.39,0.42]); return m; }
+function pillbugBallMesh() { const m = Mesh(); mergeMesh(m, discMesh(0.0, 0.13, 8, 0.24, [0.42,0.43,0.46])); mergeMesh(m, discMesh(0.0, 0.13, 8, -0.1, [0.36,0.37,0.4]));
+  for (let i=0;i<5;i++) { const a=i/5*3.14; mTri(m, [0,0.37,0],[Math.cos(a)*0.13,0.13,Math.sin(a)*0.13],[Math.cos(a+0.6)*0.13,0.13,Math.sin(a+0.6)*0.13],[0.33,0.34,0.37]); } return m; }
+function centipedeMesh() { const m = Mesh(), c = [0.56,0.3,0.24], leg = [0.4,0.22,0.18];
+  for (let i=0;i<8;i++){ const x=(i-3.5)*0.09; mBox(m, x, 0.04, 0, 0.045, 0.035, 0.05, i%2?c:[c[0]*0.85,c[1]*0.85,c[2]*0.85]);
+    mBox(m, x, 0.02, 0.07, 0.008, 0.008, 0.05, leg); mBox(m, x, 0.02, -0.07, 0.008, 0.008, 0.05, leg); }
+  mBox(m, 0.41, 0.05, 0, 0.04, 0.04, 0.05, c); mBox(m, 0.46, 0.06, 0.02, 0.02,0.008,0.008,leg); mBox(m, 0.46, 0.06, -0.02, 0.02,0.008,0.008,leg); return m; }
+function beetleMesh() { const m = Mesh(), shell = [0.18,0.26,0.2], hi = [0.3,0.46,0.34];
+  mergeMesh(m, discMesh(0.04, 0.15, 7, 0.13, shell)); mergeMesh(m, discMesh(0.07, 0.11, 7, 0.08, hi));
+  mBox(m, 0.15, 0.05, 0, 0.04, 0.04, 0.05, [0.12,0.14,0.12]);
+  for (const s of [-1,1]) for (let i=0;i<3;i++) mBox(m, (i-1)*0.07, 0.0, s*0.13, 0.012, 0.012, 0.05, [0.1,0.1,0.1]); return m; }
+function slugMesh() { const m = Mesh(), c = [0.57,0.42,0.26];
+  for (let i=0;i<5;i++){ const r=0.07*(1-Math.abs(i-2)/4)+0.028; mergeAt(m, discMesh(0, r, 6, r*0.9, c), (i-2)*0.1, 0.02, 0); }
+  mBox(m, 0.24, 0.09, 0.02, 0.008, 0.05, 0.008, [0.4,0.3,0.2]); mBox(m, 0.24, 0.09, -0.02, 0.008, 0.05, 0.008, [0.4,0.3,0.2]); return m; }
+function salamanderMesh() { const m = Mesh(), body = [0.14,0.14,0.16], spot = [0.9,0.78,0.22];
+  mBox(m, 0, 0.045, 0, 0.14, 0.04, 0.05, body); mBox(m, -0.24, 0.035, 0, 0.11, 0.028, 0.03, body); mBox(m, 0.17, 0.05, 0, 0.05, 0.04, 0.045, body);
+  for (const s of [-1,1]) { mBox(m, 0.08, 0.0, s*0.07, 0.013, 0.02, 0.035, body); mBox(m, -0.07, 0.0, s*0.07, 0.013, 0.02, 0.035, body); }
+  for (let i=0;i<3;i++){ mBox(m, (i-1)*0.09, 0.085, 0.03, 0.02, 0.008, 0.02, spot); mBox(m, (i-1)*0.09, 0.085, -0.03, 0.02, 0.008, 0.02, spot); } return m; }
 function heronMesh() { const m = Mesh(), g=[0.56,0.6,0.64], pale=[0.8,0.82,0.85];
   mBox(m, 0, 0.9, 0, 0.16, 0.16, 0.32, g); mCyl(m, 0, 1.5, 0.05, 0.05, 6, pale);          // body + neck (vertical cyl up)
   mBox(m, 0.1, 1.55, 0, 0.1, 0.1, 0.1, pale); mBox(m, 0.26, 1.55, 0, 0.14, 0.02, 0.02, [0.85,0.7,0.2]);  // head + beak
@@ -6130,10 +6156,18 @@ const CREATURES = {
   shrimp:   { mesh: () => shrimpMesh(),               base: 0.4, max: 160, label: "Shrimp", desc: "A near-clear shrimp flicking backwards through a tide pool." },
   octopus:  { mesh: () => octopusMesh(),              base: 0.5, max: 60,  label: "Tiny Octopus", desc: "A little octopus tucked in a crevice — it jets away if you crowd it." },
   seaduck:  { mesh: () => seaDuckMesh(),              base: 0.7, max: 70,  label: "Little Sea Duck", desc: "A small diving duck riding the swell just off the shore." },
+  // §21C life that hides under stones — scatters when a stone is lifted, then hides again
+  gunnel:   { mesh: () => gunnelMesh(),               base: 0.5, max: 60,  label: "Gunnel", desc: "A little eel-like fish that wriggles away the instant its stone is lifted.", stoneCritter: 1, aquatic: 1 },
+  chiton:   { mesh: () => chitonMesh(),               base: 0.4, max: 80,  label: "Chiton", desc: "An armoured oval of eight plates, clamped to the damp underside of a stone.", stoneCritter: 1, aquatic: 1 },
+  pillbug:  { mesh: () => pillbugMesh(),              base: 0.4, max: 120, label: "Pill Bug", desc: "A woodlouse that rolls into a tight ball the moment it's touched.", stoneCritter: 1, land: 1 },
+  centipede:{ mesh: () => centipedeMesh(),            base: 0.45,max: 80,  label: "Centipede", desc: "A fast ripple of legs, gone under the leaf litter in a blink.", stoneCritter: 1, land: 1 },
+  beetle:   { mesh: () => beetleMesh(),               base: 0.4, max: 90,  label: "Ground Beetle", desc: "A shiny beetle that trundles off into the dark.", stoneCritter: 1, land: 1 },
+  slug:     { mesh: () => slugMesh(),                 base: 0.45,max: 90,  label: "Slug", desc: "A glistening slug, in no hurry at all.", stoneCritter: 1, land: 1 },
+  salamander:{ mesh: () => salamanderMesh(),          base: 0.5, max: 60,  label: "Spotted Salamander", desc: "Dark and yellow-spotted, kept damp under a stone — a real treat to turn up.", stoneCritter: 1, land: 1 },
 };
 // §R4 explicit per-creature bucketability — small aquatic & intertidal life only. Never birds (gull, piper,
 // heron, seaduck), mammals (seal, otter, raccoon, goat), or large/game fish (flounder, rockfish, lingcod).
-const BUCKETABLE_TYPES = { crab:1, hermit:1, fish:1, minnow:1, star:1, urchin:1, anemone:1, jelly:1, shrimp:1, snail:1, hopper:1, octopus:1, horseshoe:1, sculpin:1, nudibranch:1 };
+const BUCKETABLE_TYPES = { crab:1, hermit:1, fish:1, minnow:1, star:1, urchin:1, anemone:1, jelly:1, shrimp:1, snail:1, hopper:1, octopus:1, horseshoe:1, gunnel:1, chiton:1 };   // §21C gunnel/chiton are aquatic; land stone-critters are inspect-only
 for (const k in CREATURES) CREATURES[k].bucketable = !!BUCKETABLE_TYPES[k];
 const FINDS = {
   shell:    { mesh: () => shellMesh(),               base: 0.5, max: 200, label: "Spiral Shell", desc: "An empty whelk, worn smooth.", rare: 0 },
@@ -6668,6 +6702,7 @@ function behave(e, dt, d, dx, dz) {
   if (e.beached) { if (waterDepthAt(e.x, e.z) > 0.12) { e.beached = false; e.flop = false; e.exposed = 0; e.hx = e.x; e.hz = e.z; }
     else { creatureExposureDry(e, dt); return; } }
   if (FISH[e.t]) { behaveFish(e, dt, d, dx, dz); return; }     // §14C huntable fish / schools
+  if (CREATURES[e.t] && CREATURES[e.t].stoneCritter) { behaveStoneCritter(e, dt, d, dx, dz); return; }   // §21C life from under a flipped stone
   if (e.returning) {                                           // poured onto dry land → head for the nearest water
     if (waterDepthAt(e.x, e.z) > 0.12) { e.returning = false; e.exposed = 0; e.hx = e.x; e.hz = e.z; return; }
     if (creatureExposureDry(e, dt)) return;                    // §13.3 too slow → dries out and dies
@@ -8003,6 +8038,7 @@ function useToolOnTarget(t) {
   const tool = selectedTool();
   switch (t.kind) {
     case "creature": if (tool === "bucket" && bucketScoop(t.obj)) return true;                                 // bucket scoops; otherwise any item hits it
+      if (CREATURES[t.obj.t] && CREATURES[t.obj.t].stoneCritter) { inspectCritter(t.obj); return true; }        // §21C stone critters: inspect to discover (land = look only)
       if (t.obj.stranded) { interactWith(t.obj); return true; }                                                // a stranded star is still picked up by hand
       genericHitCreature(t.obj); return true;
     case "find": interactWith(t.obj); return true;
@@ -10673,6 +10709,44 @@ function drawFlipStones(view) {
   if (n) flipStoneDyn.draw(flipScratch, n);
 }
 function flipStonePrompt(s) { return s.up ? (IS_TOUCH ? "tap to put the stone back" : "click to put the stone back") : (IS_TOUCH ? "tap to flip the stone" : "click to flip the stone"); }
+// §21C which critters hide under a stone, by biome
+function stoneCritterPool(biome) {
+  return biome === "forest"
+    ? ["pillbug","centipede","beetle","slug","salamander","snail"]
+    : ["crab","hopper","gunnel","chiton","star","snail"];
+}
+function behaveStoneCritter(e, dt, d, dx, dz) {
+  const reg = CREATURES[e.t];
+  if (e.t === "pillbug") { e.curl = (d < 2.2) ? Math.min(1, (e.curl||0)+dt*5) : Math.max(0, (e.curl||0)-dt*2.5); if (e.curl > 0.5) { e.cdState = "curl"; return; } }
+  if (e.fromStone && clock.t < e.scatterUntil) {                 // short window to inspect, then it bolts for cover
+    const ax = e.x-e.hx, az = e.z-e.hz, bx = e.x-player.x, bz = e.z-player.z;
+    let mx = ax*0.3 + bx, mz = az*0.3 + bz; const mm = Math.hypot(mx,mz) || 1;
+    const spd = reg.aquatic ? 2.2 : (e.t==="centipede" ? 3.0 : e.t==="slug" ? 0.5 : 1.6);
+    e.x += mx/mm*dt*spd; e.z += mz/mm*dt*spd; e.yaw = Math.atan2(mz,mx) + (e.t==="gunnel" ? Math.PI : 1.57);
+    if (reg.aquatic && waterDepthAt(e.x,e.z) < 0.02) { const g = groundGradient(e.x,e.z); e.x += g.dx*dt*1.6; e.z += g.dz*dt*1.6; }
+    e.cdState = "scatter"; return;
+  }
+  if (e.fromStone) {                                             // window over → hide and vanish
+    e.hideT = (e.hideT||0) + dt; e.x += Math.cos(e.yaw)*dt*0.4; e.z += Math.sin(e.yaw)*dt*0.4;
+    if (e.hideT > 1.6 && d > 4) { if (typeof spawnSand === "function") spawnSand(e.x, surfaceAt(e.x,e.z).h+0.03, e.z, 3, [0.5,0.45,0.4]); const i = life.indexOf(e); if (i>=0) life.splice(i,1); }
+    e.cdState = "hiding"; return;
+  }
+  if (d < 3) { const a = Math.atan2(e.z-player.z, e.x-player.x); e.x += Math.cos(a)*dt*1.2; e.z += Math.sin(a)*dt*1.2; e.yaw = a; e.cdState = "flee"; return; }
+  e.timer -= dt; if (e.timer < 0) { e.timer = 1+rng()*2; e.vx = (rng()-0.5); e.vz = (rng()-0.5); }
+  e.x += e.vx*dt*0.5; e.z += e.vz*dt*0.5; e.yaw = Math.atan2(e.vz,e.vx);
+  if (Math.hypot(e.x-e.hx, e.z-e.hz) > (e.hr||5)) { e.vx = (e.hx-e.x)*0.1; e.vz = (e.hz-e.z)*0.1; }
+  e.cdState = "wander";
+}
+function inspectCritter(e) {
+  const reg = CREATURES[e.t], first = !discovered.has(e.t);
+  discovered.add(e.t);
+  if (typeof SND !== "undefined") SND.play(first ? "discover" : "pickup");
+  if (first && typeof sparkle === "function") sparkle(e.x, surfaceAt(e.x,e.z).h+0.2, e.z, [0.9,0.85,0.5], 8);
+  const vb = (typeof variantBadge === "function") ? variantBadge(e) : "";
+  showCard((first ? "New — " : "") + reg.label + vb, reg.desc + (reg.land ? " · a land critter — look, don't scoop." : ""));
+  if (e.fromStone) e.scatterUntil = Math.min(e.scatterUntil || clock.t+1, clock.t + 1.0);   // it startles and hurries off
+  if (typeof checkSets === "function") checkSets();
+}
 
 /* ===================================================================== *
  * § 19  THE COTTAGE — a weathered home base near spawn: shelter, hearth,
