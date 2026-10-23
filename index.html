@@ -3174,7 +3174,10 @@ function rollWeight(sp) { const [a, b] = sp.w; const r = Math.random() * Math.ra
 function beginBite() {                                         // fish takes the bait: a nibble, then the plunge
   const species = rollSpecies();
   if (species === "junk") { rod.fish = { species: "junk", junkId: JUNK_POOL[(Math.random() * JUNK_POOL.length) | 0], weight: 0 }; }
-  else { const sp = FISH_SPECIES[species]; rod.fish = { species, weight: rollWeight(sp) }; }
+  else { const sp = FISH_SPECIES[species]; rod.fish = { species, weight: rollWeight(sp) };
+    const vr = rng();                                                         // §22 a giant catch counts as a record; colour morphs for the journal
+    if (vr < 0.03) { rod.fish.variant = "giant"; rod.fish.weight = +(rod.fish.weight * (1.9 + rng()*0.6)).toFixed(2); }
+    else if (vr < 0.03 + 0.03) rod.fish.variant = VARIANT_MORPHS[(rng()*VARIANT_MORPHS.length)|0]; }
   rod.state = "nibble"; rod.nibbleUntil = clock.t + (0.5 + Math.random() * 0.5);
   if (typeof SND !== "undefined") SND.play("tick", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz] });
 }
@@ -3229,8 +3232,9 @@ function landFish() {
     if (typeof SND !== "undefined") SND.play("plop"); endCast(0.6); return;
   }
   const sp = FISH_SPECIES[f.species];
-  const prev = rodRecord[f.species] || 0; f.record = f.weight > prev;
-  if (f.record) { rodRecord[f.species] = f.weight; saveRodRec(); }
+  const prev = rodRecord[f.species] || 0; f.record = f.weight > prev || f.variant === "giant";   // §22 a giant is always a record
+  if (f.weight > prev) { rodRecord[f.species] = f.weight; saveRodRec(); }
+  if (f.variant && typeof recordVariant === "function") recordVariant({ t: f.species, variant: f.variant });
   if (typeof cottage !== "undefined" && cottage) { cottage.lastCatch = { species: f.species, weight: f.weight, record: f.record, day: Math.floor(tideDay)+1 }; saveCottage(); }   // §19D mountable as a wall trophy
   if (sp.creature) discovered.add(sp.creature);                // the rod-caught species also lights up its creature page
   if (typeof sparkle === "function") sparkle(rod.bob.x, rod.bob.surf + 0.2, rod.bob.z, [0.9,0.95,1], 12);
@@ -6261,11 +6265,33 @@ function spawnCreature(t, x, z, extra) {
   const e = { kind: "creature", t, x, z, yaw: rng()*6.283, scale: CREATURES[t].base*(0.85+rng()*0.3),
               phase: rng()*6.283, state: "idle", timer: rng()*3, vx: 0, vz: 0, hx: x, hz: z, hr: extra?.hr||6,
               closed: 0, special: false, name: CREATURES[t].label, tint: [1,1,1], id: _critId++ };
-  Object.assign(e, extra); life.push(e); if (crabLog && t === "crab") console.log(`crab#${e.id} spawn at ${x.toFixed(1)},${z.toFixed(1)}`); return e;
+  Object.assign(e, extra); if (!e.variant) applyVariant(e); life.push(e); if (crabLog && t === "crab") console.log(`crab#${e.id} spawn at ${x.toFixed(1)},${z.toFixed(1)}`); return e;
 }
 function spawnFind(t, x, z) {
   life.push({ kind: "find", t, x, z, yaw: rng()*6.283, scale: FINDS[t].base*(0.85+rng()*0.3),
               phase: rng()*6.283, name: FINDS[t].label, tint: [1,1,1], pickAt: clock.t });
+}
+/* §22 ANOMALIES — every eligible spawn rolls for a rare variant: a Giant, or a
+   colour morph (blue like the famous blue lobster, albino, or two-tone). */
+const VARIANT_GIANT_P = 0.015, VARIANT_MORPH_P = 0.02;   // per spawn (tunable)
+const VARIANT_MORPHS = ["blue","albino","twotone"];
+const VARIANT_TINT = { blue:[0.32,0.5,0.98], albino:[0.97,0.95,0.97], twotone:[0.6,0.52,0.78] };
+const VARIANT_LABEL = { giant:"Giant", blue:"Blue", albino:"Albino", twotone:"Two-tone" };
+const VARIANT_BADGE = { giant:"◆", blue:"🔵", albino:"⚪", twotone:"◑" };
+let variantsSeen = {};   // species → { giant:n, blue:n, albino:n, twotone:n } (persisted)
+function variantEligible(t) { const r = CREATURES[t]; return !!(r && (FISH[t] || r.stoneCritter || t==="crab" || t==="star" || t==="horseshoe" || t==="gull" || t==="hermit" || t==="urchin")); }
+function applyVariant(e) {
+  if (!variantEligible(e.t)) return;
+  const r = rng();
+  if (r < VARIANT_GIANT_P) { e.variant = "giant"; e.scale *= 1.8 + rng()*0.7; }
+  else if (r < VARIANT_GIANT_P + VARIANT_MORPH_P) { const m = VARIANT_MORPHS[(rng()*VARIANT_MORPHS.length)|0]; e.variant = m; e.tint = VARIANT_TINT[m].slice(); }
+}
+function variantBadge(e) { const v = e && e.variant; return v ? "  " + (VARIANT_BADGE[v]||"◆") + " " + VARIANT_LABEL[v] : ""; }
+function recordVariant(e) {
+  const v = e && e.variant; if (!v) return;
+  if (!variantsSeen[e.t]) variantsSeen[e.t] = {};
+  variantsSeen[e.t][v] = (variantsSeen[e.t][v]||0) + 1;
+  if (typeof saveState === "function") saveState();
 }
 
 function populateLife() {
@@ -7189,7 +7215,7 @@ function invDrop(idx, one) {
 
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
-  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup, stonesBack: stonesPutBack,
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup, stonesBack: stonesPutBack, variants: variantsSeen,
     recipes: [...knownRecipes], spearHard: spearHardened,   // §16 crafting
     bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, moist: c.moist, caught: c.caught })) } })); } catch (e) {}
 }
@@ -7202,6 +7228,7 @@ function loadState() {
       starsRescued = s.rescued || 0;
       if (typeof s.cleanup === "number") beachCleanup = s.cleanup;   // §5 beach-cleanup tally
       if (typeof s.stonesBack === "number") stonesPutBack = s.stonesBack;   // §21 stones put back tally
+      if (s.variants && typeof s.variants === "object") variantsSeen = s.variants;   // §22 variant sightings per species
       if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
       if (Array.isArray(s.recipes)) knownRecipes = new Set(s.recipes);   // §16 crafting
@@ -7768,7 +7795,8 @@ function journalGrid(tab) {
     const got = discovered.has(k), reg = CREATURES[k];
     if (!got) return `<div class="jcard unk"><img src="${reg.icon||""}"><div class="jname">??? </div></div>`;
     const rec = fishRecord[k] ? `<div class="jqty">record ${Math.round(fishRecord[k]*50)}cm</div>` : "";   // §14C largest speared
-    return `<div class="jcard" data-jk="c:${k}"><img src="${reg.icon||""}"><div class="jname">${reg.label}</div>${rec}</div>`;
+    const vs = variantsSeen[k] ? `<div class="jqty" style="letter-spacing:1px">${Object.keys(variantsSeen[k]).map(v=>VARIANT_BADGE[v]||"◆").join(" ")}</div>` : "";   // §22 variant badges
+    return `<div class="jcard" data-jk="c:${k}"><img src="${reg.icon||""}"><div class="jname">${reg.label}</div>${rec}${vs}</div>`;
   }).join("");
   if (tab === "finds") return Object.keys(FINDS).map((k) => {
     const got = discovered.has("f_" + k), it = ITEMS[k], cnt = Inv.count(k);
@@ -8769,10 +8797,12 @@ function bucketScoop(e) {                                       // bucket used o
   if (!isBucketable(e.t)) return false;                        // §R4 ineligible (bird/mammal/large fish) → normal inspect, dimmed ring
   if (bucket.creatures.length >= BUCKET_CAP) { showCard("Bucket full", `It holds ${BUCKET_CAP} creatures.`); return true; }
   // §13.3 creatures can always be scooped, with or without water; a fresh catch starts fully moist
-  bucket.creatures.push({ t: e.t, scale: e.scale, tint: e.tint || [1,1,1], special: !!e.special, name: e.name, poolRim: e.poolRim,
+  bucket.creatures.push({ t: e.t, scale: e.scale, tint: e.tint || [1,1,1], special: !!e.special, name: e.name, poolRim: e.poolRim, variant: e.variant,
     moist: 1, caught: { biome: catchBiomeLabel(e.x, e.z), tide: catchTideLabel() } });
   const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
-  discovered.add(e.t); if (onDig) onDig(bucket.water ? "splash" : "sift"); saveState(); return true;
+  discovered.add(e.t); if (typeof recordVariant === "function") recordVariant(e);   // §22 log the variant when scooped
+  if (e.variant) showCard("A rare one!", `That's a ${VARIANT_LABEL[e.variant].toLowerCase()} ${CREATURES[e.t].label.toLowerCase()} — into the bucket.`);
+  if (onDig) onDig(bucket.water ? "splash" : "sift"); saveState(); return true;
 }
 // §13.3 advance the drying clock for the bucket's contents; a creature that dries out dies → dried remains to Finds.
 function updateBucketMoisture(dt) {
@@ -10743,7 +10773,8 @@ function inspectCritter(e) {
   if (typeof SND !== "undefined") SND.play(first ? "discover" : "pickup");
   if (first && typeof sparkle === "function") sparkle(e.x, surfaceAt(e.x,e.z).h+0.2, e.z, [0.9,0.85,0.5], 8);
   const vb = (typeof variantBadge === "function") ? variantBadge(e) : "";
-  showCard((first ? "New — " : "") + reg.label + vb, reg.desc + (reg.land ? " · a land critter — look, don't scoop." : ""));
+  if (typeof recordVariant === "function") recordVariant(e);
+  showCard((first ? "New — " : "") + reg.label + vb, (e.variant ? "A rare "+VARIANT_LABEL[e.variant].toLowerCase()+" one! " : "") + reg.desc + (reg.land ? " · a land critter — look, don't scoop." : ""));
   if (e.fromStone) e.scatterUntil = Math.min(e.scatterUntil || clock.t+1, clock.t + 1.0);   // it startles and hurries off
   if (typeof checkSets === "function") checkSets();
 }
