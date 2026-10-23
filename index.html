@@ -220,6 +220,8 @@
   .jcard.unk img { filter: brightness(0) saturate(0) opacity(.42); }   /* silhouette */
   .jcard.unk .jname { letter-spacing: .25em; }
   .jhint { margin-top: 12px; opacity: .5; font-size: 12px; }
+  .jstat { font-size: 13px; margin: -4px 0 12px; opacity: .85; letter-spacing: .02em; }
+  .jstat b { color: #9fdc83; font-weight: 700; }
   /* toasts (bottom-left, above hud) */
   #toasts { position: fixed; left: 12px; bottom: 60px; z-index: 8; pointer-events: none;
     display: flex; flex-direction: column; gap: 6px; }
@@ -4556,7 +4558,7 @@ const FINDS = {
   strawbit:  { mesh: () => plasticStrawMesh(),       base: 0.4, max: 80,  label: "Plastic Straw", desc: "A faded straw, washed in from somewhere far.", rare: 0, litter: 1 },
   nautilus: { mesh: () => nautilusMesh(),            base: 0.5, max: 60,  label: "Nautilus Shell", desc: "A pearly chambered spiral, drifted from deep water.", rare: 2 },
   oyster:   { mesh: () => oysterMesh(),              base: 0.5, max: 80,  label: "Oyster", desc: "A craggy grey oyster, clamped shut. Good food, better cooked.", rare: 0 },
-  barnacle: { mesh: () => barnacleMesh(),            base: 0.5, max: 80,  label: "Barnacles", desc: "A cluster of acorn barnacles broken off a rock.", rare: 0 },
+  barnacle: { mesh: () => barnacleMesh(),            base: 0.5, max: 80,  label: "Barnacles", desc: "Acorn barnacles scraped off a tidal rock — prized fishing bait.", rare: 0, bait: 1 },
   feather:  { mesh: () => featherMesh(),             base: 0.5, max: 90,  label: "Seabird Feather", desc: "A soft grey gull feather, caught on the wrack line.", rare: 0 },
 };
 
@@ -4731,6 +4733,118 @@ function washUp(initial) {
   // cap total finds
   const finds = life.filter((e) => e.kind === "find");
   if (finds.length > 500) life = life.filter((e) => e.kind !== "find").concat(finds.slice(-500));
+  if (!initial) addFlotsam(2 + (currentEvent === "storm" ? 3 : 0));   // §5 each tide drifts a little more flotsam in
+}
+
+/* ===================================================================== *
+ * § 5  FLOATING DEBRIS (flotsam) — litter that bobs & drifts on the water,
+ *      beaches itself into a wash-up, and can be scooped straight from the sea.
+ *      A running "beach cleanup" tally climbs whenever you clear litter.
+ * ===================================================================== */
+let flotsam = [];            // { id, x, z, ph, yaw, spin, lat }
+let beachCleanup = 0;        // litter removed from shore & water (shown in the journal)
+const FLOTSAM_CAP = 16, FLOTSAM_R = 0.55;
+const _flotScratch = {};     // per-litter-type instance scratch
+function flotsamSpawnPoint() {
+  // prefer the near-shore water band where it'll drift in and be seen
+  for (let k = 0; k < 60; k++) { const a = rng()*6.283, r = HALF*(0.45 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const d = waterDepthAt(x, z); if (d > 0.6 && d < 8) return { x, z }; }
+  return null;
+}
+function addFlotsam(n) {
+  for (let i = 0; i < n && flotsam.length < FLOTSAM_CAP; i++) { const sp = flotsamSpawnPoint(); if (!sp) continue;
+    flotsam.push({ id: LITTER[(rng()*LITTER.length)|0], x: sp.x, z: sp.z, ph: rng()*6.283, yaw: rng()*6.283, spin: (rng()-0.5)*0.5, lat: (rng()-0.5) }); }
+}
+function seedFlotsam() { flotsam = []; addFlotsam(5 + (rng()*4|0)); }
+function updateFlotsam(dt) {
+  const flood = tideInfo().rising;                          // a flood tide pushes debris shoreward; an ebb barely holds it
+  for (let i = flotsam.length - 1; i >= 0; i--) { const f = flotsam[i];
+    f.ph += dt*1.4; f.yaw += f.spin*dt;
+    const grad = groundGradient(f.x, f.z);                  // dx,dz point downhill → out to deeper water
+    const sh = flood ? 0.6 : 0.18;                          // net shoreward pull
+    const dx = -grad.dx*sh + (-grad.dz)*f.lat*0.35, dz = -grad.dz*sh + (grad.dx)*f.lat*0.35;
+    f.x += dx*dt*0.7; f.z += dz*dt*0.7;
+    const depth = waterDepthAt(f.x, f.z);
+    if (depth < 0.22) { const w = nearestWalkable(f.x, f.z); spawnFind(f.id, w[0], w[1]); flotsam.splice(i, 1); continue; }   // §5 beached → a wash-up on the sand
+    if (depth > 11 || Math.hypot(f.x, f.z) > HALF*0.95) flotsam.splice(i, 1);   // drifted out to sea → gone
+  }
+}
+function collectFlotsam(f) {
+  const i = flotsam.indexOf(f); if (i < 0) return;
+  const added = Inv.add(f.id, 1);
+  if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
+  flotsam.splice(i, 1);
+  const first = !discovered.has("f_" + f.id); discovered.add("f_" + f.id); notify(f.id, 1, first);
+  beachCleanup++; saveState();
+}
+function drawFlotsam(view) {
+  if (!flotsam.length) return;
+  propUniforms(view);
+  const px = cam.pos[0], pz = cam.pos[2], byType = {};
+  for (const f of flotsam) { const dx = f.x-px, dz = f.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue; (byType[f.id] = byType[f.id] || []).push(f); }
+  for (const id in byType) { const reg = FINDS[id]; if (!reg || !reg.dyn) continue; const arr = byType[id];
+    let s = _flotScratch[id]; if (!s || s.length < arr.length*10) s = _flotScratch[id] = new Float32Array(Math.max(16, arr.length)*10);
+    let n = 0; for (const f of arr) { const o = n*10, y = waterSurfaceAt(f.x, f.z) + 0.02 + Math.sin(f.ph)*0.04;
+      s[o]=f.x; s[o+1]=y; s[o+2]=f.z; s[o+3]=1; s[o+4]=f.yaw; s[o+5]=Math.sin(f.ph*0.7)*0.18; s[o+6]=f.yaw; s[o+7]=1; s[o+8]=1; s[o+9]=1; n++; }
+    reg.dyn.draw(s, n); }
+}
+
+/* ===================================================================== *
+ * § 5  BARNACLES — acorn-barnacle crusts on intertidal rocks (below the high-tide
+ *      line). Scrape them with the Tool Kit for bait; they regrow over a few days.
+ * ===================================================================== */
+let barnacles = [];          // { x, z, g, rsc, yaw, amt, max, regrowAt }  — each is a little intertidal rock crusted with barnacles
+const BARNACLE_REGROW_DAYS = 3;
+let barnacleDyn = null, barnacleRockDyn = null;
+function barnTop(b) { return b.g + b.rsc*0.3; }                 // where the crust sits on the rock
+function seedBarnacles() {
+  barnacles = [];
+  const want = 9 + (rng()*8|0);
+  for (let k = 0; k < 700 && barnacles.length < want; k++) {
+    const a = rng()*6.283, r = HALF*(0.46 + rng()*0.48), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const s = surfaceAt(x, z), g = s.h;
+    if (g > MAX_HIGH_TIDE - 0.3 || g < MAX_HIGH_TIDE - 4 || s.slope > 0.55) continue;   // the intertidal band, just below the high-tide line
+    if (bigPropBlocking(x, z, 1.2)) continue;
+    if (barnacles.some(b => Math.hypot(b.x-x, b.z-z) < 6)) continue;                     // keep them spread out
+    const max = 3 + (rng()*4|0);
+    barnacles.push({ x, z, g, rsc: 0.55 + rng()*0.7, yaw: rng()*6.283, amt: max, max, regrowAt: 0 });
+  }
+}
+function updateBarnacles() {
+  for (const b of barnacles) if (b.amt < b.max && b.regrowAt && clock.t >= b.regrowAt) {
+    b.amt++; b.regrowAt = b.amt < b.max ? clock.t + BARNACLE_REGROW_DAYS*DAY_PERIOD : 0;
+  }
+}
+function barnacleExposed(b) { return waterLevel < barnTop(b) + 0.35; }    // reachable when the tide isn't covering the rock
+function scrapeBarnacle(b) {
+  if (!b || b.amt <= 0) { showCard("Bare rock", "Give the barnacles a few days to grow back."); return; }
+  if (!(selectedItem() === "toolkit" || selectedTool() === "shovel")) { showCard("Scrape them off", "Scrape barnacles with the Tool Kit (or a shovel)."); return; }
+  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
+  shovelSwing = 1; spendStamina(CHOP_COST*0.5, true); rootPlayer(); if (onDig) onDig("chop");
+  const added = Inv.add("barnacle", 1);
+  if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
+  b.amt--; b.regrowAt = clock.t + BARNACLE_REGROW_DAYS*DAY_PERIOD;
+  const first = !discovered.has("f_barnacle"); discovered.add("f_barnacle"); notify("barnacle", 1, first);
+  spawnSand(b.x, barnTop(b), b.z, 4, [0.9,0.86,0.8]);
+  if (b.amt <= 0) showCard("Scraped clean", "Good bait. They'll crust back over in time.");
+}
+function drawBarnacles(view) {
+  if (!barnacles.length) return;
+  if (!barnacleDyn) barnacleDyn = makeDynamic(barnacleMesh(), 200);
+  if (!barnacleRockDyn) barnacleRockDyn = makeDynamic(rockMesh((SEED_INT^0x5b)>>>0, "rounded", [0.4,0.4,0.42]), 64);   // dark wet intertidal rock
+  propUniforms(view);
+  const px = cam.pos[0], pz = cam.pos[2];
+  // the little rocks first
+  let nr = 0; for (const b of barnacles) { if (nr >= 64) break; const dx = b.x-px, dz = b.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    const o = nr*10; digScratch[o]=b.x; digScratch[o+1]=b.g; digScratch[o+2]=b.z; digScratch[o+3]=b.rsc; digScratch[o+4]=b.yaw; digScratch[o+5]=0; digScratch[o+6]=0;
+    digScratch[o+7]=0.78; digScratch[o+8]=0.8; digScratch[o+9]=0.84; nr++; }
+  if (nr) barnacleRockDyn.draw(digScratch, nr);
+  // then the barnacle crust on top, shrinking as it's scraped away
+  let n = 0; for (const b of barnacles) { if (b.amt <= 0 || n >= 200) continue; const dx = b.x-px, dz = b.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    const sc = (0.55 + 0.6*(b.amt/Math.max(1,b.max))) * (0.7+b.rsc*0.3), o = n*10;
+    digScratch[o]=b.x; digScratch[o+1]=barnTop(b); digScratch[o+2]=b.z; digScratch[o+3]=sc; digScratch[o+4]=b.yaw*1.7; digScratch[o+5]=0; digScratch[o+6]=0;
+    digScratch[o+7]=1; digScratch[o+8]=1; digScratch[o+9]=1; n++; }
+  if (n) barnacleDyn.draw(digScratch, n);
 }
 
 // §1c crab lifecycle logging (toggle with K in debug mode) + a stable id per creature
@@ -5185,7 +5299,7 @@ function invDrop(idx, one) {
 
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
-  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode,
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup,
     recipes: [...knownRecipes], spearHard: spearHardened,   // §16 crafting
     bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, moist: c.moist, caught: c.caught })) } })); } catch (e) {}
 }
@@ -5196,6 +5310,7 @@ function loadState() {
       if (Array.isArray(s.main)) { Inv.main = padArr(s.main, INV_SLOTS); Inv.hotbar = padArr((s.hotbar || []).map(normCell), HOTBAR_SLOTS); }
       Inv.selected = Math.min(HOTBAR_SLOTS - 1, s.sel || 0); (s.disc || []).forEach((d) => discovered.add(d));
       starsRescued = s.rescued || 0;
+      if (typeof s.cleanup === "number") beachCleanup = s.cleanup;   // §5 beach-cleanup tally
       if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
       if (Array.isArray(s.recipes)) knownRecipes = new Set(s.recipes);   // §16 crafting
@@ -5739,8 +5854,10 @@ function renderJournal() {
   const tabs = [["creatures","Creatures"],["finds","Finds"],["treasure","Treasure"]];
   const tabHtml = tabs.map(([id,lbl]) => { const [n,t] = journalCount(id);
     return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
+  const cleanupLine = `<div class="jstat">🌊 Beach cleanup — <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared</div>`;
   j.innerHTML = `<div id="journalbox"><h2>Field Journal</h2>
     <div class="jtabs">${tabHtml}</div>
+    ${cleanupLine}
     <div class="jbody"><div class="jgrid">${journalGrid(journalTab)}</div></div>
     <div class="jhint">${IS_TOUCH ? "tap a card to inspect" : "click a card to inspect"} · Tab for tabs · E or Esc to close</div></div>`;
   j.querySelectorAll(".jtab").forEach(b => b.onclick = () => { journalTab = b.dataset.jtab; renderJournal(); });
@@ -5926,6 +6043,10 @@ function targetAlongRay(r, sticky) {
   for (const e of life) { if (!lifeVisible(e)) continue; sphere(e, e.kind, e.x, e.z, entityCY(e), entityRadius(e)); }
   for (const g of goats) sphere(g, "goat", g.x, g.z, 0.7, 1.1);
   for (const s of saltSpots) if (s.amt > 0) sphere(s, "salt", s.x, s.z, 0.2, 0.75);
+  for (const f of flotsam) { const wy = waterSurfaceAt(f.x, f.z);   // §5 floating debris sits at the water surface, not the seabed
+    consider(f, "flotsam", f.x, f.z, (w) => raySphere(r.o, r.d, f.x, wy + 0.1, f.z, FLOTSAM_R*Math.max(w, TARGET_FORGIVE))); }
+  for (const bc of barnacles) if (bc.amt > 0 && barnacleExposed(bc))   // §5 barnacle crusts on exposed intertidal rock
+    consider(bc, "barnacle", bc.x, bc.z, (w) => raySphere(r.o, r.d, bc.x, barnTop(bc) + 0.12, bc.z, (0.4 + bc.rsc*0.4)*Math.max(w, TARGET_FORGIVE)));
   // big objects: a fat vertical capsule (trunk + lower canopy) / lying trunk / sphere
   for (const o of treeObjs) { if (o.gone || o.falling) continue; const gy = surfaceAt(o.x, o.z).h;
     if (o.fallen) { const [cx, cz] = fallenCrownPos(o);
@@ -5969,6 +6090,8 @@ function useToolOnTarget(t) {
     case "goblin": openGoblinTrade(t.obj); return true;
     case "goat": offerSaltTo(t.obj); return true;
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
+    case "flotsam": collectFlotsam(t.obj); return true;   // §5 scoop floating debris straight from the water
+    case "barnacle": scrapeBarnacle(t.obj); return true;   // §5 scrape with the Tool Kit (or a shovel) for bait
     case "nest": takeEgg(t.obj); return true;
     case "chest": openChestAction(t.obj); return true;
     case "driftwood": return breakDriftwood(t.obj);
@@ -6026,6 +6149,7 @@ function interactWith(e) {
     const first = !discovered.has("f_" + e.t);
     discovered.add("f_" + e.t);
     notify(e.t, 1, first);
+    if (FINDS[e.t] && FINDS[e.t].litter) { beachCleanup++; }   // §5 clearing litter counts toward the beach-cleanup tally
     if (SEED_TREE[e.t] || e.t === "salt" || e.t === "leaves") Inv.autoHotbar(e.t);   // handy items go to the hotbar
     if (e.t === "bottle" && !e.drop && typeof bottleMapChance === "function") bottleMapChance();   // §12C a bottle may hold a map piece
     if (e.drop) { const di = worldDrops.indexOf(e.drop); if (di >= 0) worldDrops.splice(di, 1); saveDrops(); }  // picked a dropped item back up
@@ -9074,6 +9198,7 @@ seedWildCrops();
 populateLife();
 seedSeaweedBeds();   // §17.2 after life[], so bed-dwelling critters aren't wiped
 seedForagePatches(); // §17.3 worm soil / buried clusters the gulls gather over
+seedFlotsam();       // §5 a little floating debris already out on the water
 // §17.5 TEST: drop one goblin trader near the player's start spot to play with
 (function () { const s = findSpawn(); const ga = s.yaw + 0.7, gx = s.x + Math.sin(ga)*4, gz = s.z - Math.cos(ga)*4;
   const ok = surfaceAt(gx, gz).h > 0.5 && !spotUnderwater(gx, gz);
@@ -9102,6 +9227,7 @@ syncDebugPanel();
 seedDigSpots();
 initShovelFP();
 initWorldObjs();
+seedBarnacles();   // §5 barnacle crusts on intertidal rocks (needs rockObjs)
 loadWorld();
 saltDyn = makeDynamic(discMesh(0, 0.5, 8, 0.03, [0.94,0.95,0.97]), 60);
 goatDyn = makeDynamic(goatMesh(), 10);
@@ -9176,6 +9302,8 @@ function frame(now) {
   updateTools(dt, gdtTotal);
   updateGoats(dt);
   updateGulls(dt);
+  updateFlotsam(dt);   // §5 floating debris drifts & beaches itself
+  updateBarnacles();   // §5 barnacles regrow over time
   updateChests(dt);
   updatePry(dt);
   updateSalt();
@@ -9424,6 +9552,7 @@ function frame(now) {
   drawDriftwood(view);
   drawSetPieces(view);
   drawBerryBushes(view);
+  drawBarnacles(view);   // §5 barnacle crusts on intertidal rocks (before the transparent water)
   drawCrops(view);
   drawSeaweedBeds(view);
   drawGoblins(view);
@@ -9437,6 +9566,7 @@ function frame(now) {
   drawSalt(view);
   drawLife(view);
   drawGulls(view);
+  drawFlotsam(view);   // §5 floating debris on the water surface (drawn before the transparent water)
   drawTells(view, dt);
   drawRipples(view);
   drawPlaceGhost(view);
