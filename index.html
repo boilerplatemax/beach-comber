@@ -2641,7 +2641,7 @@ function hurtCreature(e, hx, hz) {
   if (e.t === "gull") { e.gstate = "flee"; e.timer = 1.6 + rng(); } else { e.alert = 1; e.fleeT = 3; e.jet = 0.7; e.state = "flee"; e.timer = 1; }
   if (onSpear) onSpear("hitflesh");
   sparkle(e.x, (e.y !== undefined ? e.y : heightAt(e.x,e.z)+0.3), e.z, [0.8,0.3,0.3], 5);
-  if (e.hp <= 0) { e.dying = 0; }                            // start the death animation (handled in updateLife/drawLife)
+  if (e.hp <= 0) { e.dying = 0; e.deathYaw = e.yaw; e.lingerT = 30 + rng()*30; }   // §urgent5 topple, lie still ~30–60s, then dither-dissolve
 }
 // a spear strike: catch a fish, else wound a creature; returns true if it hit something living
 function spearStrike(x, y, z, r) {
@@ -4126,8 +4126,14 @@ uniform float uWetLevel, uWaterLevel;               // §13.7 wet band near the 
 uniform int uWetBand;                               // 1 only for the world prop pass (rocks, trees)
 uniform float uGhost; uniform vec3 uGhostCol;       // §16B building-placement ghost
 uniform vec3 uLanternPos; uniform float uLanternI;  // §18 lantern light pool
+uniform float uDissolve;                            // §urgent5 0 = solid; >0 = dithered dissolve (dying creatures)
 ${SKY_GLSL}
 void main() {
+  if (uDissolve > 0.0) {                              // §urgent5 ordered Bayer-4x4 dither dissolve — no shrink
+    const float B[16] = float[16](0.,8.,2.,10., 12.,4.,14.,6., 3.,11.,1.,9., 15.,7.,13.,5.);
+    int ix = int(mod(gl_FragCoord.x, 4.0)), iy = int(mod(gl_FragCoord.y, 4.0));
+    if (uDissolve > (B[iy*4+ix] + 0.5) / 16.0) discard;
+  }
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
   float diff = abs(dot(n, normalize(uSunDir)));      // abs → foliage lit both sides
   vec3 col = vCol * (0.5 + 0.6 * diff);
@@ -5875,16 +5881,20 @@ function updateLife(dt, tSec) {
   for (let i = life.length - 1; i >= 0; i--) {
     const e = life[i];
     const dx = e.x - px, dz = e.z - pz, d2 = dx*dx + dz*dz;
+    // §urgent5 the dying/fade timeline runs even for distant corpses, so they never linger forever if you walk off
+    if (e.dying !== undefined) {
+      e.dying += dt;
+      if (!e.dropped && e.dying > 0.55) { e.dropped = true; const drop = CREATURE_DROP[e.t];
+        if (drop) { const a = (e.deathYaw||0) + 1.57; spawnFind(drop, e.x + Math.cos(a)*0.6, e.z + Math.sin(a)*0.6); } }
+      if (e.fade === undefined && e.dying > 1.2 && (e.dying > (e.lingerT || 40) || !creatureOnScreen(e))) e.fade = 0;
+      if (e.fade !== undefined) { e.fade += dt / 1.3; if (e.fade >= 1) { queueRespawn(e.t); life.splice(i, 1); } }
+      continue;
+    }
     if (d2 > UPDATE_R*UPDATE_R) continue;                // sleep distant entities
     const d = Math.sqrt(d2);
     e.phase += dt;
     if (e.kind === "find") continue;
     if (e.hurtT > 0) e.hurtT = Math.max(0, e.hurtT - dt);
-    if (e.dying !== undefined) {                         // §R4 killed → topples, lingers, fades, then drops & is removed
-      e.dying += dt;
-      if (e.dying > 2.3) { const drop = CREATURE_DROP[e.t]; if (drop) spawnFind(drop, e.x, e.z); queueRespawn(e.t); life.splice(i, 1); }
-      continue;
-    }
     behave(e, dt, d, dx, dz);
     if (e.dead) life.splice(i, 1);                       // §13.3 dried out — removed, remains already dropped
   }
@@ -6056,6 +6066,14 @@ function behave(e, dt, d, dx, dz) {
   }
 }
 
+// §urgent5 is a creature within the view (used to fade the dead early when off-screen)
+function creatureOnScreen(e) {
+  if (Math.hypot(e.x - cam.pos[0], e.z - cam.pos[2]) > DRAW_R) return false;
+  const y = (e.y !== undefined) ? e.y : heightAt(e.x, e.z) + 0.4;
+  const p = projectToScreen(e.x, y, e.z); if (!p) return false;
+  const m = 48;
+  return p[0] > -m && p[0] < innerWidth + m && p[1] > -m && p[1] < innerHeight + m;
+}
 function drawLife(view) {
   gl.useProgram(propProg);
   gl.uniformMatrix4fv(propU.uProj, false, proj);
@@ -6068,6 +6086,7 @@ function drawLife(view) {
   gl.uniform3fv(propU.uWarm, SKY.warm);
   gl.uniform1f(propU.uFogDensity, FOG_DENSITY);
   gl.uniform1f(propU.uFogNear, FOG_NEAR);
+  gl.uniform1f(propU.uDissolve, 0);   // §urgent5 default solid; the fade pass sets it per dying creature
   const px = cam.pos[0], pz = cam.pos[2];
   const buckets = {};
   for (const k in CREATURES) buckets[k] = 0;
@@ -6077,6 +6096,7 @@ function drawLife(view) {
     let n = 0;
     for (const e of life) {
       if (!filter(e)) continue;
+      if (e.fade !== undefined) continue;                // §urgent5 fading corpses are drawn separately (with the dissolve)
       const dx = e.x - px, dz = e.z - pz; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
       if (forceSpawn ? false : !lifeVisible(e)) continue;
       if (n >= reg.max) break;
@@ -6108,8 +6128,14 @@ function drawLife(view) {
         if (e.t === "star" || e.t === "anemone" || e.t === "urchin" || e.t === "snail" || e.t === "octopus") y += 0.02;
         else if (e.t === "shrimp") y += 0.06;
       } else { y = g + 0.05; lean = 0.2; }
-      // §R4 death throes: topple onto its side, linger, then shrink away
-      if (e.dying !== undefined) { lean = Math.min(1.45, e.dying*5); ld = e.yaw; if (e.dying > 1.4) sc *= Math.max(0, 1 - (e.dying-1.4)/0.9); }
+      // §urgent5 death: topple onto its side with a small settle, then lie still (NO shrink; the fade is a dither-dissolve)
+      if (e.dying !== undefined) {
+        const tp = Math.min(1, e.dying / 0.45);
+        lean = 1.5 * (1 - (1-tp)*(1-tp));                                            // ease over onto its side
+        if (e.dying > 0.45 && e.dying < 0.95) lean += Math.sin((e.dying-0.45)/0.5*Math.PI) * 0.06;   // a little settle bounce
+        ld = e.deathYaw || e.yaw; y = g + 0.04;
+      }
+      e._sc = sc;                                          // §urgent5 remember the drawn scale so the fade pass matches it (no pop)
       const o = n*10;
       lifeScratch[o]=e.x; lifeScratch[o+1]=y; lifeScratch[o+2]=e.z;
       lifeScratch[o+3]=sc; lifeScratch[o+4]=e.yaw; lifeScratch[o+5]=lean; lifeScratch[o+6]=ld;
@@ -6122,6 +6148,19 @@ function drawLife(view) {
   };
   for (const k in CREATURES) drawType(k, CREATURES[k], (e) => e.kind === "creature" && e.t === k);
   for (const k in FINDS) drawType(k, FINDS[k], (e) => e.kind === "find" && e.t === k);
+  // §urgent5 fade pass: each fading corpse drawn on its own with a dither-dissolve amount (no shrink)
+  for (const e of life) {
+    if (e.kind !== "creature" || e.fade === undefined) continue;
+    const dx = e.x - px, dz = e.z - pz; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
+    const reg = CREATURES[e.t]; if (!reg) continue;
+    const g = heightAt(e.x, e.z), o = 0;
+    lifeScratch[0]=e.x; lifeScratch[1]=g+0.04; lifeScratch[2]=e.z;
+    lifeScratch[3]=e._sc || e.scale; lifeScratch[4]=e.yaw; lifeScratch[5]=1.5; lifeScratch[6]=e.deathYaw || e.yaw;
+    lifeScratch[7]=e.tint[0]; lifeScratch[8]=e.tint[1]; lifeScratch[9]=e.tint[2];
+    gl.uniform1f(propU.uDissolve, Math.min(0.98, e.fade));
+    reg.dyn.draw(lifeScratch, 1);
+  }
+  gl.uniform1f(propU.uDissolve, 0);
 }
 
 /* --------------------------------------------------------------------- *
@@ -7292,6 +7331,7 @@ function propUniforms(view) {
   gl.uniform3fv(propU.uSunDir, SKY.sun); gl.uniform3fv(propU.uCamPos, cam.pos);
   gl.uniform3fv(propU.uZenith, SKY.zenith); gl.uniform3fv(propU.uHorizon, SKY.horizon); gl.uniform3fv(propU.uWarm, SKY.warm);
   gl.uniform1f(propU.uFogDensity, FOG_DENSITY); gl.uniform1f(propU.uFogNear, FOG_NEAR);
+  gl.uniform1f(propU.uDissolve, 0);   // §urgent5 default: solid
 }
 
 /* ===================================================================== *
