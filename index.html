@@ -4133,16 +4133,46 @@ function keyMesh() { const m = Mesh(); const br=[0.72,0.6,0.28];
 function mapPieceMesh() { const m = Mesh(); const pa=[0.82,0.73,0.54], e=[0.66,0.56,0.4];
   mBox(m,0,0.02,0,0.34,0.02,0.26,pa); mBox(m,0.3,0.02,0,0.06,0.025,0.26,e); mBox(m,-0.3,0.02,0,0.06,0.025,0.26,e); return m; }
 function shardMesh() { const m = Mesh(); const w=[0.9,0.88,0.84]; mTri(m,[-0.2,0,-0.1],[0.25,0.02,0.05],[0,0.03,0.22],w); mTri(m,[-0.2,0,-0.1],[0,0.03,0.22],[-0.25,0.01,0.12],w); return m; }
-function chestMesh(open, barnacled) {
-  const m = Mesh(); const wood=[0.42,0.3,0.18], wood2=[0.5,0.36,0.22], iron=[0.3,0.31,0.34], gold=[0.74,0.6,0.28];
-  mBox(m,0,0.26,0,0.5,0.26,0.34, wood);                      // body
-  for (const sx of [-0.52,0.52]) mBox(m,sx,0.26,0,0.03,0.28,0.36, iron);   // iron bands
-  mBox(m,0,0.26,0,0.52,0.05,0.36, iron);                     // mid band
-  const lidY = open ? 0.9 : 0.56, lidTip = open ? 0.75 : 0.72;
-  mBox(m,0, lidY, open?-0.2:0, 0.5,0.05,0.34, wood2);        // lid slab (tilts back when open)
-  mBox(m,0, lidTip, 0.34, 0.12,0.08,0.05, gold);             // lock
-  if (barnacled) for (let i=0;i<10;i++){ const a=i*2.3, s=0.5+0.4*((i*7)%3);
-    mBox(m, Math.cos(a)*0.48, 0.1+0.4*((i*5)%3)/3, Math.sin(a)*0.33, 0.05*s,0.05*s,0.05*s, [0.78,0.76,0.7]); }
+// §R4 chest body: plank walls with gaps, iron corner brackets & bands, a lock plate + hasp, and rope handles.
+const CHEST_H = 0.26, CHEST_W = 0.5, CHEST_D = 0.34;        // half-extents; lid hinges at y = 2*CHEST_H, z = -CHEST_D
+function chestBodyMesh(barnacled) {
+  const m = Mesh();
+  const wood=[0.4,0.28,0.17], wood2=[0.48,0.34,0.2], wood3=[0.33,0.23,0.14], iron=[0.27,0.28,0.32], ironHi=[0.4,0.42,0.46], gold=[0.72,0.58,0.26], rope=[0.58,0.48,0.3];
+  const W=CHEST_W, H=CHEST_H, D=CHEST_D;
+  for (const sz of [-1,1]) for (let i=-2;i<=2;i++){ const px=i*0.19; mBox(m, px, H, sz*D, 0.085, H, 0.018, i%2?wood:wood2); }   // front/back vertical planks (gaps between)
+  for (const sx of [-1,1]) for (let j=-1;j<=1;j++){ const pz=j*0.21; mBox(m, sx*W, H, pz, 0.018, H, 0.095, j%2?wood:wood2); }    // side planks
+  mBox(m, 0, 0.03, 0, W, 0.03, D, wood3);                     // floor
+  for (const sx of [-1,1]) for (const sz of [-1,1]) { mBox(m, sx*W, 0.06, sz*D, 0.03, 0.06, 0.03, iron); mBox(m, sx*W, H*1.85, sz*D, 0.03, 0.05, 0.03, iron); }   // corner brackets
+  mBox(m, 0, 0.1, 0, W+0.012, 0.028, D+0.012, iron); mBox(m, 0, H*1.65, 0, W+0.012, 0.028, D+0.012, ironHi);   // bands
+  mBox(m, 0, H*1.25, D+0.012, 0.09, 0.1, 0.02, iron);         // lock plate
+  mBox(m, 0, H*1.5, D+0.02, 0.028, 0.055, 0.02, gold);        // hasp
+  mBox(m, 0, H*1.18, D+0.03, 0.03, 0.03, 0.015, [0.1,0.1,0.11]);   // keyhole
+  for (const sx of [-1,1]) for (let k=0;k<4;k++){ const a=k/3*Math.PI; mBox(m, sx*(W+0.03), H+Math.cos(a)*0.08, Math.sin(a)*0.06, 0.02, 0.024, 0.024, rope); }   // rope handles
+  if (barnacled) { for (let i=0;i<11;i++){ const a=i*2.3; mBox(m, Math.cos(a)*W*0.92, 0.07+0.32*((i*5)%3)/3, Math.sin(a*1.3)*D, 0.033,0.033,0.033, [0.82,0.8,0.74]); }
+    for (let i=0;i<4;i++){ const a=i*1.7; mBox(m, Math.cos(a)*W*0.8, 0.22, Math.sin(a)*D, 0.02,0.14,0.04, [0.3,0.42,0.26]); } }   // seaweed
+  return m;
+}
+// §R4 chest lid: curved slats with iron straps, hinged at the origin (back-top edge), arching forward +z.
+function chestLidMesh(barnacled) {
+  const m = Mesh();
+  const wood=[0.42,0.3,0.18], wood2=[0.5,0.36,0.22], iron=[0.27,0.28,0.32];
+  const segs=4, L=0.68;
+  for (let i=0;i<segs;i++){ const z0=i/segs*L, z1=(i+1)/segs*L;
+    const y0=Math.sin((i/segs)*Math.PI)*0.11, y1=Math.sin(((i+1)/segs)*Math.PI)*0.11;
+    for (const sx of [[-CHEST_W,-0.17],[-0.17,0.17],[0.17,CHEST_W]]) {   // three slats across
+      mQuad(m, [sx[0],y0,z0],[sx[1],y0,z0],[sx[1],y1,z1],[sx[0],y1,z1], i%2?wood:wood2); }
+    mQuad(m, [-CHEST_W,y0,z0],[-CHEST_W,y1,z1],[-CHEST_W,-0.02,z1],[-CHEST_W,-0.02,z0], wood);   // end caps (closed)
+    mQuad(m, [CHEST_W,y1,z1],[CHEST_W,y0,z0],[CHEST_W,-0.02,z0],[CHEST_W,-0.02,z1], wood);
+  }
+  for (const sx of [-0.33,0,0.33]) mBox(m, sx, 0.11, L*0.5, 0.025, 0.02, L*0.5, iron);   // iron straps front-to-back
+  if (barnacled) for (let i=0;i<5;i++){ const a=i*1.3; mBox(m, Math.cos(a)*0.38, 0.11, 0.2+Math.sin(a)*0.18, 0.03,0.03,0.03, [0.82,0.8,0.74]); }
+  return m;
+}
+function chestMesh(open, barnacled) {   // composed (for the journal icon): body + lid, flat when closed
+  const m = chestBodyMesh(barnacled); const lid = chestLidMesh(barnacled);
+  const th = open ? -1.6 : 0, ct = Math.cos(th), st = Math.sin(th);   // rotate the lid about the back-top hinge
+  for (let i=0;i<lid.pos.length;i+=3){ const y=lid.pos[i+1], z=lid.pos[i+2];
+    m.pos.push(lid.pos[i], 2*CHEST_H + (y*ct - z*st), -CHEST_D + (y*st + z*ct)); m.col.push(lid.col[i],lid.col[i+1],lid.col[i+2]); }
   return m;
 }
 // §R4 axe: a wooden haft with a wedge-shaped blade at the top
@@ -8920,9 +8950,10 @@ const TREASURE_LOOT = [
   { id:"agate",    min:1, max:2, w:2, fragile:false },
 ];
 const TREASURE_BONUS = ["compass", "jewelry", "agate", "bell", "fossil"];   // key-opening bonus
-const chestDynClosed = makeDynamic(chestMesh(false, false), 8);
-const chestDynOpen   = makeDynamic(chestMesh(true, false), 8);
-const chestDynBarn   = makeDynamic(chestMesh(false, true), 8);
+const chestBodyDyn = makeDynamic(chestBodyMesh(false), 8);         // §R4 body + hinged lid drawn separately so the lid can swing open
+const chestBodyBarnDyn = makeDynamic(chestBodyMesh(true), 8);
+const chestLidDyn = makeDynamic(chestLidMesh(false), 8);
+const chestLidBarnDyn = makeDynamic(chestLidMesh(true), 8);
 const tellChainMesh  = makeDynamic((function(){ const m=Mesh(); const ir=[0.32,0.33,0.36]; for(let i=0;i<3;i++) mCyl(m,i*0.12,i*0.12+0.14,0.07,0.07,6,ir); return m; })(), 8);
 const tellPlankMesh  = makeDynamic((function(){ const m=Mesh(); mBox(m,0,0.1,0,0.3,0.04,0.12,[0.5,0.38,0.24]); mBox(m,0.26,0.16,0,0.06,0.1,0.12,[0.46,0.34,0.2]); return m; })(), 8);
 const tellRopeMesh   = makeDynamic((function(){ const m=Mesh(); for(let i=0;i<4;i++){ const a=i*0.9; mCyl(m,Math.sin(a)*0.1,Math.sin(a)*0.1+0.14,0.05,0.05,5,[0.66,0.56,0.36]); } return m; })(), 8);
@@ -9041,7 +9072,8 @@ function openChestLoot(c, method) {
   if (method === "key") { const bid = TREASURE_BONUS[(rng()*TREASURE_BONUS.length)|0]; if (Inv.add(bid, 1) > 0) { bonusTxt = "  Bonus: " + (ITEMS[bid]?ITEMS[bid].name:bid) + "."; discovered.add("f_"+bid); } }
   c.looted = true;
   c.log = { items: got.slice(), method, broke, when: ISLAND_NAME };
-  if (onDig) onDig("clang"); sparkle(c.x, surfaceAt(c.x,c.z).h+0.8, c.z, [1,0.9,0.5], 18);
+  if (onDig) onDig("clang"); sparkle(c.x, surfaceAt(c.x,c.z).h+0.8, c.z, [1,0.9,0.5], 18);   // §R4 glow from inside
+  spawnSand(c.x, surfaceAt(c.x,c.z).h+0.1, c.z, 12, [0.82,0.74,0.56]);                        // §R4 sand puff as the lid swings up
   const methodTxt = method === "key" ? "The key turns and the lid swings open." : method === "smash" ? (broke ? `Smashed open — ${broke} item${broke>1?"s":""} shattered.` : "Smashed open.") : "You pry the lid open.";
   showCard("Treasure!", methodTxt + " " + (got.length ? got.join(", ") + "." : "Empty.") + bonusTxt);
   discovered.add("chest_" + c.id);
@@ -9104,22 +9136,21 @@ function updateChests(dt) {
 }
 function drawChests(view) {
   propUniforms(view);
-  // darker-sand ring tells (buried chests within ~10m)
-  let nr = 0;
-  for (const c of chests) { if (c.exposed || c.opened) continue; const d = Math.hypot(c.x-player.x, c.z-player.z); if (d > 11) continue;
-    const gy = surfaceAt(c.x, c.z).h, o = nr*10;
-    digScratch[o]=c.x;digScratch[o+1]=gy+0.04;digScratch[o+2]=c.z;digScratch[o+3]=1.7;digScratch[o+4]=0;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=1;digScratch[o+8]=1;digScratch[o+9]=1; nr++; }
-  if (nr) chestRingDyn.draw(digScratch, nr);
+  // §R4 the giveaway brown ring is gone — the only buried tell is now the subtle thing poking out of the sand
   // a physical poke-out tell by type
   for (const c of chests) { if (c.exposed || c.opened) continue; const d = Math.hypot(c.x-player.x, c.z-player.z); if (d > 11) continue;
     const gy = surfaceAt(c.x, c.z).h; digScratch.set([c.x+0.25, gy, c.z+0.15, 1, c.id*0.7, 0.2, 0, 1,1,1], 0);
     (c.tell==="chain"?tellChainMesh:c.tell==="plank"?tellPlankMesh:tellRopeMesh).draw(digScratch, 1); }
-  // chest bodies (emerging / exposed / open)
+  // §R4 chest bodies + separately-hinged lids (emerging / exposed / open)
   for (const c of chests) { if (c.carried) continue; const d = Math.hypot(c.x-player.x, c.z-player.z); if (d > 130) continue;
     if (!c.exposed && c.expose <= 0.01) continue;
-    const gy = surfaceAt(c.x, c.z).h, sink = c.exposed ? 0 : (1 - c.expose) * 0.55;
-    const dyn = c.opened ? chestDynOpen : (c.barnacles > c.scrapes ? chestDynBarn : chestDynClosed);
-    digScratch.set([c.x, gy - sink, c.z, 1, 0, 0, 0, 1,1,1], 0); dyn.draw(digScratch, 1); }
+    const gy = surfaceAt(c.x, c.z).h, sink = c.exposed ? 0 : (1 - c.expose) * 0.55, by = gy - sink;
+    const barn = c.barnacles > c.scrapes;
+    (barn ? chestBodyBarnDyn : chestBodyDyn).draw((digScratch.set([c.x, by, c.z, 1, 0, 0, 0, 1,1,1], 0), digScratch), 1);
+    // the lid hinges at the back-top edge; c.open (0 closed … 1 open) swings it ~100°
+    const lidA = -(c.open || 0) * 1.7;
+    digScratch.set([c.x, by + 2*CHEST_H, c.z - CHEST_D, 1, 0, lidA, 0, 1,1,1], 0);   // lean=lidA, ld=0 → hinge about the x-axis
+    (barn ? chestLidBarnDyn : chestLidDyn).draw(digScratch, 1); }
 }
 // ---- procedural treasure map (parchment, from the real coastline) ----
 let _mapGrid = null;
