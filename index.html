@@ -2264,6 +2264,9 @@ const JUMP_COST = 0.08;         // stamina per jump
 const GROUND_TOL = 0.12;        // ground probe tolerance (m) — small bumps/slope changes don't count as airborne
 const LEDGE_DROP = 0.45;        // a drop bigger than this under your feet makes you fall (walk off a ledge)
 let physAcc = 0, camSit = 0;    // step accumulator; smoothed crouch/rest camera offset
+// §urgent7 individually-disableable camera/movement effects (for hunting the landing snap). raw = all off.
+const camFx = { interp: true, bob: true, eyeSmooth: true, crouch: true, landDip: true, raw: false };
+function camFxOn(k) { return !camFx.raw && camFx[k]; }
 const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, prevFeetY: 0, sprinting: false, scramble: 0, vy: 0, airborne: false, coyote: 0, landStun: 0,
                  swimming: false, underwater: false, breath: 40,       // §14A swimming/breath (BREATH_MAX)
                  climbing: false, climbWet: false, climbIntoX: 0, climbIntoZ: 1, climbSway: 0, climbTrickle: 0 };   // §15 climbing
@@ -6888,6 +6891,15 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgHunger">${hungerEnabled ? "Hunger: on" : "Hunger: off"}</button><button id="dbgBreath">${infiniteBreath ? "Breath: ∞" : "Breath: norm"}</button></div>
     <div class="dbgrow"><button id="dbgDeep">To deep water</button><button id="dbgAlert">${showAlert ? "Alertness: on" : "Alertness: off"}</button></div>
     <div class="dbgrow"><button id="dbgCook">${fireInstantCook ? "Cook: instant" : "Cook: normal"}</button><button id="dbgFuel">${fireFreeFuel ? "Fuel: ∞" : "Fuel: normal"}</button><button id="dbgGivePot">Give pot+bait</button></div>
+    <h3>Camera (jump-snap hunt)</h3>
+    <div class="dbgrow"><button id="dbgCamRaw" style="${camFx.raw?'background:#b5503a':''}">Raw camera: ${camFx.raw?"ON":"off"}</button><button id="dbgYG">Y graph (Y)</button></div>
+    <div class="dbgrow">
+      <button id="dbgCamInterp">interp: ${camFx.interp?"on":"OFF"}</button>
+      <button id="dbgCamBob">bob: ${camFx.bob?"on":"OFF"}</button>
+      <button id="dbgCamEye">eye-smooth: ${camFx.eyeSmooth?"on":"OFF"}</button>
+      <button id="dbgCamCrouch">crouch-dip: ${camFx.crouch?"on":"OFF"}</button>
+      <button id="dbgCamLand">landing-dip: ${camFx.landDip?"on":"OFF"}</button>
+    </div>
     <h3>Shovel / stamina</h3>
     ${TUNABLES.map((t) => `<label>${t.k} <b class="tv" data-k="${t.k}">${(+DBG_GET(t.k)).toFixed(t.step < 0.01 ? 3 : 2)}</b>
       <input class="dbgtune" data-k="${t.k}" type="range" min="${t.min}" max="${t.max}" step="${t.step}" value="${DBG_GET(t.k)}"></label>`).join("")}
@@ -6911,6 +6923,14 @@ function syncDebugPanel() {
   p.querySelector("#dbgCook").onclick = () => { fireInstantCook = !fireInstantCook; syncDebugPanel(); };   // §Cooking instant roast/stew
   p.querySelector("#dbgFuel").onclick = () => { fireFreeFuel = !fireFreeFuel; syncDebugPanel(); };         // §Cooking fires never burn out
   p.querySelector("#dbgGivePot").onclick = () => { Inv.add("pot", 2); Inv.add("worm", 5); Inv.add("salt", 3); Inv.add("clam", 4); Inv.add("cassava", 2); showCard("Debug", "+2 pots, bait, salt & ingredients."); };
+  // §urgent7 camera-effect toggles for the jump-snap hunt
+  p.querySelector("#dbgCamRaw").onclick = () => { camFx.raw = !camFx.raw; syncDebugPanel(); };
+  p.querySelector("#dbgYG").onclick = () => { dbgYGraph = !dbgYGraph; document.getElementById("ygraph").style.display = dbgYGraph ? "block" : "none"; };
+  p.querySelector("#dbgCamInterp").onclick = () => { camFx.interp = !camFx.interp; syncDebugPanel(); };
+  p.querySelector("#dbgCamBob").onclick = () => { camFx.bob = !camFx.bob; syncDebugPanel(); };
+  p.querySelector("#dbgCamEye").onclick = () => { camFx.eyeSmooth = !camFx.eyeSmooth; syncDebugPanel(); };
+  p.querySelector("#dbgCamCrouch").onclick = () => { camFx.crouch = !camFx.crouch; syncDebugPanel(); };
+  p.querySelector("#dbgCamLand").onclick = () => { camFx.landDip = !camFx.landDip; syncDebugPanel(); };
   p.querySelector("#dbgDeep").onclick = () => teleportToDeepWater();
   p.querySelector("#dbgAlert").onclick = () => { showAlert = !showAlert; syncDebugPanel(); };   // §14C
   p.querySelectorAll(".dbgtune").forEach((el) => el.oninput = (e) => {
@@ -10966,16 +10986,19 @@ function frame(now) {
     if (physAcc > PHYS_STEP) physAcc = PHYS_STEP;   // clamp (tab was hidden / big hitch) — avoids spiral of death
     if (Math.abs(player.feetY - player.prevFeetY) > 3) player.prevFeetY = player.feetY;   // a teleport happened (respawn/climb) — don't interpolate across it
     const alpha = Math.min(1, physAcc / PHYS_STEP);
-    const renderFeetY = player.prevFeetY + (player.feetY - player.prevFeetY) * alpha;
+    // §urgent7 each effect is individually disableable; "raw camera" (camFx.raw) turns them all off at once.
+    const renderFeetY = camFxOn("interp") ? (player.prevFeetY + (player.feetY - player.prevFeetY) * alpha) : player.feetY;   // render interpolation
     // camera = interpolated feet + eye + additive camera-only offsets (bob, crouch/rest, landing dip) — none touch feetY
     const moving = wl > 0.01 ? 1 : 0;
     player.walkLen = moving ? Math.min(1, wl) : 0;              // §R4 feeds the first-person tool's walk bob
     const amp = (0.06 + (player.sprinting ? 0.05 : 0) + player.scramble * 0.07) * moving;
-    const bobOff = Math.sin(player.bob * (player.scramble > 0.3 ? 1.7 : 2.6)) * amp;
-    const sitTarget = resting ? -0.8 : (crouching ? -CROUCH_DROP : 0);   // §13.4 lower the camera when crouched/resting
-    camSit += (sitTarget - camSit) * Math.min(1, dt * 14);
+    const bobOff = camFxOn("bob") ? Math.sin(player.bob * (player.scramble > 0.3 ? 1.7 : 2.6)) * amp : 0;   // head bob
+    const sitTarget = camFxOn("crouch") ? (resting ? -0.8 : (crouching ? -CROUCH_DROP : 0)) : 0;   // §13.4 crouch / rest dip
+    if (camFxOn("eyeSmooth")) camSit += (sitTarget - camSit) * Math.min(1, dt * 14);   // eye-height smoothing
+    else camSit = sitTarget;
     player.eyeY = renderFeetY + EYE + camSit;                            // stable gameplay eye (rays, lantern, spear)
-    cam.pos[0] = player.x; cam.pos[1] = player.eyeY + bobOff + camYOff; cam.pos[2] = player.z;   // + visual bob + landing give
+    const landDip = camFxOn("landDip") ? camYOff : 0;                   // landing dip / give
+    cam.pos[0] = player.x; cam.pos[1] = player.eyeY + bobOff + landDip; cam.pos[2] = player.z;   // + visual bob + landing give
     if (dbgYGraph) { recordY(renderFeetY, cam.pos[1], player.airborne); drawYGraph(); }    // §P1
     if (critDbg) drawCritDebug();                                                          // §R4 creature AI overlay
    }
@@ -10991,8 +11014,9 @@ function frame(now) {
   // a bounced-tool jolt: a fast jitter on yaw & pitch that decays (§10.1)
   const shk = camShake > 0.001 ? camShake * 0.09 * screenShake : 0;   // §R4 scaled by the Screen shake setting
   const shakeYaw = shk ? Math.sin(t * 90) * shk : 0, shakePit = shk ? Math.cos(t * 83) * shk : 0;
-  if (mode === "walk" && (player.scramble > 0.01 || camNudge > 0.001 || breathe !== 0 || shk !== 0)) {   // dip + breathe + dig kick + jolt
-    const dip = player.scramble * 0.14 + Math.sin(t * 2.2) * player.scramble * 0.025 + camNudge + breathe + shakePit;
+  const nudgeFx = camFxOn("landDip") ? camNudge : 0;   // §urgent7 landing pitch-nod is part of the landing dip
+  if (mode === "walk" && !camFx.raw && (player.scramble > 0.01 || nudgeFx > 0.001 || breathe !== 0 || shk !== 0)) {   // dip + breathe + dig kick + jolt
+    const dip = player.scramble * 0.14 + Math.sin(t * 2.2) * player.scramble * 0.025 + nudgeFx + breathe + shakePit;
     const yaw = cam.yaw + shakeYaw;
     const cp = Math.cos(cam.pitch - dip), sp = Math.sin(cam.pitch - dip);
     f = [Math.sin(yaw) * cp, sp, -Math.cos(yaw) * cp];
