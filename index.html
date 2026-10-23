@@ -2588,7 +2588,7 @@ function climbTargetInFront() {
   return null;
 }
 function tryGrabClimb() {
-  if (player.climbing || mode !== "walk" || player.swimming || isPanelOpen()) return false;
+  if (!climbEnabled || player.climbing || mode !== "walk" || player.swimming || isPanelOpen()) return false;
   const t = climbTargetInFront();
   if (!t) return false;
   if (t.sand) { showCard("Too crumbly", "Sand and dunes won't hold a grip."); return false; }
@@ -2785,6 +2785,9 @@ function drawThrownSpears(view) {
  *   Mobile: a Cast / Reel hold-button; desktop: hold left-mouse (or F).
  * ===================================================================== */
 let relaxedFishing = false;
+// §climb optional modes (persisted): climbing on/off, never run out of bait, never starve
+let climbEnabled = true, infiniteWorms = false, noStarvation = false;
+try { climbEnabled = localStorage.getItem("bc_climb") !== "0"; infiniteWorms = localStorage.getItem("bc_infworms") === "1"; noStarvation = localStorage.getItem("bc_nostarve") === "1"; } catch (e) {}
 try { relaxedFishing = localStorage.getItem("bc_relaxfish") === "1"; } catch (e) {}
 function setRelaxedFishing(v) { relaxedFishing = v; try { localStorage.setItem("bc_relaxfish", v ? "1" : "0"); } catch (e) {} }
 let fishForceBite = false, fishOddsLog = false;        // debug toggles (O / U in debug mode)
@@ -2820,7 +2823,7 @@ let fishSigns = [];
 let fishReveal = { open: false };
 
 function rodEquipped() { return mode === "walk" && selectedTool() === "rod" && !isPanelOpen(); }
-function bestBait() { for (const b of ROD_BAIT) if (Inv.has(b[0])) return b; return null; }
+function bestBait() { if (infiniteWorms) return ROD_BAIT[0]; for (const b of ROD_BAIT) if (Inv.has(b[0])) return b; return null; }   // §climb infinite-worms mode always has bait
 function ensureBait() { if (bestBait()) return true; hintText = "Need worms"; hintT = 1.4; return false; }   // §fishpolish small crosshair hint, no card
 
 // where a cast at this charge would land: straight out along the look direction, distance scaled by charge
@@ -2877,7 +2880,7 @@ function onBobberLanded() {
   // §fishpolish the bobber must come down on water; if the target isn't water (tide drained it), reel straight back
   if (waterDepthAt(rod.bob.tx, rod.bob.tz) < 0.2) { hintText = "No water there"; hintT = 1.2; if (typeof SND !== "undefined") SND.play("plop"); endCast(0.5); return; }
   rod.state = "waiting"; rod.bob.splash = 1;
-  if (!rod.baitTaken) { Inv.remove(rod.baitId, 1); rod.baitTaken = true; }   // §fishpolish 1 worm, taken on landing
+  if (!rod.baitTaken && !infiniteWorms) { Inv.remove(rod.baitId, 1); rod.baitTaken = true; }   // §fishpolish 1 worm, taken on landing (§climb free in infinite-worms mode)
   rod.spotQ = Math.max(0, spotQuality(rod.bob.tx, rod.bob.tz));
   const q = rod.spotQ, hot = hotspotNear(rod.bob.tx, rod.bob.tz) ? 1 : 0;
   // wide bite variance; a hotspot cuts the wait sharply
@@ -3532,6 +3535,8 @@ addEventListener("keyup", (e) => { keys[e.code] = false; });
 canvas.addEventListener("mousedown", (e) => {
   if (IS_TOUCH) return;
   if (e.button === 1 && mode === "walk" && selectedItem() === "toolkit") { e.preventDefault(); cycleToolkit(); return; }   // §13.2 middle-click cycles the Tool Kit
+  if (e.button === 2 && mode === "walk" && !isPanelOpen() && document.pointerLockElement === canvas) {   // §climb hold right mouse to grab a climbable face
+    e.preventDefault(); if (climbEnabled && !player.climbing) tryGrabClimb(); return; }
   if (e.button !== 0) return;
   if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
   if (mode === "walk" && buildMode) { placeBuildAtGhost(); return; }      // §16B click to place the ghost
@@ -3545,7 +3550,8 @@ canvas.addEventListener("mousedown", (e) => {
   if (mode === "walk" && selectedTool() === "rod" && !isPanelOpen()) { rodPressStart(); return; }        // §Fishing charge/hook/reel
   useHeld = true; clickAt(0, 0);                 // §13.2 hold to keep swinging at a work target
 });
-addEventListener("mouseup", (e) => { if (e.button === 0) { useHeld = false; if (spear.charging) spearRelease(); rodPressEnd(); } });
+addEventListener("mouseup", (e) => { if (e.button === 0) { useHeld = false; if (spear.charging) spearRelease(); rodPressEnd(); }
+  else if (e.button === 2 && player.climbing) dropClimb(); });   // §climb release right mouse to let go
 // §13.2 scroll wheel cycles belt slots (skips empties)
 addEventListener("wheel", (e) => {
   if (mode !== "walk" || isPanelOpen()) return;
@@ -3825,7 +3831,10 @@ function openSettings() {
       <div class="srow"><label>Auto-pickup</label><button data-k="autopick">${onoff(autoPickup)}</button></div>
       <div class="srow"><label>Hunger</label><button data-k="hunger">${onoff(hungerEnabled)}</button></div>
       <div class="srow"><label>Day/night cycle</label><button data-k="daynight">${onoff(dayNightEnabled)}</button></div>
-      <div class="srow"><label>Relaxed fishing</label><button data-k="relaxfish">${onoff(relaxedFishing)}</button></div>`,
+      <div class="srow"><label>Relaxed fishing</label><button data-k="relaxfish">${onoff(relaxedFishing)}</button></div>
+      <div class="srow"><label>Climbing</label><button data-k="climbing">${onoff(climbEnabled)}</button></div>
+      <div class="srow"><label>Infinite worms</label><button data-k="infworms">${onoff(infiniteWorms)}</button></div>
+      <div class="srow"><label>No starvation</label><button data-k="nostarve">${onoff(noStarvation)}</button></div>`,
     access: `
       <div class="srow"><label>Brightness</label><input id="setBright" type="range" min="0.6" max="1.8" step="0.05" value="${nightBrightness}"></div>
       <div class="srow"><label>Screen shake</label><input id="setShake" type="range" min="0" max="1" step="0.05" value="${screenShake}"></div>
@@ -3845,6 +3854,9 @@ function openSettings() {
     else if (k === "hunger") { setHungerEnabled(!hungerEnabled); }   // §13.8
     else if (k === "daynight") { setDayNight(!dayNightEnabled); }     // §13.9
     else if (k === "relaxfish") { setRelaxedFishing(!relaxedFishing); }   // §Fishing forgiving reel mini-game
+    else if (k === "climbing") { climbEnabled = !climbEnabled; if (!climbEnabled && player.climbing) dropClimb(); try { localStorage.setItem("bc_climb", climbEnabled ? "1" : "0"); } catch (e) {} }   // §climb toggle
+    else if (k === "infworms") { infiniteWorms = !infiniteWorms; try { localStorage.setItem("bc_infworms", infiniteWorms ? "1" : "0"); } catch (e) {} }   // §climb never run out of bait
+    else if (k === "nostarve") { noStarvation = !noStarvation; try { localStorage.setItem("bc_nostarve", noStarvation ? "1" : "0"); } catch (e) {} }   // §climb hunger never reaches starving
     else if (k === "crouchkey") { crouchKey = crouchKey === "KeyC" ? "ControlLeft" : "KeyC"; try { localStorage.setItem("bc_crouchKey", crouchKey); } catch (e) {} }
     openSettings();
   });
@@ -7869,6 +7881,7 @@ function canHeavyAction() { return !exhausted && stamina > 0.02 && digCommit <= 
 function rootPlayer() { digCommit = COMMIT_TIME; }              // short wind-up: rooted ~0.5s per strike
 function updateHunger(gdt) { if (!hungerEnabled) { hunger = 1; return; }
   hunger = Math.max(0, hunger - HUNGER_DRAIN * gdt);                       // slow passive drain (game-time)
+  if (noStarvation && hunger < H_HUNGRY + 0.03) hunger = H_HUNGRY + 0.03;  // §climb no-starvation mode: never drops into the starving tier
   if (hungerTier() === "starving") { growlT -= gdt; if (growlT <= 0) { growlT = 11 + rng()*7; if (onDig) onDig("growl"); } } }
 function updateStamina(dt) {
   if (mode !== "walk") { stamina = 1; resting = false; exhausted = false; digCommit = 0; crouching = false; crouchStillT = 0; return; }
