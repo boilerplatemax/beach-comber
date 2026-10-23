@@ -1814,11 +1814,11 @@ void main() {
     col += col * caust * shallow * 0.6;
   }
 
-  // §18 lantern: a warm pool of light around the player, with a soft falloff
+  // §18/§tools lantern: a soft warm pool with a gentle (non-spiking) falloff, so it lifts dark ground without washing to white.
   if (uLanternI > 0.001) {
     float ld = length(vWorld - uLanternPos);
-    float latt = uLanternI / (1.0 + ld*ld*0.08) * (1.0 - smoothstep(7.0, 13.0, ld));
-    col += vec3(1.0, 0.72, 0.42) * latt;
+    float latt = uLanternI * (1.0 - smoothstep(0.4, 8.5, ld));
+    col += vec3(1.0, 0.62, 0.32) * latt;
   }
   // Distance fog → the sky color for this fragment's own view direction.
   vec3 viewVec = vWorld - uCamPos;
@@ -4378,9 +4378,9 @@ void main() {
     float sp = fract(sin(dot(floor(vWorld.xz * 7.0), vec2(12.99, 78.23))) * 43758.5);  // barnacle speckle in the splash zone
     if (band > 0.3 && sp > 0.82) col = mix(col, vec3(0.82, 0.82, 0.78), 0.55);
   }
-  if (uLanternI > 0.001) {   // §18 lantern pool on props
+  if (uLanternI > 0.001) {   // §18/§tools soft warm lantern pool on props (gentle falloff, no white spike)
     float ld = length(vWorld - uLanternPos);
-    col += vec3(1.0, 0.72, 0.42) * (uLanternI / (1.0 + ld*ld*0.08) * (1.0 - smoothstep(7.0, 13.0, ld)));
+    col += vec3(1.0, 0.62, 0.32) * (uLanternI * (1.0 - smoothstep(0.4, 8.5, ld)));
   }
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
@@ -6659,7 +6659,7 @@ function selectedItem() { const c = Inv.hotbar[Inv.selected]; return c ? c.id : 
 function lanternLit() { return mode === "walk" && !isPanelOpen() && selectedItem() === "lantern"; }
 function lanternPos() { return [player.x, player.eyeY - 0.55, player.z]; }
 function lanternFlicker() { const t = clock.t; return 0.84 + 0.12*Math.sin(t*18.0) + 0.06*Math.sin(t*7.3 + 1.0) + 0.04*Math.sin(t*33.0); }
-const LANTERN_I = 1.35;   // §18 lantern brightness (tunable)
+const LANTERN_I = 0.62;   // §18/§tools lantern brightness — lower, warm, soft (tunable)
 let _preLanternSlot = 0;
 function toggleLantern() {   // §18 L key / mobile button: hold up the lantern, or put it away
   const li = Inv.hotbar.findIndex(s => s && s.id === "lantern");
@@ -6667,11 +6667,42 @@ function toggleLantern() {   // §18 L key / mobile button: hold up the lantern,
   if (Inv.selected === li) selectHotbar(_preLanternSlot);
   else { _preLanternSlot = Inv.selected; selectHotbar(li); }
 }
+let placedLanterns = [];   // §tools lit lanterns set down in the world, saved per seed: { x, y, z }
+// the one lantern that lights the scene this frame: the held one if raised, else the nearest placed lantern to the camera
+function activeLanternPos() {
+  if (lanternLit()) return lanternPos();
+  let best = null, bd = 1e9;
+  for (const L of placedLanterns) { const d = (L.x-cam.pos[0])**2 + (L.z-cam.pos[2])**2; if (d < bd) { bd = d; best = L; } }
+  return best ? [best.x, best.y + 0.35, best.z] : null;
+}
 function setLanternUniform(U) {   // call after the program + its uniforms are bound
   if (!U || U.uLanternI === undefined) return;
-  const on = lanternLit();
-  gl.uniform1f(U.uLanternI, on ? LANTERN_I * lanternFlicker() : 0);
-  if (on) { const p = lanternPos(); gl.uniform3f(U.uLanternPos, p[0], p[1], p[2]); }
+  const p = activeLanternPos();
+  gl.uniform1f(U.uLanternI, p ? LANTERN_I * lanternFlicker() : 0);
+  if (p) gl.uniform3f(U.uLanternPos, p[0], p[1], p[2]);
+}
+function placeLantern(x, z) {
+  if (placedLanterns.length >= 64) { showCard("That's plenty", "You can't set out any more lanterns here."); return; }
+  const gy = surfaceAt(x, z).h;
+  placedLanterns.push({ x, y: gy, z });
+  Inv.remove("lantern", 1);                      // one lantern leaves the belt and stays lit on the ground
+  shovelSwing = Math.max(shovelSwing, 0.3); if (onDig) onDig("pat");
+  saveWorld();
+}
+function pickUpLantern(L) {
+  const i = placedLanterns.indexOf(L); if (i < 0) return;
+  if (Inv.add("lantern", 1) <= 0) { showCard("Pack full", "No room to pick up the lantern."); return; }
+  placedLanterns.splice(i, 1); if (onDig) onDig("pickup"); saveWorld();
+}
+let placedLanternDyn = null; const _lanternArr = new Float32Array(64 * 10);
+function drawPlacedLanterns(view) {
+  if (!placedLanterns.length) return;
+  if (!placedLanternDyn) placedLanternDyn = makeDynamic(lanternMesh(), 64);
+  propUniforms(view); const a = _lanternArr; let n = 0;
+  const px = cam.pos[0], pz = cam.pos[2], gl2 = 0.6 + 0.4 * lanternFlicker();   // warm glow tint pulse
+  for (const L of placedLanterns) { if ((L.x-px)**2 + (L.z-pz)**2 > DRAW_R*DRAW_R) continue;
+    const o = n*10; a[o]=L.x; a[o+1]=L.y; a[o+2]=L.z; a[o+3]=1.5; a[o+4]=0; a[o+5]=0; a[o+6]=0; a[o+7]=1.0; a[o+8]=0.88*gl2+0.3; a[o+9]=0.6*gl2+0.2; n++; if (n >= 64) break; }
+  if (n) placedLanternDyn.draw(a, n);
 }
 // §13.2 the effective tool: the Tool Kit resolves to shovel/axe/pickaxe (by aim in Auto, or the locked mode)
 function selectedTool() { const c = Inv.hotbar[Inv.selected]; if (!c) return null;
@@ -7517,6 +7548,7 @@ function targetAlongRay(r, sticky) {
     else if (ch.exposed) sphere(ch, "chest", ch.x, ch.z, 0.3, 0.9); }
   for (let i = 0; i < storageBoxes.length; i++) sphere(storageBoxes[i], "storagebox", storageBoxes[i].x, storageBoxes[i].z, 0.3, 0.8);
   for (const c of campfires) sphere(c, "campfire", c.x, c.z, 0.35, 1.0);   // §Cooking look at a fire + F to cook
+  for (const L of placedLanterns) sphere(L, "lantern", L.x, L.z, 0.4, 0.6);   // §tools pick a set-down lantern back up
 
   // stickiness: keep the locked target unless another is clearly closer
   if (stick && (!best || best.obj !== stick.obj) && (!best || bestT > stickT - STICK_MARGIN)) return stick;
@@ -7546,6 +7578,7 @@ function useToolOnTarget(t) {
     case "openchest": pickUpChest(t.obj); return true;
     case "storagebox": openStash(storageBoxes.indexOf(t.obj)); return true;
     case "campfire": doFireAction(t.obj); return true;   // §Cooking one-press world interaction (no modal)
+    case "lantern": pickUpLantern(t.obj); return true;   // §tools pick a set-down lantern back up
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
     case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
     case "rock": if (tool === "pickaxe") { mineObj(t.obj); return true; } return false;
@@ -7576,6 +7609,7 @@ function clickAt(ndcx, ndcy) {
   else if (CROP_SEED[tool]) plantCrop(pt[0], pt[1]);            // §17 plant a crop seed on soil
   else if (tool === "leaves") useLeavesAt(pt[0], pt[1]);
   else if (tool === "chestbox") placeStorageBox(pt[0], pt[1]);   // §12C place an emptied chest as storage
+  else if (tool === "lantern") placeLantern(pt[0], pt[1]);       // §tools set a lit lantern on the ground
   else if (isFood(selectedItem())) eatSelected();               // §15 clicking food in hand eats it
   else punch(pt);                                               // §15 anything else → a punch (startles creatures)
 }
@@ -10074,6 +10108,7 @@ function saveWorld() {
       c.ripe ? 0 : Math.max(0, +(c.ripeAt - clock.t).toFixed(0)), +c.scale.toFixed(2), c.wild?1:0, c.grown?1:0]),
     seaweed: seaweedBeds.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),   // §17.2 per-bed regrow (0 = ripe)
     patches: foragePatches.map(p => +p.rich.toFixed(2)),   // §17.3 forage-patch richness (looted spots stay low until they replenish)
+    lanterns: placedLanterns.map(L => [+L.x.toFixed(1), +L.z.toFixed(1)]),   // §tools lit lanterns set down in the world
   })); } catch (e) {}
 }
 function loadWorld() {
@@ -10117,6 +10152,7 @@ function loadWorld() {
       ripe: !!c[4], ripeAt: c[4] ? 0 : clock.t + (c[5] || 0), scale: c[6], wild: !!c[7], grown: !!c[8] })); }
     if (Array.isArray(w.seaweed)) w.seaweed.forEach((v, i) => { if (seaweedBeds[i]) { if (v > 0) { seaweedBeds[i].ripe = false; seaweedBeds[i].regrowAt = clock.t + v; } else seaweedBeds[i].ripe = true; } });   // §17.2
     if (Array.isArray(w.patches)) w.patches.forEach((v, i) => { if (foragePatches[i]) { foragePatches[i].rich = v; if (v < 1) foragePatches[i].replenishAt = clock.t + PATCH_REPLENISH_DAYS*DAY_PERIOD; } });   // §17.3
+    if (Array.isArray(w.lanterns)) placedLanterns = w.lanterns.map(([x, z]) => ({ x, y: surfaceAt(x, z).h, z }));   // §tools restore set-down lanterns
     rebuildCollHash();
   } catch (e) {}
 }
@@ -11393,6 +11429,7 @@ function frame(now) {
   drawGoblins(view);
   drawSacks(view);
   drawCampfires(view);
+  drawPlacedLanterns(view);   // §tools lit lanterns set down in the world
   drawGoats(view);
   drawNests(view);
   drawChests(view);
