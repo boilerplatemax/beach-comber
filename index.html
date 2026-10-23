@@ -10273,6 +10273,190 @@ function drawTools(view) {
 }
 const palmScratch = new Float32Array(48*10), pineScratch = new Float32Array(48*10), broadleafScratch = new Float32Array(48*10), rockScratch = new Float32Array(200*10);
 
+/* ===================================================================== *
+ * § 19  THE COTTAGE — a weathered home base near spawn: shelter, hearth,
+ *        bed, storage, displays, an aquarium & collection-set rewards.
+ *        (§19A shell + fixtures; interactivity follows in §19B+.)
+ * ===================================================================== */
+// —— dimensions (local space: origin = floor centre, +z = door/front) ——
+const C_IX = 2.75, C_IZ = 2.25, C_H = 2.55, C_T = 0.16;        // interior half-x/half-z, wall height, thickness
+const C_DW = 0.85, C_DH = 2.05;                                // door half-width (gap = 2·DW), height
+const C_WW = 0.92, C_WH = 0.82, C_WY = 1.42;                   // window width, height, sill height
+const C_OX = C_IX + C_T, C_OZ = C_IZ + C_T, C_TH = C_T / 2;
+const C_ZB = -(C_IZ + C_TH), C_ZF = (C_IZ + C_TH), C_XL = -(C_IX + C_TH), C_XR = (C_IX + C_TH);
+const C_ROOF_RISE = 1.35, C_EAVE = 0.42, C_DOOR_R = 2.8, C_DOOR_SPD = 3.6, C_DOOR_OPEN = 1.4;   // door auto-opens within range
+// —— interior anchors (local), shared by meshes, interaction & later sections ——
+const C_HEARTH = { x: 0, z: C_ZB + 0.3 }, C_FIRE = { x: 0, y: 0.2, z: C_ZB + 0.42 };
+const C_BED = { x: C_XL + 0.62, z: -0.8 }, C_CHEST = { x: C_DW + 0.95, z: C_ZF - 0.55 };
+const C_CAB = { x: C_XR - 0.42, z: -1.05 }, C_AQ = { x: C_XR - 0.82, z: 1.1 };
+// —— palette ——
+const CWC = {
+  plank: [0.57,0.51,0.43], plankDk: [0.48,0.42,0.35], beam: [0.35,0.29,0.23],
+  floor: [0.5,0.42,0.33], floor2: [0.44,0.37,0.29], roof: [0.44,0.45,0.47], roofU: [0.3,0.28,0.26],
+  stone: [0.53,0.51,0.48], stoneDk: [0.42,0.4,0.37], frame: [0.4,0.34,0.27],
+  bed: [0.5,0.34,0.3], quilt: [0.74,0.76,0.78], pillow: [0.88,0.86,0.82], cab: [0.46,0.37,0.28],
+};
+let cottage = null;   // populated by initCottage()
+const cottageScratch = new Float32Array(10);
+
+// ---- wall helpers: a flat wall spanning an axis with a rectangular hole cut out ----
+function holedWallX(m, zc, zh, X, H, hx0, hx1, hy0, hy1, col) {    // wall x∈[-X,X] at z=zc; hole x∈[hx0,hx1], y∈[hy0,hy1]
+  if (hy0 > 0.02) mBox(m, 0, hy0/2, zc, X, hy0/2, zh, col);
+  if (hy1 < H-0.02) mBox(m, 0, (hy1+H)/2, zc, X, (H-hy1)/2, zh, col);
+  if (hx0 > -X+0.02) mBox(m, (-X+hx0)/2, (hy0+hy1)/2, zc, (X+hx0)/2, (hy1-hy0)/2, zh, col);
+  if (hx1 < X-0.02) mBox(m, (hx1+X)/2, (hy0+hy1)/2, zc, (X-hx1)/2, (hy1-hy0)/2, zh, col);
+}
+function holedWallZ(m, xc, xh, Z, H, hz0, hz1, hy0, hy1, col) {    // wall z∈[-Z,Z] at x=xc; hole z∈[hz0,hz1], y∈[hy0,hy1]
+  if (hy0 > 0.02) mBox(m, xc, hy0/2, 0, xh, hy0/2, Z, col);
+  if (hy1 < H-0.02) mBox(m, xc, (hy1+H)/2, 0, xh, (H-hy1)/2, Z, col);
+  if (hz0 > -Z+0.02) mBox(m, xc, (hy0+hy1)/2, (-Z+hz0)/2, xh, (hy1-hy0)/2, (Z+hz0)/2, col);
+  if (hz1 < Z-0.02) mBox(m, xc, (hy0+hy1)/2, (hz1+Z)/2, xh, (hy1-hy0)/2, (Z-hz1)/2, col);
+}
+function frameRectX(m, zc, x0, x1, y0, y1, col) { const t = 0.06, zh = C_TH + 0.02;
+  mBox(m, (x0+x1)/2, y0, zc, (x1-x0)/2+t, t, zh, col); mBox(m, (x0+x1)/2, y1, zc, (x1-x0)/2+t, t, zh, col);
+  mBox(m, x0, (y0+y1)/2, zc, t, (y1-y0)/2, zh, col); mBox(m, x1, (y0+y1)/2, zc, t, (y1-y0)/2, zh, col); }
+function frameRectZ(m, xc, z0, z1, y0, y1, col) { const t = 0.06, xh = C_TH + 0.02;
+  mBox(m, xc, y0, (z0+z1)/2, xh, t, (z1-z0)/2+t, col); mBox(m, xc, y1, (z0+z1)/2, xh, t, (z1-z0)/2+t, col);
+  mBox(m, xc, (y0+y1)/2, z0, xh, (y1-y0)/2, t, col); mBox(m, xc, (y0+y1)/2, z1, xh, (y1-y0)/2, t, col); }
+
+// ---- interior fixtures (static wood/stone) ----
+function cotHearthMesh() { const m = Mesh();
+  mBox(m, 0, 0.22, 0, 0.98, 0.22, 0.42, CWC.stone);               // hearth plinth
+  mBox(m, -0.82, 0.88, 0, 0.17, 0.62, 0.4, CWC.stoneDk);          // left jamb
+  mBox(m, 0.82, 0.88, 0, 0.17, 0.62, 0.4, CWC.stoneDk);           // right jamb
+  mBox(m, 0, 1.62, 0, 1.02, 0.14, 0.46, CWC.stone);               // mantle beam
+  mBox(m, 0, 2.2, -0.04, 0.58, 0.55, 0.3, CWC.stoneDk);           // chimney breast
+  return m; }
+function cotBedMesh() { const m = Mesh();
+  mBox(m, 0, 0.18, 0, 0.5, 0.12, 0.95, CWC.bed);                  // frame
+  mBox(m, 0, 0.34, 0.05, 0.46, 0.08, 0.86, CWC.quilt);           // mattress / quilt
+  mBox(m, 0, 0.44, -0.72, 0.42, 0.1, 0.16, CWC.pillow);          // pillow
+  mBox(m, 0, 0.62, 0.92, 0.5, 0.44, 0.06, CWC.bed);              // footboard
+  mBox(m, 0, 0.78, -0.95, 0.5, 0.58, 0.06, CWC.bed);             // headboard
+  return m; }
+function cotCabinetMesh() { const m = Mesh();
+  mBox(m, 0, 0.48, 0, 0.42, 0.48, 0.3, CWC.cab);                 // lower cupboard
+  mBox(m, -0.4, 1.28, 0, 0.03, 0.44, 0.28, CWC.cab); mBox(m, 0.4, 1.28, 0, 0.03, 0.44, 0.28, CWC.cab);  // corner posts
+  mBox(m, 0, 1.74, 0, 0.42, 0.03, 0.3, CWC.cab);                 // top board
+  return m; }
+function cotShelfMesh(w) { const m = Mesh(); mBox(m, 0, 0, 0, w/2, 0.03, 0.16, CWC.plankDk);
+  mBox(m, -w/2+0.08, -0.08, 0, 0.04, 0.08, 0.13, CWC.beam); mBox(m, w/2-0.08, -0.08, 0, 0.04, 0.08, 0.13, CWC.beam); return m; }
+
+// ---- the cottage shell ----
+function cottageBodyMesh() { const m = Mesh();
+  for (let i=0;i<7;i++){ const z0=-C_OZ+2*C_OZ*i/7, z1=-C_OZ+2*C_OZ*(i+1)/7; mBox(m,0,0.03,(z0+z1)/2, C_OX,0.03,(z1-z0)/2-0.008, i%2?CWC.floor:CWC.floor2); }  // floor planks
+  holedWallX(m, C_ZB, C_TH, C_OX, C_H, -C_WW/2, C_WW/2, C_WY, C_WY+C_WH, CWC.plank);      // back wall + window
+  holedWallX(m, C_ZF, C_TH, C_OX, C_H, -C_DW, C_DW, 0, C_DH, CWC.plankDk);                // front wall + doorway
+  holedWallZ(m, C_XL, C_TH, C_OZ, C_H, 0.35, 0.35+C_WW, C_WY, C_WY+C_WH, CWC.plank);      // left wall + window (front half)
+  holedWallZ(m, C_XR, C_TH, C_OZ, C_H, -0.35-C_WW, -0.35, C_WY, C_WY+C_WH, CWC.plank);    // right wall + window (back half)
+  for (const sx of [-1,1]) for (const sz of [-1,1]) mBox(m, sx*C_OX, C_H/2, sz*C_OZ, C_T*0.75, C_H/2, C_T*0.75, CWC.beam);  // corner posts
+  mBox(m, 0, C_H+0.04, 0, C_OX+0.05, 0.08, C_OZ+0.05, CWC.beam);   // top plate
+  frameRectX(m, C_ZF, -C_DW, C_DW, 0, C_DH, CWC.frame);           // door frame
+  frameRectX(m, C_ZB, -C_WW/2, C_WW/2, C_WY, C_WY+C_WH, CWC.frame);
+  frameRectZ(m, C_XL, 0.35, 0.35+C_WW, C_WY, C_WY+C_WH, CWC.frame);
+  frameRectZ(m, C_XR, -0.35-C_WW, -0.35, C_WY, C_WY+C_WH, CWC.frame);
+  mergeAt(m, cotHearthMesh(), C_HEARTH.x, 0, C_HEARTH.z);
+  mergeAt(m, cotBedMesh(), C_BED.x, 0, C_BED.z);
+  mergeAt(m, cotCabinetMesh(), C_CAB.x, 0, C_CAB.z);
+  mBox(m, C_XL+0.16, C_WY-0.04, 0.35+C_WW/2, C_TH+0.12, 0.05, C_WW/2+0.1, CWC.frame);   // left windowsill
+  for (let k=0;k<3;k++) mergeAt(m, cotShelfMesh(1.3), -1.72, 0.98+k*0.5, C_ZB+0.13);     // shelves: back wall, left of hearth
+  for (let k=0;k<2;k++) mergeAt(m, cotShelfMesh(1.05), -1.55, 1.05+k*0.55, C_ZF-0.13);   // shelves: front wall, left of door
+  return m; }
+function cottageRoofMesh() { const m = Mesh();
+  const X = C_OX + C_EAVE, Z = C_OZ + C_EAVE, y0 = C_H, yp = C_H + C_ROOF_RISE;
+  mQuad(m, [-X,y0,-Z],[0,yp,-Z],[0,yp,Z],[-X,y0,Z], CWC.roof);             // left slope
+  mQuad(m, [X,y0,-Z],[X,y0,Z],[0,yp,Z],[0,yp,-Z], CWC.roof);              // right slope
+  mQuad(m, [-X,y0-0.05,Z],[0,yp-0.05,Z],[0,yp-0.05,-Z],[-X,y0-0.05,-Z], CWC.roofU);   // undersides
+  mQuad(m, [X,y0-0.05,-Z],[0,yp-0.05,-Z],[0,yp-0.05,Z],[X,y0-0.05,Z], CWC.roofU);
+  mTri(m, [-C_OX,y0,C_ZB],[C_OX,y0,C_ZB],[0,yp,C_ZB], CWC.plankDk);       // gable ends
+  mTri(m, [-C_OX,y0,C_ZF],[0,yp,C_ZF],[C_OX,y0,C_ZF], CWC.plankDk);
+  mBox(m, 0, yp, 0, 0.08, 0.08, Z, CWC.beam);                            // ridge beam
+  return m; }
+function cottageGlassMesh() { const m = Mesh(), g = [1,1,1];
+  mQuad(m, [-C_WW/2,C_WY,C_ZB],[C_WW/2,C_WY,C_ZB],[C_WW/2,C_WY+C_WH,C_ZB],[-C_WW/2,C_WY+C_WH,C_ZB], g);                 // back window
+  mQuad(m, [C_XL,C_WY,0.35],[C_XL,C_WY,0.35+C_WW],[C_XL,C_WY+C_WH,0.35+C_WW],[C_XL,C_WY+C_WH,0.35], g);                 // left window
+  mQuad(m, [C_XR,C_WY,-0.35-C_WW],[C_XR,C_WY,-0.35],[C_XR,C_WY+C_WH,-0.35],[C_XR,C_WY+C_WH,-0.35-C_WW], g);             // right window
+  return m; }
+function cottageDoorMesh() { const m = Mesh(), w = 2*C_DW;   // hinge-local: door hangs in -x from the hinge
+  mBox(m, -w/2, C_DH/2, 0, w/2-0.02, C_DH/2-0.01, 0.04, CWC.plankDk);
+  mBox(m, -w/2, C_DH*0.55, 0.05, w/2-0.12, 0.05, 0.02, CWC.beam);          // cross-brace
+  mBox(m, -w+0.16, 1.0, 0.07, 0.04, 0.09, 0.03, [0.22,0.2,0.18]);          // handle
+  return m; }
+
+function cotLocalToWorld(lx, lz) { const c = cottage, cy = Math.cos(c.yaw), sy = Math.sin(c.yaw); return [ c.x + lx*cy + lz*sy, c.z - lx*sy + lz*cy ]; }
+function cotWorldToLocal(wx, wz) { const c = cottage, cy = Math.cos(c.yaw), sy = Math.sin(c.yaw), dx = wx-c.x, dz = wz-c.z; return [ dx*cy - dz*sy, dx*sy + dz*cy ]; }
+function insideCottage(wx, wz) { if (!cottage) return false; const l = cotWorldToLocal(wx, wz); return Math.abs(l[0]) < C_OX+0.1 && Math.abs(l[1]) < C_OZ+0.1; }
+
+function cottageFlatness(x, z) {   // footprint must be dry, above tide, and reasonably flat
+  let mn = 1e9, mx = -1e9;
+  const pts = [[0,0],[C_OX,C_OZ],[-C_OX,C_OZ],[C_OX,-C_OZ],[-C_OX,-C_OZ],[C_OX,0],[-C_OX,0],[0,C_OZ],[0,-C_OZ]];
+  for (const [lx,lz] of pts){ const wx = x+lx, wz = z+lz, s = surfaceAt(wx,wz);
+    if (s.h < 1.5 || waterDepthAt(wx,wz) > 0.02) return null; mn = Math.min(mn,s.h); mx = Math.max(mx,s.h); }
+  if (mx-mn > 0.75) return null;
+  return { y: mx, range: mx-mn };
+}
+function addCottageColliders() {
+  const add = (lx, lz, r) => { const w = cotLocalToWorld(lx, lz); colliders.push({ x:w[0], z:w[1], r, kind:"cottage" }); };
+  for (let x=-C_OX; x<=C_OX+0.001; x+=0.45) { add(x, C_ZB, 0.3); if (Math.abs(x) > C_DW+0.04) add(x, C_ZF, 0.3); }   // front skips the doorway
+  for (let z=-C_OZ; z<=C_OZ+0.001; z+=0.45) { add(C_XL, z, 0.3); add(C_XR, z, 0.3); }
+  rebuildCollHash();
+}
+function initCottage() {
+  const sp = findSpawn(), rng = mulberry32((SEED_INT ^ 0x19c077a9) >>> 0);
+  let best = null;
+  for (let k=0;k<70;k++){
+    const ang = sp.yaw + (rng()-0.5) * (k<35?1.1:2.6), r = 5 + rng()*7.5;
+    const x = sp.x + Math.sin(ang)*r, z = sp.z - Math.cos(ang)*r;
+    const flat = cottageFlatness(x, z); if (!flat) continue;
+    const score = flat.range + (bigPropBlocking(x, z, 3.4) ? 2 : 0);
+    if (!best || score < best.score) best = { x, z, y: flat.y, score, yaw: Math.atan2(sp.x-x, sp.z-z) };
+  }
+  if (!best) { const y = surfaceAt(sp.x, sp.z).h; best = { x: sp.x, z: sp.z, y, yaw: sp.yaw }; }
+  cottage = { x: best.x, z: best.z, yaw: best.yaw, floorY: best.y - 0.02,
+    doorSwing: 0, cosy: 0, hearthLit: false, disp: {}, trophies: [], aqua: null };
+  cottage.bodyDyn = makeDynamic(cottageBodyMesh(), 1);
+  cottage.roofDyn = makeDynamic(cottageRoofMesh(), 1);
+  cottage.glassDyn = makeDynamic(cottageGlassMesh(), 1);
+  cottage.doorDyn = makeDynamic(cottageDoorMesh(), 1);
+  addCottageColliders();
+}
+function cottageIsLit() {
+  if (!cottage) return 0; let v = cottage.hearthLit ? 1 : 0;
+  if (typeof lanternLit === "function" && lanternLit() && insideCottage(player.x, player.z)) v = Math.max(v, 0.9);
+  for (const L of placedLanterns) if (insideCottage(L.x, L.z)) { v = Math.max(v, 0.8); break; }
+  return Math.max(v, cottage.cosy * 0.5);
+}
+function cottageWindowGlow() {
+  const night = 1 - clamp(((SKY.sun[1] || 0) + 0.05) * 3, 0, 1), lit = cottageIsLit(), g = night * (0.25 + 0.95*lit);
+  return [0.5 + g*1.3, 0.55 + g*0.8, 0.68 + g*0.18];
+}
+function updateCottage(dt) {
+  if (!cottage || mode === "menu") return; const c = cottage;
+  const d = cotLocalToWorld(0, C_ZF);
+  const near = insideCottage(player.x, player.z) || Math.hypot(player.x-d[0], player.z-d[1]) < C_DOOR_R;
+  const before = c.doorSwing > 0.5;
+  c.doorSwing += ((near?1:0) - c.doorSwing) * Math.min(1, dt*C_DOOR_SPD);
+  if (c.doorSwing < 0.001) c.doorSwing = 0;
+  if ((c.doorSwing > 0.5) !== before && typeof SND !== "undefined") SND.play("creak", { position:[d[0], c.floorY+1, d[1]], volume:0.45 });
+}
+function drawCottage(view) {
+  if (!cottage) return; const c = cottage;
+  const dx = c.x-cam.pos[0], dz = c.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) return;
+  propUniforms(view); const a = cottageScratch;
+  a[0]=c.x;a[1]=c.floorY;a[2]=c.z;a[3]=1;a[4]=c.yaw;a[5]=0;a[6]=0;a[7]=1;a[8]=1;a[9]=1;
+  c.bodyDyn.draw(a, 1);
+  const hinge = cotLocalToWorld(C_DW, C_ZF);                      // door, hinged at the right jamb
+  a[0]=hinge[0];a[2]=hinge[1];a[4]=c.yaw + c.doorSwing*C_DOOR_OPEN; c.doorDyn.draw(a, 1);
+  const camIn = insideCottage(cam.pos[0], cam.pos[2]) && cam.pos[1] < c.floorY + C_H + C_ROOF_RISE;
+  if (!camIn) { a[0]=c.x;a[2]=c.z;a[4]=c.yaw; c.roofDyn.draw(a, 1); }
+  const glow = cottageWindowGlow();                              // glass windows — warm glow at night when lit
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+  a[0]=c.x;a[2]=c.z;a[4]=c.yaw;a[7]=glow[0];a[8]=glow[1];a[9]=glow[2]; c.glassDyn.draw(a, 1);
+  gl.depthMask(true); gl.disable(gl.BLEND);
+}
+function saveCottage() { if (!cottage) return; try { localStorage.setItem("bcc_"+SEED_STR, JSON.stringify({ cosy: cottage.cosy })); } catch(e){} }
+function loadCottage() { if (!cottage) return; try { const o = JSON.parse(localStorage.getItem("bcc_"+SEED_STR)||"null"); if (o && typeof o.cosy==="number") cottage.cosy = o.cosy; } catch(e){} }
+
 /* ---- save / load planted trees & stumps (per seed) ---- */
 function saveWorld() {
   try { localStorage.setItem("bcw_" + SEED_STR, JSON.stringify({
@@ -11318,7 +11502,9 @@ seedDigSpots();
 initShovelFP();
 initWorldObjs();
 seedBarnacles();   // §5 barnacle crusts on intertidal rocks (needs rockObjs)
+initCottage();     // §19 the home-base cottage near spawn (needs terrain + colliders)
 loadWorld();
+loadCottage();     // §19 restore cosiness / displays / aquarium for this seed
 saltDyn = makeDynamic(discMesh(0, 0.5, 8, 0.03, [0.94,0.95,0.97]), 60);
 goatDyn = makeDynamic(goatMesh(), 10);
 seedSalt();
@@ -11337,7 +11523,7 @@ try {
     let fx = sp.x, fz = sp.z, placed = false;
     for (let k = 0; k < 40 && !placed; k++) { const a = sp.yaw + (k ? (Math.random()-0.5)*3 : 0.4), r = 2.5 + Math.random()*3;
       const x = sp.x + Math.sin(a)*r, z = sp.z - Math.cos(a)*r;
-      if (surfaceAt(x, z).h > 0.6 && waterDepthAt(x, z) < 0.05 && !bigPropBlocking(x, z, 1)) { fx = x; fz = z; placed = true; } }
+      if (surfaceAt(x, z).h > 0.6 && waterDepthAt(x, z) < 0.05 && !bigPropBlocking(x, z, 1) && !insideCottage(x, z)) { fx = x; fz = z; placed = true; } }
     campfires.push(newCampfire(fx, fz, { pot: { ingredients: [], water: false, salt: false, cooking: 0, t: 0, done: false, dish: null } }));
     localStorage.setItem("bc_firstfire_" + SEED_STR, "1"); saveWorld();
   }
@@ -11409,6 +11595,7 @@ function frame(now) {
   updateBarnacles();   // §5 barnacles regrow over time
   updateChests(dt);
   updateCampfires(dt);   // §Cooking fuel burns, food roasts, stews simmer
+  updateCottage(dt);     // §19 door swing + creak
   updatePry(dt);
   updateSalt();
   updateAutoPickup();
@@ -11675,6 +11862,7 @@ function frame(now) {
   drawChests(view);
   drawStorage(view);
   drawBuilds(view);        // §16B placed building pieces + the placement ghost
+  drawCottage(view);       // §19 the home-base cottage (shell, door, roof, glowing windows)
   drawSalt(view);
   drawLife(view);
   drawGulls(view);
