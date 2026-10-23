@@ -7699,6 +7699,8 @@ function targetAlongRay(r, sticky) {
     sphere(s, "dispslot", w[0], w[1], (cottage.floorY + s.y) - gy, 0.16); }
   if (cottage) for (const s of TROPHY_SLOTS) { const w = cotLocalToWorld(s.x, s.z), gy = surfaceAt(w[0], w[1]).h;      // §19D fish-trophy mounts
     sphere(s, "cottrophy", w[0], w[1], (cottage.floorY + s.y) - gy, 0.3); }
+  if (cottage) { const w = cotLocalToWorld(C_AQ.x, C_AQ.z), gy = surfaceAt(w[0], w[1]).h;                              // §19E the aquarium tank
+    sphere(cottage, "aqua", w[0], w[1], (cottage.floorY + AQ_STAND + AQ_WH*0.5) - gy, 0.6); }
   for (const L of placedLanterns) sphere(L, "lantern", L.x, L.z, 0.4, 0.6);   // §tools pick a set-down lantern back up
 
   // stickiness: keep the locked target unless another is clearly closer
@@ -7734,6 +7736,7 @@ function useToolOnTarget(t) {
     case "cotbed": trySleepCottage(); return true;       // §19B sleep / set respawn at the cottage
     case "dispslot": toggleDisplaySlot(t.obj); return true;   // §19C place / take a displayed find
     case "cottrophy": toggleTrophy(t.obj); return true;       // §19D mount / take down a fish trophy
+    case "aqua": useAquarium(); return true;                  // §19E pour creatures / refresh water / decorate
     case "lantern": pickUpLantern(t.obj); return true;   // §tools pick a set-down lantern back up
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
     case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
@@ -10432,7 +10435,8 @@ function initCottage() {
   }
   if (!best) { const y = surfaceAt(sp.x, sp.z).h; best = { x: sp.x, z: sp.z, y, yaw: sp.yaw }; }
   cottage = { x: best.x, z: best.z, yaw: best.yaw, floorY: best.y - 0.02,
-    doorSwing: 0, cosy: 0, hearthLit: false, disp: {}, trophies: [], aqua: null };
+    doorSwing: 0, cosy: 0, hearthLit: false, disp: {}, trophies: [], lastCatch: null,
+    aqua: { creatures: [], decor: [], freshAt: 0 } };
   cottage.bodyDyn = makeDynamic(cottageBodyMesh(), 1);
   cottage.roofDyn = makeDynamic(cottageRoofMesh(), 1);
   cottage.glassDyn = makeDynamic(cottageGlassMesh(), 1);
@@ -10457,6 +10461,7 @@ function updateCottage(dt) {
   c.doorSwing += ((near?1:0) - c.doorSwing) * Math.min(1, dt*C_DOOR_SPD);
   if (c.doorSwing < 0.001) c.doorSwing = 0;
   if ((c.doorSwing > 0.5) !== before && typeof SND !== "undefined") SND.play("creak", { position:[d[0], c.floorY+1, d[1]], volume:0.45 });
+  updateAquarium(dt);
 }
 function drawCottage(view) {
   if (!cottage) return; const c = cottage;
@@ -10515,12 +10520,14 @@ function trySleepCottage() {
       : "The cottage is your respawn point. A rest here restores your stamina.");
   }
 }
-function saveCottage() { if (!cottage) return; try { localStorage.setItem("bcc_"+SEED_STR, JSON.stringify({ cosy: cottage.cosy, disp: cottage.disp, trophies: cottage.trophies, lastCatch: cottage.lastCatch, flog: findLog })); } catch(e){} }
+function saveCottage() { if (!cottage) return; try { localStorage.setItem("bcc_"+SEED_STR, JSON.stringify({ cosy: cottage.cosy, disp: cottage.disp, trophies: cottage.trophies, lastCatch: cottage.lastCatch, aqua: cottage.aqua, flog: findLog })); } catch(e){} }
 function loadCottage() { if (!cottage) return; try { const o = JSON.parse(localStorage.getItem("bcc_"+SEED_STR)||"null"); if (!o) return;
   if (typeof o.cosy === "number") cottage.cosy = o.cosy;
   if (o.disp && typeof o.disp === "object") cottage.disp = o.disp;
   if (Array.isArray(o.trophies)) cottage.trophies = o.trophies;
   if (o.lastCatch) cottage.lastCatch = o.lastCatch;
+  if (o.aqua && typeof o.aqua === "object") { cottage.aqua = Object.assign({ creatures: [], decor: [], freshAt: 0 }, o.aqua);
+    if (!Array.isArray(cottage.aqua.creatures)) cottage.aqua.creatures = []; if (!Array.isArray(cottage.aqua.decor)) cottage.aqua.decor = []; }
   if (o.flog && typeof o.flog === "object") Object.assign(findLog, o.flog);
 } catch(e){} }
 
@@ -10655,6 +10662,98 @@ function drawCottageTrophies(view) {
     for (const t of bySp[sp]) { const s = TROPHY_SLOT_MAP[t.slot]; if (!s) continue; const w = cotLocalToWorld(s.x + s.nx*0.16, s.z + s.nz*0.16), o = n*10;
       a[o]=w[0];a[o+1]=cottage.floorY+s.y-fm.cy+0.03;a[o+2]=w[1];a[o+3]=fm.scale;a[o+4]=cottage.yaw+s.face;a[o+5]=0;a[o+6]=0;a[o+7]=fm.tint[0];a[o+8]=fm.tint[1];a[o+9]=fm.tint[2]; n++; }
     if (n) fm.dyn.draw(a, n); }
+}
+
+/* §19E AQUARIUM — a glass tank with a sandy bottom. Pour in bucket creatures and
+   they live here (simple swim/crawl animation); decorate with rocks & sea plants;
+   the water needs fresh seawater every couple of days or the residents go sluggish. */
+const AQ_TWx = 0.42, AQ_TWz = 0.62, AQ_STAND = 0.5, AQ_WH = 0.52, AQ_SAND = 0.06;
+const AQUA_FRESH_DAYS = 2;
+const AQUA_SWIM = new Set(["fish","minnow"]);
+const AQUA_DRIFT = new Set(["jelly"]);
+const AQUA_DECOR = new Set(["stone","rock","pebble","seaweed","kelp","eelgrass","seamoss","redalgae","coral","shell","cockle"]);
+let aquaSolidDyn = null, aquaWaterDyn = null;
+function aquaSolidMesh() { const m = Mesh(); const wood = CWC.cab, sand = [0.86,0.8,0.64], rim = [0.33,0.33,0.36], top = AQ_STAND+AQ_WH;
+  for (const sx of [-1,1]) for (const sz of [-1,1]) mBox(m, sx*(AQ_TWx-0.05), AQ_STAND/2, sz*(AQ_TWz-0.05), 0.05, AQ_STAND/2, 0.05, wood);   // legs
+  mBox(m, 0, AQ_STAND-0.03, 0, AQ_TWx+0.03, 0.03, AQ_TWz+0.03, wood);                 // stand top
+  mBox(m, 0, AQ_STAND+AQ_SAND/2, 0, AQ_TWx-0.04, AQ_SAND/2, AQ_TWz-0.04, sand);        // sand bottom
+  for (const yy of [AQ_STAND, top]) { for (const sz of [-1,1]) mBox(m, 0, yy, sz*AQ_TWz, AQ_TWx, 0.025, 0.025, rim); for (const sx of [-1,1]) mBox(m, sx*AQ_TWx, yy, 0, 0.025, 0.025, AQ_TWz, rim); }  // frame rims
+  for (const sx of [-1,1]) for (const sz of [-1,1]) mBox(m, sx*AQ_TWx, AQ_STAND+AQ_WH/2, sz*AQ_TWz, 0.025, AQ_WH/2, 0.025, rim);   // corner posts
+  return m; }
+function aquaWaterMesh() { const m = Mesh(), w = [1,1,1], y1 = AQ_STAND+AQ_WH-0.02, y0 = AQ_STAND+AQ_SAND, ix = AQ_TWx-0.03, iz = AQ_TWz-0.03;
+  mQuad(m, [-ix,y1,-iz],[ix,y1,-iz],[ix,y1,iz],[-ix,y1,iz], w);                        // surface
+  mQuad(m, [-ix,y0,iz],[ix,y0,iz],[ix,y1,iz],[-ix,y1,iz], w); mQuad(m, [ix,y0,-iz],[-ix,y0,-iz],[-ix,y1,-iz],[ix,y1,-iz], w);
+  mQuad(m, [ix,y0,iz],[ix,y0,-iz],[ix,y1,-iz],[ix,y1,iz], w); mQuad(m, [-ix,y0,-iz],[-ix,y0,iz],[-ix,y1,iz],[-ix,y1,-iz], w);
+  return m; }
+function aquaStale() { return cottage && cottage.aqua && (tideDay - cottage.aqua.freshAt) > AQUA_FRESH_DAYS; }
+function addAquaResident(c) {
+  const a = Math.random()*6.283, sp = 0.08 + Math.random()*0.08;
+  cottage.aqua.creatures.push({ t: c.t, scale: c.scale || 1, tint: c.tint || [1,1,1], special: !!c.special, name: c.name,
+    lx: (Math.random()-0.5)*AQ_TWx, lz: (Math.random()-0.5)*AQ_TWz, ly: AQUA_SWIM.has(c.t) ? 0.2 : 0.02,
+    vx: Math.cos(a)*sp, vz: Math.sin(a)*sp, yaw: a, phase: Math.random()*6,
+    swim: AQUA_SWIM.has(c.t), drift: AQUA_DRIFT.has(c.t) });
+}
+function addAquaDecor(id) { cottage.aqua.decor.push({ id, lx: (Math.random()-0.5)*(AQ_TWx*1.4), lz: (Math.random()-0.5)*(AQ_TWz*1.4) }); }
+function updateAquarium(dt) {
+  const aq = cottage.aqua; if (!aq || !aq.creatures.length) return; const sp = aquaStale() ? 0.3 : 1;
+  const bx = AQ_TWx-0.09, bz = AQ_TWz-0.09;
+  for (const r of aq.creatures) { r.phase += dt;
+    if (r.swim) { r.lx += r.vx*dt*sp; r.lz += r.vz*dt*sp; r.ly = clamp(r.ly + Math.sin(r.phase*0.8)*dt*0.12*sp, 0.08, AQ_WH-0.14);
+      if (r.lx < -bx || r.lx > bx) { r.vx *= -1; r.lx = clamp(r.lx,-bx,bx); } if (r.lz < -bz || r.lz > bz) { r.vz *= -1; r.lz = clamp(r.lz,-bz,bz); }
+      r.yaw = Math.atan2(r.vx, r.vz);
+    } else if (r.drift) { r.ly = clamp(0.24 + Math.sin(r.phase*0.5)*0.14, 0.08, AQ_WH-0.1); r.lx = clamp(r.lx + Math.sin(r.phase*0.3)*dt*0.06*sp, -bx, bx); r.yaw += dt*0.3*sp;
+    } else { r.lx += r.vx*dt*0.4*sp; r.lz += r.vz*dt*0.4*sp; r.ly = 0.02;
+      if (r.lx < -bx || r.lx > bx) { r.vx *= -1; r.lx = clamp(r.lx,-bx,bx); } if (r.lz < -bz || r.lz > bz) { r.vz *= -1; r.lz = clamp(r.lz,-bz,bz); }
+      if (Math.random() < dt*0.4) { const a = Math.random()*6.283; r.vx = Math.cos(a)*0.08; r.vz = Math.sin(a)*0.08; r.yaw = a; } }
+  }
+}
+function drawCottageAquarium(view) {
+  if (!cottage || !cottage.aqua) return; const c = cottage, aq = c.aqua;
+  const aw = cotLocalToWorld(C_AQ.x, C_AQ.z); const dx = aw[0]-cam.pos[0], dz = aw[1]-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) return;
+  if (!aquaSolidDyn) aquaSolidDyn = makeDynamic(aquaSolidMesh(), 1);
+  if (!aquaWaterDyn) aquaWaterDyn = makeDynamic(aquaWaterMesh(), 1);
+  propUniforms(view); const a = cottageScratch;
+  a[0]=aw[0];a[1]=c.floorY;a[2]=aw[1];a[3]=1;a[4]=c.yaw;a[5]=0;a[6]=0;a[7]=1;a[8]=1;a[9]=1; aquaSolidDyn.draw(a, 1);
+  // decor on the sand
+  const sandY = c.floorY + AQ_STAND + AQ_SAND;
+  const byDecor = {}; for (const d of aq.decor) (byDecor[d.id] = byDecor[d.id] || []).push(d);
+  for (const id in byDecor) { const mi = dispModel(id); if (!mi) continue; const arr = dispScratch; let n = 0;
+    for (const d of byDecor[id]) { const w = cotLocalToWorld(C_AQ.x + d.lx, C_AQ.z + d.lz), o = n*10;
+      arr[o]=w[0];arr[o+1]=sandY+mi.yOff*0.7;arr[o+2]=w[1];arr[o+3]=mi.scale*0.7;arr[o+4]=c.yaw;arr[o+5]=0;arr[o+6]=0;arr[o+7]=mi.tint[0];arr[o+8]=mi.tint[1];arr[o+9]=mi.tint[2]; n++; }
+    if (n) mi.dyn.draw(arr, n); }
+  // residents
+  const bySp = {}; for (const r of aq.creatures) (bySp[r.t] = bySp[r.t] || []).push(r);
+  for (const t in bySp) { const cd = CREATURES[t]; if (!cd || !cd.dyn) continue; const arr = dispScratch; let n = 0;
+    const sc = Math.min(0.32, (cd.base || 0.6) * 0.24);
+    for (const r of bySp[t]) { if (n >= 20) break; const w = cotLocalToWorld(C_AQ.x + r.lx, C_AQ.z + r.lz), o = n*10;
+      arr[o]=w[0];arr[o+1]=sandY+r.ly;arr[o+2]=w[1];arr[o+3]=sc;arr[o+4]=c.yaw+r.yaw;arr[o+5]=0;arr[o+6]=0;arr[o+7]=r.tint[0];arr[o+8]=r.tint[1];arr[o+9]=r.tint[2]; n++; }
+    if (n) cd.dyn.draw(arr, n); }
+  // translucent water (via the ghost-alpha path), tinted murky when stale
+  const wc = aquaStale() ? [0.42,0.56,0.44] : [0.38,0.62,0.8];
+  propUniforms(view); gl.uniform1f(propU.uGhost, 1); gl.uniform3fv(propU.uGhostCol, wc);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+  a[0]=aw[0];a[1]=c.floorY;a[2]=aw[1];a[3]=1;a[4]=c.yaw;a[5]=0;a[6]=0;a[7]=wc[0];a[8]=wc[1];a[9]=wc[2]; aquaWaterDyn.draw(a, 1);
+  gl.disable(gl.BLEND); gl.depthMask(true); gl.uniform1f(propU.uGhost, 0);
+}
+function aquaPrompt() {
+  const held = selectedItem(), aq = cottage.aqua;
+  if (held === "bucket" && bucket.creatures.length) return (IS_TOUCH?"tap":"click/F") + ` to pour ${bucket.creatures.length} creature${bucket.creatures.length!==1?"s":""} into the tank`;
+  if (held === "bucket" && bucket.water) return (IS_TOUCH?"tap":"click/F") + " to refresh the tank water";
+  if (AQUA_DECOR.has(held) && Inv.has(held)) return (IS_TOUCH?"tap":"click/F") + ` to place ${ITEMS[held]?ITEMS[held].name:held} in the tank`;
+  return `Aquarium — ${aq.creatures.length} resident${aq.creatures.length!==1?"s":""}` + (aquaStale() ? " · water murky, pour in seawater" : " · water fresh");
+}
+function useAquarium() {
+  const held = selectedItem(), aq = cottage.aqua;
+  if (held === "bucket") {
+    if (bucket.creatures.length) { for (const cr of bucket.creatures) addAquaResident(cr); bucket.creatures = []; aq.freshAt = tideDay;
+      if (onDig) onDig("splash"); const w = cotLocalToWorld(C_AQ.x, C_AQ.z); if (typeof sparkle === "function") sparkle(w[0], cottage.floorY+AQ_STAND+AQ_WH, w[1], [0.6,0.85,0.95], 8);
+      showCard("Into the tank", "The creatures settle into their new home."); saveCottage(); saveState(); if (typeof checkSets === "function") checkSets(); return; }
+    if (bucket.water) { bucket.water = false; aq.freshAt = tideDay; if (onDig) onDig("splash");
+      showCard("Fresh seawater", "The tank is clean and clear again — the residents perk up."); saveCottage(); saveState(); return; }
+    showCard("Empty bucket", "Scoop up creatures or seawater first, then pour them into the tank."); return;
+  }
+  if (AQUA_DECOR.has(held) && Inv.has(held)) { addAquaDecor(held); Inv.remove(held, 1); if (onDig) onDig("pat"); showCard("Decorated", `Added ${ITEMS[held]?ITEMS[held].name:held} to the tank.`); saveCottage(); return; }
+  showCard("Aquarium", `${aq.creatures.length} creature${aq.creatures.length!==1?"s":""} living here.` + (aquaStale() ? " The water's gone murky — pour in a bucket of seawater." : " Water's fresh.") + " Pour bucket creatures in, or decorate with rocks and sea plants.");
 }
 
 /* ---- save / load planted trees & stumps (per seed) ---- */
@@ -12066,6 +12165,7 @@ function frame(now) {
   drawCottage(view);       // §19 the home-base cottage (shell, door, roof, glowing windows)
   drawCottageDisplays(view);   // §19C placed finds on shelves / cabinet / windowsill
   drawCottageTrophies(view);   // §19D mounted fish trophies
+  drawCottageAquarium(view);   // §19E the aquarium tank, residents & decor
   drawSalt(view);
   drawLife(view);
   drawGulls(view);
@@ -12215,8 +12315,8 @@ function frame(now) {
         promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
         crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block"; }
     }
-    if (!buildMode && curTarget && (curTarget.kind === "dispslot" || curTarget.kind === "cottrophy")) {   // §19C/§19D cottage tooltip overrides the generic prompt
-      promptEl.textContent = curTarget.kind === "dispslot" ? displaySlotPrompt(curTarget.obj) : trophyPrompt(curTarget.obj);
+    if (!buildMode && curTarget && (curTarget.kind === "dispslot" || curTarget.kind === "cottrophy" || curTarget.kind === "aqua")) {   // §19C–E cottage tooltip overrides the generic prompt
+      promptEl.textContent = curTarget.kind === "dispslot" ? displaySlotPrompt(curTarget.obj) : curTarget.kind === "cottrophy" ? trophyPrompt(curTarget.obj) : aquaPrompt();
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
