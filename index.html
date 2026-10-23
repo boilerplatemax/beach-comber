@@ -2732,8 +2732,12 @@ let rodRecord = {};                                    // species → biggest we
 try { rodRecord = JSON.parse(localStorage.getItem("bc_rodrec") || "{}"); } catch (e) {}
 function saveRodRec() { try { localStorage.setItem("bc_rodrec", JSON.stringify(rodRecord)); } catch (e) {} }
 
-// bait the player might have, best → worst. q = quality (0..2): better bait bites faster and lands rarer fish.
-const ROD_BAIT = [ ["clam", 2, "Clam"], ["barnacle", 1, "Barnacles"], ["worm", 0, "Earthworm"] ];
+// §fishpolish bait is worms only for now (other baits removed). q = quality (0 = basic).
+const ROD_BAIT = [ ["worm", 0, "Earthworm"] ];
+// §fishpolish tunables — bite timing, how a hotspot speeds it up, and how far you can wander before the cast cancels
+const BITE_MIN = 4, BITE_MAX = 40;     // seconds to a bite in plain water (wide variance)
+const HOTSPOT_BITE_MUL = 0.28;         // a hotspot cuts the wait to ~this fraction
+const CANCEL_DIST = 30;                // walk this far from the bobber and the cast reels itself in
 // rod species — weights in kg, strength drives the fight, rare steers the odds, dmin = min water depth it favours
 const FISH_SPECIES = {
   surfperch: { label: "Surfperch", item: "surfperch", w: [0.2,1.3],  strength: 0.55, fight: 6,  dmin: 0.5 },
@@ -2757,7 +2761,7 @@ let fishReveal = { open: false };
 
 function rodEquipped() { return mode === "walk" && selectedTool() === "rod" && !isPanelOpen(); }
 function bestBait() { for (const b of ROD_BAIT) if (Inv.has(b[0])) return b; return null; }
-function ensureBait() { if (bestBait()) return true; showCard("No bait", "Dig earthworms from dark soil, or scrape barnacles off a tidal rock."); return false; }
+function ensureBait() { if (bestBait()) return true; hintText = "Need worms"; hintT = 1.4; return false; }   // §fishpolish small crosshair hint, no card
 
 // where a cast at this charge would land: straight out along the look direction, distance scaled by charge
 function castTarget(charge) {
@@ -2765,10 +2769,10 @@ function castTarget(charge) {
   const x = player.x + dx * dist, z = player.z + dz * dist;
   return { x, z, dist };
 }
-function spotQuality(x, z) {                                    // 0..1 — deeper water & nearby fish-signs fish better
+function spotQuality(x, z) {                                    // 0..1 — deeper water & a hotspot fish better
   const d = waterDepthAt(x, z); if (d < 0.35) return -1;        // not water enough
   let q = Math.min(1, (d - 0.35) / 4);
-  for (const s of fishSigns) if (Math.hypot(s.x - x, s.z - z) < 5) { q = Math.min(1, q + 0.35); break; }
+  if (hotspotNear(x, z)) q = Math.min(1, q + 0.35);             // §fishpolish a hotspot also slightly favours a bigger fish
   return q;
 }
 
@@ -2776,6 +2780,7 @@ function rodPressStart() {
   if (!rodEquipped() || fishReveal.open) return;
   switch (rod.state) {
     case "idle": if (rod.cd <= 0 && ensureBait()) { rod.state = "charging"; rod.charge = 0; rod.chargeT = clock.t; } break;
+    case "waiting": reelInEmpty(); break;                      // §fishpolish click again while waiting → reel in / cancel
     case "nibble": missBite(); break;                          // struck too early → spooked
     case "bite":   setHook(); break;
     case "fighting": rod.press = true; break;                  // hold to reel
@@ -2800,8 +2805,8 @@ function rodTap() {                                            // single-press p
 function castRod(charge) {
   const b = bestBait(); if (!b) { rod.state = "idle"; ensureBait(); return; }
   const tgt = castTarget(Math.max(0.12, charge));
-  if (waterDepthAt(tgt.x, tgt.z) < 0.35) { showCard("Cast at the water", "Face open water and try again."); rod.state = "idle"; rod.charge = 0; return; }
-  Inv.remove(b[0], 1); rod.baitId = b[0]; rod.baitQ = b[1];
+  if (waterDepthAt(tgt.x, tgt.z) < 0.35) { hintText = "Aim at the water"; hintT = 1.4; rod.state = "idle"; rod.charge = 0; return; }   // §fishpolish crosshair hint, no card
+  rod.baitId = b[0]; rod.baitQ = b[1]; rod.baitTaken = false;   // §fishpolish worm is taken when it LANDS, not now
   rod.bob.sx = player.x + Math.sin(cam.yaw) * 0.8; rod.bob.sz = player.z - Math.cos(cam.yaw) * 0.8;
   rod.bob.tx = tgt.x; rod.bob.tz = tgt.z; rod.bob.cast = 0; rod.bob.surf = waterSurfaceAt(tgt.x, tgt.z);
   rod.bob.x = rod.bob.sx; rod.bob.z = rod.bob.sz; rod.bob.y = player.eyeY - 0.3; rod.bob.sink = 0; rod.bob.splash = 0;
@@ -2809,13 +2814,17 @@ function castRod(charge) {
   if (typeof SND !== "undefined") SND.play("whoosh");
 }
 function onBobberLanded() {
+  // §fishpolish the bobber must come down on water; if the target isn't water (tide drained it), reel straight back
+  if (waterDepthAt(rod.bob.tx, rod.bob.tz) < 0.2) { hintText = "No water there"; hintT = 1.2; if (typeof SND !== "undefined") SND.play("plop"); endCast(0.5); return; }
   rod.state = "waiting"; rod.bob.splash = 1;
+  if (!rod.baitTaken) { Inv.remove(rod.baitId, 1); rod.baitTaken = true; }   // §fishpolish 1 worm, taken on landing
   rod.spotQ = Math.max(0, spotQuality(rod.bob.tx, rod.bob.tz));
-  const q = rod.spotQ;
-  let delay = (fishForceBite ? 0.4 : (3.5 + Math.random() * 7) * (1 - 0.3 * rod.baitQ) * (1 - 0.45 * q));
+  const q = rod.spotQ, hot = hotspotNear(rod.bob.tx, rod.bob.tz) ? 1 : 0;
+  // wide bite variance; a hotspot cuts the wait sharply
+  let delay = fishForceBite ? 0.4 : (BITE_MIN + Math.random() * (BITE_MAX - BITE_MIN)) * (hot ? HOTSPOT_BITE_MUL : 1) * (1 - 0.25 * q);
   rod.biteAt = clock.t + Math.max(0.4, delay);
   if (typeof SND !== "undefined") SND.play("plop", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz] });
-  if (typeof spawnSand === "function") spawnSand(rod.bob.tx, rod.bob.surf, rod.bob.tz, 5, [0.8,0.86,0.92]);
+  if (typeof spawnSand === "function") spawnSand(rod.bob.tx, rod.bob.surf, rod.bob.tz, 6, [0.8,0.86,0.92]);
 }
 function rollSpecies() {                                       // weighted by spot quality (depth+signs) & bait quality
   const q = rod.spotQ, bq = rod.baitQ;
@@ -2899,9 +2908,12 @@ function landFish() {
 }
 function lineSnap() { showCard("The line snapped!", "Too much strain — ease off the reel when the fish runs."); loseBaitMaybe(); if (typeof SND !== "undefined") SND.play("crack"); endCast(0.9); }
 function fishEscape() { showCard("It threw the hook", "You gave it too much slack — keep reeling to stay tight."); loseBaitMaybe(); endCast(0.8); }
-function reelInEmpty() { if (rod.baitId && Math.random() < 0.6) Inv.add(rod.baitId, 1); endCast(0.3); if (typeof SND !== "undefined") SND.play("plop"); }
+function reelInEmpty() { if (rod.baitTaken && rod.baitId) { Inv.add(rod.baitId, 1); rod.baitTaken = false; }   // §fishpolish reeled in before a nibble → full worm refund
+  endCast(0.3); if (typeof SND !== "undefined") SND.play("plop"); }
 function loseBaitMaybe() { /* the bait is already off the hook — spent on the attempt */ }
-function endCast(cd) { rod.state = "idle"; rod.fish = null; rod.fight = null; rod.press = false; rod.pulse = 0; rod.bend = 0; rod.cd = cd || 0.4; }
+function endCast(cd) { rod.state = "idle"; rod.fish = null; rod.fight = null; rod.press = false; rod.pulse = 0; rod.bend = 0; rod.baitTaken = false; rod.cd = cd || 0.4; }
+// §fishpolish is this point inside an active fishing hotspot?
+function hotspotNear(x, z) { for (const s of fishSigns) if (s.hot && Math.hypot(s.x - x, s.z - z) < (s.r || 4)) return s; return null; }
 
 // gulls will dive on a floating bait if one ventures near while you wait
 function gullStealCheck(dt) {
@@ -2918,18 +2930,41 @@ function gullStealCheck(dt) {
   }
 }
 
+// §fishpolish FISHING HOTSPOTS — semi-rare spots in the water marked by a cluster of small rising bubbles
+// and the odd fish flash. They last a while, then move. Casting into one bites much faster. This is the ONLY
+// bubble effect in the water, so it's unmistakable. Visible whether or not the rod is out.
+const HOTSPOT_MAX = 3, HOTSPOT_LIFE_MIN = 22, HOTSPOT_LIFE_MAX = 46, HOTSPOT_SPAWN_MIN = 7, HOTSPOT_SPAWN_MAX = 18;
+let hotspotSpawnT = 5;
+function spawnHotspotBubble(s) {
+  const surf = waterSurfaceAt(s.x, s.z), a = Math.random() * 6.283, rr = Math.random() * s.r * 0.55;
+  bubbleParticle(s.x + Math.cos(a) * rr, surf - 0.25 - Math.random() * 0.5, s.z + Math.sin(a) * rr);
+}
+function hotspotJump(s) {   // a brief fish flash/jump at the surface: a splash + droplets
+  const surf = waterSurfaceAt(s.x, s.z), a = Math.random() * 6.283, rr = Math.random() * s.r * 0.5;
+  const jx = s.x + Math.cos(a) * rr, jz = s.z + Math.sin(a) * rr;
+  if (typeof spawnSand === "function") spawnSand(jx, surf + 0.05, jz, 10, [0.82, 0.88, 0.95]);
+  if (typeof sparkle === "function") sparkle(jx, surf + 0.3, jz, [0.85, 0.9, 0.96], 5);
+  if (typeof SND !== "undefined" && Math.hypot(jx - cam.pos[0], jz - cam.pos[2]) < 40) SND.play("fish_splash", { position: [jx, surf, jz], volume: 0.5 });
+}
 function updateFishSigns(dt) {
-  // §urgent2 — fish-signs are a FISHING aid, not ambient décor. Only show them while the rod is out, so
-  // open-water ripple rings never appear as unexplained "circles in the water" during normal play.
-  if (selectedTool() !== "rod") { if (fishSigns.length) fishSigns.length = 0; return; }
-  for (let i = fishSigns.length - 1; i >= 0; i--) { const s = fishSigns[i]; s.age += dt; if (s.age > s.life) fishSigns.splice(i, 1); }
+  for (let i = fishSigns.length - 1; i >= 0; i--) { const s = fishSigns[i];
+    s.age += dt; if (s.age > s.life) { fishSigns.splice(i, 1); continue; }
+    const near = Math.hypot(s.x - cam.pos[0], s.z - cam.pos[2]) < 70;
+    if (near) {
+      s.bubT -= dt; if (s.bubT <= 0) { s.bubT = 0.1 + Math.random() * 0.16; spawnHotspotBubble(s); if (Math.random() < 0.5) spawnHotspotBubble(s); }
+      s.jumpT -= dt; if (s.jumpT <= 0) { s.jumpT = 4 + Math.random() * 6; hotspotJump(s); }
+    }
+  }
   if (mode !== "walk") return;
-  rod.signT -= dt;
-  if (rod.signT <= 0) {
-    rod.signT = 3 + Math.random() * 4;
-    for (let k = 0; k < 12; k++) { const a = Math.random() * 6.283, r = 7 + Math.random() * 22;
+  hotspotSpawnT -= dt;
+  if (hotspotSpawnT <= 0 && fishSigns.length < HOTSPOT_MAX) {
+    hotspotSpawnT = HOTSPOT_SPAWN_MIN + Math.random() * (HOTSPOT_SPAWN_MAX - HOTSPOT_SPAWN_MIN);
+    for (let k = 0; k < 18; k++) { const a = Math.random() * 6.283, r = 10 + Math.random() * 34;
       const x = player.x + Math.sin(a) * r, z = player.z - Math.cos(a) * r;
-      if (waterDepthAt(x, z) > 1.0 && fishSigns.length < 10) { fishSigns.push({ x, z, age: 0, life: 4.5 + Math.random() * 4 }); break; } }
+      if (waterDepthAt(x, z) > 1.2 && !hotspotNear(x, z)) {
+        fishSigns.push({ x, z, age: 0, life: HOTSPOT_LIFE_MIN + Math.random() * (HOTSPOT_LIFE_MAX - HOTSPOT_LIFE_MIN),
+          r: 3 + Math.random() * 1.6, hot: true, bubT: 0, jumpT: 1.5 + Math.random() * 3 }); break; }
+    }
   }
 }
 
@@ -2948,6 +2983,11 @@ function updateFishing(dt) {
     rod.bend = 0.25 * (1 - t);
     if (t >= 1) { rod.bob.y = rod.bob.surf; onBobberLanded(); }
     return;
+  }
+  // §fishpolish cancel conditions while the bobber sits out there: water drained under it, or you wandered too far
+  if (["waiting","nibble","bite"].includes(rod.state)) {
+    if (waterDepthAt(rod.bob.x, rod.bob.z) < 0.12) { hintText = "The water drained away"; hintT = 1.4; if (rod.baitTaken && rod.baitId) { Inv.add(rod.baitId, 1); rod.baitTaken = false; } if (typeof SND !== "undefined") SND.play("plop"); endCast(0.4); return; }
+    if (Math.hypot(player.x - rod.bob.x, player.z - rod.bob.z) > CANCEL_DIST) { hintText = "Too far — line reeled in"; hintT = 1.4; if (typeof SND !== "undefined") SND.play("plop"); endCast(0.4); return; }
   }
   if (rod.state === "waiting") { gullStealCheck(dt); if (clock.t >= rod.biteAt) beginBite(); }
   else if (rod.state === "nibble") { gullStealCheck(dt); if (clock.t >= rod.nibbleUntil) toBite(); }
@@ -3002,20 +3042,16 @@ function drawBobber(view) {
   if (!bobberDyn) bobberDyn = makeDynamic(bobberMesh(), 1);
   const dx = rod.bob.x - cam.pos[0], dz = rod.bob.z - cam.pos[2]; if (dx*dx + dz*dz > DRAW_R*DRAW_R) return;
   propUniforms(view); const a = rockScratch;
-  a[0] = rod.bob.x; a[1] = rod.bob.y; a[2] = rod.bob.z; a[3] = 0.6; a[4] = 0; a[5] = 0; a[6] = 0; a[7] = 1; a[8] = 1; a[9] = 1;
+  a[0] = rod.bob.x; a[1] = rod.bob.y; a[2] = rod.bob.z; a[3] = 1.15; a[4] = 0; a[5] = 0; a[6] = 0; a[7] = 1; a[8] = 1; a[9] = 1;   // §fishpolish bigger, easier to see
   bobberDyn.draw(a, 1);
 }
 function drawFishHUD() {
   const cv = document.getElementById("fishcanvas"); if (!cv) return;
-  const showing = mode === "walk" && (fishSigns.length || ["casting","waiting","nibble","bite","fighting"].includes(rod.state));
+  const showing = mode === "walk" && ["casting","waiting","nibble","bite","fighting"].includes(rod.state);   // §fishpolish hotspots are 3D bubbles now, not HUD rings
   if (!showing) { if (cv.style.display !== "none") cv.style.display = "none"; return; }
   if (cv.width !== innerWidth || cv.height !== innerHeight) { cv.width = innerWidth; cv.height = innerHeight; }
   cv.style.display = "block";
   const g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height);
-  // fish-sign ripple rings on the water
-  for (const s of fishSigns) { const p = projectToScreen(s.x, waterSurfaceAt(s.x, s.z) + 0.05, s.z); if (!p) continue;
-    const t = s.age / s.life, rad = 5 + t * 26; g.strokeStyle = `rgba(175,215,232,${(1 - t) * 0.5})`; g.lineWidth = 2;
-    g.beginPath(); g.arc(p[0], p[1], rad, 0, 6.283); g.stroke(); }
   // line + bobber + bite marker
   if (["casting","waiting","nibble","bite","fighting"].includes(rod.state)) {
     const bp = projectToScreen(rod.bob.x, rod.bob.y + 0.25, rod.bob.z);
