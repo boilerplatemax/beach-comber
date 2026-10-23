@@ -7692,6 +7692,7 @@ function targetAlongRay(r, sticky) {
     else if (ch.exposed) sphere(ch, "chest", ch.x, ch.z, 0.3, 0.9); }
   for (let i = 0; i < storageBoxes.length; i++) sphere(storageBoxes[i], "storagebox", storageBoxes[i].x, storageBoxes[i].z, 0.3, 0.8);
   for (const c of campfires) sphere(c, "campfire", c.x, c.z, 0.35, 1.0);   // §Cooking look at a fire + F to cook
+  if (cottage) { const bw = cotLocalToWorld(C_BED.x, C_BED.z); sphere(cottage, "cotbed", bw[0], bw[1], 0.75, 1.7); }   // §19B the cottage bed
   for (const L of placedLanterns) sphere(L, "lantern", L.x, L.z, 0.4, 0.6);   // §tools pick a set-down lantern back up
 
   // stickiness: keep the locked target unless another is clearly closer
@@ -7724,6 +7725,7 @@ function useToolOnTarget(t) {
     case "openchest": pickUpChest(t.obj); return true;
     case "storagebox": openStash(storageBoxes.indexOf(t.obj)); return true;
     case "campfire": doFireAction(t.obj); return true;   // §Cooking one-press world interaction (no modal)
+    case "cotbed": trySleepCottage(); return true;       // §19B sleep / set respawn at the cottage
     case "lantern": pickUpLantern(t.obj); return true;   // §tools pick a set-down lantern back up
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
     case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
@@ -9153,11 +9155,12 @@ function refuelCampfire(c) {
 function lightCampfire(c) { if (c.fuel <= 0) { if (!refuelCampfire(c)) return; } c.lit = true; if (typeof SND !== "undefined") SND.play("flame", { position: [c.x, surfaceAt(c.x,c.z).h, c.z] }); saveWorld(); }
 function updateCampfires(dt) {
   for (const c of campfires) {
-    if (c.lit && c.fuel > 0) { c.fuel = Math.max(0, c.fuel - CAMPFIRE_BURN * dt * (fireFreeFuel ? 0 : 1)); if (c.fuel <= 0) c.lit = false; }
-    // roasting advances only on a lit fire; a pot stew likewise
+    if (c.lit && c.fuel > 0) { c.fuel = Math.max(0, c.fuel - CAMPFIRE_BURN * dt * ((fireFreeFuel || c.hearth) ? 0 : 1)); if (c.fuel <= 0) c.lit = false; }   // §19B the hearth never burns out
+    // roasting advances only on a lit fire; a pot stew likewise (the hearth cooks a little faster)
     if (c.lit && c.fuel > 0) {
-      if (c.roast) { c.roast.t += dt * (fireInstantCook ? 20 : 1); if (Math.random() < dt * 1.2) { const y = surfaceAt(c.x,c.z).h + 0.4; sparkle(c.x, y, c.z, [0.95,0.8,0.4], 1); } }
-      if (c.pot && c.pot.cooking && !c.pot.done) { c.pot.t += dt * (fireInstantCook ? 20 : 1); if (c.pot.t >= POT_COOK_TIME) { c.pot.done = true; if (typeof SND !== "undefined") SND.play("glug", { position:[c.x,surfaceAt(c.x,c.z).h,c.z] }); } }
+      const cm = (fireInstantCook ? 20 : 1) * (c.hearth ? 1.6 : 1);
+      if (c.roast) { c.roast.t += dt * cm; if (Math.random() < dt * 1.2) { const y = surfaceAt(c.x,c.z).h + 0.4; sparkle(c.x, y, c.z, [0.95,0.8,0.4], 1); } }
+      if (c.pot && c.pot.cooking && !c.pot.done) { c.pot.t += dt * cm; if (c.pot.t >= POT_COOK_TIME) { c.pot.done = true; if (typeof SND !== "undefined") SND.play("glug", { position:[c.x,surfaceAt(c.x,c.z).h,c.z] }); } }
     }
   }
 }
@@ -9165,7 +9168,8 @@ function drawCampfires(view) {
   if (!campfires.length) return;
   if (!campfireDyn) campfireDyn = makeDynamic(campfireMesh(), 30);
   propUniforms(view); const a = rockScratch; let n = 0;
-  for (const c of campfires) { if (n >= 30) break; const dx = c.x-cam.pos[0], dz = c.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+  for (const c of campfires) { if (n >= 30) break; if (c.hearth) continue;   // §19B hearth flames are drawn by drawCottage (no stone ring)
+    const dx = c.x-cam.pos[0], dz = c.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
     const o = n*10, y = surfaceAt(c.x, c.z).h, lit = c.lit && c.fuel > 0;
     const fl = lit ? (0.9 + Math.sin(clock.t*8 + c.x)*0.1) * (0.5 + 0.5*c.fuel) : 0;   // flame brightness scales with fuel; grey embers when out
     a[o]=c.x;a[o+1]=y;a[o+2]=c.z;a[o+3]=1;a[o+4]=0;a[o+5]=0;a[o+6]=0;
@@ -10320,13 +10324,19 @@ function frameRectZ(m, xc, z0, z1, y0, y1, col) { const t = 0.06, xh = C_TH + 0.
   mBox(m, xc, (y0+y1)/2, z0, xh, (y1-y0)/2, t, col); mBox(m, xc, (y0+y1)/2, z1, xh, (y1-y0)/2, t, col); }
 
 // ---- interior fixtures (static wood/stone) ----
-function cotHearthMesh() { const m = Mesh();
-  mBox(m, 0, 0.22, 0, 0.98, 0.22, 0.42, CWC.stone);               // hearth plinth
-  mBox(m, -0.82, 0.88, 0, 0.17, 0.62, 0.4, CWC.stoneDk);          // left jamb
-  mBox(m, 0.82, 0.88, 0, 0.17, 0.62, 0.4, CWC.stoneDk);           // right jamb
-  mBox(m, 0, 1.62, 0, 1.02, 0.14, 0.46, CWC.stone);               // mantle beam
-  mBox(m, 0, 2.2, -0.04, 0.58, 0.55, 0.3, CWC.stoneDk);           // chimney breast
+function cotHearthMesh() { const m = Mesh(); const s = CWC.stone, sd = CWC.stoneDk;
+  mBox(m, 0, 0.06, 0.3, 1.0, 0.06, 0.2, s);                       // hearthstone apron at the floor
+  mBox(m, -0.68, 0.68, 0, 0.17, 0.68, 0.38, sd);                  // left jamb (fire burns at floor level between the jambs)
+  mBox(m, 0.68, 0.68, 0, 0.17, 0.68, 0.38, sd);                   // right jamb
+  mBox(m, 0, 0.6, -0.26, 0.55, 0.6, 0.12, sd);                    // fire-back slab
+  mBox(m, 0, 1.42, 0.02, 1.0, 0.13, 0.42, s);                     // mantle beam
+  mBox(m, 0, 2.05, -0.04, 0.6, 0.5, 0.3, sd);                     // chimney breast
+  mBox(m, 0, 0.12, 0.04, 0.3, 0.05, 0.08, CWC.beam); mBox(m, 0, 0.17, 0.04, 0.08, 0.05, 0.28, [0.4,0.3,0.2]);   // firewood
   return m; }
+function flameMesh() { const m = Mesh();   // a few translucent-looking flame tongues (tinted per instance), sized for the hearth
+  for (let i = 0; i < 4; i++) { const a = i/4*6.283; mTri(m, [Math.cos(a)*0.16, 0.0, Math.sin(a)*0.16], [Math.cos(a+1.4)*0.16, 0.0, Math.sin(a+1.4)*0.16], [0, 0.85, 0], [1,1,1]); }
+  return m; }
+let cottageFlameDyn = null;
 function cotBedMesh() { const m = Mesh();
   mBox(m, 0, 0.18, 0, 0.5, 0.12, 0.95, CWC.bed);                  // frame
   mBox(m, 0, 0.34, 0.05, 0.46, 0.08, 0.86, CWC.quilt);           // mattress / quilt
@@ -10453,6 +10463,48 @@ function drawCottage(view) {
   gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
   a[0]=c.x;a[2]=c.z;a[4]=c.yaw;a[7]=glow[0];a[8]=glow[1];a[9]=glow[2]; c.glassDyn.draw(a, 1);
   gl.depthMask(true); gl.disable(gl.BLEND);
+  if (c.hearthFire && c.hearthFire.lit) {                          // hearth flames (the campfire mesh is skipped for the hearth)
+    if (!cottageFlameDyn) cottageFlameDyn = makeDynamic(flameMesh(), 1);
+    const fp = cotLocalToWorld(C_HEARTH.x, C_HEARTH.z + 0.04), fl = 0.9 + Math.sin(clock.t*8)*0.1;
+    a[0]=fp[0];a[1]=c.floorY+0.09;a[2]=fp[1];a[3]=1;a[4]=c.yaw;a[5]=0;a[6]=0;a[7]=fl;a[8]=fl*0.72;a[9]=fl*0.4;
+    propUniforms(view); cottageFlameDyn.draw(a, 1);
+    if (Math.random() < 0.1) sparkle(fp[0], c.floorY+0.6, fp[1], [0.95,0.6,0.25], 1);
+  }
+}
+// §19B fixtures that depend on the loaded world/storage (run after loadWorld + loadStorage):
+//   the hearth is a campfire that never burns out and cooks faster; the sea chest shares the stash.
+function initCottageFixtures() {
+  if (!cottage) return;
+  if (!cottage.hearthFire) {
+    const fp = cotLocalToWorld(C_HEARTH.x, C_HEARTH.z);
+    const f = newCampfire(fp[0], fp[1], { hearth: true, lit: true, fuel: 1,
+      pot: { ingredients: [], water: false, salt: false, cooking: 0, t: 0, done: false, dish: null } });
+    campfires.push(f); cottage.hearthFire = f; cottage.hearthLit = true;
+  }
+  if (!storageBoxes.some(b => b.cottage)) {
+    const cw = cotLocalToWorld(C_CHEST.x, C_CHEST.z);
+    storageBoxes.push({ x: cw[0], z: cw[1], yaw: cottage.yaw + Math.PI, cottage: true });
+  }
+}
+// §19B sleep in the cottage bed: it becomes your respawn point; at night, skip to morning.
+function trySleepCottage() {
+  const wake = cotLocalToWorld(0, C_IZ - 0.7);
+  shelterSpawn = { x: wake[0], z: wake[1] };
+  for (const o of builds) if (o.type === "leanto") o.respawn = false;
+  cottage.isRespawn = true;
+  const night = dayNightEnabled && dayFactor() < 0.35;
+  if (night) {
+    startFade(() => { timeOfDay = MORNING_TIME; updateSun();
+      const b = cotLocalToWorld(C_BED.x, C_BED.z + 0.95), h = surfaceAt(b[0], b[1]).h;
+      player.x = b[0]; player.z = b[1]; player.feetY = h; player.eyeY = h + EYE; player.vy = 0; player.airborne = false;
+      stamina = 1; exhausted = false; player.breath = BREATH_MAX; });
+    if (onDig) onDig("eat");
+    showCard("You sleep until morning", "Rested. The cottage is your home now — you'll wake here.");
+  } else {
+    stamina = 1; exhausted = false;
+    showCard("Home sweet home", dayNightEnabled ? "The cottage is your respawn point. Sleep here at night to skip to morning."
+      : "The cottage is your respawn point. A rest here restores your stamina.");
+  }
 }
 function saveCottage() { if (!cottage) return; try { localStorage.setItem("bcc_"+SEED_STR, JSON.stringify({ cosy: cottage.cosy })); } catch(e){} }
 function loadCottage() { if (!cottage) return; try { const o = JSON.parse(localStorage.getItem("bcc_"+SEED_STR)||"null"); if (o && typeof o.cosy==="number") cottage.cosy = o.cosy; } catch(e){} }
@@ -10471,7 +10523,7 @@ function saveWorld() {
     build: [...builtCells].map(i => [i, +built[i].toFixed(2), material[i]]),
     berries: berryBushes.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),   // 0 = ripe, else seconds left
     digcells: (() => { const out = []; for (const c of digCells.values()) if (c.depleted) out.push([c.cx, c.cz, Math.max(0, +(c.refillAt - clock.t).toFixed(0))]); return out; })(),   // §urgent3 spent dig-cells + seconds left to refill
-    fires: campfires.map(c => ({ x: +c.x.toFixed(1), z: +c.z.toFixed(1), f: +(c.fuel||0).toFixed(2), lit: c.lit ? 1 : 0,
+    fires: campfires.filter(c => !c.hearth).map(c => ({ x: +c.x.toFixed(1), z: +c.z.toFixed(1), f: +(c.fuel||0).toFixed(2), lit: c.lit ? 1 : 0,
       roast: c.roast ? [c.roast.id, +c.roast.t.toFixed(1)] : null,
       pot: c.pot ? { ing: c.pot.ingredients.slice(), w: c.pot.water ? 1 : 0, s: c.pot.salt ? 1 : 0, ck: c.pot.cooking ? 1 : 0, t: +c.pot.t.toFixed(1), d: c.pot.done ? 1 : 0, dish: c.pot.dish } : null })),
     builds: builds.map(b => ({ t: b.type, x: +b.x.toFixed(1), z: +b.z.toFixed(1), y: +b.yaw.toFixed(2), c: b.cost || [],
@@ -11327,7 +11379,7 @@ function stashAdd(id, qty) {
   const it = ITEMS[id]; for (const s of stash) if (s.id === id && it.stackable && s.qty < (it.maxStack||99)) { s.qty += qty; return true; }
   if (stash.length < STASH_CAP) { stash.push({ id, qty }); return true; } return false;
 }
-function saveStorage() { try { localStorage.setItem("bcs_" + SEED_STR, JSON.stringify({ b: storageBoxes.map(b=>[+b.x.toFixed(1),+b.z.toFixed(1),+b.yaw.toFixed(2)]), s: stash })); } catch (e) {} }
+function saveStorage() { try { localStorage.setItem("bcs_" + SEED_STR, JSON.stringify({ b: storageBoxes.filter(b=>!b.cottage).map(b=>[+b.x.toFixed(1),+b.z.toFixed(1),+b.yaw.toFixed(2)]), s: stash })); } catch (e) {} }
 function loadStorage() { try { const o = JSON.parse(localStorage.getItem("bcs_" + SEED_STR) || "null"); if (!o) return;
   storageBoxes = (o.b||[]).map(r=>({x:r[0],z:r[1],yaw:r[2]})); stash = o.s || []; } catch (e) {} }
 function drawStorage(view) {
@@ -11516,6 +11568,7 @@ loadNests();
 seedChests();
 loadChests();
 loadStorage();
+initCottageFixtures();   // §19B hearth campfire + sea chest (after loadWorld/loadStorage rebuild their arrays)
 // §Cooking guaranteed first cook-pot: once per seed, lay a lit, pot-topped campfire near spawn
 try {
   if (localStorage.getItem("bc_firstfire_" + SEED_STR) !== "1") {
