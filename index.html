@@ -6200,8 +6200,19 @@ function hopperMesh() { const m = Mesh(); mBox(m,0,0.05,0,0.08,0.05,0.06,[0.72,0
 function gunnelMesh() { const m = Mesh(), c = [0.44,0.54,0.4], c2 = [0.37,0.46,0.33];
   for (let i=0;i<6;i++){ const x=(i-2.5)*0.11, w=0.055*(1-Math.abs(i-2.5)/4)+0.02; mBox(m, x, 0.03, Math.sin(i*1.1)*0.05, 0.055, 0.03, w, i%2?c:c2); }
   mBox(m, 0.34, 0.04, 0, 0.045, 0.04, 0.04, c); mBox(m, 0.38, 0.055, 0.02, 0.012,0.012,0.012,[0.1,0.1,0.1]); mBox(m, 0.38, 0.055, -0.02, 0.012,0.012,0.012,[0.1,0.1,0.1]); return m; }
-function chitonMesh() { const m = Mesh(), c = [0.5,0.48,0.45]; mergeMesh(m, discMesh(0.0, 0.3, 7, 0.1, c));
-  for (let i=0;i<4;i++) mBox(m, (i-1.5)*0.13, 0.11, 0, 0.045, 0.06, 0.24, [0.42+i*0.015,0.4,0.38]); return m; }
+// §fix a roly-poly (pill bug / woodlouse): a rounded, ribbed capsule of overlapping armour segments that taper at both ends
+function chitonMesh() { const m = Mesh();
+  const base = [0.46,0.43,0.4], seg = [0.55,0.52,0.48];
+  const L = 8;
+  for (let i = 0; i < L; i++) {
+    const t = i/(L-1), prof = Math.sin(Math.PI*(0.1 + 0.8*t));   // small at the head/tail → rounds the capsule
+    const w = 0.2*prof + 0.01, hh = 0.13*prof + 0.012, xw = 0.075;
+    const x = (t-0.5)*0.5;
+    const d = Mesh(); mergeMesh(d, discMesh(0, 1, 9, 0.75, i%2 ? seg : base));   // a unit arched plate
+    for (let v = 0; v < d.pos.length; v += 3) { d.pos[v] *= xw; d.pos[v+1] *= hh; d.pos[v+2] *= w; }
+    mergeAt(m, d, x, 0.0, 0);
+  }
+  return m; }
 function pillbugMesh() { const m = Mesh(), c = [0.43,0.44,0.47]; mergeMesh(m, discMesh(0.0, 0.14, 7, 0.13, c));
   for (let i=0;i<5;i++) mBox(m, (i-2)*0.05, 0.08, 0, 0.012, 0.09, 0.14, [0.34,0.35,0.38]);
   mBox(m, 0.14, 0.05, 0, 0.03, 0.04, 0.09, [0.38,0.39,0.42]); return m; }
@@ -6231,22 +6242,21 @@ function berryMesh() { const m = Mesh(); const c = [0.62,0.16,0.3]; for (let i =
 // a low inland shrub; ripe=true studs it with berries
 // §13.7 three states: "ripe" (red clusters), "green" (small unripe berries), "bare" (just harvested — none)
 // §4 a rounded leafy mound (overlapping faceted leaf clusters + a few arching sprigs), studded with berry clusters when ripe
-// §gulls bigger, bushier berry bush — puffy cloud-like clusters of leaf domes, with berries spread throughout
+// §fix a dead-simple berry bush: a rounded green "cloud" of a few overlapping puffs, dotted with red berries when ripe
+function berryDotMesh(s, col) { const d = Mesh(); mergeMesh(d, discMesh(0, s, 6, s, col)); mergeMesh(d, discMesh(0, s, 6, -s, col)); return d; }   // a little round berry dot
 function berryBushMesh(state) { const m = Mesh();
-  const g=[0.3,0.46,0.25], g2=[0.38,0.55,0.3], g3=[0.25,0.4,0.22], g4=[0.34,0.5,0.27], twig=[0.4,0.32,0.22];
-  for (let i=0;i<4;i++){ const a=i/4*6.283; mergeAt(m, cylM(0,0.36,0.026,0.018,twig), Math.cos(a)*0.06,0,Math.sin(a)*0.06); }   // woody stems
-  // a big rounded shrub built from many overlapping domes of varied size — reads as puffy cloud-like foliage
-  const lobes=[[0,0.52,0,0.36],[0.3,0.44,0.08,0.27],[-0.28,0.42,-0.1,0.27],[0.09,0.42,-0.3,0.25],[-0.11,0.46,0.3,0.25],
-    [0.26,0.37,-0.22,0.21],[-0.26,0.35,0.22,0.21],[0.32,0.55,0.0,0.19],[-0.07,0.63,0.07,0.21],[0.15,0.32,0.28,0.18],[-0.22,0.55,-0.15,0.19]];
-  for (let i=0;i<lobes.length;i++){ const [lx,ly,lz,lr]=lobes[i]; const c=[g,g2,g3,g4][i%4];
-    mergeAt(m, discMesh(0,lr,8,lr*0.95,c), lx,ly,lz); mergeAt(m, discMesh(0,lr,8,-lr*0.45,c), lx,ly-0.02,lz); }   // dome + shallow underside = a puff
-  for (let i=0;i<6;i++){ const a=i/6*6.283+0.5; bladeLeaf(m, Math.cos(a)*0.2, Math.sin(a)*0.2, a, 0.18, 0.035, 0.06, g2, g, 0.34); }   // sprigs for a natural silhouette
-  // berries spread THROUGHOUT the canopy (a golden-angle scatter of small clusters, not just a few spots)
+  const g = [0.37,0.57,0.31], g2 = [0.3,0.48,0.26], twig = [0.4,0.32,0.22];
+  mergeAt(m, cylM(0, 0.16, 0.035, 0.028, twig), 0, 0, 0);   // a short stub of a stem to sit it on the ground
+  // the green cloud — a handful of overlapping rounded puffs
+  const puffs = [[0,0.36,0,0.3],[0.22,0.3,0.05,0.22],[-0.2,0.3,-0.04,0.22],[0.05,0.48,-0.02,0.2],[-0.06,0.32,0.22,0.19],[0.16,0.3,-0.2,0.18]];
+  for (let i = 0; i < puffs.length; i++) { const [x,y,z,r] = puffs[i], c = i%2 ? g : g2;
+    mergeAt(m, discMesh(0, r, 8, r*0.85, c), x, y, z);         // top of the puff
+    mergeAt(m, discMesh(0, r, 8, -r*0.6, c), x, y-0.01, z); }  // underside → a round ball
+  // red dots = the berries, scattered over the cloud (pale green when still unripe)
   if (state === "ripe" || state === "green") {
-    const ripe = state === "ripe";
-    const b1 = ripe ? [0.66,0.16,0.28] : [0.5,0.6,0.34], b2 = ripe ? [0.78,0.26,0.38] : [0.44,0.54,0.3], sz = ripe ? 0.05 : 0.034;
-    for (let i=0;i<14;i++){ const a = i*2.399, rr = 0.2 + ((i*7)%10)/10*0.28, bx = Math.cos(a)*rr, by = 0.26 + ((i*5)%9)/9*0.34, bz = Math.sin(a)*rr;
-      for (let k=0;k<2+(i%2);k++){ const aa = k/3*6.283+i; berryBit(m, bx+Math.cos(aa)*0.05, by-(k===2?0.04:0), bz+Math.sin(aa)*0.05, sz, k%2?b1:b2); } }
+    const ripe = state === "ripe", col = ripe ? [0.84,0.15,0.2] : [0.52,0.63,0.35], sz = ripe ? 0.055 : 0.04;
+    for (let i = 0; i < 12; i++) { const a = i*2.399, rr = 0.1 + ((i*7)%10)/10*0.26, x = Math.cos(a)*rr, y = 0.22 + ((i*5)%9)/9*0.3, z = Math.sin(a)*rr;
+      mergeAt(m, berryDotMesh(sz, col), x, y, z); }
   }
   return m; }
 function campfireMesh() { const m = Mesh(); const st = [0.5,0.48,0.46];
@@ -8263,7 +8273,7 @@ function targetAlongRay(r, sticky) {
   for (const sw of seaweedBeds) if (sw.ripe) sphere(sw, "seaweed", sw.x, sw.z, 0.6*sw.scale, 0.9*sw.scale);   // §17.2 pick sea lettuce
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
   for (const s of flipStones) if (!s.anim) sphere(s, "flipstone", s.x, s.z, 0.4*s.sc, 0.5 + s.sc*0.4);   // §21 flippable stones
-  if (typeof heaveBoulders !== "undefined") for (const b of heaveBoulders) if (!b.anim && !b.flipped) sphere(b, "heaveboulder", b.x, b.z, 0.5*b.sc, 0.7 + b.sc*0.5);   // §21D heavy boulders to lever over
+  // §heave-removed: heave boulders are no longer targetable
   if (typeof oysterBeds !== "undefined") for (const b of oysterBeds) if (oysterBedExposed(b)) sphere(b, "oysterbed", b.x, b.z, 0.5*b.sc, 0.75);   // §23 oyster beds bared at low tide
   if (typeof geodes !== "undefined") for (const g of geodes) if (!g.taken) sphere(g, "geode", g.x, g.z, 0.4*g.sc, 0.5 + g.sc*0.4);   // §40 geodes to crack with a pickaxe (cracked ones stay targetable so the halves can be picked up — §A3)
   for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
@@ -11141,7 +11151,9 @@ function seedHeaveBoulders() {
     const sc = 1.5 + rng()*0.9;
     const b = { x, z, yaw: rng()*6.283, sc, biome: "beach", flipped: false, flip: 0, target: 0, anim: false, refillAt: 0, flippedAt: -99, content: null, critters: [] };
     heaveBoulders.push(b);
-    colliders.push({ x, z, r: sc*0.5, kind: "heaveboulder", obj: b });   // a solid obstacle until levered aside
+    // §heave-removed: boulder heaving is gone (it paused the game and is being replaced by crates/barrels).
+    // We still run the placement loop so the seeded RNG stream — and thus every other island feature — is unchanged,
+    // but the boulders are no longer drawn, targetable or solid.
   }
   if (_savedHeave) for (const e of _savedHeave) { const b = heaveBoulders[e[0]]; if (b) { b.flipped = true; b.flip = 1; b.target = 1; b.refillAt = e[1]; b.flippedAt = e[2]; b.content = "spent"; } }
   rebuildCollHash();
@@ -11225,6 +11237,7 @@ function updateHeaveBoulders(dt) {
   }
 }
 function drawHeaveBoulders(view) {
+  return;   // §heave-removed: no longer drawn (boulder heaving is gone)
   if (!heaveBoulders.length) return;
   if (!heaveBoulderDyn) heaveBoulderDyn = makeDynamic(heaveBoulderMesh(), HEAVE_BOULDER_N);
   if (!dampPatchDyn) dampPatchDyn = makeDynamic(discMesh(0, 0.46, 9, 0.0, [1,1,1]), FLIP_STONE_N);
