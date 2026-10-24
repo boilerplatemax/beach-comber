@@ -1385,6 +1385,7 @@ const SND = {
   reg: {}, unlocked: false, muted: false, musicEnabled: true, underwater: false, lastAt: {},
   vol: { master: 0.75, sfx: 0.9, ambience: 0.6, ui: 0.7, music: 0.55 },
   music: { el: null, node: null, fade: null, src: null, url: null, want: 0, cur: 0, _fadeT: null },
+  cat: { el: null, url: null, cur: 0, want: 0 },   // §catbard the cat bard's ballad, an in-world loop that fades with distance
   MAX_VOICES: 24, MAX_DIST: 48,
   // register a sound: id → { p: params | [variants], vol, pv (pitch var), vv (vol var), cd (cooldown s), max, bus }
   def(id, p, o = {}) { this.reg[id] = { p, vol: o.vol ?? 0.5, pv: o.pv ?? 0.06, vv: o.vv ?? 0.12, cd: o.cd ?? 0, max: o.max ?? 4, bus: o.bus || "sfx" }; },
@@ -1476,6 +1477,22 @@ const SND = {
   },
   fadeOutMusic() { const m = this.music; if (!m.el) return; m.want = 0; this._startMusicFade(); },
   musicPlaying() { const m = this.music; return !!(m.el && !m.el.paused && m.want > 0); },
+  // §catbard the cat's ballad plays from its own <audio> element (never Web Audio, same CORS reason as the theme),
+  // and its volume tracks how close you are. updateCat(gain) is called every frame with a 0..1 proximity gain.
+  initCat(url) { if (this.cat.el) return;
+    try { const el = new Audio(url); el.loop = true; el.preload = "auto"; el.volume = 0; this.cat.el = el; this.cat.url = url; } catch (e) {} },
+  updateCat(gain) {
+    const m = this.cat; if (!m.el) return;
+    m.want = Math.max(0, Math.min(1, gain || 0));
+    m.cur += (m.want - m.cur) * 0.1;                 // smooth ~0.4s fade as you walk in/out of earshot
+    if (Math.abs(m.cur - m.want) < 0.004) m.cur = m.want;
+    // the ballad is "music", so Mute and the Music setting silence it just like the theme
+    const v = (this.muted || this.musicEnabled === false) ? 0 : Math.max(0, Math.min(1, (this.vol.master ?? 0.75) * (this.vol.music ?? 0.55) * m.cur));
+    try { m.el.volume = v; } catch (e) {}
+    if (m.want > 0.02 && m.el.paused && this.unlocked !== false && !this.muted && this.musicEnabled !== false) {
+      const p = m.el.play(); if (p && p.catch) p.catch(() => {});
+    } else if (m.cur <= 0.003 && m.want === 0 && !m.el.paused) { try { m.el.pause(); } catch (e) {} }
+  },
   setUnderwater(u) { this.underwater = u; if (!this.ctx) return;
     for (const b of ["sfx", "ambience"]) this.lp[b].frequency.setTargetAtTime(u ? 480 : 20000, this.ctx.currentTime, 0.2); },
   // the one API everything calls
@@ -1651,6 +1668,7 @@ function soundCategory(id, bus) {
   D("owl",        { freq:420, freq2:380, shape:"sine", atk:0.03, sus:0.1, rel:0.2, gain:0.3, vib:20, vibf:6 }, { vol:0.34, cd:0.3 });
   D("bat",        { freq:5000, freq2:6500, shape:"sine", atk:0.001, sus:0.008, rel:0.02, gain:0.18 }, { vol:0.2, cd:0.1 });
   D("raccoon",    { freq:600, freq2:900, shape:"saw", atk:0.005, sus:0.04, rel:0.06, gain:0.28, vib:120, vibf:30 }, { vol:0.3, cd:0.15 });
+  D("purr",       { freq:58, freq2:52, shape:"tri", atk:0.06, sus:0.34, rel:0.26, noise:0.12, gain:0.34, vib:22, vibf:14 }, { vol:0.32, cd:0.25 });   // §catbard a soft rumble when you pet the cat
   D("hcrab_scrape",{ shape:"noise", lpf:0.4, atk:0.01, sus:0.08, rel:0.06, gain:0.3, crush:40 }, { vol:0.26, cd:0.1 });
   D("hcrab_flip", { freq:260, freq2:180, shape:"tri", atk:0.001, sus:0.02, rel:0.08, noise:0.3, gain:0.4 }, { vol:0.35 });
   // ambience one-shots
@@ -1663,8 +1681,10 @@ SND.loadVol();   // reflect saved volumes in Settings before the first gesture u
 // surfAudio kept as an alias so older checks still read "audio is on"
 let surfAudio = null;
 const MUSIC_URL = "beachcombing_theme.mp3";   // §music the title theme (sits beside index.html)
+const CAT_BALLAD_URL = "cat_ballad.mp3";       // §catbard the cat bard's tune (sits beside index.html)
 window.startAudio = function () { SND.init(); if (SND.ctx) surfAudio = SND;
   if (SND.ctx && (mode === "preview" || mode === "intro")) SND.playMusic(MUSIC_URL);   // §music start the title theme on the first gesture, while still on the menu
+  SND.initCat(CAT_BALLAD_URL);                  // §catbard ready the ballad element on the first gesture (plays later, only when you're near the cat)
   if (typeof refreshMusicToggle === "function") refreshMusicToggle(); };
 // §playtest1 surf wave cycle: a swell builds, crashes, washes up, retreats, then a quieter gap, looped
 let _surfPhase = Math.random(), _surfT = performance.now();
@@ -1711,7 +1731,7 @@ function updateSurf() {
   } catch (e) {}
 }
 // pause/hide handling: suspend audio when the tab is hidden or the game is paused
-document.addEventListener("visibilitychange", () => { try { if (!SND.ctx) return; if (document.hidden) SND.ctx.suspend(); else if (!pauseStage) SND.ctx.resume(); } catch (e) {} });
+document.addEventListener("visibilitychange", () => { try { if (SND.cat && SND.cat.el && document.hidden) SND.cat.el.pause(); if (!SND.ctx) return; if (document.hidden) SND.ctx.suspend(); else if (!pauseStage) SND.ctx.resume(); } catch (e) {} });
 // which footstep sound for the ground under the player
 function footSurface() {
   if (typeof waterDepthAt === "function" && waterDepthAt(player.x, player.z) > 0.12) return "step_water";
@@ -8828,6 +8848,7 @@ function targetAlongRay(r, sticky) {
   if (cottage) { const w = cotLocalToWorld(C_AQ.x, C_AQ.z), gy = surfaceAt(w[0], w[1]).h;                              // §19E the aquarium tank
     sphere(cottage, "aqua", w[0], w[1], (cottage.floorY + AQ_STAND + AQ_WH*0.5) - gy, 0.6); }
   for (const L of placedLanterns) sphere(L, "lantern", L.x, L.z, 0.4, 0.6);   // §tools pick a set-down lantern back up
+  if (catBard) sphere(catBard, "catbard", catBard.x, catBard.z, 0.5, CAT_REACH);   // §catbard pet the cat
 
   // stickiness: keep the locked target unless another is clearly closer
   if (stick && (!best || best.obj !== stick.obj) && (!best || bestT > stickT - STICK_MARGIN)) return stick;
@@ -8841,7 +8862,7 @@ let curTarget = null;    // recomputed each frame from the crosshair (desktop)
 // The tool-gated kinds (tree/fallentree/rock/searock/stump/geode/heaveboulder) are deliberately excluded.
 const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","seaweed","tallgrass","salt",
   "flotsam","barnacle","nest","driftwood","chest","openchest","storagebox","campfire","cotbed","dispslot",
-  "cottrophy","aqua","lantern","fence","crate","barrel","searock"]);
+  "cottrophy","aqua","lantern","fence","crate","barrel","searock","catbard"]);
 function softTargetUnderCrosshair() { const t = effectiveTarget(); return (t && SOFT_INTERACT.has(t.kind)) ? t : null; }
 function useToolOnTarget(t) {
   if (!t) return false;
@@ -8877,6 +8898,7 @@ function useToolOnTarget(t) {
     case "cottrophy": toggleTrophy(t.obj); return true;       // §19D mount / take down a fish trophy
     case "aqua": useAquarium(); return true;                  // §19E pour creatures / refresh water / decorate
     case "lantern": pickUpLantern(t.obj); return true;   // §tools pick a set-down lantern back up
+    case "catbard": petCat(); return true;   // §catbard pet the cat (pure charm, no quest)
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
     case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
     case "searock":   // §menu a shore rock with an oyster/barnacle cluster, scraping/picking takes priority over mining (any item)
@@ -12648,6 +12670,87 @@ function drawCottage(view) {
     if (Math.random() < 0.1) sparkle(fp[0], c.floorY+0.6, fp[1], [0.95,0.6,0.25], 1);
   }
 }
+/* ===================================================================== *
+ * §catbard  THE CAT BARD. A ginger cat with a little lute, sitting on a
+ *   driftwood log beside the cottage. You can pet it (pure charm, no quest),
+ *   and its ballad (cat_ballad.mp3) plays as an in-world loop that fades in
+ *   as you walk near and out as you leave. No gameplay beyond the company.
+ * ===================================================================== */
+let catBard = null, catBardDyn = null;
+const catScratch = new Float32Array(10);
+const CAT_SCALE = 1.5, CAT_NEAR = 3.4, CAT_FAR = 16, CAT_REACH = 2.4;
+function catBardMesh() {
+  const m = Mesh();
+  const gin=[0.85,0.52,0.28], ginD=[0.7,0.4,0.2], cream=[0.95,0.88,0.74],
+        earIn=[0.92,0.62,0.6], nose=[0.86,0.45,0.48], eye=[0.12,0.12,0.14],
+        wood=[0.58,0.37,0.2], woodD=[0.3,0.2,0.12], drift=[0.52,0.46,0.4];
+  mBox(m, 0, 0.08, -0.04, 0.44, 0.08, 0.22, drift);              // a weathered driftwood log to perch on
+  const b = 0.16;                                                // the cat sits on top of the log
+  mBox(m, 0, b+0.2, -0.14, 0.2, 0.2, 0.17, gin);                 // haunches
+  mBox(m, 0, b+0.08, -0.02, 0.19, 0.08, 0.2, gin);              // seated lower body
+  mBox(m, 0, b+0.4, -0.14, 0.12, 0.016, 0.14, ginD);            // back stripes
+  mBox(m, 0, b+0.33, -0.2, 0.14, 0.016, 0.1, ginD);
+  mBox(m, 0, b+0.34, 0.08, 0.16, 0.22, 0.12, gin);              // upright chest
+  mBox(m, 0, b+0.3, 0.17, 0.11, 0.18, 0.04, cream);             // cream chest front
+  for (const sx of [-1,1]) { mBox(m, sx*0.1, b+0.14, 0.17, 0.05, 0.16, 0.05, gin);   // front legs
+    mBox(m, sx*0.1, b+0.02, 0.22, 0.06, 0.03, 0.08, cream); }                        // paws
+  mBox(m, 0, b+0.6, 0.12, 0.15, 0.13, 0.14, gin);               // head
+  mBox(m, 0, b+0.55, 0.24, 0.08, 0.07, 0.05, cream);            // muzzle
+  mBox(m, 0, b+0.57, 0.29, 0.025, 0.02, 0.02, nose);            // nose
+  for (const sx of [-1,1]) { const ex=sx*0.1, ey=b+0.72, ez=0.1;                     // ears
+    mTri(m, [ex-0.06,ey,ez],[ex+0.06,ey,ez],[ex,ey+0.1,ez-0.02], gin);
+    mTri(m, [ex-0.03,ey+0.01,ez+0.006],[ex+0.03,ey+0.01,ez+0.006],[ex,ey+0.06,ez-0.01], earIn); }
+  for (const sx of [-1,1]) mBox(m, sx*0.07, b+0.62, 0.25, 0.022, 0.03, 0.02, eye);   // eyes
+  mBox(m, 0.18, b+0.06, -0.12, 0.05, 0.05, 0.14, gin);          // tail curling round the side
+  mBox(m, 0.26, b+0.08, 0.02, 0.05, 0.05, 0.12, gin);
+  mBox(m, 0.24, b+0.1, 0.16, 0.05, 0.05, 0.08, ginD);
+  const lx=0.02, ly=b+0.28, lz=0.26;                            // the lute, held across the lap
+  mBox(m, lx, ly, lz, 0.1, 0.12, 0.05, wood);
+  mBox(m, lx, ly+0.005, lz+0.045, 0.045, 0.045, 0.01, woodD);   // soundhole
+  mBox(m, lx-0.14, ly+0.14, lz-0.01, 0.03, 0.14, 0.025, wood);  // neck, angled up and across
+  mBox(m, lx-0.26, ly+0.26, lz-0.01, 0.035, 0.03, 0.03, woodD); // headstock
+  return m;
+}
+function initCatBard() {
+  catBard = null;
+  if (!cottage) return;
+  const w = cotLocalToWorld(C_OX + 1.15, C_OZ + 0.2);           // beside the cottage, clear of the door path
+  catBard = { x: w[0], z: w[1], yaw: cottage.yaw + Math.PI, phase: (typeof rng==="function"?rng():Math.random())*6.28, petT: 0, met: false };
+  if (typeof colliders !== "undefined") { colliders.push({ x: catBard.x, z: catBard.z, r: 0.5, kind: "catbard" }); if (typeof rebuildCollHash === "function") rebuildCollHash(); }
+}
+function updateCatBard(dt) {
+  if (!catBard) return;
+  catBard.phase += dt;
+  if (catBard.petT > 0) catBard.petT = Math.max(0, catBard.petT - dt);
+}
+// how loud the ballad should be right now (1 close, 0 far / away / paused)
+function catBardAudioGain() {
+  if (!catBard || mode !== "walk" || clock.paused) return 0;
+  const d = Math.hypot(player.x - catBard.x, player.z - catBard.z);
+  return d <= CAT_NEAR ? 1 : d >= CAT_FAR ? 0 : (CAT_FAR - d) / (CAT_FAR - CAT_NEAR);
+}
+function petCat() {
+  if (!catBard) return;
+  if (Math.hypot(catBard.x - player.x, catBard.z - player.z) > CAT_REACH + 1.2) return;
+  catBard.petT = 1.0;
+  const gy = surfaceAt(catBard.x, catBard.z).h;
+  if (typeof SND !== "undefined") SND.play("purr", { position: [catBard.x, gy + 0.5, catBard.z] });
+  if (typeof sparkle === "function") sparkle(catBard.x, gy + 0.75, catBard.z, [0.95,0.5,0.55], 5);
+  if (!catBard.met) { catBard.met = true; showCard("The cat bard", "A ginger cat with a little lute, singing to the sea. It leans into your hand and purrs, and keeps right on playing."); }
+  else { const lines = ["The cat purrs and plays on.", "A slow blink, a louder purr, the ballad never breaks.", "It headbutts your palm, delighted, still strumming."]; showCard("The cat bard", lines[(Math.random()*lines.length)|0]); }
+}
+function drawCatBard(view) {
+  if (!catBard) return;
+  const dx = catBard.x - cam.pos[0], dz = catBard.z - cam.pos[2]; if (dx*dx + dz*dz > DRAW_R*DRAW_R) return;
+  if (!catBardDyn) catBardDyn = makeDynamic(catBardMesh(), 1);
+  propUniforms(view);
+  const gy = surfaceAt(catBard.x, catBard.z).h;
+  const bob = Math.sin(catBard.phase*1.6)*0.012 + (catBard.petT > 0 ? Math.sin(clock.t*20)*0.02 : 0);   // gentle idle sway, a happy wiggle while petted
+  const a = catScratch;
+  a[0]=catBard.x; a[1]=gy+bob; a[2]=catBard.z; a[3]=CAT_SCALE; a[4]=catBard.yaw; a[5]=0; a[6]=0; a[7]=1; a[8]=1; a[9]=1;
+  catBardDyn.draw(a, 1);
+}
+function catBardPrompt() { return (IS_TOUCH ? "tap" : "click") + " to pet the cat"; }
 // §19B fixtures that depend on the loaded world/storage (run after loadWorld + loadStorage):
 //   the hearth is a campfire that never burns out and cooks faster; the sea chest shares the stash.
 function initCottageFixtures() {
@@ -14170,6 +14273,7 @@ seedChests();
 loadChests();
 loadStorage();
 initCottageFixtures();   // §19B hearth campfire + sea chest (after loadWorld/loadStorage rebuild their arrays)
+initCatBard();   // §catbard the cat bard on its driftwood log beside the cottage
 if (typeof updateCosy === "function") updateCosy();   // §19G seed cosiness from restored displays/trophies/aquarium/rewards (no celebrate on load)
 initWeather();   // §20 roll today's weather from the seed (no transition on load)
 // §4 the old spawn fire-ring + loose pot is gone, pot cooking now lives at the cottage hearth (initCottageFixtures gives it a built-in pot)
@@ -14243,6 +14347,8 @@ function frame(now) {
   updateCampfires(dt);   // §Cooking fuel burns, food roasts, stews simmer
   updateWeather(dt);     // §20 weather state machine, fog/light/wind, lightning, after-storm
   updateCottage(dt);     // §19 door swing + creak
+  updateCatBard(dt);     // §catbard idle sway / pet wiggle
+  if (typeof SND !== "undefined" && SND.updateCat) SND.updateCat(catBardAudioGain());   // §catbard ballad fades with distance
   updateWeakStones(dt);  // §weak7 broken spots regrow a stone, out of view
   updateHeaveBoulders(dt);  // §21D heavy-boulder roll + reset
   updateHeave(dt);       // §21D the boulder heave mini-game
@@ -14523,6 +14629,7 @@ function frame(now) {
   drawStorage(view);
   drawBuilds(view);        // §16B placed building pieces + the placement ghost
   drawCottage(view);       // §19 the home-base cottage (shell, door, roof, glowing windows)
+  drawCatBard(view);       // §catbard the ginger cat bard on its log beside the cottage
   drawCottageDisplays(view);   // §19C placed finds on shelves / cabinet / windowsill
   drawCottageSlotMarkers(view);   // §5 pegs/stands on empty display spots (+ a soft glow when holding a find to place)
   drawCottageTrophies(view);   // §19D mounted fish trophies
@@ -14691,6 +14798,11 @@ function frame(now) {
     }
     if (!buildMode && curTarget && curTarget.kind === "tallgrass") {   // §veg5 tall-grass tooltip
       promptEl.textContent = tallGrassPrompt(curTarget.obj);
+      promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
+      crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
+    }
+    if (!buildMode && curTarget && curTarget.kind === "catbard") {   // §catbard pet-the-cat tooltip
+      promptEl.textContent = catBardPrompt();
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
