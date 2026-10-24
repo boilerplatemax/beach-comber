@@ -11392,7 +11392,7 @@ const MATURE = { palm: 9, pine: 10, broadleaf: 8 };
 let treeObjs = [], rockObjs = [], stumps = [], planted = [], looseRocks = [], fallenTrees = [], driftObjs = [];
 const driftDyn = makeDynamic(driftwoodMesh(), 400);   // §13.1 lying driftwood, individually choppable
 let palmType, pineType, broadleafType, rockType, rockStyleTypes = [], pendingTool = null;
-let palmDyn, pineDyn, broadleafDyn, stumpDyn, rockDyn;
+let palmDyn, pineDyn, broadleafDyn, stumpDyn, rockDyn, rubbleDyn;   // §stone1 rubbleDyn draws loose Stones with the Stone item mesh
 
 function initWorldObjs() {
   palmType = propTypes.find(t => t.kind === "palm");
@@ -11679,7 +11679,11 @@ function mineObj(o) {                                           // one pickaxe s
   if (!o.gone && (o.barn || o.oyst) && typeof attachRockCluster === "function") attachRockCluster(o);   // §clust8 the rock may have shrunk on a split; re-fix its cluster onto the new surface
 }
 // Small rubble pieces: no mining needed, walk up and pick one for Stone.
-function dropRubble(x, z, sc) { if (looseRocks.length < 240) looseRocks.push({ x, z, sc, bornT: clock.t }); }
+// A pickable Stone lying on the ground. `sc` sizes the (generous) interaction
+// volume; `rsc` is the VISUAL size, fixed from the Stone item's own registry
+// scale so a dropped stone looks hand-sized, never a shrunk chunk of the boulder
+// it came from. (§stone1)
+function dropRubble(x, z, sc) { if (looseRocks.length < 240) looseRocks.push({ x, z, sc, rsc: FINDS.stone.base * (0.9 + rng() * 0.5), bornT: clock.t }); }
 function pickRubble(lr) {
   const added = Inv.add("stone", 1);
   if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
@@ -11826,15 +11830,20 @@ function drawTools(view) {
   if (np) palmDyn.draw(palmScratch, np);
   if (ni) pineDyn.draw(pineScratch, ni);
   if (nb) broadleafDyn.draw(broadleafScratch, nb);
-  // loose rubble + dynamic rock nodes
+  // loose rubble: the small pickable Stones. Drawn with the Stone ITEM mesh at
+  // its registry scale (§stone1), not the big boulder prop that made them huge.
+  if (!rubbleDyn) rubbleDyn = makeDynamic(stoneMesh(), 200);
+  let nrub = 0;
+  for (const lr of looseRocks) { if (nrub >= 200) break; const sc = lr.rsc || FINDS.stone.base, o = nrub*10, y = surfaceAt(lr.x,lr.z).h + sc*0.1;
+    rubbleScratch[o]=lr.x;rubbleScratch[o+1]=y;rubbleScratch[o+2]=lr.z;rubbleScratch[o+3]=sc;rubbleScratch[o+4]=0;rubbleScratch[o+5]=0;rubbleScratch[o+6]=0;rubbleScratch[o+7]=0.95;rubbleScratch[o+8]=0.93;rubbleScratch[o+9]=0.9; nrub++; }
+  if (nrub) rubbleDyn.draw(rubbleScratch, nrub);
+  // dynamic rock nodes (mined boulders that shrank as they're chipped away) stay on the boulder mesh
   let nr = 0;
-  for (const lr of looseRocks) { if (nr >= 200) break; const o = nr*10, y = surfaceAt(lr.x,lr.z).h + lr.sc*0.1;
-    rockScratch[o]=lr.x;rockScratch[o+1]=y;rockScratch[o+2]=lr.z;rockScratch[o+3]=lr.sc;rockScratch[o+4]=0;rockScratch[o+5]=0;rockScratch[o+6]=0;rockScratch[o+7]=0.95;rockScratch[o+8]=0.93;rockScratch[o+9]=0.9; nr++; }
   for (const o2 of rockObjs) { if (!o2.dyn || o2.gone || nr >= 200) continue; const o = nr*10, y = surfaceAt(o2.x,o2.z).h + o2.sc*0.1, dk = 1-0.5*(1-o2.hp/o2.maxhp);
     rockScratch[o]=o2.x;rockScratch[o+1]=y;rockScratch[o+2]=o2.z;rockScratch[o+3]=o2.scale;rockScratch[o+4]=0;rockScratch[o+5]=0;rockScratch[o+6]=0;rockScratch[o+7]=0.95*dk;rockScratch[o+8]=0.92*dk;rockScratch[o+9]=0.88*dk; nr++; }
   if (nr) rockDyn.draw(rockScratch, nr);
 }
-const palmScratch = new Float32Array(48*10), pineScratch = new Float32Array(48*10), broadleafScratch = new Float32Array(48*10), rockScratch = new Float32Array(200*10);
+const palmScratch = new Float32Array(48*10), pineScratch = new Float32Array(48*10), broadleafScratch = new Float32Array(48*10), rockScratch = new Float32Array(200*10), rubbleScratch = new Float32Array(200*10);
 
 /* ===================================================================== *
  * § 21  FLIPPING STONES, the childhood joy of flipping a stone to see what
@@ -12131,7 +12140,7 @@ function heaveBoulderAction(b) {
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
   startHeave(b); return true;
 }
-function heaveBoulderPrompt(b) { return b.flipped ? "levered aside" : (selectedTool()==="shovel" ? (IS_TOUCH?"hold to heave it over":"heave it over") : "needs the shovel to lever"); }
+function heaveBoulderPrompt(b) { const has = selectedTool()==="shovel" || (autoSwitch && ownsTool("shovel")); return b.flipped ? "levered aside" : (has ? (IS_TOUCH?"hold to heave it over":"heave it over") : "needs the shovel to lever"); }   // §tool2 toolkit reaches for the shovel on action
 
 /* ===================================================================== *
  * § 23  OYSTERS & PEARLS, craggy oyster beds on the intertidal flats, bared
@@ -12415,7 +12424,7 @@ function drawGeodes(view) {
   if (cn) geodeCrackedDyn.draw(geodeCrackScratch, cn);
 }
 function geodeAction(g) { return crackGeode(g); }
-function geodePrompt(g) { return g.cracked ? ((IS_TOUCH?"tap":"click/F") + " to pick up the geode halves") : (selectedTool()==="pickaxe" ? (IS_TOUCH?"hold to crack it open":"crack it open") : "a dull nodule, try a pickaxe"); }
+function geodePrompt(g) { const has = selectedTool()==="pickaxe" || (autoSwitch && ownsTool("pickaxe")); return g.cracked ? ((IS_TOUCH?"tap":"click/F") + " to pick up the geode halves") : (has ? (IS_TOUCH?"hold to crack it open":"crack it open") : "a dull nodule, try a pickaxe"); }   // §tool2 toolkit reaches for the pickaxe on action
 
 /* ===================================================================== *
  * § 41  HORSESHOE CRABS, a living fossil plowing the sandy shallows day and
@@ -14460,6 +14469,7 @@ function disposeWorldGL() {
   if (Array.isArray(propTypes)) for (const t of propTypes) if (t && t.inst) disposeGLObj(t.inst);
   if (cottage) { disposeGLObj(cottage.bodyDyn); disposeGLObj(cottage.roofDyn); disposeGLObj(cottage.glassDyn); disposeGLObj(cottage.doorDyn); }
   if (rockDyn) { disposeGLObj(rockDyn); rockDyn = null; }                   // rock prop dynamic mesh is seeded (rockMesh(SEED_INT^0x51))
+  if (rubbleDyn) { disposeGLObj(rubbleDyn); rubbleDyn = null; }             // loose-Stone mesh is seeded (stoneMesh → mRock(SEED_INT^0x51a3))
   if (barnacleRockDyn) { disposeGLObj(barnacleRockDyn); barnacleRockDyn = null; }  // intertidal rock mesh is seeded (SEED_INT^0x5b)
   _barnRockMesh = null;                                                     // seeded base mesh for standalone intertidal rocks; lazily rebuilt
 }
@@ -15032,13 +15042,12 @@ function frame(now) {
   if (mode === "walk") {
     curTarget = targetAlongRay(rayFromNDC(0, 0), curTarget);
     const info = aimInfo();
-    // §13.2 Tool Kit Auto: pick the right tool from what we're aiming at, before any click
-    if (selectedItem() === "toolkit" && toolkit.mode === "auto" && !workLockActive()) {
-      const need = info && (info.need === "axe" || info.need === "pickaxe" || info.need === "shovel") ? info.need : null;
-      // never drop back to the shovel during or just after working an entity (§13.2)
-      const blockShovel = need === "shovel" && clock.t - lastEntityHitT < 1;
-      if (need && need !== toolkit.tool && !blockShovel) { toolkit.tool = need; renderHotbar(); }
-    }
+    // §tool2 The Tool Kit no longer swaps the tool in hand while you aim, the held
+    // tool stays put as you look around. The right tool is reached for at the
+    // MOMENT you mine/chop/dig (reachForTool / groundAutoDig / the chop path),
+    // and then kept until you pick a different tool or act on a different kind of
+    // target. The interaction ring already reflects ownership (aimAffordable →
+    // ownsTool), not what's currently equipped, so it still lights up correctly.
     if (info) {
       const dim = !aimAffordable(info);
       crossEl.className = "ring" + (dim ? " dim" : "");
