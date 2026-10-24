@@ -233,7 +233,12 @@
   /* §A6 one shared scrim behind every modal; the panels themselves sit above it */
   #scrim { position: fixed; inset: 0; z-index: 11; display: none; background: var(--dim); backdrop-filter: blur(2px); }
   /* §menu the combined satchel + bucket view: both panels laid out side by side */
-  #combined { position: fixed; inset: 0; z-index: 13; display: none; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; padding: 16px; box-sizing: border-box; }
+  #combined { position: fixed; inset: 0; z-index: 13; display: none; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; padding: 16px; box-sizing: border-box;
+    background: rgba(6,10,14,.5); }   /* §mob9 a dim, tappable backdrop so tapping outside the panel closes it */
+  #combinedClose { position: absolute; top: calc(12px + env(safe-area-inset-top)); right: calc(12px + env(safe-area-inset-right));
+    width: 44px; height: 44px; border-radius: 50%; border: 2px solid rgba(240,217,176,.55); background: rgba(40,28,18,.92); color: #f0d9b0;
+    font-size: 20px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; pointer-events: auto; }
+  #combinedClose:active, #combinedClose:hover { filter: brightness(1.25); }
   #combined #invpanel, #combined #bucketlookbox { position: static; transform: none; left: auto; top: auto; margin: 0; }
   #combined #invpanel { max-height: 86vh; }
   #journal {
@@ -546,7 +551,7 @@
     text-shadow: 0 1px 2px rgba(0,0,0,.6);
   }
   /* §music a small, quiet speaker toggle in the title's corner (drawn glyph, no emoji) */
-  #musicToggle { position: absolute; top: 16px; right: 18px; width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;
+  #musicToggle { position: absolute; top: calc(16px + env(safe-area-inset-top)); right: calc(18px + env(safe-area-inset-right)); width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;
     background: rgba(18,26,28,.32); border: 1px solid rgba(255,220,150,.22); border-radius: 9px; cursor: pointer; color: #e9dcc0;
     opacity: .55; transition: opacity .15s ease, background .15s ease; z-index: 6; padding: 0; }
   #musicToggle:hover { opacity: 1; background: rgba(18,26,28,.6); }
@@ -4733,14 +4738,18 @@ if (IS_TOUCH) (function mobileControls() {
     #mKnob { position: absolute; left: 50%; top: 50%; width: 52px; height: 52px;
       margin: -26px 0 0 -26px; border-radius: 50%;
       background: rgba(255,255,255,.35); }
-    #mBtns { position: absolute; right: 16px; bottom: 22px; display: flex;
-      flex-direction: column; gap: 12px; pointer-events: auto; }
+    #mBtns { position: fixed; right: calc(16px + env(safe-area-inset-right)); bottom: calc(22px + env(safe-area-inset-bottom)); display: flex;
+      flex-direction: column; gap: 12px; pointer-events: auto; z-index: 15; }   /* §mob9 above the open satchel panel so Bag always toggles; clear of the notch/home-bar */
+    #mCloseHint { position: fixed; z-index: 15; pointer-events: none; }
     .mBtn { width: 76px; height: 48px;
       background: var(--facet); color: var(--ink); font: 600 13px var(--ui); letter-spacing: .04em;
       text-shadow: 0 1px 1px var(--ink-shadow); display: flex; align-items: center; justify-content: center;
       clip-path: polygon(10px 0, calc(100% - 10px) 0, 100% 10px, 100% calc(100% - 10px), calc(100% - 10px) 100%, 10px 100%, 0 calc(100% - 10px), 0 10px);
       -webkit-user-select: none; user-select: none; }
     .mBtn:active { filter: brightness(1.3); }
+    /* §mob9 mobile HUD cleanup: drop the control-instructions line, the seed/tide text and the tide curve.
+       The hunger shells and the stamina ring stay. */
+    #help, #hud, #tidecurve { display: none !important; }
     #mRotate { position: fixed; inset: 0; z-index: 20; display: none;
       align-items: center; justify-content: center; text-align: center;
       background: #0e1418; color: var(--ink); font: 500 18px var(--ui); letter-spacing: .03em;
@@ -4754,22 +4763,20 @@ if (IS_TOUCH) (function mobileControls() {
     `<div id="mLayer"></div>
      <div id="mJoy"><div id="mKnob"></div></div>
      <div id="mBtns">
-       <div class="mBtn" data-act="jump">Jump</div>
-       <div class="mBtn" data-act="run">Run</div>
-       <div class="mBtn" data-key="KeyF">Use</div>
-       <div class="mBtn" data-act="crouch">Crouch</div>
-       <div class="mBtn" data-act="swimup" data-hold="1">▲ Up</div>
-       <div class="mBtn" data-act="swimdown" data-hold="1">▼ Down</div>
-       <div class="mBtn" data-act="climb" data-hold="1">Climb</div>
-       <div class="mBtn" data-act="lantern">Lantern</div>
-       <div class="mBtn mrod" data-act="rod" data-hold="1" style="display:none">Cast / Reel</div>
-       <div class="mBtn" data-key="KeyE">Bag</div>
        <div class="mBtn" data-act="pause">Pause</div>
+       <div class="mBtn" data-key="KeyE">Bag</div>
+       <div class="mBtn" data-act="swimup" data-hold="1" style="display:none">▲ Up</div>
+       <div class="mBtn" data-act="swimdown" data-hold="1" style="display:none">▼ Down</div>
+       <div class="mBtn" data-act="climb" data-hold="1" style="display:none">Climb</div>
+       <div class="mBtn mrod" data-act="rod" data-hold="1" style="display:none">Cast / Reel</div>
        <div class="mBtn mbuild" data-act="brotate" style="display:none">Rotate</div>
        <div class="mBtn mbuild" data-act="bplace" style="display:none">Place</div>
        <div class="mBtn mbuild" data-act="bcancel" style="display:none">Cancel</div>
+       <div class="mBtn" data-act="jump">Jump</div>
+       <div class="mBtn" data-act="run">Run</div>
      </div>`;
   document.body.appendChild(ui);
+  document.body.appendChild(ui.querySelector("#mBtns"));   // §mob9 lift the control buttons out of #mUI so z-index:15 beats the open satchel panel (Bag stays tappable to close it)
   const rotate = document.createElement("div");
   rotate.id = "mRotate";
   rotate.textContent = "Rotate your device to landscape to play.";
@@ -4799,7 +4806,7 @@ if (IS_TOUCH) (function mobileControls() {
   }
 
   // ---- buttons ----
-  ui.querySelectorAll(".mBtn").forEach((btn) => {
+  document.querySelectorAll("#mBtns .mBtn").forEach((btn) => {   // §mob9 #mBtns now lives on <body>, not inside #mUI
     btn.addEventListener("touchstart", (e) => {
       e.preventDefault(); e.stopPropagation();
       unlockAudio();
@@ -8314,8 +8321,18 @@ function buildPanels() {
   panel.addEventListener("contextmenu", (e) => { e.preventDefault(); const s = e.target.closest(".islot"); if (s && s.dataset.idx !== undefined && Inv.cell(+s.dataset.idx)) showContextMenu(+s.dataset.idx, e.clientX, e.clientY); });
   document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#ctxmenu")) hideContextMenu(); }, true);
   const bag = document.getElementById("bagBtn");
-  if (IS_TOUCH) bag.style.display = "flex";
+  // §mob9 the circular backpack button is retired on mobile (the on-screen "Bag" button in the control column
+  // handles it there, and it was overlapping that column). It stays hidden on desktop too (keyboard E opens the bag).
   bag.addEventListener("click", (e) => { e.preventDefault(); toggleMenu("satchel"); });
+  // §mob9 the combined satchel panel had no way to close on touch (no Esc, no pointer-lock, and the toggle button
+  // was behind it) so the bag "trapped" you. Give it a clear X and a tap-on-the-backdrop close.
+  const comb = document.getElementById("combined");
+  if (comb && !comb.querySelector("#combinedClose")) {
+    const x = document.createElement("button"); x.id = "combinedClose"; x.type = "button"; x.setAttribute("aria-label", "Close"); x.textContent = "✕";
+    comb.appendChild(x);
+    x.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); closeMenu(); });
+    comb.addEventListener("pointerdown", (e) => { if (e.target === comb) closeMenu(); });   // tap the dimmed area outside the panels
+  }
 }
 // procedural canvas-bag texture (noise weave + dashed stitched seam), matching the palette
 function applyBagTexture() {
