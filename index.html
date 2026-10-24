@@ -10612,7 +10612,7 @@ function finishFall(o) {
   o.ang = o.leanDir + Math.PI/2;                               // horizontal lie direction
   o.treeScale = o.scale;                                       // full size, for geometry
   o.crownChops = o.species === "palm" ? 0 : 2;                 // palms have no woody crown
-  o.trunkChops = 3 + (rng()*2|0);
+  o.trunkChops = 3 + (rng()*2|0); o.trunkChopsMax = o.trunkChops; o.notches = [];   // §A4 full-length trunk, cut notches accumulate
   o.bornFall = clock.t; o.sink = 0;
   o.leanAdd = (o.restLean !== undefined ? o.restLean : 1.5); setTreeInstance(o);   // §R4 rest along the terrain, not into it
   if (o.coll) { o.coll.r = 0; rebuildCollHash(); }             // standing collider off
@@ -10660,9 +10660,40 @@ function chopFallen(o) {
     }
     return;
   }
-  o.trunkChops--; o.scale *= 0.82; setTreeInstance(o);         // trunk → Logs, shrinking as consumed
-  spawnFind("log", o.x + (rng()-0.5)*1.5, o.z + (rng()-0.5)*1.5);
-  if (o.trunkChops <= 0) { removeFallen(o); stumps.push({ x: o.x, z: o.z, species: o.species, hp: 4, sproutAt: clock.t + SPROUT_DAYS*DAY_PERIOD }); saveWorld(); }
+  // §A4 the trunk keeps its FULL length — each hit cuts a fresh notch and throws wood chips, not Logs
+  o.trunkChops--;
+  if (!o.notches) o.notches = [];
+  const rel = fallenNotchRel(o, o.notches.length); o.notches.push(rel);
+  const nx = o.x + Math.cos(o.ang)*rel, nz = o.z + Math.sin(o.ang)*rel, ny = surfaceAt(nx, nz).h + Math.max(0, 0.5 - (o.sink||0));
+  spawnSand(nx, ny, nz, 8, [0.56,0.43,0.28]);                  // flying wood chips
+  if (o.trunkChops <= 0) {
+    // §A4 the final hit splits the whole trunk into Logs at once, with a satisfying break
+    const total = o.trunkChopsMax || 3, logs = 2 + total;
+    for (let i = 0; i < logs; i++) { const t = (i+0.5)/logs; const lx = o.x + Math.cos(o.ang)*o.treeScale*0.7*t, lz = o.z + Math.sin(o.ang)*o.treeScale*0.7*t;
+      spawnFind("log", lx + (rng()-0.5)*0.5, lz + (rng()-0.5)*0.5); }
+    spawnSand(o.x + Math.cos(o.ang)*o.treeScale*0.35, surfaceAt(o.x,o.z).h+0.5, o.z + Math.sin(o.ang)*o.treeScale*0.35, 18, [0.56,0.43,0.28]);
+    if (onDig) onDig("crack"); camNudge = 0.07;
+    removeFallen(o); stumps.push({ x: o.x, z: o.z, species: o.species, hp: 4, sproutAt: clock.t + SPROUT_DAYS*DAY_PERIOD }); saveWorld();
+  }
+}
+// §A4 where the i-th cut notch sits along a fallen trunk (marches from the base toward the crown)
+function fallenNotchRel(o, idx) { const tot = Math.max(1, o.trunkChopsMax || 3); return (o.treeScale||1) * (0.12 + 0.4 * (idx / tot)); }
+let notchDyn = null;
+function notchMesh() { const m = Mesh(); const dk=[0.22,0.16,0.1], dk2=[0.3,0.22,0.14], halfZ=0.22, lip=0.18;
+  mQuad(m, [-0.13,lip,-halfZ],[0,0,-halfZ],[0,0,halfZ],[-0.13,lip,halfZ], dk);     // a V-groove cut across the trunk, opening upward
+  mQuad(m, [0.13,lip,-halfZ],[0,0,-halfZ],[0,0,halfZ],[0.13,lip,halfZ], dk2);
+  return m; }
+function drawFallenNotches(view) {
+  let n = 0; const a = rockScratch;
+  for (const o of fallenTrees) { if (o.gone || !o.notches || !o.notches.length) continue;
+    const dx = o.x-cam.pos[0], dz = o.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    for (const rel of o.notches) { if (n >= 200) break;
+      const nx = o.x+Math.cos(o.ang)*rel, nz = o.z+Math.sin(o.ang)*rel, ny = surfaceAt(nx, nz).h + Math.max(0, 0.4 - (o.sink||0));
+      const oo = n*10; a[oo]=nx;a[oo+1]=ny;a[oo+2]=nz;a[oo+3]=1;a[oo+4]=o.ang+1.5708;a[oo+5]=0;a[oo+6]=0;a[oo+7]=1;a[oo+8]=1;a[oo+9]=1; n++; }
+  }
+  if (!n) return;
+  if (!notchDyn) notchDyn = makeDynamic(notchMesh(), 200);
+  propUniforms(view); gl.uniform1f(propU.uFogDensity, FOG_DENSITY); notchDyn.draw(a, n);
 }
 /* ---- stumps: dig or chop them out for a little wood; leaves a healing hole ---- */
 function nearestStump(x, z, maxd) { let best = null, bd = maxd; for (const s of stumps) { const d = Math.hypot(s.x - x, s.z - z); if (d < bd) { bd = d; best = s; } } return best; }
@@ -12213,7 +12244,7 @@ function saveWorld() {
     driftGone: driftObjs.map((d, i) => d.gone ? i : -1).filter(i => i >= 0),
     fenceGone: colliders.filter(c => c.kind === "fence" && c.r <= 0).map(c => c.ii),
     // fallen trees are real toppled instances: save the instance ref + its whittle state
-    fallen: fallenTrees.filter(o => !o.gone).map(o => [o.i, o.species, +o.treeScale.toFixed(2), +o.scale.toFixed(2), o.crownChops, o.trunkChops, +o.leanDir.toFixed(2), +(clock.t - o.bornFall).toFixed(0)]),
+    fallen: fallenTrees.filter(o => !o.gone).map(o => [o.i, o.species, +o.treeScale.toFixed(2), +o.scale.toFixed(2), o.crownChops, o.trunkChops, +o.leanDir.toFixed(2), +(clock.t - o.bornFall).toFixed(0), o.trunkChopsMax || o.trunkChops]),
     // player-built terrain (sparse): [cell index, built height, material]
     build: [...builtCells].map(i => [i, +built[i].toFixed(2), material[i]]),
     berries: berryBushes.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),   // 0 = ripe, else seconds left
@@ -12246,6 +12277,8 @@ function loadWorld() {
       o.fallen = true; o.treeScale = f[2]; o.scale = f[3]; o.crownChops = f[4]; o.trunkChops = f[5];
       o.leanDir = f[6]; o.ang = o.leanDir + Math.PI/2; o.settle = 0; o.restLean = fallRestLean(o); o.leanAdd = o.restLean;   // §R4 rest along the terrain
       o.bornFall = clock.t - (f[7]||0); o.sink = 0;
+      o.trunkChopsMax = f[8] || o.trunkChops; o.notches = [];   // §A4 rebuild the cut notches from how much has been chopped
+      for (let k = 0; k < (o.trunkChopsMax - o.trunkChops); k++) o.notches.push(fallenNotchRel(o, k));
       setTreeInstance(o); if (o.coll) o.coll.r = 0;
       fallenTrees.push(o);
     }
@@ -13614,6 +13647,7 @@ function frame(now) {
 
   // props & points of interest (instanced), before the transparent water
   drawProps(view);
+  drawFallenNotches(view);   // §A4 cut notches on chopped fallen trunks
   drawTools(view);
   drawDriftwood(view);
   drawSetPieces(view);
