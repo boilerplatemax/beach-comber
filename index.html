@@ -8849,6 +8849,7 @@ function digAt(x, z) {
   if (mode !== "walk" || selectedTool() !== "shovel") return;
   if (resting) resting = false;
   if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;          // out of reach: no action
+  if (cottageProtectBlock(x, z)) return;                  // §2 protected ground around the cottage
   if (player.airborne) return;                            // §playtest2 no digging mid-air (sprinting is fine now)
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §13.2 too tired: gentle refusal, no swing
   // a stump in reach? the shovel can also lever it out (several strikes)
@@ -8904,6 +8905,7 @@ function canPlaceAt(x, z) {
 }
 function placeMaterial(x, z) {
   const id = selectedTool(), mat = MAT_ITEM[id]; if (mat === undefined) return;
+  if (cottageProtectBlock(x, z)) return;                  // §2 no raising ground on the cottage pad / approach
   if (!Inv.has(id) || !canPlaceAt(x, z)) return;
   Inv.remove(id, 1);
   Terrain.edit(x, z, PLACE_R, PLACE_RAISE, "built", mat);         // raise built height + paint material
@@ -8913,6 +8915,7 @@ function placeMaterial(x, z) {
 }
 // Pickaxe on placed stone (or any player-built ground) lowers it a step.
 function removeBuiltAt(x, z) {
+  if (inCottageProtected(x, z)) return false;                  // §2 can't pickaxe away the cottage pad
   const i = cellIndex(x, z); if (i < 0 || built[i] <= 0.01) return false;
   Terrain.edit(x, z, PLACE_R, -Math.min(built[i] + 0.2, PLACE_RAISE + 0.2), "built");
   // if fully removed, clear its painted material back to natural
@@ -10620,6 +10623,7 @@ function mineAt(x, z) {
 function mineObj(o) {                                           // one pickaxe strike on a rock
   if (!o || o.gone) return;
   if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 1.4) return;
+  if (cottageProtectBlock(o.x, o.z)) return;                   // §2 no mining the rocks right by the cottage
   if (player.airborne) return;                            // §playtest2 no mining mid-air (sprinting is fine now)
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §13.2 too tired: gentle refusal, no swing
   shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST, true); rootPlayer();
@@ -11532,13 +11536,65 @@ function cotLocalToWorld(lx, lz) { const c = cottage, cy = Math.cos(c.yaw), sy =
 function cotWorldToLocal(wx, wz) { const c = cottage, cy = Math.cos(c.yaw), sy = Math.sin(c.yaw), dx = wx-c.x, dz = wz-c.z; return [ dx*cy - dz*sy, dx*sy + dz*cy ]; }
 function insideCottage(wx, wz) { if (!cottage) return false; const l = cotWorldToLocal(wx, wz); return Math.abs(l[0]) < C_OX+0.1 && Math.abs(l[1]) < C_OZ+0.1; }
 
-function cottageFlatness(x, z) {   // footprint must be dry, above tide, and reasonably flat
+// §2 the cottage must sit well above the highest tide + storm wash, off the cliffs, with a clear door approach
+const COTTAGE_MIN_Y = MAX_HIGH_TIDE + 1.6;         // floor sits this far above spring high (tunable) — never floods (the sim's water never exceeds spring high)
+const COTTAGE_APPROACH = 3.6;                       // metres of cleared, flattened ground in front of the door (tunable)
+const COTTAGE_PROTECT_R = 8.0;                      // no dig/mine/place within this radius of the cottage (tunable)
+const C_OX_PAD = C_OX + 0.7, C_OZ_PAD = C_OZ + 0.7; // flattened pad half-extents (a little past the walls)
+// Validate a candidate site+orientation. Returns {y, range} if good, else null.
+function cottageSiteOK(x, z, yaw) {
+  const cy = Math.cos(yaw), sy = Math.sin(yaw), L2W = (lx, lz) => [x + lx*cy + lz*sy, z - lx*sy + lz*cy];
   let mn = 1e9, mx = -1e9;
-  const pts = [[0,0],[C_OX,C_OZ],[-C_OX,C_OZ],[C_OX,-C_OZ],[-C_OX,-C_OZ],[C_OX,0],[-C_OX,0],[0,C_OZ],[0,-C_OZ]];
-  for (const [lx,lz] of pts){ const wx = x+lx, wz = z+lz, s = surfaceAt(wx,wz);
-    if (s.h < 1.5 || waterDepthAt(wx,wz) > 0.02) return null; mn = Math.min(mn,s.h); mx = Math.max(mx,s.h); }
-  if (mx-mn > 0.75) return null;
-  return { y: mx, range: mx-mn };
+  const corners = [[0,0],[C_OX,C_OZ],[-C_OX,C_OZ],[C_OX,-C_OZ],[-C_OX,-C_OZ],[C_OX,0],[-C_OX,0],[0,C_OZ],[0,-C_OZ]];
+  for (const [lx,lz] of corners) { const w = L2W(lx, lz), s = surfaceAt(w[0], w[1]);
+    if (s.h < COTTAGE_MIN_Y) return null;                               // the building sits above the highest tide + storm
+    if (waterDepthAt(w[0], w[1]) > 0.0) return null;
+    if (s.slope > 1.1) return null;                                     // a cliff/steep corner (we flatten gentle slopes, not cliffs)
+    mn = Math.min(mn, s.h); mx = Math.max(mx, s.h);
+  }
+  if (mx - mn > 3.2) return null;                                       // too steep even to flatten into a tidy pad
+  if (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, C_OX + 1.2)) return null;   // trees/rocks/POIs in the footprint
+  const padY = mx;                                                      // the pad (and thus the approach) will be levelled to here
+  for (let d = C_OZ + 0.6; d <= C_OZ + COTTAGE_APPROACH; d += 0.8) {     // the walkable approach straight out from the door (local +z)
+    const w = L2W(0, d), s = surfaceAt(w[0], w[1]);                      // we'll flatten it, so only reject water, a huge fill, or props
+    if (waterDepthAt(w[0], w[1]) > 0.0 || s.h < padY - 4) return null;
+    if (typeof bigPropBlocking === "function" && bigPropBlocking(w[0], w[1], 0.8)) return null;
+  }
+  return { y: mx, range: mx - mn };
+}
+// Flatten a level pad (+ door approach) into the terrain under the cottage, blending out smoothly.
+function flattenCottagePad() {
+  if (!cottage) return; const c = cottage, padY = c.floorY + 0.02;
+  // the terrain grid is coarse (cells several metres wide), so flatten a generous landing and blend out over a long, gentle ramp
+  const APR = COTTAGE_APPROACH + CELL, BLEND = Math.max(5.5, CELL*2), reach = Math.max(C_OX_PAD, C_OZ_PAD + APR) + BLEND + CELL;
+  const gcx = (c.x+HALF)/CELL, gcz = (c.z+HALF)/CELL, rg = reach/CELL;
+  const minx = Math.max(0, Math.floor(gcx-rg)), maxx = Math.min(GRID-1, Math.ceil(gcx+rg));
+  const minz = Math.max(0, Math.floor(gcz-rg)), maxz = Math.min(GRID-1, Math.ceil(gcz+rg));
+  const cy = Math.cos(c.yaw), sy = Math.sin(c.yaw);
+  for (let gz = minz; gz <= maxz; gz++) for (let gx = minx; gx <= maxx; gx++) {
+    const wx = gx*CELL - HALF, wz = gz*CELL - HALF, dx = wx-c.x, dz = wz-c.z, lx = dx*cy - dz*sy, lz = dx*sy + dz*cy;
+    const ox = Math.max(0, Math.abs(lx) - C_OX_PAD);
+    const oz = lz > 0 ? Math.max(0, lz - (C_OZ_PAD + APR)) : Math.max(0, -lz - C_OZ_PAD);   // approach extends on the +z (door) side
+    const out = Math.hypot(ox, oz); if (out > BLEND) continue;
+    const t = out <= 0 ? 1 : 1 - out/BLEND, f = t*t*(3-2*t), i = gz*GRID+gx;               // smoothstep blend
+    built[i] = f * (padY - (heightmap[i] + dig[i]));                                        // absolute: lift/cut toward padY (re-applied each load; not persisted)
+  }
+  rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz);
+  resnapPropsRegion(c.x-reach, c.z-reach, c.x+reach, c.z+reach);
+}
+// Is this spot the cottage's protected ground (the pad, the approach, or the 8m bubble)?
+function inCottageProtected(wx, wz) {
+  if (!cottage) return false;
+  if (Math.hypot(wx-cottage.x, wz-cottage.z) < COTTAGE_PROTECT_R) return true;
+  const l = cotWorldToLocal(wx, wz);
+  return Math.abs(l[0]) < C_OX_PAD + 0.8 && l[1] > 0 && l[1] < C_OZ_PAD + COTTAGE_APPROACH + 0.8;   // the approach strip reaches a bit further out
+}
+let _cotProtT = 0;
+function cottageProtectBlock(wx, wz) {   // §2 the normal failure reaction (recoil) if you try to alter protected ground
+  if (!inCottageProtected(wx, wz)) return false;
+  if (typeof failStrike === "function") failStrike(false, wx, surfaceAt(wx, wz).h + 0.3, wz);
+  if (clock.t - _cotProtT > 2) { _cotProtT = clock.t; showCard("Too close to the cottage", "The ground around your home stays clear — no digging, mining or building here."); }
+  return true;
 }
 function addCottageColliders() {
   const add = (lx, lz, r) => { const w = cotLocalToWorld(lx, lz); colliders.push({ x:w[0], z:w[1], r, kind:"cottage" }); };
@@ -11548,18 +11604,47 @@ function addCottageColliders() {
 }
 function initCottage() {
   const sp = findSpawn(), rng = mulberry32((SEED_INT ^ 0x19c077a9) >>> 0);
-  let best = null;
-  for (let k=0;k<70;k++){
-    const ang = sp.yaw + (rng()-0.5) * (k<35?1.1:2.6), r = 5 + rng()*7.5;
-    const x = sp.x + Math.sin(ang)*r, z = sp.z - Math.cos(ang)*r;
-    const flat = cottageFlatness(x, z); if (!flat) continue;
-    const score = flat.range + (bigPropBlocking(x, z, 3.4) ? 2 : 0);
-    if (!best || score < best.score) best = { x, z, y: flat.y, score, yaw: Math.atan2(sp.x-x, sp.z-z) };
+  const toHigh = (typeof HIGH !== "undefined") ? Math.atan2(HIGH.x - sp.x, -(HIGH.z - sp.z)) : sp.yaw;   // uphill, toward the island's high ground
+  let best = null, tried = 0, passed = 0;
+  // several passes, each reaching further uphill, so the cottage lands on high dry ground set back from the beach
+  const passes = [
+    { n: 110, rMin: 6,  rSpan: 18, spread: 1.4 },    // just inland, aimed uphill
+    { n: 120, rMin: 10, rSpan: 34, spread: 2.4 },    // further up the slope, wider arc
+    { n: 150, rMin: 8,  rSpan: 55, spread: 6.283 },  // anywhere reachable
+  ];
+  for (const ps of passes) {
+    for (let k = 0; k < ps.n; k++) {
+      tried++;
+      const ang = toHigh + (rng()-0.5) * ps.spread, r = ps.rMin + rng()*ps.rSpan;
+      const x = sp.x + Math.sin(ang)*r, z = sp.z - Math.cos(ang)*r;
+      // try a few door orientations: toward spawn (open beach), and down the local slope (open ground)
+      const g = (typeof groundGradient === "function") ? groundGradient(x, z) : { dx: sp.x-x, dz: sp.z-z };
+      const yaws = [Math.atan2(sp.x - x, sp.z - z), Math.atan2(g.dx, g.dz), Math.atan2(sp.x - x, sp.z - z) + 0.9];
+      for (const yaw of yaws) {
+        const ok = cottageSiteOK(x, z, yaw); if (!ok) continue; passed++;
+        const dSpawn = Math.hypot(x - sp.x, z - sp.z);
+        const score = ok.range * 3 + dSpawn * 0.12;                    // flatter + nearer spawn is better
+        if (!best || score < best.score) best = { x, z, y: ok.y, score, yaw, range: ok.range };
+      }
+    }
+    if (best) break;
   }
-  if (!best) { const y = surfaceAt(sp.x, sp.z).h; best = { x: sp.x, z: sp.z, y, yaw: sp.yaw }; }
+  if (!best) {   // last resort: march uphill from spawn to the flattest high-enough spot we can find, then flatten hard
+    let fb = null;
+    for (let r = 8; r <= 70; r += 3) {
+      const x = sp.x + Math.sin(toHigh)*r, z = sp.z - Math.cos(toHigh)*r, s = surfaceAt(x, z);
+      if (waterDepthAt(x, z) > 0) continue;
+      const cand = { x, z, y: Math.max(s.h, COTTAGE_MIN_Y), yaw: Math.atan2(sp.x - x, sp.z - z), slope: s.slope };
+      if (!fb || (s.h >= COTTAGE_MIN_Y && cand.slope < fb.slope)) fb = cand;
+      if (s.h >= COTTAGE_MIN_Y && s.slope < 0.5) { fb = cand; break; }
+    }
+    best = fb || { x: sp.x, z: sp.z, y: Math.max(surfaceAt(sp.x, sp.z).h, COTTAGE_MIN_Y), yaw: sp.yaw };
+    console.warn("[cottage] no validated site — uphill fallback @ (" + best.x.toFixed(1) + ", " + best.z.toFixed(1) + ")");
+  }
   cottage = { x: best.x, z: best.z, yaw: best.yaw, floorY: best.y - 0.02,
     doorSwing: 0, cosy: 0, hearthLit: false, disp: {}, trophies: [], lastCatch: null, rewards: [],
     aqua: { creatures: [], decor: [], freshAt: 0 } };
+  console.log(`[cottage] site @ (${best.x.toFixed(1)}, ${best.z.toFixed(1)}) floorY ${cottage.floorY.toFixed(2)} yaw ${(best.yaw).toFixed(2)} | range ${(best.range!=null?best.range.toFixed(2):"n/a")} · tried ${tried}, ${passed} valid · minY ${COTTAGE_MIN_Y.toFixed(1)}`);
   cottage.bodyDyn = makeDynamic(cottageBodyMesh(), 1);
   cottage.roofDyn = makeDynamic(cottageRoofMesh(), 1);
   cottage.glassDyn = makeDynamic(cottageGlassMesh(), 1);
@@ -13013,6 +13098,7 @@ seedHeaveBoulders();  // §21D heavy boulders to lever over (needs colliders + c
 seedOysterBeds();  // §23 oyster beds on the intertidal flats
 seedGeodes();  // §40 geodes on cobble & rocky shores
 loadWorld();
+flattenCottagePad();  // §2 level pad + door approach under the cottage (after loadWorld so it always wins; re-applied each load, not persisted)
 loadCottage();     // §19 restore cosiness / displays / aquarium for this seed
 saltDyn = makeDynamic(saltPanMesh(), 60);   // §saltfix a salt crust on a dried-mud rim, not a flat white disc
 goatDyn = makeDynamic(goatMesh(), 10);
