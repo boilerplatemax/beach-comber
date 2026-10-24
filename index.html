@@ -3861,8 +3861,10 @@ canvas.addEventListener("mousedown", (e) => {
       if (hasUse && !crouching) { interactBuild(b); return; }
       if (crouching) { pickUpBuild(b); return; } }
   }
-  if (mode === "walk" && selectedTool() === "spear" && !isPanelOpen()) { spearPressStart(); return; }   // §14C charge → thrust/throw
-  if (mode === "walk" && selectedTool() === "rod" && !isPanelOpen()) { rodPressStart(); return; }        // §Fishing charge/hook/reel
+  // §A3 the rod and spear have their own primary use, but you can still harvest a plant / hit a creature / pick a find
+  // with them in hand: if the crosshair is on such a target, do that instead of casting or thrusting.
+  if (mode === "walk" && selectedTool() === "spear" && !isPanelOpen()) { if (softTargetUnderCrosshair()) { useHeld = true; clickAt(0,0); return; } spearPressStart(); return; }   // §14C charge → thrust/throw
+  if (mode === "walk" && selectedTool() === "rod" && !isPanelOpen()) { if (softTargetUnderCrosshair()) { useHeld = true; clickAt(0,0); return; } rodPressStart(); return; }        // §Fishing charge/hook/reel
   useHeld = true; clickAt(0, 0);                 // §13.2 hold to keep swinging at a work target
 });
 addEventListener("mouseup", (e) => { if (e.button === 0) { useHeld = false; if (spear.charging) spearRelease(); rodPressEnd(); }
@@ -6056,15 +6058,17 @@ function cropMesh(type, stage) {
     mergeMesh(m, discMesh(H,0.045,7,0.02,sheath2));
     if (sp) { for (let i=0;i<2;i++){ const a=i*3.1; wavyRibbon(m, { h:0.42, w0:0.11, w1:0.04, seg:5, dir:a, amp:0.12, freq:0.8, droop:0.14, y0:H*0.5, twist:0.1, c0:lf, c1:lftip }); } }
     else {
-      const blades = gr?4:6;   // broad paddle leaves fanning from the crown
-      for (let i=0;i<blades;i++){ const a=i/blades*6.283 + 0.4; wavyRibbon(m, { h: gr?0.8:1.0, w0: 0.17, w1: 0.05, seg: 6, dir: a, amp: 0.26, freq: 0.75, phase: 0.2, droop: gr?0.42:0.6, bx:0, bz:0, y0: H-0.12, twist: 0.12, c0: lf, c1: lftip }); }
+      // §A3 a fuller, bushier crown — more broad paddle leaves, plus a cluster of shorter upright inner leaves so it reads dense
+      const blades = gr?6:9;
+      for (let i=0;i<blades;i++){ const a=i/blades*6.283 + 0.4; wavyRibbon(m, { h: gr?0.85:1.05, w0: 0.19, w1: 0.05, seg: 6, dir: a, amp: 0.26, freq: 0.75, phase: 0.2, droop: gr?0.4:0.58, bx:0, bz:0, y0: H-0.12, twist: 0.12, c0: lf, c1: lftip }); }
+      const inner = gr?3:4;
+      for (let i=0;i<inner;i++){ const a=i/inner*6.283 + 1.1; wavyRibbon(m, { h: gr?0.58:0.72, w0: 0.13, w1: 0.04, seg: 5, dir: a, amp: 0.14, freq: 0.8, phase: 0.5, droop: 0.22, bx:0, bz:0, y0: H-0.04, twist: 0.1, c0: lftip, c1: lf }); }
       if (rp) {
         mergeAt(m, cylM(-0.42,0,0.028,0.02,[0.42,0.46,0.26]), 0,H-0.1,0.03);          // the fruit stalk hanging down
         const fruit=[0.9,0.82,0.3];
         for (let tier=0;tier<3;tier++){ const ty=H-0.46-tier*0.16, n=6-tier, rad=0.07;   // hands of curved fingers, splaying outward
           for (let i=0;i<n;i++){ const a=i/n*6.283; bananaFinger(m, Math.cos(a)*rad, ty, Math.sin(a)*rad + 0.03, a, 0.26, [fruit[0], fruit[1]-tier*0.03, fruit[2]]); } }
-        const bud=[0.42,0.2,0.34], bud2=[0.5,0.26,0.4];                                // closed purple heart bud at the tip
-        diamondOvoid(m, 0, H-1.02, 0.03, 0.12, 0.08, bud, bud2);
+        // §A3 (the purple heart flower bud has been removed)
       }
     }
   } else if (type === "pineapple") {
@@ -7384,6 +7388,7 @@ function saveState() {
     pearls: pearlsSeen, oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)]),   // §23 pearl sightings + oyster-bed stock
     hsFlipped: horseshoesFlipped,   // §41 horseshoe crabs turned back over
     geodes: geodes.map((g,i)=>g.cracked?i:-1).filter(i=>i>=0),   // §40 which geodes are already cracked
+    geodesTaken: geodes.map((g,i)=>g.taken?i:-1).filter(i=>i>=0),   // §A3 which cracked geodes have had their halves taken
     recipes: [...knownRecipes], spearHard: spearHardened,   // §16 crafting
     bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, moist: c.moist, caught: c.caught })) } })); } catch (e) {}
 }
@@ -7401,6 +7406,7 @@ function loadState() {
       if (s.pearls && typeof s.pearls === "object") pearlsSeen = s.pearls;   // §23 pearl sightings per variant
       if (Array.isArray(s.oysters)) _savedOysters = s.oysters;   // §23 oyster-bed stock (applied in seedOysterBeds)
       if (Array.isArray(s.geodes)) _savedGeodes = s.geodes;   // §40 cracked geodes (applied in seedGeodes)
+      if (Array.isArray(s.geodesTaken)) _savedGeodesTaken = s.geodesTaken;   // §A3 geodes whose halves were taken
       if (typeof s.hsFlipped === "number") horseshoesFlipped = s.hsFlipped;   // §41 horseshoe crabs turned back over
       if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
@@ -8217,7 +8223,7 @@ function targetAlongRay(r, sticky) {
   for (const s of flipStones) if (!s.anim) sphere(s, "flipstone", s.x, s.z, 0.4*s.sc, 0.5 + s.sc*0.4);   // §21 flippable stones
   if (typeof heaveBoulders !== "undefined") for (const b of heaveBoulders) if (!b.anim && !b.flipped) sphere(b, "heaveboulder", b.x, b.z, 0.5*b.sc, 0.7 + b.sc*0.5);   // §21D heavy boulders to lever over
   if (typeof oysterBeds !== "undefined") for (const b of oysterBeds) if (oysterBedExposed(b)) sphere(b, "oysterbed", b.x, b.z, 0.5*b.sc, 0.75);   // §23 oyster beds bared at low tide
-  if (typeof geodes !== "undefined") for (const g of geodes) if (!g.cracked) sphere(g, "geode", g.x, g.z, 0.4*g.sc, 0.5 + g.sc*0.4);   // §40 geodes to crack with a pickaxe
+  if (typeof geodes !== "undefined") for (const g of geodes) if (!g.taken) sphere(g, "geode", g.x, g.z, 0.4*g.sc, 0.5 + g.sc*0.4);   // §40 geodes to crack with a pickaxe (cracked ones stay targetable so the halves can be picked up — §A3)
   for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
   for (const c of colliders) if (c.kind === "fence" && c.r > 0) { const gy = surfaceAt(c.x, c.z).h; capsule(c, "fence", c.x, c.z, c.x, gy, c.z, c.x, gy+1.0, c.z, 0.32); }   // §13.1 choppable posts
@@ -8244,6 +8250,12 @@ let curTarget = null;    // recomputed each frame from the crosshair (desktop)
 // Act on a crosshair target. Pickups/creatures/goats/salt act with any tool;
 // trees/rocks/stumps only respond to the matching tool. Returns true if it did
 // something (so a click can fall through to a ground tool-use otherwise).
+// §A3 target kinds that ANY held item can act on (harvest a plant, hit a creature, pick a find, open a thing).
+// The tool-gated kinds (tree/fallentree/rock/searock/stump/geode/heaveboulder) are deliberately excluded.
+const SOFT_INTERACT = new Set(["creature","find","rubble","flipstone","oysterbed","bush","crop","seaweed","salt",
+  "flotsam","barnacle","nest","driftwood","chest","openchest","storagebox","campfire","cotbed","dispslot",
+  "cottrophy","aqua","lantern","fence","crate","barrel"]);
+function softTargetUnderCrosshair() { const t = effectiveTarget(); return (t && SOFT_INTERACT.has(t.kind)) ? t : null; }
 function useToolOnTarget(t) {
   if (!t) return false;
   const tool = selectedTool();
@@ -9435,7 +9447,7 @@ function updateBerries() { for (const b of berryBushes) if (!b.ripe && clock.t >
 function nearestBush(x, z, maxd) { let best = null, bd = maxd; for (const b of berryBushes) { const d = Math.hypot(b.x - x, b.z - z); if (d < bd) { bd = d; best = b; } } return best; }
 function harvestBush(b) {
   if (!b.ripe) { showCard("Not ripe", "This bush will berry again in a few days."); return; }
-  const n = 2 + (rng()*2|0); const first = !discovered.has("f_berry");
+  const n = harvestYield("berry"); const first = !discovered.has("f_berry");
   for (let i = 0; i < n; i++) Inv.add("berry", 1);
   discovered.add("f_berry"); notify("berry", n, first);
   b.ripe = false; b.regrowAt = clock.t + BERRY_REGROW * DAY_PERIOD;
@@ -9460,6 +9472,9 @@ function drawBerryBushes(view) {
 let crops = [];     // { type, x, z, ripe, ripeAt, scale, yaw, wild, grown }
 const CROP_GROW_DAYS = 2.5;     // in-game days for a planted seed to first ripen (tunable)
 const CROP_REGROW_DAYS = 2;     // days to re-ripen after a harvest — crops are perennial (tunable)
+// §A3 harvest yields are a small random range per plant, inclusive (tunable). Anything unlisted gives 1–3.
+const HARVEST_YIELD = { banana:[2,5], berry:[3,7], cassava:[2,4], pineapple:[1,3], taro:[2,4], sealettuce:[1,3], pickleweed:[2,4], fiber:[1,3] };
+function harvestYield(id) { const r = HARVEST_YIELD[id] || [1,3]; return r[0] + (rng()*(r[1]-r[0]+1)|0); }
 const CROP_TYPES = ["cassava", "banana", "pineapple", "taro"];
 // where each wild crop likes to grow (a height band + max slope)
 const CROP_HAB = {
@@ -9486,7 +9501,7 @@ function cropStage(c) { if (c.ripe) return "ripe";
 function updateCrops() { for (const c of crops) if (!c.ripe && clock.t >= c.ripeAt) { c.ripe = true; c.grown = true; } }
 function harvestCrop(c) {
   if (!c.ripe) { showCard("Not ripe yet", "Give it another day or two to grow."); return; }
-  const food = c.type, n = 1 + (rng()*2|0);
+  const food = c.type, n = harvestYield(food);
   for (let i = 0; i < n; i++) Inv.add(food, 1);
   let got = ITEMS[food].name + " ×" + n;
   if (rng() < 0.7) { const seed = CROP_FOOD_SEED[food]; Inv.add(seed, 1); got += " + a " + ITEMS[seed].name; }   // a start to replant
@@ -9547,7 +9562,7 @@ function updateSeaweed() { for (const b of seaweedBeds) if (!b.ripe && clock.t >
 function nearestSeaweed(x, z, maxd) { let best = null, bd = maxd; for (const b of seaweedBeds) { const dd = Math.hypot(b.x-x, b.z-z); if (dd < bd) { bd = dd; best = b; } } return best; }
 function harvestSeaweed(b) {
   if (!b.ripe) { showCard("Already picked", "This bed will grow back in a day or so."); return; }
-  const n = 1 + (rng()*2|0); for (let i = 0; i < n; i++) Inv.add("sealettuce", 1);
+  const n = harvestYield("sealettuce"); for (let i = 0; i < n; i++) Inv.add("sealettuce", 1);
   b.ripe = false; b.regrowAt = clock.t + SEAWEED_REGROW_DAYS * DAY_PERIOD;
   if (onDig) onDig("pluck"); sparkle(b.x, surfaceAt(b.x, b.z).h + 0.4, b.z, [0.4, 0.8, 0.4], 6);
   showCard("Picked Sea Lettuce ×" + n, "Fresh and salty — eat it now or save it."); saveWorld();
@@ -11356,6 +11371,13 @@ function geodeCrackedMesh() { const m = Mesh(); const rock=[0.5,0.48,0.45], crys
   mergeMesh(m, discMesh(-0.05,0.42,8,0.08,rock));                                              // the split-open lower half
   for (const [x,z,h] of [[0,0,0.3],[0.12,0.05,0.22],[-0.1,0.08,0.2],[0.06,-0.1,0.24]]) { const cone=Mesh(); mCyl(cone,0.02,h,0.05,0.03,6,crys); mergeMesh(cone,discMesh(h,0.03,6,0.04,crys)); mergeAt(m, cone, x, 0.02, z); }
   return m; }
+// §A3 the opened geode registered as a collectible, displayable find (defined here, after its mesh exists)
+if (typeof FINDS !== "undefined" && !FINDS.geode) {
+  FINDS.geode = { mesh: () => geodeCrackedMesh(), base: 0.5, max: 20, label: "Geode", desc: "A geode cracked open, its two halves still lined with crystal.", rare: 2 };
+  FINDS.geode.dyn = makeDynamic(FINDS.geode.mesh(), FINDS.geode.max);
+  ITEMS.geode = { id: "geode", name: FINDS.geode.label, category: "find", rarity: RARITY[FINDS.geode.rare] || "common",
+                  stackable: true, maxStack: 99, desc: FINDS.geode.desc, model: FINDS.geode.mesh, tint: [1,1,1] };
+}
 
 // --- rare-find spawning ---
 const RARE_WASH = [["whelk",10],["redglass",8],["marble",8],["fossil",9],["sharktooth",7],["hagstone",9],["nautilus",8],["hcmolt",9],["jewelry",3],["megalodon",1]];
@@ -11380,7 +11402,7 @@ function stoneItemFind(s) {
 const GEODE_N = 8;                                 // geodes per island (tunable)
 const GEODE_HITS = 2;                              // pickaxe strikes to crack one open
 const GEODE_AMETHYST_P = 0.3;                      // else quartz (tunable)
-let geodes = [], geodeDyn = null, geodeCrackedDyn = null, _savedGeodes = null;
+let geodes = [], geodeDyn = null, geodeCrackedDyn = null, _savedGeodes = null, _savedGeodesTaken = null;
 const geodeScratch = new Float32Array(GEODE_N * 10), geodeCrackScratch = new Float32Array(GEODE_N * 10);
 function seedGeodes() {
   geodes = [];
@@ -11395,9 +11417,15 @@ function seedGeodes() {
     geodes.push({ x, z, yaw: rng()*6.283, sc: 0.7+rng()*0.4, hits: 0, cracked: false });
   }
   if (_savedGeodes) for (const i of _savedGeodes) { if (geodes[i]) { geodes[i].cracked = true; geodes[i].hits = GEODE_HITS; } }
+  if (_savedGeodesTaken) for (const i of _savedGeodesTaken) { if (geodes[i]) { geodes[i].cracked = true; geodes[i].hits = GEODE_HITS; geodes[i].taken = true; } }   // §A3
 }
 function crackGeode(g) {
-  if (g.cracked) { showCard("Already opened", "This geode's been cracked — its crystals are in your pack."); return true; }
+  if (g.cracked) {   // §A3 an opened geode is a collectible — pick up the two crystal-lined halves to keep or display
+    const first = !discovered.has("f_geode");
+    if (Inv.add("geode", 1) > 0) { g.taken = true; discovered.add("f_geode"); notify("geode", 1, first); if (onDig) onDig("pickup"); saveState(); }
+    else { showCard("Pack full", "No room for the geode halves."); bagShake(); }
+    return true;
+  }
   if (selectedTool() !== "pickaxe") { showCard("Needs a pickaxe", "This dull nodule looks promising. Swing a pickaxe at it to crack it open."); return true; }
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST, true); rootPlayer(); if (onDig) onDig("mine");
@@ -11407,10 +11435,12 @@ function crackGeode(g) {
     g.cracked = true;
     if (onDig) onDig("crack");
     const amethyst = rng() < GEODE_AMETHYST_P, t = amethyst ? "amethyst" : "quartz";
-    spawnFind(t, g.x+(rng()-0.5)*0.4, g.z+(rng()-0.5)*0.4);
+    const first = !discovered.has("f_" + t);
+    if (Inv.add(t, 1) > 0) { discovered.add("f_" + t); notify(t, 1, first); }   // §A3 the crystal goes straight into the pack …
+    else spawnFind(t, g.x+(rng()-0.5)*0.4, g.z+(rng()-0.5)*0.4);                 //    … or onto the ground if the pack is full
     if (typeof SND !== "undefined") { SND.play("discover"); setTimeout(()=>{ try{ SND.play("discover"); }catch(e){} }, 180); }
     if (typeof sparkle === "function") sparkle(g.x, sy+0.3, g.z, amethyst ? [0.7,0.5,0.9] : [0.9,0.95,1], 18);
-    showCard("The geode cracks open!", "Hollow all along — and lined with " + (amethyst ? "violet amethyst" : "clear quartz") + " crystal. " + (amethyst ? "A rare one." : "A beauty."));
+    showCard("The geode cracks open!", "Hollow all along — and lined with " + (amethyst ? "violet amethyst" : "clear quartz") + " crystal (added to your pack). The halves are yours to pick up, too.");
     saveState();
   }
   return true;
@@ -11420,7 +11450,7 @@ function drawGeodes(view) {
   if (!geodeDyn) geodeDyn = makeDynamic(geodeMesh(), GEODE_N);
   if (!geodeCrackedDyn) geodeCrackedDyn = makeDynamic(geodeCrackedMesh(), GEODE_N);
   propUniforms(view); let n = 0, cn = 0;
-  for (const g of geodes) { const dx = g.x-cam.pos[0], dz = g.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+  for (const g of geodes) { if (g.taken) continue; const dx = g.x-cam.pos[0], dz = g.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
     const gy = surfaceAt(g.x, g.z).h + g.sc*0.08;
     if (g.cracked) { const o = cn*10; geodeCrackScratch[o]=g.x;geodeCrackScratch[o+1]=gy;geodeCrackScratch[o+2]=g.z;geodeCrackScratch[o+3]=g.sc;geodeCrackScratch[o+4]=g.yaw;geodeCrackScratch[o+5]=0;geodeCrackScratch[o+6]=0;geodeCrackScratch[o+7]=1;geodeCrackScratch[o+8]=1;geodeCrackScratch[o+9]=1; cn++; }
     else { const o = n*10; geodeScratch[o]=g.x;geodeScratch[o+1]=gy;geodeScratch[o+2]=g.z;geodeScratch[o+3]=g.sc;geodeScratch[o+4]=g.yaw;geodeScratch[o+5]=0;geodeScratch[o+6]=0;geodeScratch[o+7]=1;geodeScratch[o+8]=1;geodeScratch[o+9]=1; n++; }
@@ -11429,7 +11459,7 @@ function drawGeodes(view) {
   if (cn) geodeCrackedDyn.draw(geodeCrackScratch, cn);
 }
 function geodeAction(g) { return crackGeode(g); }
-function geodePrompt(g) { return g.cracked ? "cracked open" : (selectedTool()==="pickaxe" ? (IS_TOUCH?"hold to crack it open":"crack it open") : "a dull nodule — try a pickaxe"); }
+function geodePrompt(g) { return g.cracked ? ((IS_TOUCH?"tap":"click/F") + " to pick up the geode halves") : (selectedTool()==="pickaxe" ? (IS_TOUCH?"hold to crack it open":"crack it open") : "a dull nodule — try a pickaxe"); }
 
 /* ===================================================================== *
  * § 41  HORSESHOE CRABS — a living fossil plowing the sandy shallows day and
