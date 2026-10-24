@@ -2573,9 +2573,9 @@ function camForward() {
 const EYE = 1.7;             // eye height above the ground
 const WALK_SPEED = 9.5;      // units / second (vast map, so not too slow)
 const SPRINT = 1.8;          // sprint multiplier
-const SLOPE_LIMIT = 40 * Math.PI / 180;   // auxiliary limit (walkable checks, landing slide)
-const SLOPE_IMPASS = 42 * Math.PI / 180;  // §13.1 uphill past this is impassable — you slide back
-const SPRINT_SLOPE_MAX = 20 * Math.PI / 180;   // §13.1 no sprinting above this uphill grade
+const SLOPE_LIMIT = 46 * Math.PI / 180;   // §A5 auxiliary limit (walkable checks, landing slide) — a few degrees more leeway
+const SLOPE_IMPASS = 48 * Math.PI / 180;  // §A5 uphill past this is impassable — you slide back (raised a few degrees)
+const SPRINT_SLOPE_MAX = 24 * Math.PI / 180;   // §A5 no sprinting above this uphill grade (a touch more leeway)
 const MOVE_SUBSTEP = 0.25;                // §13.1 substep distance so fast moves can't skip the slope check
 let _curSlopeDeg = 0, _curSpeedMul = 1;   // debug readout
 const WADE_DEPTH = 1.0;      // can wade up to this depth, then it blocks
@@ -2601,11 +2601,12 @@ function openSeaDepth(x, z) {
 function slopeSpeedMul(grade) {
   if (grade <= 0) return 1 - Math.min(0.4, -grade * 0.45);   // downhill: steeper = a bit slower (and slips)
   const deg = grade * 180 / Math.PI;
-  if (deg <= 15) return 1;                                   // easy
-  if (deg >= 42) return 0;                                   // impassable → slide back
-  if (deg <= 25) return 1 + (deg - 15) * (0.6 - 1) / 10;     // 15°→25°:  100% → 60%
-  if (deg <= 35) return 0.6 + (deg - 25) * (0.3 - 0.6) / 10; // 25°→35°:   60% → 30% (heavy scramble)
-  return 0.3 + (deg - 35) * (0.0 - 0.3) / 7;                 // 35°→42°:   30% →  0%
+  // §A5 gentler slowdown curve, extended to the raised 48° limit
+  if (deg <= 18) return 1;                                   // easy
+  if (deg >= 48) return 0;                                   // impassable → slide back
+  if (deg <= 28) return 1 + (deg - 18) * (0.75 - 1) / 10;    // 18°→28°:  100% → 75%
+  if (deg <= 38) return 0.75 + (deg - 28) * (0.45 - 0.75) / 10; // 28°→38°:  75% → 45%
+  return 0.45 + (deg - 38) * (0.0 - 0.45) / 10;              // 38°→48°:   45% →  0%
 }
 // Downhill unit direction + slope magnitude at a point (for slide-back on steep ground).
 function groundGradient(x, z) {
@@ -3096,8 +3097,8 @@ function drawThrownSpears(view) {
  * ===================================================================== */
 let relaxedFishing = false;
 // §climb optional modes (persisted): climbing on/off, never run out of bait, never starve
-let climbEnabled = true, infiniteWorms = false, noStarvation = false;
-try { climbEnabled = localStorage.getItem("bc_climb") !== "0"; infiniteWorms = localStorage.getItem("bc_infworms") === "1"; noStarvation = localStorage.getItem("bc_nostarve") === "1"; } catch (e) {}
+let climbEnabled = false, infiniteWorms = false, noStarvation = false;   // §A5 climbing is OFF by default now
+try { climbEnabled = localStorage.getItem("bc_climb") === "1"; infiniteWorms = localStorage.getItem("bc_infworms") === "1"; noStarvation = localStorage.getItem("bc_nostarve") === "1"; } catch (e) {}
 try { relaxedFishing = localStorage.getItem("bc_relaxfish") === "1"; } catch (e) {}
 function setRelaxedFishing(v) { relaxedFishing = v; try { localStorage.setItem("bc_relaxfish", v ? "1" : "0"); } catch (e) {} }
 let fishForceBite = false, fishOddsLog = false;        // debug toggles (O / U in debug mode)
@@ -8441,7 +8442,7 @@ function maxStamina() { if (!hungerEnabled) return 1; const t = hungerTier(); re
 function heavyCostMul() { return 1; }    // §Cooking no extra cost when hungry
 function swingRateMul() { return 1; }    // §Cooking no slower swings when hungry
 // §tools effort & hunger: labour burns hunger (∝ stamina spent), recovery scales with fullness, and being fed makes heavy jobs land harder
-let EFFORT_HUNGER = 0.05;                 // hunger burned per unit of stamina spent on work (sprint/swim/dig/chop/mine/sift); walking spends ~none
+let EFFORT_HUNGER = 0.03;                 // §A5 hunger burned per unit of stamina spent on work — reduced ~40% (was 0.05); walking spends ~none
 function hungerRegenMul() { return hungerEnabled ? 0.55 + 0.75 * Math.max(0, Math.min(1, hunger)) : 1; }   // fuller = faster stamina recovery (0.55×…1.3×)
 function jobEffortMul() { if (!hungerEnabled) return 1; const t = hungerTier();   // fed = a few fewer hits to fell/break; hungry = slightly more (never punishing)
   return t === "full" ? 1.5 : t === "peckish" ? 1.0 : 0.85; }
