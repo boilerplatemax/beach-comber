@@ -1816,18 +1816,10 @@ function footSurface() {
   if (surfaceAt(player.x, player.z).h > 11 && k !== "rock") return "step_grass";
   return "step_sand";
 }
-// footsteps paced by movement (bob phase crossings); quieter crouched, heavier sprinting
-let _lastStepBob = 0;
-function updateFootsteps() {
-  if (!SND.ctx || mode !== "walk" || player.swimming || isPanelOpen()) { _lastStepBob = player.bob || 0; return; }
-  if ((player.walkLen || 0) < 0.05 || player.airborne) { _lastStepBob = player.bob || 0; return; }
-  const bob = player.bob || 0, period = Math.PI;                 // one step per half bob cycle
-  if (Math.floor(bob / period) !== Math.floor(_lastStepBob / period)) {
-    const vol = (crouching ? 0.4 : player.sprinting ? 1.1 : 0.75);
-    SND.play(footSurface(), { volume: vol });
-  }
-  _lastStepBob = bob;
-}
+// §foot footsteps are triggered by distance travelled in the movement loop (one per stride,
+// see STRIDE_* and onFootstep), not here. This stale bob-crossing trigger is removed so steps
+// don't fire twice (which read as "too fast").
+function updateFootsteps() {}
 // occasional positional creature calls from nearby life (spatial soundscape by day/night)
 let _critSndT = 0;
 function updateCreatureSound(dt) {
@@ -2751,6 +2743,8 @@ function camForward() {
  * --------------------------------------------------------------------- */
 
 const EYE = 1.7;             // eye height above the ground
+// §foot stride lengths: one footstep (and one head-bob) per this many metres travelled (tunable)
+const STRIDE_WALK = 0.7, STRIDE_SPRINT = 1.1, STRIDE_SCRAMBLE = 1.3;
 const WALK_SPEED = 9.5;      // units / second (vast map, so not too slow)
 const SPRINT = 1.8;          // sprint multiplier
 // §slope5 steep ground is now WALKABLE, just slower, down to a trudge. Only near-vertical faces block you.
@@ -8900,7 +8894,7 @@ function walkTo(x, z, entity) {
  * § TARGETING  (crosshair/tap raycast vs. the SAME objects we render,
  *   within reach and line of sight, no proximity phantoms, no click-to-walk)
  * --------------------------------------------------------------------- */
-const REACH = 4.6;
+const REACH = 5.1;   // §tool-reach interaction reach (was 4.6, +0.5m; tunable). Ray targeting already measures to an object's hit surface, not its centre.
 function rayFromNDC(ndcx, ndcy) {
   if (ndcx === 0 && ndcy === 0) return { o: cam.pos, d: camForward() };   // crosshair center = look dir
   if (!lastInvVP) return null;
@@ -9513,6 +9507,8 @@ function goatPaw(g) {
 let shovelSwing = 0, camNudge = 0, toolRecoilT = 0, camShake = 0, lastFailT = -99;
 // §tools5 live fine-tune offsets for the held tool (debug sliders): extra yaw/pitch/roll in radians, and a swing-direction flip.
 const dbgTool = { yaw: 0, pitch: 0, roll: 0, swingDir: 1, spin: 0 };   // §tools7 `spin` = a NEW rotation axis: about the tool's own long (handle) axis, in local space before the pose tilt
+const PICK_X_SHIFT = 0.12;        // §tool-pick how far further right the pickaxe is held than the other tools (tunable)
+const SPEAR_REST_PITCH = 0.6;     // §tool-spear resting tilt that points the spear tip up-and-forward toward the crosshair (tunable)
 // §axe8 the AXE gets its OWN chop-swing settings so the pickaxe is unaffected. `axis` picks which rotation the chop
 // animates: "x" = pitch (overhead, the old behaviour), "y" = yaw (sideways twist), "z" = roll (sweeps across the
 // screen plane, a true chopping arc, the new default). `dir` flips the swing direction. Toggle both live in debug.
@@ -11231,7 +11227,7 @@ function drawShovel(view) {
   const chg = isSpear && spear.charging ? spear.charge : 0;
   const t = clock.t;
   const bobA = Math.min(1, (player.walkLen || 0));                                        // 0 still … 1 moving
-  const bob = Math.sin((player.bob || 0) * 2.6) * 0.02 * bobA + Math.cos((player.bob||0)*1.3)*0.01*bobA;
+  const bob = Math.sin(player.bob || 0) * 0.02 * bobA + Math.cos((player.bob||0)*0.5)*0.01*bobA;   // §foot synced to the stride phase
   const sway = Math.sin(t*1.1)*0.01, swayR = Math.sin(t*0.9)*0.03;                        // idle sway
   const swap = toolSwapT*toolSwapT;                                                       // swap dip
   let ox, oy, oz, roll, pitch, scale, toolYaw = 0, flipEnd = false;
@@ -11267,19 +11263,26 @@ function drawShovel(view) {
       roll = -0.28 + swayR;                                                               // a little lean, held steady (no twist)
       pitch = -0.15 + rec*0.5;
       toolYaw = (id === "axe") ? BLADE_BASE_YAW_AXE : BLADE_BASE_YAW;                      // §tools7 the axe sits 180° round from the pickaxe
-      if (id === "axe") {                                                                 // §axe8 AXE: chop animates the axis chosen in debug (default roll/z = screen-plane sweep)
-        const d = chopAmt * dbgAxe.dir;
-        if (dbgAxe.axis === "x") pitch += d;                                              // local X → pitch (overhead chop, the old axis)
-        else if (dbgAxe.axis === "y") toolYaw += d;                                       // local Y → yaw (sideways twist)
-        else roll += d;                                                                  // local Z → roll (sweeps across the screen)
-      } else {
-        pitch += chopAmt * dbgTool.swingDir;                                              // §axe8 PICKAXE keeps the shared overhead (pitch) swing, untouched
-      }
+      if (id === "pickaxe") ox += PICK_X_SHIFT;                                           // §tool-pick nudge the pickaxe further to the right of the screen (tunable)
+      // §tool-pick the pickaxe now swings on the SAME axis and direction as the axe (default roll/z, the screen-plane sweep)
+      const d = chopAmt * dbgAxe.dir;
+      if (dbgAxe.axis === "x") pitch += d;                                                // local X → pitch (overhead chop, the old axis)
+      else if (dbgAxe.axis === "y") toolYaw += d;                                         // local Y → yaw (sideways twist)
+      else roll += d;                                                                    // local Z → roll (sweeps across the screen)
+    } else if (isSpear) {
+      // §tool-spear held point-FORWARD (flipped from the old backward hold) and angled UP toward the crosshair;
+      // a thrust drives the point ahead and levels it. SPEAR_REST_PITCH tilts the tip up at rest (tunable).
+      scale = 0.5;
+      ox = 0.16 + sway;
+      oy = -0.42 - swap*0.5 + bob + chg*0.08;
+      oz = 0.8 - rec*0.35 + jab*0.6 - chg*0.28;                                           // thrust drives it forward
+      roll = -0.18 + swayR;
+      pitch = SPEAR_REST_PITCH + chg*0.1 - jab*0.6 + rec*0.4;                             // tip up-forward at rest; a stab levels it
     } else {
       oy = -0.42 - sw*0.08 + rec*0.2 - swap*0.5 + bob + chg*0.1;
-      oz = 0.82 + sw*0.6 - rec*0.35 + jab*0.5 - chg*0.3;
+      oz = 0.82 + sw*0.6 - rec*0.35 - chg*0.3;
       roll = -0.4 + swayR - sw*0.12;
-      pitch = (isPoke ? (-0.95 + jab*0.3 - chg*0.3) : -0.2) - sw*1.05 + rec*0.65;         // spear thrusts straight ahead
+      pitch = -0.2 - sw*1.05 + rec*0.65;
     }
     if (id === "shovel") { flipEnd = true; oy = -0.26 - sw*0.08 + rec*0.2 - swap*0.5 + bob; oz = 0.78 + sw*0.5 - rec*0.35; pitch = -0.5 - sw*0.9 + rec*0.6; }   // §playtest1 flip 180°: D-grip up in the hand, spade at the far end pointing down & away
   }
@@ -11624,7 +11627,7 @@ function mineAt(x, z) {
 }
 function mineObj(o) {                                           // one pickaxe strike on a rock
   if (!o || o.gone) return;
-  if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 1.4) return;
+  if (Math.hypot(o.x - player.x, o.z - player.z) - (0.6 + o.sc * 0.5) > REACH + 0.3) return;   // §tool-reach measure to the boulder's surface (its hit radius), not its centre, so big rocks are reachable
   if (cottageProtectBlock(o.x, o.z)) return;                   // §2 no mining the rocks right by the cottage
   if (player.airborne) return;                            // §playtest2 no mining mid-air (sprinting is fine now)
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §13.2 too tired: gentle refusal, no swing
@@ -14491,10 +14494,12 @@ function frame(now) {
       if (waterLevel - sZ.h <= WADE_INTO && sZ.h - h0 <= maxRise) nz = player.z + wz*dist;
       [nx, nz] = slideCircles(nx, nz);
       player.x = nx; player.z = nz;
-      player.bob += dist * (player.sprinting ? 0.6 : 1);   // §playtest1 sprinting = longer strides → the bob (and head-bob) advances slower
-      const stepLen = scrambleTarget > 0.5 ? 1.5 : player.sprinting ? 1.7 : 1.15;   // §playtest1 fewer, longer footfalls while sprinting
-      if (player.bob - _stepPhase >= stepLen) {
-        _stepPhase = player.bob;
+      // §foot one footstep per stride of real distance travelled (not a timer), and the head-bob
+      // phase advances in lock-step: PI of bob phase == one stride, so the bob peaks once per footfall.
+      const strideLen = scrambleTarget > 0.5 ? STRIDE_SCRAMBLE : player.sprinting ? STRIDE_SPRINT : STRIDE_WALK;
+      const prevBob = player.bob;
+      player.bob += dist * (Math.PI / strideLen);
+      if (Math.floor(player.bob / Math.PI) !== Math.floor(prevBob / Math.PI)) {
         if (onFootstep) onFootstep(surfaceType(here.h, here.slope), scrambleTarget > 0.5 ? 1 : (player.sprinting ? 0.9 : 0.55));
       }
     }
@@ -14518,7 +14523,7 @@ function frame(now) {
     const moving = wl > 0.01 ? 1 : 0;
     player.walkLen = moving ? Math.min(1, wl) : 0;              // §R4 feeds the first-person tool's walk bob
     const amp = (0.06 + (player.sprinting ? 0.05 : 0) + player.scramble * 0.07) * moving;
-    const bobOff = camFxOn("bob") ? Math.sin(player.bob * (player.scramble > 0.3 ? 1.7 : 2.6)) * amp : 0;   // head bob
+    const bobOff = camFxOn("bob") ? Math.sin(player.bob) * amp : 0;   // §foot head bob driven by the stride phase (one bob per footfall)
     const sitTarget = camFxOn("crouch") ? (resting ? -0.8 : (crouching ? -CROUCH_DROP : 0)) : 0;   // §13.4 crouch / rest dip
     if (camFxOn("eyeSmooth")) camSit += (sitTarget - camSit) * Math.min(1, dt * 14);   // eye-height smoothing
     else camSit = sitTarget;
