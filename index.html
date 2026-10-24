@@ -6257,7 +6257,7 @@ const CREATURES = {
 };
 // §R4 explicit per-creature bucketability — small aquatic & intertidal life only. Never birds (gull, piper,
 // heron, seaduck), mammals (seal, otter, raccoon, goat), or large/game fish (flounder, rockfish, lingcod).
-const BUCKETABLE_TYPES = { crab:1, hermit:1, fish:1, minnow:1, star:1, urchin:1, anemone:1, jelly:1, shrimp:1, snail:1, hopper:1, octopus:1, horseshoe:1, gunnel:1, chiton:1 };   // §21C gunnel/chiton are aquatic; land stone-critters are inspect-only
+const BUCKETABLE_TYPES = { crab:1, hermit:1, fish:1, minnow:1, flounder:1, rockfish:1, lingcod:1, star:1, urchin:1, anemone:1, jelly:1, shrimp:1, snail:1, hopper:1, octopus:1, horseshoe:1, gunnel:1, chiton:1 };   // §6 the swimming fish are scoopable too; §21C gunnel/chiton are aquatic; land stone-critters are inspect-only
 for (const k in CREATURES) CREATURES[k].bucketable = !!BUCKETABLE_TYPES[k];
 const FINDS = {
   shell:    { mesh: () => shellMesh(),               base: 0.5, max: 200, label: "Spiral Shell", desc: "An empty whelk, worn smooth.", rare: 0 },
@@ -8937,7 +8937,11 @@ function removeBuiltAt(x, z) {
  * § BUCKET  (Phase 10 Part 4): fill it, scoop small creatures, pour it out
  * ===================================================================== */
 const bucket = { water: false, creatures: [] };
-const BUCKET_CAP = 5;
+// §6 the bucket holds a fixed volume of SPACE rather than a head-count: little critters take 1 unit, fish 2-3 by size
+const BUCKET_UNITS = 6;                           // total space (tunable)
+const CREATURE_UNITS = { lingcod: 3, rockfish: 2, flounder: 2, fish: 2, octopus: 2, jelly: 2, horseshoe: 2 };   // the rest default to 1
+function creatureUnits(c) { let u = CREATURE_UNITS[c && c.t] || 1; if (c && c.variant === "giant") u += 1; return Math.min(u, BUCKET_UNITS); }
+function bucketUnitsUsed() { let u = 0; for (const c of bucket.creatures) u += creatureUnits(c); return u; }
 // §13.3 moisture: a creature out of water dries out over DRY_OUT_TIME real-seconds (tunable, ~5 min).
 // A fresh scoop / a refill tops it back to 1; a dry bucket lets it fall to 0, where the creature dies.
 const DRY_OUT_TIME = 300;                        // seconds from soaked to dead when kept dry (tunable)
@@ -8955,8 +8959,9 @@ function catchTideLabel() { return isMinusTideNow() ? "a minus tide" : (tideInfo
 // §R4 the single source of truth is the registry flag set above
 function isBucketable(t) { return !!(CREATURES[t] && CREATURES[t].bucketable); }
 function bucketScoop(e) {                                       // bucket used on a creature
-  if (!isBucketable(e.t)) return false;                        // §R4 ineligible (bird/mammal/large fish) → normal inspect, dimmed ring
-  if (bucket.creatures.length >= BUCKET_CAP) { showCard("Bucket full", `It holds ${BUCKET_CAP} creatures.`); return true; }
+  if (!isBucketable(e.t)) return false;                        // §R4 ineligible (bird/mammal) → normal inspect, dimmed ring
+  const need = creatureUnits({ t: e.t, variant: e.variant });  // §6 does it fit in the space that's left?
+  if (bucketUnitsUsed() + need > BUCKET_UNITS) { showCard("Bucket full", bucketUnitsUsed() >= BUCKET_UNITS ? `It's full (${BUCKET_UNITS} units).` : `No room — that one needs ${need} of the ${BUCKET_UNITS - bucketUnitsUsed()} units left.`); return true; }
   // §13.3 creatures can always be scooped, with or without water; a fresh catch starts fully moist
   bucket.creatures.push({ t: e.t, scale: e.scale, tint: e.tint || [1,1,1], special: !!e.special, name: e.name, poolRim: e.poolRim, variant: e.variant,
     moist: 1, caught: { biome: catchBiomeLabel(e.x, e.z), tide: catchTideLabel() } });
@@ -9183,7 +9188,7 @@ function updateBucketPanel() {
     drawBucketScene, drawBucketRipples);
   blitMini(fbo, bucketCtx);
   bucketCtx.fillStyle = "#ecdfc4"; bucketCtx.font = "600 11px 'Chakra Petch', monospace"; bucketCtx.textAlign = "center";
-  bucketCtx.fillText(`${bucket.creatures.length}/${BUCKET_CAP}`, bucketPanelEl.width/2, bucketPanelEl.height - 4);
+  bucketCtx.fillText(`${bucketUnitsUsed()}/${BUCKET_UNITS} units`, bucketPanelEl.width/2, bucketPanelEl.height - 4);
 }
 // §13.3 "Look inside": a large top-down close-up; tap a creature to open its inspect card.
 const bucketLook = { open: false, el: null, ctx: null, cv: null, t: 0, vp: null };
@@ -9227,7 +9232,7 @@ function updateBucketLook() {
   blitMini(fbo, bucketLook.ctx);
   const cEl = document.getElementById("bucketlookcount");
   if (cEl) cEl.textContent = bucket.creatures.length
-    ? `${bucket.creatures.length}/${BUCKET_CAP}` + (bucket.water ? " · in fresh water" : " · drying out")
+    ? `${bucketUnitsUsed()}/${BUCKET_UNITS} units` + (bucket.water ? " · in fresh water" : " · drying out")
     : (bucket.water ? "empty · just water" : "empty · scoop a critter or fill with water");
 }
 
@@ -11933,7 +11938,7 @@ function aquaWaterMesh() { const m = Mesh(), w = [1,1,1], y1 = AQ_STAND+AQ_WH-0.
 function aquaStale() { return cottage && cottage.aqua && (tideDay - cottage.aqua.freshAt) > AQUA_FRESH_DAYS; }
 function addAquaResident(c) {
   const a = Math.random()*6.283, sp = 0.08 + Math.random()*0.08;
-  cottage.aqua.creatures.push({ t: c.t, scale: c.scale || 1, tint: c.tint || [1,1,1], special: !!c.special, name: c.name,
+  cottage.aqua.creatures.push({ t: c.t, scale: c.scale || 1, tint: c.tint || [1,1,1], special: !!c.special, name: c.name, variant: c.variant,
     lx: (Math.random()-0.5)*AQ_TWx, lz: (Math.random()-0.5)*AQ_TWz, ly: AQUA_SWIM.has(c.t) ? 0.2 : 0.02,
     vx: Math.cos(a)*sp, vz: Math.sin(a)*sp, yaw: a, phase: Math.random()*6,
     swim: AQUA_SWIM.has(c.t), drift: AQUA_DRIFT.has(c.t) });
@@ -11983,6 +11988,8 @@ function drawCottageAquarium(view) {
 function aquaPrompt() {
   const held = selectedItem(), aq = cottage.aqua;
   if (held === "bucket" && bucket.creatures.length) return (IS_TOUCH?"tap":"click/F") + ` to pour ${bucket.creatures.length} creature${bucket.creatures.length!==1?"s":""} into the tank`;
+  if (held === "bucket" && aquaStale() && bucket.water) return (IS_TOUCH?"tap":"click/F") + " to refresh the tank water";
+  if (held === "bucket" && aq.creatures.length && bucketUnitsUsed() < BUCKET_UNITS) return (IS_TOUCH?"tap":"click/F") + " to scoop a resident back into the bucket";
   if (held === "bucket" && bucket.water) return (IS_TOUCH?"tap":"click/F") + " to refresh the tank water";
   if (AQUA_DECOR.has(held) && Inv.has(held)) return (IS_TOUCH?"tap":"click/F") + ` to place ${ITEMS[held]?ITEMS[held].name:held} in the tank`;
   return `Aquarium — ${aq.creatures.length} resident${aq.creatures.length!==1?"s":""}` + (aquaStale() ? " · water murky, pour in seawater" : " · water fresh");
@@ -11993,8 +12000,22 @@ function useAquarium() {
     if (bucket.creatures.length) { for (const cr of bucket.creatures) addAquaResident(cr); bucket.creatures = []; aq.freshAt = tideDay;
       if (onDig) onDig("splash"); const w = cotLocalToWorld(C_AQ.x, C_AQ.z); if (typeof sparkle === "function") sparkle(w[0], cottage.floorY+AQ_STAND+AQ_WH, w[1], [0.6,0.85,0.95], 8);
       showCard("Into the tank", "The creatures settle into their new home."); saveCottage(); saveState(); if (typeof checkSets === "function") checkSets(); return; }
-    if (bucket.water) { bucket.water = false; aq.freshAt = tideDay; if (onDig) onDig("splash");
+    if (aquaStale() && bucket.water) { bucket.water = false; aq.freshAt = tideDay; if (onDig) onDig("splash");
       showCard("Fresh seawater", "The tank is clean and clear again — the residents perk up."); saveCottage(); saveState(); return; }
+    // §6 scoop a resident back OUT into the bucket (to move or release it)
+    if (aq.creatures.length) {
+      const r = aq.creatures[aq.creatures.length - 1], need = creatureUnits(r);
+      if (bucketUnitsUsed() + need > BUCKET_UNITS) { showCard("No room in the bucket", `${CREATURES[r.t]?CREATURES[r.t].label:r.t} needs ${need} of the ${BUCKET_UNITS - bucketUnitsUsed()} units left — empty the bucket first.`); return; }
+      aq.creatures.pop();
+      bucket.creatures.push({ t: r.t, scale: r.scale, tint: r.tint || [1,1,1], special: !!r.special, name: r.name, variant: r.variant,
+        moist: 1, caught: { biome: "the aquarium", tide: "a quiet afternoon" } });
+      bucket.water = true;
+      if (onDig) onDig("splash"); const w = cotLocalToWorld(C_AQ.x, C_AQ.z); if (typeof sparkle === "function") sparkle(w[0], cottage.floorY+AQ_STAND+AQ_WH, w[1], [0.6,0.85,0.95], 6);
+      showCard("Scooped out", `${CREATURES[r.t]?CREATURES[r.t].label:r.t} is back in the bucket — carry it out and tip it into the sea, or move it elsewhere.`);
+      saveCottage(); saveState(); return;
+    }
+    if (bucket.water) { bucket.water = false; aq.freshAt = tideDay; if (onDig) onDig("splash");
+      showCard("Fresh seawater", "The tank is clean and clear again."); saveCottage(); saveState(); return; }
     showCard("Empty bucket", "Scoop up creatures or seawater first, then pour them into the tank."); return;
   }
   if (AQUA_DECOR.has(held) && Inv.has(held)) { addAquaDecor(held); Inv.remove(held, 1); if (onDig) onDig("pat"); showCard("Decorated", `Added ${ITEMS[held]?ITEMS[held].name:held} to the tank.`); saveCottage(); return; }
