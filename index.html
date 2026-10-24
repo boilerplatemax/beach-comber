@@ -5342,6 +5342,8 @@ function drawContactShadows(view) {
   for (const o of rockObjs) if (!o.gone) add(o.x, o.z, 0.9 + (o.sc||1)*0.7);
   for (const o of fallenTrees) if (!o.gone) add(o.x, o.z, 1.0);
   for (const o of driftObjs) if (!o.gone) add(o.x, o.z, 0.5*(o.scale||1));
+  // §A2 a soft contact shadow under each hovering dropped find
+  for (const e of life) if (e.kind === "find" && e.fade === undefined) add(e.x, e.z, 0.22 + (e.scale||0.5)*0.28);
   if (n === 0) return;
   gl.useProgram(shadowProg);
   gl.uniformMatrix4fv(shadowU.uProj, false, proj); gl.uniformMatrix4fv(shadowU.uView, false, view);
@@ -6303,7 +6305,7 @@ const FINDS = {
   tin:      { mesh: () => tinMesh(),                 base: 0.55,max: 30,  label: "Sealed Tin", desc: "Rust-flecked and heavy. Something shifts inside.", rare: 2 },
   // --- materials & seeds (chopping / mining / planting) ---
   log:      { mesh: () => logMesh(),                 base: 0.8, max: 60,  label: "Log", desc: "A length of trunk, fresh-cut.", rare: 0 },
-  stone:    { mesh: () => stoneMesh(),               base: 0.7, max: 60,  label: "Stone", desc: "A heavy chunk of rock.", rare: 0 },
+  stone:    { mesh: () => stoneMesh(),               base: 0.3, max: 60,  label: "Stone", desc: "A small, hand-sized stone.", rare: 0 },
   coconut:  { mesh: () => coconutMesh(),             base: 0.5, max: 30,  label: "Coconut", desc: "A palm seed — plant it on sand.", rare: 1 },
   pinecone: { mesh: () => coneMesh2(),               base: 0.4, max: 30,  label: "Pine Cone", desc: "A conifer seed — plant it on soil or grass.", rare: 1 },
   nut:      { mesh: () => nutMesh(),                  base: 0.4, max: 30,  label: "Nut", desc: "A broadleaf seed — plant it on soil or grass.", rare: 1 },
@@ -6342,7 +6344,7 @@ const FINDS = {
   // §14B a glass fishing float lost from some far-off net, rolled onto the seabed
   glassfloat:{ mesh: () => glassFloatMesh(), base: 0.6, max: 40, label: "Glass Float", desc: "A sea-green glass orb from a fishing net, found resting on the seabed.", rare: 2 },
   // §13.3 dried remains — what a scooped or stranded creature leaves behind when it dries out completely
-  driedstar:{ mesh: () => starMesh([0.64,0.57,0.47]), base: 0.8, max: 60, label: "Dried Sea Star", desc: "A sea star left too long in the air, stiff and curled.", rare: 1 },
+  driedstar:{ mesh: () => starMesh([0.64,0.57,0.47]), base: 0.6, max: 60, label: "Dried Sea Star", desc: "A sea star left too long in the air, stiff and curled.", rare: 1 },
   husk:     { mesh: () => huskMesh(),                base: 0.45,max: 60,  label: "Dried Husk", desc: "The shrivelled remains of a small shore creature that dried out.", rare: 0 },
   // §16.1 new beachcombing finds
   // §17.1 washed-up litter — collect it to keep the shore clean (a trader will want it later)
@@ -6364,12 +6366,14 @@ const FINDS = {
   duskglass:{ mesh: () => glassMesh([0.62,0.4,0.72]), base: 0.38,max: 30,  label: "End-of-day Glass", desc: "A swirl of colours fused in one shard — a glassworks' last melt of the day. Only turns up near dusk.", rare: 2 },
   marble:   { mesh: () => marbleMesh(),              base: 0.34,max: 40,  label: "Old Marble", desc: "A child's glass marble with a ribbon of colour at its heart. How long has it rolled with the tide?", rare: 2 },
   sharktooth:{ mesh: () => sharkToothMesh(false),    base: 0.4, max: 40,  label: "Shark Tooth", desc: "A fossil tooth, black with age and still needle-sharp.", rare: 2 },
-  megalodon:{ mesh: () => sharkToothMesh(true),      base: 0.7, max: 20,  label: "Megalodon Tooth", desc: "A palm-sized tooth from a shark long extinct. The find of a lifetime.", rare: 2 },
+  megalodon:{ mesh: () => sharkToothMesh(true),      base: 0.5, max: 20,  label: "Megalodon Tooth", desc: "A palm-sized tooth from a shark long extinct. The find of a lifetime.", rare: 2 },
   hagstone: { mesh: () => hagStoneMesh(),            base: 0.5, max: 40,  label: "Hag Stone", desc: "A beach stone worn clean through by the sea. Look through the hole for luck, they say.", rare: 2 },
   quartz:   { mesh: () => crystalMesh([0.92,0.94,0.98]),base: 0.5, max: 30, label: "Quartz Crystal", desc: "A clear six-sided point, broken from a geode's heart.", rare: 2 },
   amethyst: { mesh: () => crystalMesh([0.62,0.44,0.82]),base: 0.5, max: 20, label: "Amethyst", desc: "A cluster of violet crystal from inside a geode. Rare and lovely.", rare: 2 },
-  hcmolt:   { mesh: () => horseshoeMesh(),            base: 1.0, max: 40,  label: "Horseshoe Molt", desc: "The cast-off shell a horseshoe crab climbed out of as it grew — split at the front, light as paper, perfectly intact.", rare: 1 },
+  hcmolt:   { mesh: () => horseshoeMesh(),            base: 0.6, max: 40,  label: "Horseshoe Molt", desc: "The cast-off shell a horseshoe crab climbed out of as it grew — split at the front, light as paper, perfectly intact.", rare: 1 },
 };
+// §A2 Minecraft-style dropped-item presentation: a gentle hover + bob a few cm up, a slow spin, a soft shadow and the odd faint glint (all tunable)
+const FIND_HOVER = 0.14, FIND_BOB_AMP = 0.045, FIND_BOB_SPD = 2.1, FIND_SPIN = 0.85;
 
 // build dynamic draw objects
 for (const k in CREATURES) CREATURES[k].dyn = makeDynamic(CREATURES[k].mesh(), CREATURES[k].max);
@@ -7008,6 +7012,7 @@ function drawLife(view) {
   gl.uniform1f(propU.uFogNear, FOG_NEAR);
   gl.uniform1f(propU.uDissolve, 0);   // §urgent5 default solid; the fade pass sets it per dying creature
   const px = cam.pos[0], pz = cam.pos[2];
+  const animT = performance.now() * 0.001;   // §A2 real-time clock for the dropped-item hover/spin/glint
   const buckets = {};
   for (const k in CREATURES) buckets[k] = 0;
   for (const k in FINDS) buckets["f_" + k] = 0;
@@ -7022,7 +7027,7 @@ function drawLife(view) {
       if (forceSpawn ? false : !lifeVisible(e)) continue;
       if (n >= reg.max) break;
       const g = heightAt(e.x, e.z);
-      let y = g, sc = e.scale, lean = 0, ld = 0;
+      let y = g, sc = e.scale, lean = 0, ld = 0, yawOut = e.yaw, glint = 0;
       if (e.kind === "creature") {
         if (FISH[e.t]) { y = (e.y !== undefined) ? e.y : g + 1.0;   // §14C huntable fish hover in the water column
           // §1e flounder lies FLAT on the sand (its mesh is a flat oval, so no tilt) with a gentle edge-to-edge ripple; others sway upright
@@ -7049,7 +7054,11 @@ function drawLife(view) {
         else if (e.t === "seaduck") y = waterSurfaceAt(e.x, e.z) + 0.03 + Math.sin(e.phase*2)*0.03;   // §16.1 bobs on the water
         if (e.t === "star" || e.t === "anemone" || e.t === "urchin" || e.t === "snail" || e.t === "octopus") y += 0.02;
         else if (e.t === "shrimp") y += 0.06;
-      } else { y = g + 0.05; lean = 0.2; }
+      } else {   // §A2 a dropped find: hover + bob a few cm above the ground, spin slowly, upright (no tilt)
+        y = g + FIND_HOVER + Math.sin(animT*FIND_BOB_SPD + e.phase)*FIND_BOB_AMP;
+        yawOut = e.phase + animT*FIND_SPIN; lean = 0;
+        glint = Math.pow(Math.max(0, Math.sin(animT*0.8 + e.phase*5)), 60);   // a rare, faint sparkle of light across it
+      }
       // §urgent5 death: topple onto its side with a small settle, then lie still (NO shrink; the fade is a dither-dissolve)
       if (e.dying !== undefined) {
         const tp = Math.min(1, e.dying / 0.45);
@@ -7061,8 +7070,9 @@ function drawLife(view) {
       e._sc = sc;                                          // §urgent5 remember the drawn scale so the fade pass matches it (no pop)
       const o = n*10;
       lifeScratch[o]=e.x; lifeScratch[o+1]=y; lifeScratch[o+2]=e.z;
-      lifeScratch[o+3]=sc; lifeScratch[o+4]=e.yaw; lifeScratch[o+5]=lean; lifeScratch[o+6]=ld;
+      lifeScratch[o+3]=sc; lifeScratch[o+4]=yawOut; lifeScratch[o+5]=lean; lifeScratch[o+6]=ld;
       lifeScratch[o+7]=e.tint[0]; lifeScratch[o+8]=e.tint[1]; lifeScratch[o+9]=e.tint[2];
+      if (glint > 0.001) { const gg = glint*0.55; lifeScratch[o+7]=e.tint[0]*(1-gg)+gg; lifeScratch[o+8]=e.tint[1]*(1-gg)+gg; lifeScratch[o+9]=e.tint[2]*(1-gg)+gg; }   // §A2 faint glint
       if (e.hurtT > 0) { const h = e.hurtT/0.32; lifeScratch[o+7]=e.tint[0]*(1-h)+1.0*h; lifeScratch[o+8]=e.tint[1]*(1-h)+0.3*h; lifeScratch[o+9]=e.tint[2]*(1-h)+0.3*h; }   // §R4 red hurt flash
       if (showAlert && FISH[e.t]) { const al = e.alert || 0; lifeScratch[o+7]=0.3+al*0.7; lifeScratch[o+8]=0.9-al*0.7; lifeScratch[o+9]=0.3; }   // §14C green→red by alertness
       n++;
