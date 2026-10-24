@@ -15,6 +15,7 @@
     --ink: #ecdfc4;           /* warm pale sand — primary text, never pure white */
     --ink-dim: #b7b196;       /* muted labels */
     --ink-shadow: #0c1210;    /* subtle shadow in a darker palette shade */
+    --dim: rgba(6,10,13,.6);  /* §A6 the one shared dim behind every modal (satchel, journal, bucket view) */
     --panel: rgba(20,32,34,.94);
     --panel-lit: rgba(32,50,52,.96);
     --panel-edge: rgba(10,20,22,.96);
@@ -201,9 +202,11 @@
   #card b { font-size: 17px; letter-spacing: .02em; }
   #card span { opacity: .8; font-size: 13px; }
   /* field journal (§13.5 redesigned: compact, tabbed, 3D-icon cards) */
+  /* §A6 one shared scrim behind every modal; the panels themselves sit above it */
+  #scrim { position: fixed; inset: 0; z-index: 11; display: none; background: var(--dim); backdrop-filter: blur(2px); }
   #journal {
     position: fixed; inset: 0; z-index: 12; display: none; align-items: center; justify-content: center;
-    background: rgba(6,10,13,.72); backdrop-filter: blur(2px); text-align: center;
+    background: transparent; text-align: center;
   }
   #journalbox { width: 70vw; max-width: 760px; max-height: 70vh; display: flex; flex-direction: column;
     background: var(--facet); padding: 18px 20px 16px; box-shadow: 0 12px 40px rgba(0,0,0,.55);
@@ -475,7 +478,7 @@
   #inspRelease { background: linear-gradient(150deg, #3f9a86 0 46%, #2b7866 46% 100%); color: #eefaf4; }
   /* §13.3 "Look inside" — a large top-down close-up of the bucket */
   #bucketlook { position: fixed; inset: 0; z-index: 24; display: none; align-items: center; justify-content: center;
-    background: rgba(6,10,13,.72); backdrop-filter: blur(2px); }
+    background: transparent; }
   #bucketlookbox { background: var(--facet); padding: 18px; box-shadow: 0 12px 40px rgba(0,0,0,.55); text-align: center;
     clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); }
   #bucketlookbox h2 { font-size: 20px; margin: 0 0 4px; letter-spacing: .03em; }
@@ -518,7 +521,7 @@
     <div class="seedrow">
       <label for="seedInput">seed</label>
       <input id="seedInput" spellcheck="false" autocomplete="off">
-      <button id="diceBtn" title="Random seed">⚅</button>
+      <button id="diceBtn" title="Random seed"><svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.6"><rect x="3.5" y="3.5" width="17" height="17" rx="3.5" fill="none"/><circle cx="8" cy="8" r="1.5" stroke="none"/><circle cx="16" cy="8" r="1.5" stroke="none"/><circle cx="12" cy="12" r="1.5" stroke="none"/><circle cx="8" cy="16" r="1.5" stroke="none"/><circle cx="16" cy="16" r="1.5" stroke="none"/></svg></button>
     </div>
     <div id="recentWrap">
       <div class="reclabel">Recent islands</div>
@@ -529,6 +532,7 @@
 <div id="settingspanel"></div>
 <div id="resumehint"><span>click to resume</span></div>
 <div id="pryoverlay"><canvas id="prycv" width="260" height="190"></canvas><div id="pryhint">Shovel the latch — strike the glowing arc</div></div>
+<div id="scrim"></div>
 <div id="stashpanel"></div>
 
 <div id="hud"></div>
@@ -584,7 +588,7 @@
     </div>
   </div>
 </div>
-<button id="bagBtn">🎒</button>
+<button id="bagBtn" aria-label="Satchel"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0"/><rect x="4" y="9" width="16" height="11" rx="2.5"/><path d="M4 13h16"/><path d="M11 13v3h2v-3z"/></svg></button>
 <div id="dragGhost"></div>
 <div id="itip"></div>
 <div id="debugpanel"></div>
@@ -3850,6 +3854,7 @@ addEventListener("keyup", (e) => { keys[e.code] = false; });
 
 canvas.addEventListener("mousedown", (e) => {
   if (IS_TOUCH) return;
+  if (menuModalOpen()) return;   // §A6 a menu is open: no world clicks, and don't re-grab pointer lock (which would let the camera turn)
   if (e.button === 1 && mode === "walk" && selectedItem() === "toolkit") { e.preventDefault(); cycleToolkit(); return; }   // §13.2 middle-click cycles the Tool Kit
   if (e.button === 2 && mode === "walk" && !isPanelOpen() && document.pointerLockElement === canvas) {   // §climb hold right mouse to grab a climbable face
     e.preventDefault(); if (climbEnabled && !player.climbing) tryGrabClimb(); return; }
@@ -3878,7 +3883,7 @@ addEventListener("wheel", (e) => {
 }, { passive: true });
 canvas.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
 document.addEventListener("mousemove", (e) => {
-  if (document.pointerLockElement !== canvas) return;
+  if (document.pointerLockElement !== canvas || menuModalOpen()) return;   // §A6 no camera look while a menu is open
   const s = 0.0022;
   cam.yaw += e.movementX * s;
   cam.pitch -= e.movementY * s;
@@ -4236,7 +4241,21 @@ function isPanelOpen() {
       || (typeof pry !== "undefined" && !!pry)
       || (typeof bucketLook !== "undefined" && bucketLook.open)
       || (typeof tradeOpen !== "undefined" && tradeOpen)
-      || document.getElementById("journal").style.display === "block"
+      || ['flex','block'].indexOf(document.getElementById("journal").style.display)>=0
+      || document.getElementById("settingspanel").style.display === "block"
+      || (typeof fishReveal !== "undefined" && fishReveal.open)
+      || (typeof catchCine !== "undefined" && !!catchCine)
+      || (typeof pauseStage !== "undefined" && !!pauseStage);
+}
+// §A6 a modal UI panel is open (satchel, journal, bucket view, inspect, stash, trade, settings, pause, fish reveal) —
+// while one is up, camera look and world clicks are blocked. (The click-driven mini-games pry/shuck/heave are NOT modal.)
+function menuModalOpen() {
+  return (typeof invOpen !== "undefined" && invOpen)
+      || (typeof inspect !== "undefined" && inspect.open)
+      || (typeof stashOpen !== "undefined" && stashOpen >= 0)
+      || (typeof bucketLook !== "undefined" && bucketLook.open)
+      || (typeof tradeOpen !== "undefined" && tradeOpen)
+      || ['flex','block'].indexOf(document.getElementById("journal").style.display)>=0
       || document.getElementById("settingspanel").style.display === "block"
       || (typeof fishReveal !== "undefined" && fishReveal.open)
       || (typeof catchCine !== "undefined" && !!catchCine)
@@ -4541,6 +4560,7 @@ if (IS_TOUCH) (function mobileControls() {
         knob.style.left = 60 + dx + "px";
         knob.style.top = 60 + dy + "px";
       } else if (t.identifier === lookId) {
+        if (menuModalOpen()) { lookLast.x = t.clientX; lookLast.y = t.clientY; continue; }   // §A6 no camera look while a menu is open
         cam.yaw += (t.clientX - lookLast.x) * lookSensMobile;
         cam.pitch -= (t.clientY - lookLast.y) * lookSensMobile;
         const lim = Math.PI / 2 - 0.02;
@@ -4557,7 +4577,7 @@ if (IS_TOUCH) (function mobileControls() {
       if (t.identifier === moveId) {
         moveId = null; analog.x = 0; analog.y = 0; joy.style.display = "none";
       } else if (t.identifier === lookId) {
-        if (!lookStart.moved && performance.now() - lookStart.t < 220) {   // tap → walk there
+        if (!lookStart.moved && performance.now() - lookStart.t < 220 && !menuModalOpen()) {   // §A6 tap → use (blocked while a menu is open)
           clickAt(t.clientX / innerWidth * 2 - 1, -(t.clientY / innerHeight * 2 - 1));
         }
         lookId = null;
@@ -6408,7 +6428,7 @@ const VARIANT_GIANT_P = 0.015, VARIANT_MORPH_P = 0.02;   // per spawn (tunable)
 const VARIANT_MORPHS = ["blue","albino","twotone"];
 const VARIANT_TINT = { blue:[0.32,0.5,0.98], albino:[0.97,0.95,0.97], twotone:[0.6,0.52,0.78] };
 const VARIANT_LABEL = { giant:"Giant", blue:"Blue", albino:"Albino", twotone:"Two-tone" };
-const VARIANT_BADGE = { giant:"◆", blue:"🔵", albino:"⚪", twotone:"◑" };
+const VARIANT_BADGE = { giant:"G", blue:"B", albino:"A", twotone:"T" };   // §A6 plain-text badges (no emoji)
 let variantsSeen = {};   // species → { giant:n, blue:n, albino:n, twotone:n } (persisted)
 function variantEligible(t) { const r = CREATURES[t]; return !!(r && (FISH[t] || r.stoneCritter || t==="crab" || t==="star" || t==="horseshoe" || t==="gull" || t==="hermit" || t==="urchin")); }
 function applyVariant(e) {
@@ -7649,7 +7669,7 @@ let invTab = "items";   // §16 satchel tab: "items" | "make"
 const MENU_TABS = [["satchel", "Satchel"], ["bucket", "Bucket"], ["journal", "Journal"]];
 let menuTab = "satchel";
 try { const v = localStorage.getItem("bc_menutab"); if (v && MENU_TABS.some(t => t[0] === v)) menuTab = v; } catch (e) {}
-function menuIsOpen() { return invOpen || bucketLook.open || document.getElementById("journal").style.display === "block"; }
+function menuIsOpen() { return invOpen || bucketLook.open || ['flex','block'].indexOf(document.getElementById("journal").style.display)>=0; }
 function renderMenuTabs() {
   const el = document.getElementById("menutabs");
   if (!menuIsOpen()) { el.classList.remove("show"); el.innerHTML = ""; return; }
@@ -7660,7 +7680,7 @@ function renderMenuTabs() {
 function hideMenuBodies() {
   if (invOpen) { invOpen = false; document.getElementById("invpanel").style.display = "none"; hideTip(); hideContextMenu(); }
   if (bucketLook.open) { bucketLook.open = false; if (bucketLook.el) bucketLook.el.style.display = "none"; }
-  const j = document.getElementById("journal"); if (j.style.display === "block") j.style.display = "none";
+  const j = document.getElementById("journal"); if (['flex','block'].indexOf(j.style.display)>=0) j.style.display = "none";
 }
 function openMenu(tab) {
   if (typeof SND !== "undefined") SND.play(menuIsOpen() ? "menu_tab" : "menu_open");   // §Sound open / switch tab
@@ -7670,7 +7690,7 @@ function openMenu(tab) {
   if (document.pointerLockElement === canvas) document.exitPointerLock();
   if (menuTab === "satchel") { invOpen = true; document.getElementById("invpanel").style.display = "block"; renderInventory(); }
   else if (menuTab === "bucket") { openBucketLook(); }
-  else { renderJournal(); document.getElementById("journal").style.display = "block"; }
+  else { renderJournal(); document.getElementById("journal").style.display = "flex"; }   // §A6 flex so the journal box centres
   renderMenuTabs();
 }
 function closeMenu() { if (typeof SND !== "undefined") SND.play("menu_close"); hideMenuBodies(); renderMenuTabs(); hideTip(); hideContextMenu(); requestLock(); }
@@ -7685,7 +7705,7 @@ function cycleMenuTab(dir) {
 }
 function toggleInventory() {
   invOpen = !invOpen; document.getElementById("invpanel").style.display = invOpen ? "block" : "none";
-  if (invOpen) { const j = document.getElementById("journal"); if (j.style.display === "block") j.style.display = "none";   // §13.4 one panel at a time
+  if (invOpen) { const j = document.getElementById("journal"); if (['flex','block'].indexOf(j.style.display)>=0) j.style.display = "none";   // §13.4 one panel at a time
     renderInventory(); if (document.pointerLockElement === canvas) document.exitPointerLock(); }   // free the cursor for the bag
   else { hideTip(); hideContextMenu(); requestLock(); }                                                        // §13.1 back to the game
 }
@@ -7998,7 +8018,7 @@ function journalGrid(tab) {
     const [n,t] = setProgress(set), done = n >= t;
     const cells = set.members.map(mem => { const got = memberGot(mem), ic = memberIcon(mem);
       return `<div class="jcard${got?"":" unk"}" title="${memberLabel(mem)}"><img src="${ic}"><div class="jname">${got?memberLabel(mem):"???"}</div></div>`; }).join("");
-    const head = done ? `<span style="color:#9fe6a0;font-weight:700">✦ COMPLETE</span>` : `<span style="opacity:.7">reward: ${REWARD_LABEL[set.reward]||"a keepsake"}</span>`;
+    const head = done ? `<span style="color:#9fe6a0;font-weight:700">COMPLETE</span>` : `<span style="opacity:.7">reward: ${REWARD_LABEL[set.reward]||"a keepsake"}</span>`;
     return `<div style="grid-column:1/-1;margin:2px 0 10px"><div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 2px 7px;border-bottom:1px solid rgba(255,220,150,.18);padding-bottom:5px">
       <b style="font-size:15px;color:#ffe6b0">${set.name}</b> <span style="font-size:12px">${n}/${t} &nbsp; ${head}</span></div>
       <div class="jgrid" style="margin:0">${cells}</div></div>`;
@@ -8013,10 +8033,10 @@ function journalGrid(tab) {
 }
 function renderJournal() {
   const j = document.getElementById("journal");
-  const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["collections","Collections"],["pearls","Pearls"],["cookbook","Cookbook"],["treasure","Treasure"]];
+  const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["collections","Collections"],["pearls","Pearls"],["treasure","Treasure"]];   // §A6 Cookbook tab removed
   const tabHtml = tabs.map(([id,lbl]) => { const [n,t] = journalCount(id);
     return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
-  const cleanupLine = `<div class="jstat">🌊 Beach cleanup — <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared · 🪨 Stones put back — <b>${stonesPutBack}</b> · 🦀 Horseshoes turned over — <b>${horseshoesFlipped}</b></div>`;
+  const cleanupLine = `<div class="jstat">Beach cleanup — <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared · Stones put back — <b>${stonesPutBack}</b> · Horseshoes turned over — <b>${horseshoesFlipped}</b></div>`;
   j.innerHTML = `<div id="journalbox"><h2>Field Journal</h2>
     <div class="jtabs">${tabHtml}</div>
     ${cleanupLine}
@@ -8031,7 +8051,7 @@ function renderJournal() {
 }
 function toggleJournal() {
   const j = document.getElementById("journal");
-  if (j.style.display === "block") { j.style.display = "none"; requestLock(); return; }   // §13.1 back to the game
+  if (['flex','block'].indexOf(j.style.display)>=0) { j.style.display = "none"; requestLock(); return; }   // §13.1 back to the game
   if (invOpen) { invOpen = false; document.getElementById("invpanel").style.display = "none"; hideTip(); hideContextMenu(); }   // §13.4 one panel at a time
   if (document.pointerLockElement === canvas) document.exitPointerLock();
   renderJournal();
@@ -9893,7 +9913,7 @@ function updateFireHud() {
   const c = (curTarget && curTarget.kind === "campfire") ? curTarget.obj : null;
   if (!c || mode !== "walk" || isPanelOpen()) { if (el.style.display !== "none") el.style.display = "none"; return; }
   const lit = c.lit && c.fuel > 0, p = c.pot, a = fireActionFor(c);
-  let fire = lit ? `🔥 fire ${Math.round(c.fuel * 100)}%` : (c.fuel > 0 ? "🪵 laid, unlit" : "◦ cold embers");
+  let fire = lit ? `fire ${Math.round(c.fuel * 100)}%` : (c.fuel > 0 ? "laid, unlit" : "cold embers");
   let mid;
   if (p) {
     if (p.done) mid = `pot: <b>${DISH_SET[p.dish].name}</b> ready`;
@@ -11348,7 +11368,7 @@ function givePearl(x, z) {
   if (typeof SND !== "undefined") { SND.play("discover"); setTimeout(() => { try { SND.play("discover"); } catch (e) {} }, 200); }
   if (typeof sparkle === "function") sparkle(x, surfaceAt(x,z).h+0.3, z, PEARL_TINT[col], 22);
   const kind = giant ? "a huge " : baroque ? "a wild, baroque " : "a ";
-  showCard("✦ A pearl!", "The shell parts and there it is — " + kind + PEARL_LABEL[col].toLowerCase() + " pearl, catching the light. One in twenty-five oysters, they say.");
+  showCard("A pearl!", "The shell parts and there it is — " + kind + PEARL_LABEL[col].toLowerCase() + " pearl, catching the light. One in twenty-five oysters, they say.");
 }
 function drawShuck() {
   const cv = document.getElementById("prycv"); if (!pryCtx) pryCtx = cv.getContext("2d");
@@ -12184,9 +12204,9 @@ function updateCosy() {
 function grantReward(set) { if (set.id === "angler") Inv.add("worm", 20); }   // decorations appear via cottage.rewards; angler also tops up bait
 function celebrateSet(set) {
   if (typeof SND !== "undefined") { SND.play("discover"); setTimeout(() => { try { SND.play("discover"); } catch(e){} }, 170); }
-  showCard("Collection complete!  ✦ " + set.name, "Reward: " + (REWARD_LABEL[set.reward]||"a keepsake") + " has appeared in your cottage.");
+  showCard("Collection complete! " + set.name, "Reward: " + (REWARD_LABEL[set.reward]||"a keepsake") + " has appeared in your cottage.");
   const w = cotLocalToWorld(0, 0.3); if (typeof sparkle === "function") sparkle(w[0], cottage.floorY+1.4, w[1], [1,0.9,0.5], 26);
-  const j = document.getElementById("journal"); if (j && j.style.display === "block") { j.classList.add("setflash"); setTimeout(() => j.classList.remove("setflash"), 1000); if (journalTab === "collections") renderJournal(); }
+  const j = document.getElementById("journal"); if (j && ['flex','block'].indexOf(j.style.display)>=0) { j.classList.add("setflash"); setTimeout(() => j.classList.remove("setflash"), 1000); if (journalTab === "collections") renderJournal(); }
 }
 function checkSets() {
   if (!cottage) return; if (!cottage.rewards) cottage.rewards = [];
@@ -13779,6 +13799,7 @@ function frame(now) {
     const cb = document.querySelector('.mBtn[data-act="climb"]');   // §15 climb button when grabbable or climbing
     if (cb) { const show = (mode === "walk" && (player.climbing || (!player.swimming && !!climbTargetInFront()))) ? "flex" : "none"; if (cb.style.display !== show) cb.style.display = show; } }
   document.getElementById("hotbar").style.display = (mode === "walk") ? "flex" : "none";
+  { const sc = document.getElementById("scrim"); if (sc) { const show = menuModalOpen() ? "block" : "none"; if (sc.style.display !== show) sc.style.display = show; } }   // §A6 shared dim behind any open modal
   // interaction indicator: a dot that becomes a soft-pulsing ring over anything in reach (§11.2)
   if (mode === "walk") {
     curTarget = targetAlongRay(rayFromNDC(0, 0), curTarget);
