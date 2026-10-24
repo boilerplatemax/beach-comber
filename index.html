@@ -11819,6 +11819,33 @@ function drawCottageDisplays(view) {
     if (n) mi.dyn.draw(arr, n);
   }
 }
+// §5 small markers so empty display spots are easy to find — a little peg/stand on each, with a soft glow when you're holding something to place
+let slotPegDyn = null, slotGlowDyn = null;
+function slotPegMesh() { const m = Mesh(); const base = [0.46,0.39,0.3], knob = [0.6,0.5,0.38];
+  mBox(m, 0, 0.012, 0, 0.055, 0.012, 0.05, base);             // a small stand plate
+  mBox(m, 0, 0.055, 0, 0.012, 0.045, 0.012, knob);            // a slender peg
+  return m; }
+function drawCottageSlotMarkers(view) {
+  if (!cottage) return;
+  const empties = []; for (const s of COT_SLOTS) if (!cottage.disp[s.key]) empties.push(s);
+  if (!empties.length) return;
+  if (!slotPegDyn) slotPegDyn = makeDynamic(slotPegMesh(), COT_SLOTS.length);
+  propUniforms(view); const a = dispScratch; let n = 0;
+  for (const s of empties) { const w = cotLocalToWorld(s.x, s.z); const dx = w[0]-cam.pos[0], dz = w[1]-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    const o = n*10; a[o]=w[0];a[o+1]=cottage.floorY+s.y;a[o+2]=w[1];a[o+3]=1;a[o+4]=cottage.yaw+s.face;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
+  if (n) slotPegDyn.draw(a, n);
+  // soft pulsing glow on empty spots while holding a displayable find
+  if (typeof isDisplayable === "function" && isDisplayable(selectedItem())) {
+    if (!slotGlowDyn) slotGlowDyn = makeDynamic(discMesh(0, 0.11, 12, 0, [1,1,1]), COT_SLOTS.length);
+    const g = 0.35 + 0.3*(0.5 + 0.5*Math.sin(clock.t*4.5));
+    gl.uniform1f(propU.uGhost, 1); gl.uniform3fv(propU.uGhostCol, [1.0,0.88,0.52]);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE); gl.depthMask(false);
+    let k = 0; for (const s of empties) { const w = cotLocalToWorld(s.x, s.z); const dx = w[0]-cam.pos[0], dz = w[1]-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+      const o = k*10; a[o]=w[0];a[o+1]=cottage.floorY+s.y+0.06;a[o+2]=w[1];a[o+3]=1;a[o+4]=cottage.yaw+s.face;a[o+5]=0;a[o+6]=0;a[o+7]=g;a[o+8]=g*0.86;a[o+9]=g*0.5; k++; }
+    if (k) slotGlowDyn.draw(a, k);
+    gl.depthMask(true); gl.disable(gl.BLEND); gl.uniform1f(propU.uGhost, 0);
+  }
+}
 
 /* §19D FISH TROPHIES — mount your latest catch on a wall board with its weight;
    a record catch gets a small brass plaque. Interact again to take it down.    */
@@ -13482,6 +13509,7 @@ function frame(now) {
   drawBuilds(view);        // §16B placed building pieces + the placement ghost
   drawCottage(view);       // §19 the home-base cottage (shell, door, roof, glowing windows)
   drawCottageDisplays(view);   // §19C placed finds on shelves / cabinet / windowsill
+  drawCottageSlotMarkers(view);   // §5 pegs/stands on empty display spots (+ a soft glow when holding a find to place)
   drawCottageTrophies(view);   // §19D mounted fish trophies
   drawCottageAquarium(view);   // §19E the aquarium tank, residents & decor
   drawCottageDecor(view);      // §19F/§19G reward decorations + cobwebs that clear as it gets cosy
