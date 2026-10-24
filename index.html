@@ -4603,6 +4603,22 @@ function mCyl(m, y0, y1, r0, r1, sides, col) {
     else mQuad(m, p00, p10, p11, p01, col);
   }
 }
+// a smooth tube swept along a circular arc in the XY plane (z is the out-of-plane thickness axis) — e.g. a bucket handle
+function mArcTube(m, cx, cy, R, r, a0, a1, segs, sides, col) {
+  let prev = null;
+  for (let i = 0; i <= segs; i++) {
+    const a = a0 + (a1 - a0) * i / segs;
+    const Cx = cx + Math.cos(a) * R, Cy = cy + Math.sin(a) * R;
+    const nx = Math.cos(a), ny = Math.sin(a);                 // in-plane radial normal; the other normal is +z
+    const ring = [];
+    for (let k = 0; k < sides; k++) {
+      const t = k / sides * 6.2832, c = Math.cos(t) * r, s = Math.sin(t) * r;
+      ring.push([Cx + nx*c, Cy + ny*c, s]);
+    }
+    if (prev) for (let k = 0; k < sides; k++) { const k2 = (k + 1) % sides; mQuad(m, prev[k], prev[k2], ring[k2], ring[k], col); }
+    prev = ring;
+  }
+}
 function mBox(m, cx, cy, cz, hx, hy, hz, col) {
   const s = [[cx-hx,cy-hy,cz-hz],[cx+hx,cy-hy,cz-hz],[cx+hx,cy-hy,cz+hz],[cx-hx,cy-hy,cz+hz],
              [cx-hx,cy+hy,cz-hz],[cx+hx,cy+hy,cz-hz],[cx+hx,cy+hy,cz+hz],[cx-hx,cy+hy,cz+hz]];
@@ -5751,9 +5767,18 @@ function bucketItemMesh() { const m = Mesh(); const tin = [0.6,0.64,0.7], dk = [
   mCyl(m, -0.03, 0.01, 0.305, 0.312, 12, dk);                       // a seam band for the tin look
   mCyl(m, 0.3, 0.37, 0.355, 0.35, 12, hi);                          // rolled rim (a smooth wider lip, not crenellations)
   mergeMesh(m, discMesh(0.37, 0.355, 12, 0.0, dk));                 // thin rim top face
-  const R = 0.35;                                                   // swing handle: a semicircular arc over the top
-  for (let i = 0; i <= 10; i++) { const a = Math.PI * i / 10; mBox(m, Math.cos(a)*R, 0.33 + Math.sin(a)*0.27, 0, 0.026, 0.026, 0.026, dk); }
+  // swing handle: one smooth curved tube arcing over the top (not broken cubes)
+  mArcTube(m, 0, 0.33, 0.35, 0.028, 0, Math.PI, 18, 8, dk);
   for (const s of [-1,1]) mBox(m, s*0.35, 0.33, 0, 0.03, 0.03, 0.055, dk);   // pivot lugs where the handle meets the rim
+  return m; }
+// §A1 the water surface that sits just below the pail's rim when it holds water — the game's water tint, lighter in the middle
+function bucketWaterFPMesh() { const m = Mesh(); const edge = [0.13,0.36,0.46], mid = [0.22,0.52,0.6];
+  const y = 0.24, r = 0.29;
+  for (let i = 0; i < 16; i++) { const a0 = i/16*6.2832, a1 = (i+1)/16*6.2832;
+    mTri(m, [0,y,0], [Math.cos(a0)*r,y,Math.sin(a0)*r], [Math.cos(a1)*r,y,Math.sin(a1)*r], mid); }
+  // a darker ring just inside the rim for depth
+  for (let i = 0; i < 16; i++) { const a0 = i/16*6.2832, a1 = (i+1)/16*6.2832;
+    mQuad(m, [Math.cos(a0)*r,y,Math.sin(a0)*r], [Math.cos(a1)*r,y,Math.sin(a1)*r], [Math.cos(a1)*(r*0.7),y+0.004,Math.sin(a1)*(r*0.7)], [Math.cos(a0)*(r*0.7),y+0.004,Math.sin(a0)*(r*0.7)], edge); }
   return m; }
 function stumpMesh() { const m = Mesh(); mCyl(m,0,0.4,0.32,0.28,7,BARK); mergeMesh(m, discMesh(0.4,0.28,7,0.03,[0.72,0.6,0.42])); return m; }
 function logMesh() { const m = Mesh(); mCyl(m,-0.45,0.45,0.15,0.15,7,BROWN); mergeMesh(m, discMesh(0.45,0.15,7,0.02,[0.66,0.56,0.42])); mergeMesh(m, discMesh(-0.45,0.15,7,-0.02,[0.66,0.56,0.42])); return m; }
@@ -10290,7 +10315,7 @@ function makeToolFP(id, mesh) {
   gl.bindVertexArray(null);
   TOOL_FP[id] = { mesh, vao, posBuf, vc: mesh.pos.length / 3, world: new Float32Array(mesh.pos.length) };
 }
-function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("spear", spearMesh()); makeToolFP("climbhands", climbHandsMesh()); makeToolFP("bucket", bucketItemMesh()); makeToolFP("lantern", lanternMesh()); makeToolFP("rod", rodMesh()); }   // §R4 bucket & lantern; §Fishing rod held too
+function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("spear", spearMesh()); makeToolFP("stake", stakeMesh()); makeToolFP("climbhands", climbHandsMesh()); makeToolFP("bucket", bucketItemMesh()); makeToolFP("bucketwater", bucketWaterFPMesh()); makeToolFP("lantern", lanternMesh()); makeToolFP("rod", rodMesh()); }   // §A1 stake now shows in hand   // §R4 bucket & lantern; §Fishing rod held too
 // §15 render the two gripping hands while climbing, with a hand-over-hand sway
 function drawClimbHands(view) {
   const fp = TOOL_FP["climbhands"]; if (!fp) return;
@@ -10322,7 +10347,9 @@ function drawShovel(view) {
   const f = camForward();
   let rx = -f[2], rz = f[0]; const rl = Math.hypot(rx, rz) || 1; rx /= rl; rz /= rl;      // camera right (horizontal)
   const upx = -rz*f[1], upy = rz*f[0] - rx*f[2], upz = rx*f[1];                           // camera up = right × forward
-  const sw = Math.sin(Math.min(1, shovelSwing) * Math.PI);                               // 0→1→0 swing arc
+  const ss = Math.min(1, shovelSwing);                                                   // 1 at the strike → 0 at rest
+  const sw = Math.sin(ss * Math.PI);                                                     // 0→1→0 swing arc (peaks mid-swing)
+  const wind = Math.max(0, ss - 0.5) * 2;                                                // 1 at strike start → 0 by mid-swing (the overhead wind-up)
   const rec = toolRecoilT * toolRecoilT;                                                 // recoil kick on a bounced hit
   const isSpear = id === "spear", isRod = id === "rod", held = (id === "bucket" || id === "lantern");
   const jab = isSpear ? Math.sin(Math.min(1, (spear.thrustT/0.3)) * Math.PI) : 0;        // §14C spear thrust
@@ -10343,17 +10370,33 @@ function drawShovel(view) {
     scale = id === "bucket" ? 0.46 : 0.6;
     ox = 0.26 + sway; oy = -0.52 - swap*0.5 + bob; oz = 0.92;
     roll = 0.08 + swayR; pitch = -0.08;
-  } else {                                                                                // shovel / axe / pickaxe / spear / stake: angled, head up & in
-    const isPoke = isSpear || id === "stake";                                             // §tools spear & stake point forward and thrust away
+  } else if (id === "stake") {                                                            // §A1 stake: gripped low-right, raised diagonally so the SHARP point (the +y end) rises toward the centre of the screen (crosshair); a hit is a forward stab
+    scale = 0.5;
+    ox = 0.16 + sway;
+    oy = -0.16 - swap*0.5 + bob + chg*0.06;
+    oz = 0.76 + sw*0.45 + jab*0.45 - chg*0.28;                                            // stab forward on a swing/thrust
+    roll = 0.1 + swayR;
+    pitch = 0.72 + sw*0.4 + jab*0.3 - chg*0.12;                                           // raised point near screen-centre; a strike tips it forward into a stab
+  } else {                                                                                // shovel / axe / pickaxe / spear: angled, head up & in
+    const isPoke = isSpear;                                                               // §tools spear points forward and thrusts away
     const bladed = id === "axe" || id === "pickaxe";
     scale = isSpear ? 0.5 : 0.46;
     ox = 0.16 + sway;
-    // §tools the swing drives the tool FORWARD, away from the player (an overhand chop), not just down
-    oy = -0.42 - sw*0.08 + rec*0.2 - swap*0.5 + bob + chg*0.1;
-    oz = 0.82 + sw*0.6 - rec*0.35 + jab*0.5 - chg*0.3;
-    roll = -0.4 + swayR - sw*0.12;
-    pitch = (isPoke ? (-0.95 + jab*0.3 - chg*0.3) : -0.2) - sw*1.05 + rec*0.65;           // chop sweeps the head down & forward; spear/stake thrust straight ahead
-    if (bladed) toolYaw = -0.90;                                                          // §tools3 ~52° CW about the vertical YAW axis (applied after tilt), not the tool's own shaft
+    if (bladed) {
+      // §A1 overhead chop: pivot about the bottom of the handle (mesh origin), the blade arcs UP (wind-up) then comes DOWN
+      // through the target in the vertical plane — a pitch-only motion, no sideways yaw twist.
+      const chop = wind*0.75 - sw*1.65;                                                   // +0.75 raised at the start → −1.65 through the strike → 0 back at rest
+      oy = -0.3 - sw*0.06 + wind*0.12 + rec*0.2 - swap*0.5 + bob;                          // lifts a touch on the wind-up, drops into the chop
+      oz = 0.74 + sw*0.5 - rec*0.3;                                                        // drives forward through the strike
+      roll = -0.28 + swayR;                                                               // a little lean, held steady (no twist)
+      pitch = -0.15 + chop + rec*0.5;
+      toolYaw = 0;
+    } else {
+      oy = -0.42 - sw*0.08 + rec*0.2 - swap*0.5 + bob + chg*0.1;
+      oz = 0.82 + sw*0.6 - rec*0.35 + jab*0.5 - chg*0.3;
+      roll = -0.4 + swayR - sw*0.12;
+      pitch = (isPoke ? (-0.95 + jab*0.3 - chg*0.3) : -0.2) - sw*1.05 + rec*0.65;         // spear thrusts straight ahead
+    }
     if (id === "shovel") { flipEnd = true; oy = -0.26 - sw*0.08 + rec*0.2 - swap*0.5 + bob; oz = 0.78 + sw*0.5 - rec*0.35; pitch = -0.5 - sw*0.9 + rec*0.6; }   // §playtest1 flip 180°: D-grip up in the hand, spade at the far end pointing down & away
   }
   const cr = Math.cos(roll), sr = Math.sin(roll), cp = Math.cos(pitch), sp2 = Math.sin(pitch);
@@ -10384,6 +10427,25 @@ function drawShovel(view) {
   gl.enable(gl.DEPTH_TEST); gl.depthMask(true);               // but its own faces still sort correctly
   gl.drawArraysInstanced(gl.TRIANGLES, 0, fp.vc, 1);
   countDraw(fp.vc / 3);
+  // §A1 a translucent water surface sitting inside the pail's rim, in the game's water tint, when the bucket holds water
+  if (id === "bucket" && bucket.water) {
+    const wf = TOOL_FP["bucketwater"];
+    if (wf) {
+      const wsrc = wf.mesh.pos, wworld = wf.world; let q = 0;
+      const lap = Math.sin(t*2.3)*0.006 + Math.cos(t*1.7)*0.004;                            // a gentle lap on the surface
+      for (let i = 0; i < wsrc.length; i += 3) {
+        let vx = wsrc[i]*scale, vy = (wsrc[i+1]+lap)*scale, vz = wsrc[i+2]*scale;
+        const x2 = vx*cr - vy*sr, y2 = vx*sr + vy*cr;
+        let y3 = y2*cp - vz*sp2, z3 = y2*sp2 + vz*cp, x3 = x2;
+        if (toolYaw) { const nx = x3*cY - z3*sY, nz = x3*sY + z3*cY; x3 = nx; z3 = nz; }
+        wworld[q++] = cam.pos[0] + rx*(ox+x3) + upx*(oy+y3) + f[0]*(oz+z3);
+        wworld[q++] = cam.pos[1] + upy*(oy+y3) + f[1]*(oz+z3);
+        wworld[q++] = cam.pos[2] + rz*(ox+x3) + upz*(oy+y3) + f[2]*(oz+z3);
+      }
+      gl.bindVertexArray(wf.vao); gl.bindBuffer(gl.ARRAY_BUFFER, wf.posBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, wworld, 0, wf.vc*3);
+      gl.drawArraysInstanced(gl.TRIANGLES, 0, wf.vc, 1); countDraw(wf.vc/3);
+    }
+  }
 }
 
 function updateDigging(dt) {
