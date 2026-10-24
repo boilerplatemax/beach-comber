@@ -204,6 +204,10 @@
   /* field journal (§13.5 redesigned: compact, tabbed, 3D-icon cards) */
   /* §A6 one shared scrim behind every modal; the panels themselves sit above it */
   #scrim { position: fixed; inset: 0; z-index: 11; display: none; background: var(--dim); backdrop-filter: blur(2px); }
+  /* §menu the combined satchel + bucket view: both panels laid out side by side */
+  #combined { position: fixed; inset: 0; z-index: 13; display: none; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; padding: 16px; box-sizing: border-box; }
+  #combined #invpanel, #combined #bucketlookbox { position: static; transform: none; left: auto; top: auto; margin: 0; }
+  #combined #invpanel { max-height: 86vh; }
   #journal {
     position: fixed; inset: 0; z-index: 12; display: none; align-items: center; justify-content: center;
     background: transparent; text-align: center;
@@ -555,6 +559,7 @@
 <div id="journal"></div>
 <div id="invpanel"></div>
 <div id="menutabs"></div>
+<div id="combined"></div>
 <div id="pausemenu"></div>
 <div id="tradepanel"></div>
 <canvas id="ygraph" width="260" height="96"></canvas>
@@ -3402,7 +3407,7 @@ function updateFishing(dt) {
 function openFishReveal() {
   const f = rod.fish, sp = FISH_SPECIES[f.species];
   rod.state = "reveal"; fishReveal.open = true;
-  if (!IS_TOUCH && document.pointerLockElement === canvas) document.exitPointerLock();
+  uiUnlock();
   const el = document.getElementById("fishreveal");
   el.innerHTML = `<div id="fishrevealbox">
       <div class="frtitle">You landed a</div>
@@ -3507,7 +3512,7 @@ function updateCatchCine(dt) {
 function openCatchCard() {
   const f = catchCine.f, sp = FISH_SPECIES[f.species], rar = catchCine.rar;
   fishReveal.open = true;
-  if (!IS_TOUCH && document.pointerLockElement === canvas) document.exitPointerLock();   // free the cursor for the card buttons
+  uiUnlock();   // free the cursor for the card buttons
   const icon = (typeof buildMeshIcon === "function") ? buildMeshIcon(catchSpeciesMesh(f.species), [1,1,1]) : null;
   if (typeof gl !== "undefined") gl.bindFramebuffer(gl.FRAMEBUFFER, null);
   const prev = rodRecord[f.species] && !f.record ? rodRecord[f.species] : 0;
@@ -3820,6 +3825,7 @@ addEventListener("keydown", (e) => {
   if (e.code === "Escape" && typeof inspect !== "undefined" && inspect.open) { closeInspect(); return; }   // close the close-up first
   if (e.code === "Escape" && typeof tradeOpen !== "undefined" && tradeOpen) { closeTrade(); return; }
   if (e.code === "Escape" && document.getElementById("settingspanel").style.display === "block") { closeSettings(); return; }   // §2 settings → back to pause (or game)
+  if (e.code === "Escape" && pauseStage === "journal") { closeJournalToPause(); return; }   // §menu journal (in pause) → back to pause
   if (e.code === "Escape" && pauseStage) { if (pauseStage === "controls") { showPause(); } else closePause(); return; }   // §2 controls → pause; pause → resume
   if (e.code === "Escape" && menuIsOpen()) { closeMenu(); return; }   // §2 Esc closes the Satchel/Bucket/Journal menu
   if (e.code === "Escape" && mode === "walk") { openPause(); return; }   // §2 Esc opens the pause menu
@@ -4095,7 +4101,7 @@ function controlsRows() {
 function openPause() {
   if (mode !== "walk" || menuIsOpen() || isPanelOpen() || buildMode) return;
   pauseWasClockPaused = clock.paused; clock.paused = true;     // freeze tide / creatures while paused
-  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  uiUnlock();
   if (typeof SND !== "undefined") { SND.play("menu_open"); if (SND.ctx && SND.master) try { SND.master.gain.value = SND.muted ? 0 : SND.vol.master * PAUSE_VOL_DUCK; } catch (e) {} }   // §playtest1 duck game audio ~70% on pause (don't silence it)
   showPause();
 }
@@ -4104,6 +4110,7 @@ function showPause() {
   const el = document.getElementById("pausemenu");
   el.innerHTML = `<div id="pausebox"><h2>Paused</h2><div class="psub">${ISLAND_NAME}</div>
     <button class="primary" data-pm="resume">Resume</button>
+    <button data-pm="journal">Field Journal</button>
     <button data-pm="settings">Settings</button>
     <button data-pm="controls">Controls</button>
     <button class="danger" data-pm="quit">Save &amp; quit</button></div>`;
@@ -4114,6 +4121,18 @@ function showControls() {
   const el = document.getElementById("pausemenu");
   el.innerHTML = `<div id="controlsbox"><h2>Controls</h2>${controlsRows()}<button class="closebtn primary" data-pm="back">Back</button></div>`;
   el.classList.add("show"); wirePause(el);
+}
+// §menu open the Field Journal from the pause menu (the game stays paused); Esc returns to the pause menu
+function openJournalFromPause() {
+  const el = document.getElementById("pausemenu"); el.classList.remove("show"); el.innerHTML = "";
+  pauseStage = "journal";
+  if (typeof renderJournal === "function") renderJournal();
+  document.getElementById("journal").style.display = "flex";
+}
+function closeJournalToPause() {
+  if (typeof inspect !== "undefined" && inspect.open) { inspect.open = false; if (inspect.el) inspect.el.style.display = "none"; }
+  document.getElementById("journal").style.display = "none";
+  showPause();
 }
 function closePause() {
   pauseStage = null;
@@ -4126,6 +4145,7 @@ function wirePause(el) {
   el.querySelectorAll("button[data-pm]").forEach(b => b.onclick = () => {
     const a = b.dataset.pm;
     if (a === "resume") closePause();
+    else if (a === "journal") openJournalFromPause();   // §menu the Field Journal now lives in the pause menu
     else if (a === "controls") showControls();
     else if (a === "back") showPause();
     else if (a === "settings") { el.classList.remove("show"); settingsFromPause = true; openSettings(); }
@@ -4268,13 +4288,19 @@ function menuModalOpen() {
 function requestLock() {   // re-acquire pointer lock after a gesture (closing a panel); harmless if it fails
   if (!IS_TOUCH && mode === "walk" && !isPanelOpen()) { try { canvas.requestPointerLock(); } catch (e) {} }
 }
+// §menu every intentional pointer-lock release in our own UI / mini-games goes through here, so the
+// pointerlockchange handler knows it wasn't an Esc/tab-away and must NOT open the pause menu.
+let intentionalUnlock = false;
+function uiUnlock() { intentionalUnlock = true; if (document.pointerLockElement === canvas) document.exitPointerLock(); }
 let wasLocked = false;   // §R4 track lock transitions so we only auto-pause on a genuine loss during play
 document.addEventListener("pointerlockchange", () => {
   const locked = document.pointerLockElement === canvas;
   if (!locked) useHeld = false;                   // §13.2 stop auto-swinging when the cursor is freed
   // §R4 desktop pause: Esc releases pointer lock and the browser often swallows the key, so the pointerlock
   // loss itself is the signal. If we were playing (locked) and no panel is responsible, open the pause menu.
-  if (wasLocked && !locked && !IS_TOUCH && mode === "walk" && !isPanelOpen() && !pauseStage) openPause();
+  // §menu a deliberate release by our own UI/mini-games sets intentionalUnlock, so it never counts as a pause.
+  if (wasLocked && !locked && !IS_TOUCH && mode === "walk" && !isPanelOpen() && !pauseStage && !intentionalUnlock) openPause();
+  intentionalUnlock = false;                       // consume the flag after this transition
   wasLocked = locked;
   const hint = document.getElementById("resumehint");
   // lost lock but a panel/pause is responsible → no title; only show the minimal resume hint if truly idle
@@ -6143,7 +6169,12 @@ function drinkCanMesh(){ const m=Mesh(); const c=[0.72,0.74,0.78]; mCyl(m,0,0.32
 function bottleCapMesh(){ const m=Mesh(); mCyl(m,0,0.03,0.07,0.07,12,[0.85,0.4,0.3]); for(let i=0;i<12;i++){ const a=i/12*6.283; mBox(m,Math.cos(a)*0.07,0.015,Math.sin(a)*0.07,0.008,0.02,0.008,[0.68,0.3,0.22]); } return m; }
 function plasticBagMesh(){ const m=Mesh(); const c=[0.82,0.85,0.9]; for(let i=0;i<5;i++){ const a=i/5*6.283; mBox(m,Math.cos(a)*0.09,0.03+(i%2)*0.05,Math.sin(a)*0.09,0.1,0.02,0.09,[c[0],c[1],c[2]-0.02*(i%2)]); } mBox(m,0,0.02,0,0.13,0.015,0.13,[0.86,0.88,0.92]); return m; }
 function foamChunkMesh(){ const m=Mesh(); const c=[0.92,0.9,0.85]; mBox(m,0,0.08,0,0.15,0.08,0.1,c); mBox(m,0.09,0.13,0.03,0.05,0.05,0.05,[0.88,0.86,0.8]); mBox(m,-0.07,0.11,-0.04,0.04,0.06,0.06,[0.9,0.88,0.83]); return m; }
-function netScrapMesh(){ const m=Mesh(); const c=[0.38,0.46,0.5]; for(let i=0;i<8;i++){ const a=i*0.85; mCyl(m,Math.cos(a)*0.1,Math.cos(a)*0.1+0.05,0.014,0.014,4,c); } mergeMesh(m, discMesh(0,0.15,6,0.02,[0.34,0.42,0.46])); for(const s of [-1,1]) mBox(m,s*0.12,0.03,0,0.02,0.02,0.1,[0.5,0.42,0.3]); return m; }
+// §menu a simple net: a square grid/mesh of crossing strands with a slight sag
+function netScrapMesh(){ const m=Mesh(); const c=[0.44,0.52,0.54], c2=[0.36,0.44,0.46], N=5, span=0.28, r=0.011;
+  for(let i=0;i<N;i++){ const t=(i/(N-1)-0.5)*2*span, sag=-0.03*(1-(t/span)*(t/span));
+    mBox(m, 0, sag, t, span, r, r, i%2?c:c2);   // strands running along x
+    mBox(m, t, sag, 0, r, r, span, i%2?c2:c); }  // strands running along z
+  return m; }
 function plasticStrawMesh(){ const m=Mesh(); mCyl(m,0,0.42,0.018,0.018,5,[0.9,0.35,0.5]); mCyl(m,0.1,0.14,0.02,0.02,5,[0.95,0.5,0.6]); return m; }
 // §17.2 varied seabed plants — a low moss carpet, a mid red algae, and harvestable sea lettuce
 function seaMossMesh(){ const m=Mesh(); const c=[0.42,0.5,0.36], c2=[0.5,0.42,0.34];
@@ -7685,61 +7716,56 @@ function itemCompartment(id) { const it = ITEMS[id]; if (!it) return "Misc";
   return "Misc"; }
 let invOpen = false;
 let invTab = "items";   // §16 satchel tab: "items" | "make"
-// §2 one menu, three tabs — Satchel / Bucket / Journal — opened with E, cycled with Tab, reopens the last tab
-const MENU_TABS = [["satchel", "Satchel"], ["bucket", "Bucket"], ["journal", "Journal"]];
-let menuTab = "satchel";
-try { const v = localStorage.getItem("bc_menutab"); if (v && MENU_TABS.some(t => t[0] === v)) menuTab = v; } catch (e) {}
-function menuIsOpen() { return invOpen || bucketLook.open || ['flex','block'].indexOf(document.getElementById("journal").style.display)>=0; }
-function renderMenuTabs() {
-  const el = document.getElementById("menutabs");
-  if (!menuIsOpen()) { el.classList.remove("show"); el.innerHTML = ""; return; }
-  el.classList.add("show");
-  el.innerHTML = MENU_TABS.map(([id, lbl]) => `<button class="mtb${menuTab === id ? " on" : ""}" data-mt="${id}">${lbl}</button>`).join("");
-  el.querySelectorAll(".mtb").forEach(b => b.onclick = () => openMenu(b.dataset.mt));
-}
-function hideMenuBodies() {
-  if (invOpen) { invOpen = false; document.getElementById("invpanel").style.display = "none"; hideTip(); hideContextMenu(); }
-  if (bucketLook.open) { bucketLook.open = false; if (bucketLook.el) bucketLook.el.style.display = "none"; }
+// §menu E opens ONE combined view — the satchel and the bucket side by side, no tabs.
+function menuIsOpen() { return invOpen || bucketLook.open; }   // the combined satchel+bucket view
+function renderMenuTabs() { const el = document.getElementById("menutabs"); if (el) { el.classList.remove("show"); el.innerHTML = ""; } }   // §menu no tabs anymore
+function hideMenuBodies() {   // kept for any external callers; clears the combined view
+  invOpen = false; bucketLook.open = false;
+  const c = document.getElementById("combined"); if (c) c.style.display = "none";
   const j = document.getElementById("journal"); if (['flex','block'].indexOf(j.style.display)>=0) j.style.display = "none";
+  hideTip(); hideContextMenu();
 }
-function openMenu(tab) {
-  if (typeof SND !== "undefined") SND.play(menuIsOpen() ? "menu_tab" : "menu_open");   // §Sound open / switch tab
-  if (tab && MENU_TABS.some(t => t[0] === tab)) menuTab = tab;
-  try { localStorage.setItem("bc_menutab", menuTab); } catch (e) {}
-  hideMenuBodies();
-  if (document.pointerLockElement === canvas) document.exitPointerLock();
-  if (menuTab === "satchel") { invOpen = true; document.getElementById("invpanel").style.display = "block"; renderInventory(); }
-  else if (menuTab === "bucket") { openBucketLook(); }
-  else { renderJournal(); document.getElementById("journal").style.display = "flex"; }   // §A6 flex so the journal box centres
-  renderMenuTabs();
+function openMenu() {   // §menu always the combined view (tab argument ignored)
+  if (menuIsOpen()) return;
+  if (typeof SND !== "undefined") SND.play("menu_open");
+  const combined = document.getElementById("combined"), inv = document.getElementById("invpanel"), box = document.getElementById("bucketlookbox");
+  initBucketLook();
+  if (inv.parentNode !== combined) combined.appendChild(inv);
+  if (box.parentNode !== combined) combined.appendChild(box);   // reparent both panels into the side-by-side wrapper
+  invOpen = true; invTab = "items"; renderInventory();
+  bucketLook.open = true;                                        // drives the live bucket render
+  inv.style.display = "block"; box.style.display = "";
+  combined.style.display = "flex";
+  uiUnlock();
 }
-function closeMenu() { if (typeof SND !== "undefined") SND.play("menu_close"); hideMenuBodies(); renderMenuTabs(); hideTip(); hideContextMenu(); requestLock(); }
-function toggleMenu(tab) {
-  if (menuIsOpen()) { if (tab && tab !== menuTab) openMenu(tab); else closeMenu(); }
-  else openMenu(tab || menuTab);
+function closeMenu() {   // §menu clears any inspect overlay too, so it always reopens on the clean combined view
+  if (typeof SND !== "undefined") SND.play("menu_close");
+  if (typeof inspect !== "undefined" && inspect.open) { inspect.open = false; if (inspect.el) inspect.el.style.display = "none"; }
+  invOpen = false; bucketLook.open = false;
+  document.getElementById("combined").style.display = "none";
+  hideTip(); hideContextMenu(); requestLock();
 }
-function cycleMenuTab(dir) {
-  if (!menuIsOpen()) { openMenu(menuTab); return; }
-  const i = MENU_TABS.findIndex(t => t[0] === menuTab);
-  openMenu(MENU_TABS[(i + (dir || 1) + MENU_TABS.length) % MENU_TABS.length][0]);
-}
+function toggleMenu() { if (menuIsOpen()) closeMenu(); else openMenu(); }
+function cycleMenuTab() { toggleMenu(); }   // §menu no tabs; Tab just toggles the combined view
 function toggleInventory() {
   invOpen = !invOpen; document.getElementById("invpanel").style.display = invOpen ? "block" : "none";
   if (invOpen) { const j = document.getElementById("journal"); if (['flex','block'].indexOf(j.style.display)>=0) j.style.display = "none";   // §13.4 one panel at a time
-    renderInventory(); if (document.pointerLockElement === canvas) document.exitPointerLock(); }   // free the cursor for the bag
+    renderInventory(); uiUnlock(); }   // free the cursor for the bag
   else { hideTip(); hideContextMenu(); requestLock(); }                                                        // §13.1 back to the game
 }
 function renderInventory() {
   if (!invOpen) return;
-  const tabs = `<div class="mtabs"><button class="mtab ${invTab==="items"?"on":""}" data-tab="items">Items</button><button class="mtab ${invTab==="make"?"on":""}" data-tab="make">Make</button></div>`;
+  // §menu the Items / Make tabs and the Tidy button are hidden for now (the code stays; set SHOW_MENU_TABS to bring them back)
+  const SHOW_MENU_TABS = false;
+  const tabs = SHOW_MENU_TABS ? `<div class="mtabs"><button class="mtab ${invTab==="items"?"on":""}" data-tab="items">Items</button><button class="mtab ${invTab==="make"?"on":""}" data-tab="make">Make</button></div>` : "";
   let html;
-  if (invTab === "make") {
+  if (SHOW_MENU_TABS && invTab === "make") {
     html = `<div class="ihead"><h2>Satchel</h2>${tabs}</div>` + renderMakeHTML();
-    html += `<div class="ihint">craft anywhere · fire recipes need a nearby campfire · E or Esc to close · Tab for tabs</div>`;
+    html += `<div class="ihint">craft anywhere · fire recipes need a nearby campfire · E or Esc to close</div>`;
   } else {
     const groups = { Finds: [], Food: [], Materials: [], Misc: [] };
     for (let i = 0; i < INV_SLOTS; i++) { const c = Inv.main[i]; if (c) groups[itemCompartment(c.id)].push(i); }
-    html = `<div class="ihead"><h2>Satchel</h2>${tabs}<button id="sortBtn">Tidy ▾</button></div>`;
+    html = `<div class="ihead"><h2>Satchel</h2>${tabs}${SHOW_MENU_TABS ? `<button id="sortBtn">Tidy ▾</button>` : ""}</div>`;
     for (const cat of COMPARTMENTS) {
       const idxs = groups[cat], cells = Math.max(6, Math.ceil((idxs.length + 1) / 6) * 6);   // a little room to grow
       let grid = "";
@@ -7748,7 +7774,7 @@ function renderInventory() {
     }
     const hot = Inv.hotbar.map((c, i) => slotHTML(c, INV_SLOTS + i, i + 1)).join("");
     html += `<div class="compartment"><div class="clabel">Tool belt</div><div class="igrid hot">${hot}</div></div>`;
-    html += `<div class="ihint">${IS_TOUCH ? "tap use · long-press menu · drag to the belt" : "click use · shift-click → belt · right-click menu · drag to move · drag out to drop"} · E or Esc to close · Tab for tabs</div>`;
+    html += `<div class="ihint">${IS_TOUCH ? "tap use · long-press menu · drag to the belt" : "click use · shift-click → belt · right-click menu · drag to move · drag out to drop"} · E or Esc to close</div>`;
   }
   const p = document.getElementById("invpanel"); p.innerHTML = html;
   const sb = p.querySelector("#sortBtn"); if (sb) sb.onclick = () => Inv.sort();
@@ -8084,7 +8110,7 @@ function toggleJournal() {
   const j = document.getElementById("journal");
   if (['flex','block'].indexOf(j.style.display)>=0) { j.style.display = "none"; requestLock(); return; }   // §13.1 back to the game
   if (invOpen) { invOpen = false; document.getElementById("invpanel").style.display = "none"; hideTip(); hideContextMenu(); }   // §13.4 one panel at a time
-  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  uiUnlock();
   renderJournal();
   j.style.display = "block";
 }
@@ -9298,25 +9324,23 @@ function projectBL(x, y, z, W, H) {
   if (o[3] <= 0.01) return null;
   return [(o[0]/o[3]*0.5+0.5)*W, (1-(o[1]/o[3]*0.5+0.5))*H];
 }
-function openBucketLook() {
-  // §2 the Bucket tab always opens (shows an empty-bucket state if there's nothing in it yet)
-  if (!bucketLook.el) {
-    bucketLook.el = document.getElementById("bucketlook");
-    bucketLook.cv = document.getElementById("bucketlookcanvas"); bucketLook.ctx = bucketLook.cv.getContext("2d");
-    document.getElementById("bucketlookclose").onclick = closeMenu;
-    bucketLook.el.addEventListener("pointerdown", (e) => { if (e.target === bucketLook.el) closeMenu(); });
-    bucketLook.cv.addEventListener("click", (e) => {
-      const r = bucketLook.cv.getBoundingClientRect();
-      const mx = (e.clientX - r.left)/r.width*bucketLook.cv.width, my = (e.clientY - r.top)/r.height*bucketLook.cv.height;
-      let best = null, bd = 48*48;
-      for (const cr of bucket.creatures) { const sp = projectBL(cr.bx, cr.by||0, cr.bz, bucketLook.cv.width, bucketLook.cv.height); if (!sp) continue;
-        const dd = (sp[0]-mx)*(sp[0]-mx) + (sp[1]-my)*(sp[1]-my); if (dd < bd) { bd = dd; best = cr; } }
-      if (best && typeof openInspect === "function") openInspect(best, "bucket");
-    });
-  }
-  bucketLook.open = true; bucketLook.el.style.display = "flex";
-  if (document.pointerLockElement === canvas) document.exitPointerLock();
+// §menu one-time setup of the bucket close-up canvas + its click-to-inspect handler
+function initBucketLook() {
+  if (bucketLook.el) return;
+  bucketLook.el = document.getElementById("bucketlook");
+  bucketLook.cv = document.getElementById("bucketlookcanvas"); bucketLook.ctx = bucketLook.cv.getContext("2d");
+  document.getElementById("bucketlookclose").onclick = closeMenu;
+  bucketLook.el.addEventListener("pointerdown", (e) => { if (e.target === bucketLook.el) closeMenu(); });
+  bucketLook.cv.addEventListener("click", (e) => {
+    const r = bucketLook.cv.getBoundingClientRect();
+    const mx = (e.clientX - r.left)/r.width*bucketLook.cv.width, my = (e.clientY - r.top)/r.height*bucketLook.cv.height;
+    let best = null, bd = 48*48;
+    for (const cr of bucket.creatures) { const sp = projectBL(cr.bx, cr.by||0, cr.bz, bucketLook.cv.width, bucketLook.cv.height); if (!sp) continue;
+      const dd = (sp[0]-mx)*(sp[0]-mx) + (sp[1]-my)*(sp[1]-my); if (dd < bd) { bd = dd; best = cr; } }
+    if (best && typeof openInspect === "function") openInspect(best, "bucket");   // §menu opens an overlay on top of the combined view
+  });
 }
+function openBucketLook() { initBucketLook(); bucketLook.open = true; bucketLook.el.style.display = "flex"; uiUnlock(); }
 function closeBucketLook() { bucketLook.open = false; if (bucketLook.el) bucketLook.el.style.display = "none";
   if ((!inspect || !inspect.open) && typeof requestLock === "function") requestLock(); }
 function updateBucketLook() {
@@ -9380,7 +9404,7 @@ function openInspect(subject, kind) {
   if (!inspect.el) initInspectDOM();
   inspect.open = true; inspect.kind = kind; inspect.subject = subject; inspect._sim = null; inspect.spin = 0; inspect._mapDrawn = false;
   inspect.yaw = 0.7; inspect.pitch = kind === "item" ? 0.3 : 0.5; inspect.dist = kind === "item" ? 2.7 : 2.5;
-  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  uiUnlock();
   renderInspectInfo(); inspect.el.style.display = "flex";
 }
 function closeInspect() { inspect.open = false; if (inspect.el) inspect.el.style.display = "none"; if (typeof requestLock === "function") requestLock(); }
@@ -9457,7 +9481,7 @@ function drawInspectRipples() {
 }
 function drawInspectItem() {
   const d = itemDyn(inspect.subject); if (!d) return;
-  inspectPedestal.draw(miniInst(0, -0.55, 0, 1, 0, 0, 0, [1,1,1]), 1);
+  // §menu no platform/pedestal — the item just floats and spins on its own (inspect.spin advances each frame)
   d.dyn.draw(miniInst(0, 0.02, 0, d.fit * 0.7, inspect.spin, 0, 0, d.tint), 1);
 }
 function updateInspectView() {
@@ -11201,7 +11225,7 @@ function startHeave(b) {
   heave = { b, pos: rng(), dir: rng()<0.5?1:-1, speed: 0.85, hits: 0, need: HEAVE_NEED, cool: 0, sweetC: 0.3+rng()*0.4, sweetW: 0.26 };
   const el = document.getElementById("pryoverlay"); el.style.display = "flex";
   const hint = document.getElementById("pryhint"); if (hint) hint.textContent = "Heave the boulder — strike the glowing arc";
-  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  uiUnlock();
 }
 function cancelHeave() { heave = null; document.getElementById("pryoverlay").style.display = "none"; const hint = document.getElementById("pryhint"); if (hint) hint.textContent = "Shovel the latch — strike the glowing arc"; }
 function updateHeave(dt) {
@@ -11355,10 +11379,10 @@ function oysterBedAction(b) {
 }
 function startShuck(b) {
   if (shuck || heave || pry) return;
-  shuck = { b, x: b.x, z: b.z, pos: rng(), dir: rng()<0.5?1:-1, speed: 0.95, opens: 0, misses: 0, need: SHUCK_NEED, cool: 0, sweetC: 0.3+rng()*0.4, sweetW: 0.24 };
+  shuck = { b, x: b.x, z: b.z, pos: rng(), dir: rng()<0.5?1:-1, speed: 1.45, opens: 0, misses: 0, need: SHUCK_NEED, cool: 0, sweetC: 0.22+rng()*0.56, sweetW: 0.15 };   // §menu harder: faster needle, smaller sweet zone
   const el = document.getElementById("pryoverlay"); el.style.display = "flex";
   const hint = document.getElementById("pryhint"); if (hint) hint.textContent = "Work the knife into the hinge — strike the glowing arc";
-  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  uiUnlock();
 }
 function cancelShuck() { shuck = null; document.getElementById("pryoverlay").style.display = "none"; const hint = document.getElementById("pryhint"); if (hint) hint.textContent = "Shovel the latch — strike the glowing arc"; }
 function updateShuck(dt) {
@@ -13022,7 +13046,7 @@ function startPry(c) {
   pry = { c, pos: rng(), dir: rng()<0.5?1:-1, speed: CHEST_TUNE.prySpeed, hits: 0, need: CHEST_TUNE.pryNeed, cool: 0,
     sweetC: 0.3 + rng()*0.4, sweetW: CHEST_TUNE.pryZone };
   const el = document.getElementById("pryoverlay"); el.style.display = "flex";
-  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  uiUnlock();
 }
 function cancelPry() { pry = null; document.getElementById("pryoverlay").style.display = "none"; }
 function updatePry(dt) {
@@ -13146,7 +13170,7 @@ function placeStorageBox(x, z) {
 let stashOpen = -1;
 function openStash(bi) {
   stashOpen = bi;
-  if (document.pointerLockElement === canvas) document.exitPointerLock();
+  uiUnlock();
   renderStash();
   document.getElementById("stashpanel").style.display = "block";
 }
