@@ -9658,6 +9658,7 @@ const CAMPFIRE_COST = { stick: 3, stone: 3 }, CAMPFIRE_R = 4;
 const FUEL_STICK = 0.22, FUEL_LOG = 0.6, FUEL_DRIFT = 0.3, CAMPFIRE_BURN = 1 / (0.55 * DAY_PERIOD);   // lit fire burns out in ~0.55 in-game day
 const ROAST_DONE = 11, ROAST_BURN = 22;   // game-seconds on the fire: cooked at 11s, ruined past 22s
 let fireInstantCook = false, fireFreeFuel = false;   // debug
+const HEARTH_BURN_MUL = 0.4;   // §4 the cottage hearth burns ~2.5× slower than a campfire (tunable) — a slow burn-down you top up with wood
 function newCampfire(x, z, extra) { return Object.assign({ x, z, fuel: 1, lit: true, pot: null, roast: null }, extra || {}); }
 function canBuildCampfire() { return Inv.count("stick") >= CAMPFIRE_COST.stick && Inv.count("stone") >= CAMPFIRE_COST.stone; }
 function buildCampfire() {
@@ -9682,7 +9683,7 @@ function refuelCampfire(c) {
 function lightCampfire(c) { if (c.fuel <= 0) { if (!refuelCampfire(c)) return; } c.lit = true; if (typeof SND !== "undefined") SND.play("flame", { position: [c.x, surfaceAt(c.x,c.z).h, c.z] }); saveWorld(); }
 function updateCampfires(dt) {
   for (const c of campfires) {
-    if (c.lit && c.fuel > 0) { c.fuel = Math.max(0, c.fuel - CAMPFIRE_BURN * dt * ((fireFreeFuel || c.hearth) ? 0 : 1)); if (c.fuel <= 0) c.lit = false; }   // §19B the hearth never burns out
+    if (c.lit && c.fuel > 0) { c.fuel = Math.max(0, c.fuel - CAMPFIRE_BURN * dt * (fireFreeFuel ? 0 : (c.hearth ? HEARTH_BURN_MUL : 1))); if (c.fuel <= 0) c.lit = false; }   // §4 the hearth burns down slowly now — feed it wood to keep it going
     // roasting advances only on a lit fire; a pot stew likewise (the hearth cooks a little faster)
     if (c.lit && c.fuel > 0) {
       const cm = (fireInstantCook ? 20 : 1) * (c.hearth ? 1.6 : 1);
@@ -11669,6 +11670,7 @@ function cottageWindowGlow() {
 }
 function updateCottage(dt) {
   if (!cottage || mode === "menu") return; const c = cottage;
+  if (c.hearthFire) c.hearthLit = c.hearthFire.lit && c.hearthFire.fuel > 0;   // §4 the hearth can burn out now — glow & cosiness follow it
   const d = cotLocalToWorld(0, C_ZF);
   const near = insideCottage(player.x, player.z) || Math.hypot(player.x-d[0], player.z-d[1]) < C_DOOR_R;
   const before = c.doorSwing > 0.5;
@@ -12108,7 +12110,9 @@ function loadWorld() {
     if (Array.isArray(w.fires)) campfires = w.fires.map(c => Array.isArray(c)
       ? newCampfire(c[0], c[1])    // migrate old saves (position only) → a fresh lit fire
       : { x: c.x, z: c.z, fuel: c.f != null ? c.f : 1, lit: !!c.lit, roast: c.roast ? { id: c.roast[0], t: c.roast[1] } : null,
-          pot: c.pot ? { ingredients: c.pot.ing || [], water: !!c.pot.w, salt: !!c.pot.s, cooking: c.pot.ck ? 1 : 0, t: c.pot.t || 0, done: !!c.pot.d, dish: c.pot.dish || null } : null });
+          pot: c.pot ? { ingredients: c.pot.ing || [], water: !!c.pot.w, salt: !!c.pot.s, cooking: c.pot.ck ? 1 : 0, t: c.pot.t || 0, done: !!c.pot.d, dish: c.pot.dish || null } : null })
+      // §4 drop the old auto spawn fire (an untouched pot-fire); the cottage hearth is the cook-pot now
+      .filter(c => !(c.pot && (!c.pot.ingredients || !c.pot.ingredients.length) && !c.pot.cooking && !c.pot.done && !c.roast));
     if (Array.isArray(w.builds)) { builds = []; for (const s of w.builds) { const def = BUILD_DEFS[s.t]; if (!def) continue;   // §16B
       const b = { type: s.t, x: s.x, z: s.z, yaw: s.y, cost: s.c || [] };
       if (def.dry && s.l) { b.load = s.l; b.n = s.n || 1; b.dryAt = clock.t + (s.d || 0); }
@@ -13132,18 +13136,7 @@ loadStorage();
 initCottageFixtures();   // §19B hearth campfire + sea chest (after loadWorld/loadStorage rebuild their arrays)
 if (typeof updateCosy === "function") updateCosy();   // §19G seed cosiness from restored displays/trophies/aquarium/rewards (no celebrate on load)
 initWeather();   // §20 roll today's weather from the seed (no transition on load)
-// §Cooking guaranteed first cook-pot: once per seed, lay a lit, pot-topped campfire near spawn
-try {
-  if (localStorage.getItem("bc_firstfire_" + SEED_STR) !== "1") {
-    const sp = findSpawn();
-    let fx = sp.x, fz = sp.z, placed = false;
-    for (let k = 0; k < 40 && !placed; k++) { const a = sp.yaw + (k ? (Math.random()-0.5)*3 : 0.4), r = 2.5 + Math.random()*3;
-      const x = sp.x + Math.sin(a)*r, z = sp.z - Math.cos(a)*r;
-      if (surfaceAt(x, z).h > 0.6 && waterDepthAt(x, z) < 0.05 && !bigPropBlocking(x, z, 1) && !insideCottage(x, z)) { fx = x; fz = z; placed = true; } }
-    campfires.push(newCampfire(fx, fz, { pot: { ingredients: [], water: false, salt: false, cooking: 0, t: 0, done: false, dish: null } }));
-    localStorage.setItem("bc_firstfire_" + SEED_STR, "1"); saveWorld();
-  }
-} catch (e) {}
+// §4 the old spawn fire-ring + loose pot is gone — pot cooking now lives at the cottage hearth (initCottageFixtures gives it a built-in pot)
 if (debugMode) auditRegistries();
 
 let proj = new Float32Array(16);
