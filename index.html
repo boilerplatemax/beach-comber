@@ -2079,14 +2079,6 @@ function spawnWashedChest() {
   if (typeof sparkle === "function") sparkle(spot.x, heightAt(spot.x, spot.z)+0.5, spot.z, [0.9,0.8,0.4], 12);
   if (typeof saveChests === "function") saveChests();
 }
-function gatherStormGulls() {
-  for (let i=0;i<8;i++){ let x, z, ok = false;
-    for (let k=0;k<20 && !ok;k++){ const a = rng()*6.283, r = HALF*(0.3+rng()*0.4); x = Math.sin(a)*r; z = -Math.cos(a)*r; const h = heightAt(x, z); if (h > waterLevel+0.3 && h < wetLevel+3) ok = true; }
-    if (!ok) continue;
-    spawnCreature("gull", x, z, { cxx: x, czz: z }); const e = life[life.length-1];
-    if (e && e.t === "gull") { if (typeof initGull === "function") initGull(e); e.gstate = "forage"; e.timer = 4 + rng()*5; e.alt = 0; e.y = heightAt(x, z); }
-  }
-}
 function onStormMorning() {
   let spawned = 0;
   for (let i=0;i<110 && spawned<75;i++){
@@ -2104,9 +2096,8 @@ function onStormMorning() {
     if (h > waterLevel+0.2 && h < wetLevel+3) { const v = 1+(rng()-0.5)*0.15; driftObjs.push({ x, z, scale: 2.4+rng()*1.5, yaw: rng()*6.28, roll:(rng()-0.5)*0.4, tint:[0.6*v,0.55*v,0.48*v], gone:false, big:true }); } }
   if (typeof addFlotsam === "function") addFlotsam(5, 0.7);                         // loose kelp & flotsam drifting in
   if (rng() < 0.45) spawnWashedChest();                                            // occasionally a chest
-  gatherStormGulls();                                                              // gulls gather on the beach
   const finds = life.filter((e) => e.kind === "find"); if (finds.length > 520) life = life.filter((e) => e.kind !== "find").concat(finds.slice(-520));
-  showCard("After the storm", "The beach is strewn with wrack and driftwood, and the gulls have gathered.");
+  showCard("After the storm", "The beach is strewn with wrack and driftwood.");
 }
 
 /* §20E LIGHT GAMEPLAY EFFECTS, fish bite more (bite multiplier, set in rollBite);
@@ -3522,20 +3513,6 @@ function endCast(cd) { rod.state = "idle"; rod.fish = null; rod.fight = null; ro
 function hotspotNear(x, z) { for (const s of fishSigns) if (s.hot && Math.hypot(s.x - x, s.z - z) < (s.r || 4)) return s; return null; }
 
 // gulls will dive on a floating bait if one ventures near while you wait
-function gullStealCheck(dt) {
-  if (rod.state !== "waiting" && rod.state !== "nibble") return;
-  for (const e of life) {
-    if (e.kind !== "creature" || e.t !== "gull" || e.dying !== undefined) continue;
-    if (Math.hypot(e.x - rod.bob.x, e.z - rod.bob.z) > 11) continue;
-    if (Math.random() < dt * (0.03 + rod.baitQ * 0.015)) {
-      e.gstate = "flee"; e.timer = 1.8 + Math.random();
-      showCard("A gull took your bait!", "Keep the bobber away from the birds, or shoo them off first.");
-      if (typeof onGull === "function") onGull("call");
-      endCast(0.7); return;
-    }
-  }
-}
-
 // §fishpolish FISHING HOTSPOTS, semi-rare spots in the water marked by a cluster of small rising bubbles
 // and the odd fish flash. They last a while, then move. Casting into one bites much faster. This is the ONLY
 // bubble effect in the water, so it's unmistakable. Visible whether or not the rod is out.
@@ -3600,8 +3577,8 @@ function updateFishing(dt) {
     if (waterDepthAt(rod.bob.x, rod.bob.z) < 0.12) { hintText = "The water drained away"; hintT = 1.4; if (rod.baitTaken && rod.baitId) { Inv.add(rod.baitId, 1); rod.baitTaken = false; } if (typeof SND !== "undefined") SND.play("plop"); endCast(0.4); return; }
     if (Math.hypot(player.x - rod.bob.x, player.z - rod.bob.z) > CANCEL_DIST) { hintText = "Too far, line reeled in"; hintT = 1.4; if (typeof SND !== "undefined") SND.play("plop"); endCast(0.4); return; }
   }
-  if (rod.state === "waiting") { gullStealCheck(dt); if (clock.t >= rod.biteAt) beginBite(); }
-  else if (rod.state === "nibble") { gullStealCheck(dt); if (clock.t >= rod.nibbleUntil) toBite(); }
+  if (rod.state === "waiting") { if (clock.t >= rod.biteAt) beginBite(); }
+  else if (rod.state === "nibble") { if (clock.t >= rod.nibbleUntil) toBite(); }
   else if (rod.state === "bite") { if (clock.t >= rod.hookUntil) missBite(); }
   else if (rod.state === "fighting") updateFight(dt);
   // bobber bob / sink settle
@@ -9022,7 +8999,6 @@ function targetAlongRay(r, sticky) {
   for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
   for (const c of colliders) if (c.kind === "fence" && c.r > 0) { const gy = surfaceAt(c.x, c.z).h; capsule(c, "fence", c.x, c.z, c.x, gy, c.z, c.x, gy+1.0, c.z, 0.32); }   // §13.1 choppable posts
-  for (const nst of gullNests) if (nst.eggs > 0 && nst.abandonedUntil <= clock.t) sphere(nst, "nest", nst.x, nst.z, 0.2, 0.75);   // §12B
   for (const ch of chests) { if (ch.carried) continue;                                                                          // §12C
     if (ch.opened && ch.looted) sphere(ch, "openchest", ch.x, ch.z, 0.3, 0.9);                                                   // carry an emptied chest
     else if (ch.exposed) sphere(ch, "chest", ch.x, ch.z, 0.3, 0.9); }
@@ -9077,7 +9053,6 @@ function useToolOnTarget(t) {
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "flotsam": collectFlotsam(t.obj); return true;   // §5 scoop floating debris straight from the water
     case "barnacle": scrapeBarnacle(t.obj); return true;   // §5 scrape with the Tool Kit (or a shovel) for bait
-    case "nest": takeEgg(t.obj); return true;
     case "chest": openChestAction(t.obj); return true;
     case "driftwood": return breakDriftwood(t.obj);
     case "fence": return chopFence(t.obj);
@@ -9782,8 +9757,6 @@ function digAt(x, z) {
   spawnSand(x, sy + 0.3, z, 14, kind === "wet" ? [0.62, 0.56, 0.46] : kind === "gravel" ? [0.6, 0.58, 0.55] : [0.86, 0.78, 0.6]);
   if (wasAbove && waterSurfaceAt(x, z) >= surfaceAt(x, z).h - 0.02) spawnInflow(x, z);   // just hit the water table
   revealSpot(x, z, false);
-  digForagePatch(x, z);                                      // §17.3 loot rich worm soil / buried clusters; depletes the patch
-  if (typeof lureGulls === "function") lureGulls(x, z);      // §12B a fresh hole draws the gulls in
   if (typeof digTreasure === "function") digTreasure(x, z);  // §12C expose chests / surface buried keys & maps
 }
 /* ---- placing materials: raise the ground + paint its surface (§A) ---- */
@@ -11720,7 +11693,6 @@ function updateTools(dt, gdt) {
   if (typeof updateTallGrass === "function") updateTallGrass();
   updateCrops();
   updateSeaweed();
-  updateForagePatches();
   updateGoblins(dt);
   // scattered seeds near mature trees slowly replenish (low density)
   seedScatterT += gdt;
@@ -13341,7 +13313,6 @@ function saveWorld() {
     crops: crops.map(c => [c.type, +c.x.toFixed(1), +c.z.toFixed(1), +(c.yaw||0).toFixed(2), c.ripe?1:0,  // §17
       c.ripe ? 0 : Math.max(0, +(c.ripeAt - clock.t).toFixed(0)), +c.scale.toFixed(2), c.wild?1:0, c.grown?1:0]),
     seaweed: seaweedBeds.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),  // §17.2 per-bed regrow (0 = ripe)
-    patches: foragePatches.map(p => +p.rich.toFixed(2)),  // §17.3 forage-patch richness (looted spots stay low until they replenish)
     lanterns: placedLanterns.map(L => [+L.x.toFixed(1), +L.z.toFixed(1)]),  // §tools lit lanterns set down in the world
   })); } catch (e) {}
 }
@@ -13390,7 +13361,6 @@ function loadWorld() {
     if (Array.isArray(w.crops)) { crops = w.crops.map(c => ({ type: c[0], x: c[1], z: c[2], yaw: c[3],  // §17 restore crops
       ripe: !!c[4], ripeAt: c[4] ? 0 : clock.t + (c[5] || 0), scale: c[6], wild: !!c[7], grown: !!c[8] })); }
     if (Array.isArray(w.seaweed)) w.seaweed.forEach((v, i) => { if (seaweedBeds[i]) { if (v > 0) { seaweedBeds[i].ripe = false; seaweedBeds[i].regrowAt = clock.t + v; } else seaweedBeds[i].ripe = true; } });   // §17.2
-    if (Array.isArray(w.patches)) w.patches.forEach((v, i) => { if (foragePatches[i]) { foragePatches[i].rich = v; if (v < 1) foragePatches[i].replenishAt = clock.t + PATCH_REPLENISH_DAYS*DAY_PERIOD; } });   // §17.3
     if (Array.isArray(w.lanterns)) placedLanterns = w.lanterns.map(([x, z]) => ({ x, y: surfaceAt(x, z).h, z }));   // §tools restore set-down lanterns
     rebuildCollHash();
   } catch (e) {}
@@ -13455,125 +13425,28 @@ function sparkle(x, y, z, col, count) { for (let i = 0; i < (count||5) && partic
  *   Only gulls near the player are simulated in detail; the flock is capped.
  * ===================================================================== */
 let onGull = null;                         // sound hook: onGull("call" | "squabble" | "screech")
-let gullNests = [];
+// §gull-rewrite Gulls do four simple things: fly in wide loops, land on the
+// beach / rocks, waddle about, then take off again. Everything else (nests,
+// eggs, stealing, dive-bombing, foraging, floating on water, perching in trees,
+// gathering at events, finding hints) was removed. Values are tunable.
 const GULL = {
-  // §13.7 slower, more gliding flight (~35–40% off) so gulls drift rather than dart
-  soarAlt: 24, soarR: 24, soarSpd: 3.8, approachSpd: 7, fleeSpd: 10, stealSpd: 8.5, bombSpd: 14,
-  stealRange: 2.6, chaseDrop: 6, shooR: 7.5, nestDefendR: 11, divebombCd: 3.5,
-  eggReplenishDays: 3, abandonDays: 2, lureLife: 14,
-  maxForage: 4, forageSpread: 7.5,  // §gulls fewer land on one spot, spread wider, reads as a flock, not a pile
-  floatMin: 20, floatMax: 60,       // §gulls once down on the water, rest 20–60 s before taking off again
-  // §3 flight feel: how fast a gull swings onto a new heading, and how hard it banks / pitches doing it
-  turnRate: 2.5, maxBank: 0.6, maxPitch: 0.42,
-  // §3 finding hint: chance per tide that the flock bothers to gather over a *buried* spot (otherwise they ignore what they can't see)
-  hintChance: 0.18,
+  flyAlt: 26, flyAltVar: 10,        // cruising height band above the ground (m)
+  flySpd: 5.5, walkSpd: 0.9,        // flight cruise / ground waddle speed
+  turnRate: 1.7, maxBank: 0.6, maxPitch: 0.42,   // how fast it swings onto a heading, and banks / pitches doing it
+  loopR: 70, wander: [5, 11],       // waypoint-loop radius; seconds between new flight waypoints
+  flapBurst: [0.9, 1.6], glide: [1.2, 2.2],      // powered-stroke vs glide spells (alternate in flight)
+  landChance: 0.05,                 // per second, chance a flying gull looks for a place to land
+  groundTime: [5, 12],              // seconds on the ground before taking off on its own
+  fleeR: 6, fleeRfast: 11,          // player distance that flushes a landed gull (sprint / tool swing uses the larger)
 };
-// small finds & food a gull will scavenge or steal from the ground / a fresh hole
-const GULL_WANTS = { clam:1, cockle:1, mussel:1, shell:1, molt:1, berry:1, worm:1, coin:1, seaglass:1, gullegg:1 };
-let gullLure = null;                       // {x,z,t} a fresh dig or wash-up that pulls gulls in (also the dig tell)
-function lureGulls(x, z) { gullLure = { x, z, t: clock.t }; }
-// §3 gulls as a finding hint: most tides they ignore what's buried; only now and then (hintChance) does the
-// flock gather over a buried patch/spot. Rolled once per low tide.
-let gullHint = { active: false };
-function rollGullHint() { gullHint.active = rng() < GULL.hintChance; }
-
-/* §17.3 forage patches, rich ground the gulls flock to (worm-abundant soil, buried clusters).
-   Looting a patch by digging depletes it, so the birds give up and move to the next-richest spot. */
-let foragePatches = [];
-const PATCH_R = 7, PATCH_REPLENISH_DAYS = 4;
-function seedForagePatches() {
-  foragePatches = [];
-  for (let i = 0; i < 160 && foragePatches.filter(p => p.kind === "worms").length < 8; i++) {   // worm soil on damp low ground
-    const a = rng()*6.283, r = HALF*(0.2 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
-    const s = surfaceAt(x, z); if (s.h < 1 || s.h > 8 || s.slope > 0.3 || waterDepthAt(x, z) > 0.1) continue;
-    const biome = coastBiomeAt(x, z); if (biome !== "mudflat" && biome !== "marsh" && s.h > 5) continue;
-    if (foragePatches.some(p => Math.hypot(p.x-x, p.z-z) < 26)) continue;
-    foragePatches.push({ x, z, rich: 1, kind: "worms", replenishAt: 0 });
-  }
-  for (let i = 0; i < 160 && foragePatches.filter(p => p.kind === "cluster").length < 5; i++) {   // buried find clusters on dune/sand
-    const a = rng()*6.283, r = HALF*(0.18 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
-    const s = surfaceAt(x, z); if (s.h < 2 || s.h > 14 || s.slope > 0.3 || waterDepthAt(x, z) > 0.05 || bigPropBlocking(x, z, 2)) continue;
-    if (foragePatches.some(p => Math.hypot(p.x-x, p.z-z) < 26)) continue;
-    foragePatches.push({ x, z, rich: 1, kind: "cluster", replenishAt: 0 });
-  }
-}
-function updateForagePatches() {
-  for (const p of foragePatches) if (p.rich < 1 && p.replenishAt && clock.t >= p.replenishAt) {
-    p.rich = Math.min(1, p.rich + 0.34); p.replenishAt = p.rich < 1 ? clock.t + PATCH_REPLENISH_DAYS*DAY_PERIOD : 0;
-  }
-}
-function nearestForagePatch(x, z, maxd) { let best = null, bd = maxd; for (const p of foragePatches) { if (p.rich < 0.15) continue; const d = Math.hypot(p.x-x, p.z-z); if (d < bd) { bd = d; best = p; } } return best; }
-// a dig at/near a rich patch loots it: bonus worms (worm soil) or a buried find (cluster), and it loses richness
-function digForagePatch(x, z) {
-  let near = null, nd = PATCH_R; for (const p of foragePatches) { if (p.rich < 0.15) continue; const d = Math.hypot(p.x-x, p.z-z); if (d < nd) { nd = d; near = p; } }
-  if (!near) return;
-  if (near.kind === "worms") { const n = 1 + (rng() < near.rich ? 1 : 0); for (let i = 0; i < n; i++) spawnFind("worm", x+(rng()-0.5)*2, z+(rng()-0.5)*2); }
-  else if (rng() < 0.6 + near.rich*0.3) spawnFind(pick(["clam","cockle","shell","agate","coin","seaglass","mussel"]), x+(rng()-0.5)*1.5, z+(rng()-0.5)*1.5);
-  near.rich = Math.max(0, near.rich - 0.28);
-  near.replenishAt = clock.t + PATCH_REPLENISH_DAYS*DAY_PERIOD;
-  if (near.rich < 0.15) for (const e of life) if (e.t === "gull" && e.gstate === "forage" && Math.hypot(e.x-near.x, e.z-near.z) < PATCH_R + 3 && (e.timer||0) > 1) e.timer = 0.6;   // spot's spent → the birds move on
-}
 
 const gullShadowDyn = makeDynamic(discMesh(0, 1, 14, 0, [0.05,0.06,0.07]), 24);
-const nestDyn = makeDynamic((function(){ const m = Mesh(); const tw=[0.4,0.33,0.22], tw2=[0.46,0.38,0.26];
-  for (let i=0;i<10;i++){ const a=i/10*6.283; mBox(m, Math.cos(a)*0.5, 0.06, Math.sin(a)*0.5, 0.16,0.07,0.16, i%2?tw:tw2); }
-  mergeMesh(m, discMesh(0.02, 0.44, 12, 0, [0.28,0.23,0.16])); return m; })(), 30);
+// §gull-rewrite the egg mesh stays, it's the Gull Egg food item's model (no nests any more).
 function eggShape(col) { const m = Mesh(); for (let i=0;i<6;i++){ const a0=i/6*6.283,a1=(i+1)/6*6.283;
   mTri(m,[0,0.26,0],[Math.cos(a0)*0.12,0.1,Math.sin(a0)*0.12],[Math.cos(a1)*0.12,0.1,Math.sin(a1)*0.12],col);
   mTri(m,[0,-0.02,0],[Math.cos(a1)*0.12,0.1,Math.sin(a1)*0.12],[Math.cos(a0)*0.12,0.1,Math.sin(a0)*0.12],col); } return m; }
-const eggDyn = makeDynamic(eggShape([0.86,0.82,0.68]), 60);
 function eggFoodMesh() { return eggShape([0.9,0.86,0.72]); }
 
-function seedGullNests() {
-  gullNests = [];
-  const colonies = 2 + (rng()*3|0);                   // 2–4 colonies
-  for (let c = 0; c < colonies; c++) {
-    let site = null;
-    for (let k = 0; k < 500 && !site; k++) {
-      const a = rng()*6.283, r = HALF*(0.28 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
-      const s = surfaceAt(x, z);
-      const dune  = s.h > 6 && s.h < 20 && s.slope < 0.5;             // dune shelf
-      const ledge = s.h > 20 && s.h < 44 && s.slope > 0.32 && s.slope < 1.1;   // cliff ledge
-      if ((dune || ledge) && !spotUnderwater(x, z) && !bigPropBlocking(x, z, 1.2) && !nearPOI(x, z, 6) && !nearCottage(x, z, 10)) site = { x, z };   // §cot7 keep colonies clear of the home
-    }
-    if (!site) continue;
-    const nPer = 1 + (rng()*3|0);
-    for (let n = 0; n < nPer; n++) {
-      const a = rng()*6.283, r = rng()*5, x = site.x + Math.cos(a)*r, z = site.z + Math.sin(a)*r;
-      if (spotUnderwater(x, z) || bigPropBlocking(x, z, 0.8) || nearCottage(x, z, 8)) continue;   // §cot7 no nests inside / right by the cottage
-      const maxEggs = 1 + (rng()*3|0);
-      gullNests.push({ x, z, eggs: maxEggs, maxEggs, replenishAt: 0, abandonedUntil: -1e9, defendCd: 0 });
-    }
-  }
-  // a couple of guardian gulls bound to the colonies
-  let guards = 0;
-  for (const nest of gullNests) { if (guards >= 4) break; if (rng() < 0.6) {
-    spawnCreature("gull", nest.x, nest.z, { cxx: nest.x, czz: nest.z, alt: 18 });
-    const e = life[life.length-1]; e.nest = nest; guards++;
-  } }
-}
-
-function gullInterest() {
-  if (gullLure && clock.t - gullLure.t < GULL.lureLife && waterDepthAt(gullLure.x, gullLure.z) < 0.4) return { x: gullLure.x, z: gullLure.z, kind: "lure" };   // §17.6 gulls work the beach, not the water
-  // a small find or food sitting out (a fresh hole, a dropped item)
-  let best = null, bd = 90;
-  for (const e of life) { if (e.kind !== "find" || !GULL_WANTS[e.t]) continue;
-    if (waterDepthAt(e.x, e.z) > 0.4) continue;    // §17.6 don't send them diving for it
-    const d = Math.hypot(e.x - player.x, e.z - player.z); if (d < bd) { bd = d; best = { x: e.x, z: e.z, kind: "find", ref: e }; } }
-  if (best) return best;
-  if (typeof chestGullPoint === "function") { const cp = chestGullPoint(); if (cp) return cp; }   // §12C open/near chests
-  // §3 buried interest, worm soil, buried clusters, "gulls circling a spot" tells, only when THIS tide's hint is active;
-  // otherwise the flock can't see it and leaves it be (so a gathering actually means something)
-  if (gullHint.active) {
-    const fp = nearestForagePatch(player.x, player.z, 110);
-    if (fp) return { x: fp.x, z: fp.z, kind: "patch", ref: fp };
-    for (const s of (typeof digSpots !== "undefined" ? digSpots : [])) {
-      if (s.revealed || s.tell !== "gull") continue;
-      if (Math.hypot(s.x - player.x, s.z - player.z) < 70) return { x: s.x, z: s.z, kind: "tell" };
-    }
-  }
-  return null;
-}
 // §3 steer with a real turn rate (no instant snaps) and bank into the turn
 function steerGull(e, tx, tz, spd, dt) {
   spd *= (e.gtrait ? e.gtrait.spd : 1);
@@ -13588,238 +13461,132 @@ function steerGull(e, tx, tz, spd, dt) {
   e.bank = (e.bank || 0) + (bankTarget - (e.bank || 0)) * Math.min(1, dt * 5);
   e.x += Math.cos(nh)*dt*spd; e.z += Math.sin(nh)*dt*spd; e.yaw = nh + 1.57;
 }
-// §R4 a perch near the gull, a conifer/broadleaf top, a boulder, driftwood or a fence post, not already taken
-function pickPerch(e) {
-  const cands = [];
-  // §gulls perch on TOP of the canopy/crown, not inside it (trees stand ~1.1× their scale tall)
-  for (const o of treeObjs) if (!o.gone && !o.fallen && Math.hypot(o.x-e.x, o.z-e.z) < 60) cands.push({ x: o.x, z: o.z, y: surfaceAt(o.x, o.z).h + (o.scale||1)*(o.species === "palm" ? 0.98 : o.species === "pine" ? 1.02 : 0.9) });
-  for (const o of rockObjs) if (!o.gone && Math.hypot(o.x-e.x, o.z-e.z) < 50) cands.push({ x: o.x, z: o.z, y: surfaceAt(o.x, o.z).h + (o.sc||1)*0.58 });
-  for (const o of driftObjs) if (!o.gone && Math.hypot(o.x-e.x, o.z-e.z) < 45) cands.push({ x: o.x, z: o.z, y: surfaceAt(o.x, o.z).h + 0.3 });
-  for (const c of colliders) if (c.kind === "fence" && c.r > 0 && Math.hypot(c.x-e.x, c.z-e.z) < 45) cands.push({ x: c.x, z: c.z, y: surfaceAt(c.x, c.z).h + 0.9 });
-  if (cottage && Math.hypot(cottage.x-e.x, cottage.z-e.z) < 55) {   // §3 the cottage roof ridge is a fine perch
-    const ridgeY = cottage.floorY + C_H + C_ROOF_RISE + 0.08;
-    for (const lz of [-C_OZ*0.55, 0, C_OZ*0.55]) { const w = cotLocalToWorld(0, lz); cands.push({ x: w[0], z: w[1], y: ridgeY, ridge: true }); }
-  }
-  if (!cands.length) return null;
-  const taken = life.filter(o => o.t === "gull" && o.perch);
-  const free = cands.filter(c => !taken.some(g => Math.hypot(g.perch.x-c.x, g.perch.z-c.z) < 1.2));
-  const pool = free.length ? free : cands;
-  return pool[(rng()*pool.length)|0];
-}
 function initGull(e) {
   if (e.gstate) return;
-  e.gstate = "soar";
+  e.gstate = "fly";
   e.home = { x: e.cxx !== undefined ? e.cxx : e.x, z: e.czz !== undefined ? e.czz : e.z };
-  e.alt = e.alt !== undefined ? e.alt : 20; e.flap = rng()*6.283; e.sp = rng()*6.283; e.carry = null; e.nest = e.nest || null;
-  // §3 a little individuality: size, flight speed, agility, how bold it is near the player, how fidgety on the ground
-  e.gtrait = { size: 0.82 + rng()*0.42, spd: 0.85 + rng()*0.3, agility: 0.8 + rng()*0.5, bold: rng(), fidget: 0.6 + rng()*0.9 };
+  e.cruise = GULL.flyAlt + (rng() - 0.5) * GULL.flyAltVar;   // this bird's own cruising height
+  e.alt = e.alt !== undefined ? e.alt : e.cruise;
+  e.flap = rng()*6.283; e.wpAng = rng()*6.283;
+  // a little individuality: size, flight speed, turn agility
+  e.gtrait = { size: 0.82 + rng()*0.42, spd: 0.85 + rng()*0.3, agility: 0.8 + rng()*0.5 };
   e.bank = 0; e.pitch = 0; e.palt = e.alt; e.idle = 0; e.hop = 0;
+  e.flapping = true; e.fgT = 0; e.wp = null; e.wpT = 0;
 }
-function gullDrop(e) {
-  if (!e.carry) return;
-  const a = rng()*6.283, r = 3 + rng()*5; const [nx, nz] = nearestWalkable(e.x + Math.cos(a)*r, e.z + Math.sin(a)*r);
-  const d = { id: e.carry, x: nx, z: nz }; worldDrops.push(d); spawnDropEntity(d); saveDrops();
-  if (onGull) onGull("call"); e.carry = null;
+// A dry spot (beach or rocky flat) near the gull to land on: not in water, not
+// up the mountain, roughly flat, clear of props/cottage, not right on the player.
+function pickLandingSpot(e) {
+  for (let k = 0; k < 14; k++) {
+    const a = rng()*6.283, r = 6 + rng()*34, x = e.x + Math.cos(a)*r, z = e.z + Math.sin(a)*r;
+    if (Math.abs(x) > HALF - 4 || Math.abs(z) > HALF - 4) continue;
+    if (waterDepthAt(x, z) > 0.12) continue;                 // dry land, not water
+    const s = surfaceAt(x, z);
+    if (s.h < 0.4 || s.h > 32 || s.slope > 0.6) continue;    // shore to low rocks, reasonably flat
+    if (bigPropBlocking(x, z, 0.8)) continue;
+    if (cottage && insideCottage(x, z)) continue;
+    if (Math.hypot(x - player.x, z - player.z) < 10) continue;
+    return { x, z, y: s.h };
+  }
+  return null;
 }
 function updateGulls(dt) {
-  // nests: replenish eggs; tick defend cooldown
-  for (const nest of gullNests) {
-    if (nest.defendCd > 0) nest.defendCd -= dt;
-    if (nest.abandonedUntil > clock.t) continue;
-    if (nest.eggs < nest.maxEggs && nest.replenishAt && clock.t >= nest.replenishAt) {
-      nest.eggs++; nest.replenishAt = nest.eggs < nest.maxEggs ? clock.t + GULL.eggReplenishDays*DAY_PERIOD : 0;
-    }
-  }
-  const gulls = life.filter(e => e.t === "gull");
-  const interest = gullInterest();
   const sprinting = mode === "walk" && player.sprinting;
   const swung = shovelSwing > 0.5;
-  let nForaging = gulls.reduce((c, e) => c + (e.gstate === "approach" || e.gstate === "forage" ? 1 : 0), 0);   // §17.4 how many are already working the spot
-  for (const e of gulls) {
+  const flushR = (sprinting || swung) ? GULL.fleeRfast : GULL.fleeR;
+  for (const e of life) {
+    if (e.t !== "gull") continue;
     initGull(e);
     const dp = Math.hypot(e.x - player.x, e.z - player.z);
-    e.flap = (e.flap || 0) + dt * (e.gstate === "soar" || e.gstate === "approach" ? 2.6 : 7);   // §13.7 glide more, flap less
-    // a landed / approaching gull is wary of the player: it flees when you get close (closer still if you crouch),
-    // and a sprint or a tool swing scatters it from further off.
-    if (e.gstate === "forage" || e.gstate === "approach" || e.gstate === "perch") {
-      const takeoffR = (sprinting || swung) ? GULL.shooR : 2.6;     // very close or fast → wings out and up
-      if (dp < takeoffR) { e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call"); }
-      else if (e.gstate === "forage" && dp < (crouching ? 3 : 6.5)) { e.gstate = "hopflee"; e.timer = 0.9 + rng()*0.7; e.hopT = 0; if (onGull) onGull("call"); }   // §R4 the classic hop-away first
-    }
+    // wing clock: fast in a powered stroke, near-still gliding, frozen on the ground
+    e.flap = (e.flap || 0) + dt * (e.gstate === "ground" ? 0 : e.flapping ? 9 : 2);
     switch (e.gstate) {
-      case "soar": {
-        e.sp += dt*0.5;
-        const cx = e.nest ? e.nest.x : e.home.x, cz = e.nest ? e.nest.z : e.home.z;
-        steerGull(e, cx + Math.cos(e.sp)*GULL.soarR, cz + Math.sin(e.sp)*GULL.soarR, GULL.soarSpd, dt);
-        e.alt += (GULL.soarAlt - e.alt) * Math.min(1, dt*0.5);
-        // §17.4 only a capped number land on one spot; the rest keep circling (a flock, not a pile-up)
-        if (interest && !e.nest && nForaging < GULL.maxForage && rng() < dt*0.35) {
-          nForaging++;
-          const ox = (rng()-0.5)*GULL.forageSpread, oz = (rng()-0.5)*GULL.forageSpread;   // spread out around the target
-          e.gstate = "approach"; e.target = { x: interest.x, z: interest.z, ref: interest.ref, kind: interest.kind, ox, oz };
+      case "fly": {
+        // wander: aim for a far waypoint, swap to a new one with a gentle heading change → wide sweeping loops
+        e.wpT = (e.wpT || 0) - dt;
+        if (e.wpT <= 0 || !e.wp) {
+          e.wpT = GULL.wander[0] + rng() * (GULL.wander[1] - GULL.wander[0]);
+          e.wpAng = (e.wpAng || rng()*6.283) + (rng() - 0.5) * 1.5;      // small turns → arcs, not sharp cuts
+          e.wp = { x: e.home.x + Math.cos(e.wpAng) * GULL.loopR, z: e.home.z + Math.sin(e.wpAng) * GULL.loopR };
+          if (rng() < 0.3) { e.home.x += (rng()-0.5)*30; e.home.z += (rng()-0.5)*30; }   // let the loop centre roam
         }
-        // §17.6 with nothing to chase, a gull over the water occasionally drops down to rest on the surface
-        else if (!interest && !e.nest && waterDepthAt(e.x, e.z) > 0.6 && rng() < dt*0.03) { e.gstate = "float"; e.timer = GULL.floatMin + rng()*(GULL.floatMax-GULL.floatMin); }
-        // §R4 or, over land, it occasionally flies off to perch on a tree top / rock / post (each on its own schedule)
-        else if (!interest && !e.nest && dp > 12 && rng() < dt*0.035) { const pr = pickPerch(e); if (pr) { e.perch = pr; e.gstate = "toperch"; } }
-        if (e.nest && e.nest.abandonedUntil <= clock.t && e.nest.eggs > 0 && dp < GULL.nestDefendR && e.nest.defendCd <= 0) {
-          e.gstate = "alarm"; e.timer = 1.5 + rng(); e.nest.defendCd = GULL.divebombCd; if (onGull) onGull("screech");   // §R4 circle-and-call before any swoop
+        steerGull(e, e.wp.x, e.wp.z, GULL.flySpd, dt);
+        e.alt += (e.cruise - e.alt) * Math.min(1, dt * 0.5);            // hold cruising height, well above the ground
+        // alternate powered strokes with glides
+        e.fgT = (e.fgT || 0) - dt;
+        if (e.fgT <= 0) { e.flapping = !e.flapping;
+          e.fgT = e.flapping ? GULL.flapBurst[0] + rng()*(GULL.flapBurst[1]-GULL.flapBurst[0]) : GULL.glide[0] + rng()*(GULL.glide[1]-GULL.glide[0]);
+          if (e.flapping && rng() < 0.12 && onGull) onGull("call"); }
+        if (rng() < dt * GULL.landChance) { const sp = pickLandingSpot(e); if (sp) { e.land = sp; e.gstate = "land"; e.flapping = true; } }
+        break;
+      }
+      case "land": {
+        if (!e.land) { e.gstate = "fly"; break; }
+        steerGull(e, e.land.x, e.land.z, GULL.flySpd * 0.75, dt);
+        e.flapping = true;                                              // flaring down, wings working
+        e.alt += (0.0 - e.alt) * Math.min(1, dt * 1.1);                 // glide down toward the spot
+        if (dp < flushR) { e.gstate = "takeoff"; e.timer = 1.2 + rng(); if (onGull) onGull("call"); break; }   // spooked before touchdown
+        if (Math.hypot(e.x - e.land.x, e.z - e.land.z) < 1.2 && e.alt < 0.5) {
+          e.x = e.land.x; e.z = e.land.z; e.alt = 0; e.land = null;      // touch down
+          e.gstate = "ground"; e.timer = GULL.groundTime[0] + rng()*(GULL.groundTime[1]-GULL.groundTime[0]);
+          e.flapping = false; e.idle = 0; e.walking = false;
+          if (rng() < 0.3 && onGull) onGull("call");
         }
         break;
       }
-      case "approach": {
-        const tx = e.target.x + (e.target.ox||0), tz = e.target.z + (e.target.oz||0);
-        steerGull(e, tx, tz, GULL.approachSpd, dt);
-        e.alt += (0.9 - e.alt) * Math.min(1, dt*0.9);
-        if (e.target.kind === "find" && e.target.ref && life.indexOf(e.target.ref) < 0) { e.gstate = "soar"; break; }   // the morsel's gone, back up
-        if (Math.hypot(e.x - tx, e.z - tz) < 1.6 && e.alt < 1.6) {
-          // §17.6 over water a gull settles on the surface to float, not peck the seabed; on land it forages
-          if (waterDepthAt(e.x, e.z) > 0.4) { e.gstate = "float"; e.timer = GULL.floatMin + rng()*(GULL.floatMax-GULL.floatMin); }   // §gulls rest on the water a good while
-          else { e.gstate = "forage"; e.timer = 3 + rng()*4; }
+      case "ground": {
+        e.alt = 0;
+        // waddle a few steps, pause, look around, on its own little clock
+        e.idle = (e.idle || 0) - dt;
+        if (e.idle <= 0) {
+          e.idle = 0.6 + rng() * 1.8;
+          e.walking = rng() < 0.55;
+          if (e.walking) { const a = rng()*6.283; e.wvx = Math.cos(a); e.wvz = Math.sin(a); }
+          if (rng() < 0.22 && onGull) onGull("call");
         }
-        break;
-      }
-      case "float": {   // §17.6 bob on the water surface, drift a little, flush if the player comes close
-        e.alt += (0.0 - e.alt) * Math.min(1, dt*2); e.timer -= dt;
-        e.wt = (e.wt || 0) - dt; if (e.wt < 0) { e.wt = 1 + rng()*2.5; e.wvx = (rng()-0.5)*0.4; e.wvz = (rng()-0.5)*0.4; }
-        e.x += (e.wvx||0)*dt; e.z += (e.wvz||0)*dt; e.yaw += (rng()-0.5)*dt*0.6;
-        for (const o of gulls) if (o !== e && o.gstate === "float") {   // §gulls rafting birds keep their distance
-          const ddx = e.x-o.x, ddz = e.z-o.z, dd = Math.hypot(ddx, ddz);
-          if (dd > 0.01 && dd < 2.2) { e.x += ddx/dd*dt*1.4; e.z += ddz/dd*dt*1.4; } }
-        if (dp < (crouching ? 3 : 7)) { e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call"); }
-        if (e.timer < 0 || waterDepthAt(e.x, e.z) < 0.3) e.gstate = "soar";
-        break;
-      }
-      case "forage": {
-        e.alt += (0.0 - e.alt) * Math.min(1, dt*2);
+        if (e.walking) {
+          const nx = e.x + e.wvx*dt*GULL.walkSpd, nz = e.z + e.wvz*dt*GULL.walkSpd;
+          if (waterDepthAt(nx, nz) < 0.2 && !bigPropBlocking(nx, nz, 0.5) && !(cottage && insideCottage(nx, nz))) {
+            e.x = nx; e.z = nz; e.yaw = Math.atan2(e.wvz, e.wvx) + 1.57;
+            e.hop = (e.hop || 0) + dt * 9; e.alt = Math.abs(Math.sin(e.hop)) * 0.035;   // a little waddle bob
+          } else e.walking = false;                                     // edge of the water / a prop → stop and turn
+        } else {
+          if (rng() < dt * 0.6) e.yaw += (rng() - 0.5) * 0.6;           // glance about
+          e.alt = 0;
+        }
         e.timer -= dt;
-        // §17.4 nothing worth pecking here any more (no wanted find near, and the spot of interest has moved on) → wrap up and leave
-        const stillGood = interest && Math.hypot(interest.x - e.x, interest.z - e.z) < 10;
-        const morselNear = life.some(it => it.kind === "find" && GULL_WANTS[it.t] && Math.hypot(it.x - e.x, it.z - e.z) < 5);
-        if (!stillGood && !morselNear) e.timer -= dt*3.5;
-        e.wt = (e.wt || 0) - dt; if (e.wt < 0) { e.wt = 0.5 + rng(); e.wvx = (rng()-0.5); e.wvz = (rng()-0.5); }
-        e.x += (e.wvx||0)*dt*1.3; e.z += (e.wvz||0)*dt*1.3; e.yaw = Math.atan2(e.wvz||0.01, e.wvx||0.01) + 1.57;
-        for (const o of gulls) if (o !== e && o.gstate === "forage") {   // §gulls squabble: shove apart harder and from further, so they stay spread
-          const ddx = e.x - o.x, ddz = e.z - o.z, dd = Math.hypot(ddx, ddz);
-          if (dd > 0.01 && dd < 2.2) { e.x += ddx/dd*dt*2.4; e.z += ddz/dd*dt*2.4; if (dd < 1.3 && rng() < dt*0.4 && onGull) onGull("squabble"); }
-        }
-        // steal a nearby wanted item if you're too slow to beat the gull to it
-        for (const it of life) { if (it.kind !== "find" || !GULL_WANTS[it.t]) continue;
-          if (Math.hypot(e.x - it.x, e.z - it.z) < GULL.stealRange && Math.hypot(player.x - it.x, player.z - it.z) > 3) {
-            e.carry = it.t;
-            if (it.drop) { const di = worldDrops.indexOf(it.drop); if (di >= 0) worldDrops.splice(di, 1); saveDrops(); }
-            const li = life.indexOf(it); if (li >= 0) life.splice(li, 1);
-            const a = rng()*6.283; e.target = { x: e.x + Math.cos(a)*60, z: e.z + Math.sin(a)*60 };
-            e.gstate = "steal"; if (onGull) onGull("call"); break;
-          }
-        }
-        if (e.timer < 0) e.gstate = "soar";
+        if (dp < flushR) { e.gstate = "takeoff"; e.timer = 1.4 + rng(); if (onGull) onGull("call"); }   // player close → up it goes
+        else if (e.timer < 0) { e.gstate = "takeoff"; e.timer = 1.2; }                                   // or, after a while, on its own
         break;
       }
-      case "steal": {
-        steerGull(e, e.target.x, e.target.z, GULL.stealSpd, dt);
-        e.alt += (14 - e.alt) * Math.min(1, dt*0.8);
-        if (dp < GULL.chaseDrop) { gullDrop(e); e.gstate = "flee"; e.timer = 1.4; break; }   // chased → drops the loot
-        if (Math.hypot(e.x - e.target.x, e.z - e.target.z) < 6) { e.carry = null; e.gstate = "soar"; e.home = { x: e.x, z: e.z }; }   // got away
-        break;
-      }
-      case "flee": {
-        const a = Math.atan2(e.z - player.z, e.x - player.x);
-        e.x += Math.cos(a)*dt*GULL.fleeSpd; e.z += Math.sin(a)*dt*GULL.fleeSpd; e.yaw = a + 1.57;
-        e.alt += (18 - e.alt) * Math.min(1, dt*0.8);
-        e.timer -= dt; if (e.timer < 0 && dp > 14) { if (e.carry) gullDrop(e); e.gstate = "soar"; e.home = { x: e.x, z: e.z }; }
-        break;
-      }
-      case "hopflee": {   // §R4 the classic ground hop-away: a few hops with wings half-open, then settle or take off
-        const hdx = e.x - player.x, hdz = e.z - player.z, r = Math.hypot(hdx, hdz) || 1;
-        e.hopT = (e.hopT || 0) - dt;
-        if (e.hopT < 0) { e.hopT = 0.34 + rng()*0.18; e.alt = 0.32; if (onGull) onGull("call"); }   // spring into a hop
-        e.alt = Math.max(0, (e.alt || 0) - dt*1.3);
-        e.x += hdx/r*dt*2.3; e.z += hdz/r*dt*2.3; e.yaw = Math.atan2(hdz, hdx) + 1.57;
+      case "takeoff": {
+        e.flapping = true;                                              // strong flaps, climbing
+        const a = dp < 14 ? Math.atan2(e.z - player.z, e.x - player.x) : ((e.yaw || 1.57) - 1.57);   // climb away from the player
+        e.x += Math.cos(a)*dt*GULL.flySpd*0.85; e.z += Math.sin(a)*dt*GULL.flySpd*0.85; e.yaw = a + 1.57;
+        e.alt += (e.cruise - e.alt) * Math.min(1, dt * 0.9);
         e.timer -= dt;
-        if (dp < 2.6 || sprinting || swung) { e.gstate = "flee"; e.timer = 1.4 + rng(); }           // pressed → take off
-        else if (dp > 9 || e.timer < 0) { e.gstate = "soar"; }
-        break;
-      }
-      case "toperch": {   // §R4 fly up to a chosen perch and land
-        if (!e.perch) { e.gstate = "soar"; break; }
-        steerGull(e, e.perch.x, e.perch.z, GULL.approachSpd, dt);
-        e.alt += ((e.perch.y - heightAt(e.x, e.z)) - e.alt) * Math.min(1, dt*1.3);
-        if (Math.hypot(e.x - e.perch.x, e.z - e.perch.z) < 1.0) { e.x = e.perch.x; e.z = e.perch.z; e.gstate = "perch"; e.timer = 7 + rng()*16; }   // own schedule
-        break;
-      }
-      case "perch": {   // §R4 sit still (wings folded), look around, then take off on its own clock
-        if (!e.perch) { e.gstate = "soar"; break; }
-        e.alt = e.perch.y - heightAt(e.x, e.z);
-        if (rng() < dt*0.4) e.yaw += (rng()-0.5)*0.5;        // glance around
-        if (rng() < dt*0.15 && onGull) onGull("call");
-        e.timer -= dt;
-        if (e.timer < 0 || dp < 7) { e.perch = null; e.gstate = "soar"; e.home = { x: e.x, z: e.z }; }
-        break;
-      }
-      case "alarm": {   // §R4 nest defense step 1: circle overhead and call; escalate to a swoop if the player stays
-        e.sp += dt*0.8;
-        steerGull(e, player.x + Math.cos(e.sp)*7, player.z + Math.sin(e.sp)*7, GULL.soarSpd*1.4, dt);
-        e.alt += (12 - e.alt) * Math.min(1, dt*0.8);
-        if (rng() < dt*0.8 && onGull) onGull("screech");
-        e.timer -= dt;
-        if (!e.nest || e.nest.eggs <= 0 || dp > GULL.nestDefendR + 4) { e.gstate = "soar"; e.home = { x: e.nest ? e.nest.x : e.x, z: e.nest ? e.nest.z : e.z }; break; }   // player left → stand down
-        if (e.timer < 0) {   // commit a swoop: aim at a point just PAST the player, offset to one side so it passes by, not onto
-          const a = Math.atan2(player.z - e.z, player.x - e.x) + (rng() < 0.5 ? 0.6 : -0.6);
-          e.target = { x: player.x + Math.cos(a)*6, z: player.z + Math.sin(a)*6 }; e.whoosh = 0;
-          e.gstate = "swoop"; e.timer = 1.6;
-        }
-        break;
-      }
-      case "swoop": {   // §R4 step 2: a fast near-miss past the head (never landing), whoosh, then climb away and go again
-        steerGull(e, e.target.x, e.target.z, GULL.bombSpd, dt);
-        const floor = dp < 5 ? 2.2 : 1.4;                    // a hard altitude floor near the player → it never lands on you
-        const targetAlt = Math.max(floor, 3.0 - (1.6 - e.timer)*2.2 + (dp > 8 ? 7 : 0));
-        e.alt += (targetAlt - e.alt) * Math.min(1, dt*3.5);
-        if (dp < 4.5) e.alt = Math.max(e.alt, 2.2);          // absolute clearance over the player
-        if (dp < 5.5 && !e.whoosh) { e.whoosh = 1; if (onGull) onGull("whoosh"); }
-        e.timer -= dt;
-        if (e.timer < 0 || Math.hypot(e.x - e.target.x, e.z - e.target.z) < 2.5) { e.gstate = "alarm"; e.timer = 1.0 + rng()*1.2; }
+        if (e.alt > e.cruise * 0.6 || e.timer < 0) { e.gstate = "fly"; e.home = { x: e.x, z: e.z }; e.wp = null; e.wpT = 0; e.fgT = 0; }
         break;
       }
     }
-    // §3 pitch tracks climb/descent: nose up while gaining height, tucked down in a dive, eased so it isn't jittery
+    // pitch tracks climb/descent: nose up gaining height, tucked in a descent, eased so it isn't jittery
     const vAlt = (e.alt - (e.palt !== undefined ? e.palt : e.alt)) / Math.max(1e-3, dt);
     e.palt = e.alt;
     const pitchTarget = Math.max(-GULL.maxPitch, Math.min(GULL.maxPitch, vAlt * 0.05));
     e.pitch = (e.pitch || 0) + (pitchTarget - (e.pitch || 0)) * Math.min(1, dt * 4);
-    // §3 ground liveliness: a settled gull fidgets on its own clock, the odd little hop, with per-bird timing
-    if (e.gstate === "forage" || e.gstate === "float") {
-      e.idle = (e.idle || 0) - dt;
-      if (e.idle < 0) { e.idle = (1.2 + rng()*2.4) / (e.gtrait ? e.gtrait.fidget : 1);
-        if (e.gstate === "forage" && rng() < 0.4) { e.hop = 0.26; if (rng() < 0.3 && onGull) onGull("call"); } }
-      if (e.hop > 0) { e.hop = Math.max(0, e.hop - dt); e.alt += Math.sin((0.26 - e.hop) / 0.26 * Math.PI) * 0.12; }   // a brief bob
-    }
-    // §3 a flying or foraging gull never passes through the cottage, deflect it out to the nearest wall (ridge-perchers are exempt)
-    if (cottage && !(e.perch && e.perch.ridge) && (e.alt || 0) < C_H + C_ROOF_RISE + 0.4 && insideCottage(e.x, e.z)) {
+    // a low-flying gull never passes through the cottage, deflect it out to the nearest wall
+    if (cottage && (e.alt || 0) < C_H + C_ROOF_RISE + 0.4 && insideCottage(e.x, e.z)) {
       const l = cotWorldToLocal(e.x, e.z);
       if (C_OX - Math.abs(l[0]) < C_OZ - Math.abs(l[1])) l[0] = (l[0] >= 0 ? 1 : -1) * (C_OX + 0.6);
       else l[1] = (l[1] >= 0 ? 1 : -1) * (C_OZ + 0.6);
       const w = cotLocalToWorld(l[0], l[1]); e.x = w[0]; e.z = w[1];
     }
-    // §gulls world height references the water SURFACE over water (never the seabed), no flying-through-water, no vertical pop
-    { const overW = waterDepthAt(e.x, e.z) > 0.4, floating = overW && (e.alt || 0) < 1.5;
+    // world Y references the water SURFACE over water (never the seabed); the bird stays above it
+    { const overW = waterDepthAt(e.x, e.z) > 0.4;
       const baseY = overW ? waterSurfaceAt(e.x, e.z) : heightAt(e.x, e.z);
-      e.y = baseY + (e.alt || 0) + (floating ? 0.1 + Math.sin(e.phase*2)*0.05 : 0.3); }
+      e.y = baseY + (e.alt || 0) + 0.3; }
   }
 }
 // Take an egg from a nest; the last one abandons it for a while.
-function takeEgg(nest) {
-  if (!nest || nest.eggs <= 0 || nest.abandonedUntil > clock.t) { showCard("Empty nest", "Nothing to take right now."); return; }
-  const added = Inv.add("gullegg", 1);
-  if (added <= 0) { showCard("Pack full", "No room for the egg."); bagShake(); return; }
-  nest.eggs--;
-  const first = !discovered.has("f_gullegg"); discovered.add("f_gullegg"); notify("gullegg", 1, first);
-  if (nest.eggs <= 0) { nest.abandonedUntil = clock.t + GULL.abandonDays*DAY_PERIOD; nest.replenishAt = nest.abandonedUntil; showCard("Nest emptied", "The gulls abandon an emptied nest for a while. Leave one and it keeps laying."); }
-  else if (!nest.replenishAt) nest.replenishAt = clock.t + GULL.eggReplenishDays*DAY_PERIOD;
-  if (onGull) onGull("call");
-  saveNests();
-}
 // §gulls an articulated gull: a rigid body (beak-first, never rolling) + two wings that flap up/down.
 // Drawn as three instanced batches (body / right wing / left wing). The wing flap is a Rodrigues "lean"
 // about the body's forward axis (leanDir = +z); the body's "lean" is its pitch about the body-right axis.
@@ -13851,12 +13618,6 @@ const _gullBody = new Float32Array(GULL_DRAW_MAX*10), _gullWR = new Float32Array
 function drawGulls(view) {
   drawGullShadows(view);   // §3 soft, elongated, height-aware contact shadows (no night shadows)
   propUniforms(view);
-  // a tiny carried item under the beak of a thieving gull
-  for (const e of life) { if (e.t !== "gull" || !e.carry) continue;
-    const reg = FINDS[e.carry]; if (!reg || !reg.dyn) continue;
-    const d = Math.hypot(e.x - player.x, e.z - player.z); if (d > 90) continue;
-    digScratch.set([e.x, (e.y||0) - 0.22, e.z, 0.5, e.yaw||0, 0, 0, 1,1,1], 0); reg.dyn.draw(digScratch, 1);
-  }
   if (!gullBodyDyn) { gullBodyDyn = makeDynamic(gullBodyMesh(), GULL_DRAW_MAX); gullWingRDyn = makeDynamic(gullWingMesh(1), GULL_DRAW_MAX); gullWingLDyn = makeDynamic(gullWingMesh(-1), GULL_DRAW_MAX); gullFeetDyn = makeDynamic(gullFeetMesh(), GULL_DRAW_MAX); }
   let n = 0; const px = cam.pos[0], pz = cam.pos[2];
   for (const e of life) {
@@ -13864,12 +13625,11 @@ function drawGulls(view) {
     const dx = e.x - px, dz = e.z - pz; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
     if (!lifeVisible(e)) continue;
     if (n >= GULL_DRAW_MAX) break;
-    const settled = (e.gstate === "forage" || e.gstate === "float" || e.gstate === "perch");
-    let base, amp;                                           // wing-beat: folded at rest, slight when gliding, full in powered flight
+    const settled = (e.gstate === "ground");
+    let base, amp;                                           // wing-beat: folded flat on the ground, held in a slight dihedral gliding, full strokes when flapping
     if (settled) { base = -0.32; amp = 0; }
-    else if (e.gstate === "soar" || e.gstate === "approach") { base = 0.1; amp = 0.16; }
-    else if (e.gstate === "hopflee") { base = 0.04; amp = 0.35; }
-    else { base = 0.0; amp = 0.62; }
+    else if (e.flapping) { base = 0.02; amp = 0.58; }        // powered strokes from the shoulder
+    else { base = 0.12; amp = 0.05; }                        // glide: wings held out, barely moving
     const flapAng = base + Math.sin(e.flap || 0) * amp;
     const sc = e.scale * 1.5 * (e.gtrait ? e.gtrait.size : 1);
     const o = n*10, yaw = e.yaw || 0, pit = e.pitch || 0, ey = e.y || 0;
@@ -13883,32 +13643,6 @@ function drawGulls(view) {
     n++;
   }
   if (n) { gullBodyDyn.draw(_gullBody, n); gullWingRDyn.draw(_gullWR, n); gullWingLDyn.draw(_gullWL, n); gullFeetDyn.draw(_gullFeet, n); }
-}
-function drawNests(view) {
-  propUniforms(view);
-  let nn = 0, ne = 0;
-  for (const nest of gullNests) {
-    const d = Math.hypot(nest.x - player.x, nest.z - player.z); if (d > 120) continue;
-    const gy = surfaceAt(nest.x, nest.z).h, o = nn*10;
-    if (nn < 30) { digScratch[o]=nest.x;digScratch[o+1]=gy;digScratch[o+2]=nest.z;digScratch[o+3]=1;digScratch[o+4]=0;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=1;digScratch[o+8]=1;digScratch[o+9]=1; nn++; }
-  }
-  if (nn) nestDyn.draw(digScratch, nn);
-  for (const nest of gullNests) {
-    const d = Math.hypot(nest.x - player.x, nest.z - player.z); if (d > 120 || nest.abandonedUntil > clock.t) continue;
-    const gy = surfaceAt(nest.x, nest.z).h + 0.08;
-    for (let i = 0; i < nest.eggs && ne < 60; i++) { const a = i/Math.max(1,nest.eggs)*6.283 + nest.x, ex = nest.x + Math.cos(a)*0.16, ez = nest.z + Math.sin(a)*0.16;
-      const o = ne*10; eggScratch(o, ex, gy, ez); ne++; }
-  }
-  if (ne) eggDyn.draw(eggBuf, ne);
-}
-const eggBuf = new Float32Array(600);
-function eggScratch(o, x, y, z) { eggBuf[o]=x;eggBuf[o+1]=y;eggBuf[o+2]=z;eggBuf[o+3]=0.7;eggBuf[o+4]=0;eggBuf[o+5]=0.25;eggBuf[o+6]=0;eggBuf[o+7]=1;eggBuf[o+8]=1;eggBuf[o+9]=1; }
-function nearestNest(x, z, maxd) { let best = null, bd = maxd; for (const n of gullNests) { const d = Math.hypot(n.x - x, n.z - z); if (d < bd) { bd = d; best = n; } } return best; }
-function saveNests() { try { localStorage.setItem("bcn_" + SEED_STR, JSON.stringify(gullNests.map(n => [+n.x.toFixed(1), +n.z.toFixed(1), n.eggs, +(n.abandonedUntil-clock.t).toFixed(0), +(n.replenishAt-clock.t).toFixed(0)]))); } catch (e) {} }
-function loadNests() {
-  try { const a = JSON.parse(localStorage.getItem("bcn_" + SEED_STR) || "null"); if (!a) return;
-    for (const r of a) { const n = gullNests.find(g => Math.abs(g.x-r[0]) < 1 && Math.abs(g.z-r[1]) < 1);
-      if (n) { n.eggs = r[2]; n.abandonedUntil = r[3] > 0 ? clock.t + r[3] : -1e9; n.replenishAt = r[4] > 0 ? clock.t + r[4] : 0; } } } catch (e) {}
 }
 
 /* ===================================================================== *
@@ -13983,11 +13717,6 @@ function seedChests() {
   }
 }
 // §12B hook: circling gulls gather over the nearest buried/exposed-but-unopened chest
-function chestGullPoint() {
-  let best = null, bd = 80;
-  for (const c of chests) { if (c.opened) continue; const d = Math.hypot(c.x - player.x, c.z - player.z); if (d < bd) { bd = d; best = { x: c.x, z: c.z, kind: "chest" }; } }
-  return best;
-}
 // digging over a chest exposes it (deeper than a normal find); near a buried key/map, it surfaces
 function digTreasure(x, z) {
   for (const c of chests) { if (c.opened || c.exposed) continue;
@@ -14366,7 +14095,6 @@ seedWildCrops();
 populateLife();
 seedSeaweedBeds();   // §17.2 after life[], so bed-dwelling critters aren't wiped
 recordCensus();      // §R4 remember starting populations for replenishment
-seedForagePatches(); // §17.3 worm soil / buried clusters the gulls gather over
 seedFlotsam();       // §5 a little floating debris already out on the water
 // §urgent4 goblin trader removed (no NPCs / trading)
 let terrain = buildTerrainMesh();        // §island9 let so New Island can rebuild them in place
@@ -14410,8 +14138,6 @@ seedSalt();
 seedGoats();
 loadTamed();
 loadDrops();
-seedGullNests();
-loadNests();
 seedChests();
 loadChests();
 loadStorage();
@@ -14522,7 +14248,6 @@ function generateWorld() {
   populateLife();
   seedSeaweedBeds();
   recordCensus();
-  seedForagePatches();
   seedFlotsam();
   rebuildTerrainInPlace();
   seedDigSpots();
@@ -14540,8 +14265,6 @@ function generateWorld() {
   seedGoats();
   loadTamed();
   loadDrops();
-  seedGullNests();
-  loadNests();
   seedChests();
   loadChests();
   loadStorage();
@@ -14621,7 +14344,7 @@ function frame(now) {
     updateHunger(s);
     updateLife(s, clock.t);
     healDig(s);
-    if (tideT > 0.73 && tideT < 0.78) { if (!washedThisLow) { currentEvent = nextEvent; washUp(false); seedDigSpots(); rollGullHint(); washedThisLow = true;
+    if (tideT > 0.73 && tideT < 0.78) { if (!washedThisLow) { currentEvent = nextEvent; washUp(false); seedDigSpots(); washedThisLow = true;
       if (currentEvent !== "calm") showCard(EVENT_LABEL[currentEvent], "The low tide has left something along the shore."); } }
     else if (tideT < 0.55) washedThisLow = false;
     gdt -= s;
@@ -14918,7 +14641,6 @@ function frame(now) {
   drawCampfires(view);
   drawPlacedLanterns(view);   // §tools lit lanterns set down in the world
   drawGoats(view);
-  drawNests(view);
   drawChests(view);
   drawStorage(view);
   drawBuilds(view);        // §16B placed building pieces + the placement ghost
