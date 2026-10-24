@@ -208,6 +208,13 @@
     padding: 7px 16px; border-radius: 20px; pointer-events: none; white-space: nowrap; transition: opacity .6s; opacity: 0; }
   #eventchev { position: fixed; z-index: 14; display: none; color: rgba(236,223,196,.7); pointer-events: none;
     filter: drop-shadow(0 1px 3px rgba(0,0,0,.6)); transition: opacity .3s; }
+  /* §capt5 Minecraft-style sound captions, bottom-right (debug toggle) */
+  #soundsubs { position: fixed; right: 12px; bottom: 90px; z-index: 16; display: none; pointer-events: none;
+    text-align: right; font-size: 12px; letter-spacing: .01em; }
+  #soundsubs .cap { color: #ecdfc4; text-shadow: 0 1px 2px rgba(0,0,0,.85); background: rgba(10,16,20,.5);
+    padding: 2px 8px; border-radius: 10px; margin-top: 3px; display: inline-block; white-space: nowrap; }
+  #soundsubs .cap .cid { color: #9fb2bf; font-size: 10px; }
+  #soundsubs .cap .cdir { color: #d8c98a; font-weight: bold; margin-left: 5px; }
   /* §A6 one shared scrim behind every modal; the panels themselves sit above it */
   #scrim { position: fixed; inset: 0; z-index: 11; display: none; background: var(--dim); backdrop-filter: blur(2px); }
   /* §menu the combined satchel + bucket view: both panels laid out side by side */
@@ -566,6 +573,7 @@
 <div id="invpanel"></div>
 <div id="eventline"></div>
 <div id="eventchev"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div>
+<div id="soundsubs"></div>
 <div id="menutabs"></div>
 <div id="combined"></div>
 <div id="pausemenu"></div>
@@ -1473,6 +1481,19 @@ const SND = {
       else return;
     }
     this.lastAt[id] = now;
+    if (soundSubs) {   // §capt5 Minecraft-style caption: name, id, and a direction arrow; repeats merge
+      let dir = "";
+      if (opt.position) {
+        const f = (typeof camForward === "function") ? camForward() : [0,0,1];
+        const dx = opt.position[0] - cam.pos[0], dz = opt.position[2] - cam.pos[2], dd = Math.hypot(dx,dz) || 1;
+        const fwd = (dx*f[0] + dz*f[2]) / dd;
+        dir = fwd < -0.35 ? "behind" : pan < -0.3 ? "←" : pan > 0.3 ? "→" : "·";
+      }
+      const capVol = distGain * r.vol;
+      const ex = soundSubList.find(s => s.id === id);
+      if (ex) { ex.bornT = clock.t; ex.dir = dir; ex.n++; ex.vol = Math.max(ex.vol, capVol); }
+      else { soundSubList.push({ id, name: soundCapName(id), dir, bornT: clock.t, vol: capVol, n: 1 }); if (soundSubList.length > 10) soundSubList.shift(); }
+    }
     const buf = bufs[(Math.random() * bufs.length) | 0]; if (!buf) return;
     const src = this.ctx.createBufferSource(); src.buffer = buf;
     src.playbackRate.value = (opt.pitch || 1) * (1 + (Math.random() * 2 - 1) * r.pv);
@@ -3037,7 +3058,7 @@ function startleNear(x, z) {
 }
 // §R4 weapons can strike any creature. Small per-species HP; a hit hurts and scatters it, enough hits kill it.
 const CREATURE_HP = { crab:2, hermit:2, piper:2, hopper:1, gull:3, seal:6, heron:3, seaduck:2, snail:1, shrimp:1, octopus:2, star:1, urchin:1, anemone:1, jelly:1 };
-const CREATURE_DROP = { crab:"crabmeat", hermit:"crabmeat", gull:"feather", piper:"feather", heron:"feather", seaduck:"feather" };
+const CREATURE_DROP = { crab:"crabmeat", hermit:"crabmeat", lobster:"crabmeat", gull:"feather", piper:"feather", heron:"feather", seaduck:"feather" };
 function creatureHP(t) { return CREATURE_HP[t] || 2; }
 function creatureAt(x, y, z, r) { let best = null, bd = r*r;
   for (const e of life) { if (e.kind !== "creature" || FISH[e.t] || e.dying !== undefined) continue;
@@ -5555,6 +5576,38 @@ function crabMesh(col) {
     mTri(m, [0.0, 0.1, s*0.4], [0.3 + k*0.2, 0.0, s*0.72], [0.1 + k*0.2, 0.1, s*0.45], col);
   return m;
 }
+// §lob5 low-poly lobster, built PALE so the entity tint sets the hue (brick-red by default, electric-blue for the rare morph).
+// Faces +X: head/claws/antennae forward, segmented abdomen + tail-fan trailing at −X.
+function lobsterMesh(colIgnored) {
+  const m = Mesh();
+  const sh = [0.92,0.86,0.82], dk = [0.74,0.68,0.66], cl = [1.0,0.9,0.84], eye = [0.12,0.12,0.14];
+  // cephalothorax (head + body)
+  mBox(m, 0.14, 0.13, 0, 0.26, 0.11, 0.15, sh);
+  mBox(m, 0.36, 0.17, 0, 0.1, 0.07, 0.11, sh);                     // raised rostrum/head
+  // segmented abdomen curling up & narrowing toward the tail
+  let tx = -0.12, ty = 0.13, hw = 0.14, seg = 0.1;
+  for (let i = 0; i < 5; i++) { mBox(m, tx - seg, ty, 0, seg, 0.095 - i*0.01, hw, i % 2 ? dk : sh); tx -= seg*1.8; ty += 0.016*i; hw *= 0.86; }
+  // tail fan (telson + uropods) — flat spreading plates
+  for (const s of [-1.3, -0.45, 0.45, 1.3]) mTri(m, [tx+0.04, ty, 0], [tx-0.18, ty+0.03, s*0.1], [tx-0.16, ty+0.03, s*0.03], dk);
+  // two big claws reaching forward (±z)
+  for (const s of [-1, 1]) {
+    mBox(m, 0.42, 0.11, s*0.17, 0.14, 0.035, 0.035, sh);           // arm
+    mBox(m, 0.6, 0.1, s*0.22, 0.11, 0.08, 0.09, cl);               // claw body (heavy)
+    mBox(m, 0.74, 0.13, s*0.22, 0.06, 0.028, 0.03, cl);            // upper pincer
+    mBox(m, 0.74, 0.07, s*0.22, 0.06, 0.028, 0.03, cl);            // lower pincer
+  }
+  // long antennae sweeping forward & out
+  for (const s of [-1, 1]) {
+    mBox(m, 0.5, 0.2, s*0.08, 0.12, 0.012, 0.012, dk);
+    mBox(m, 0.72, 0.22, s*0.15, 0.14, 0.01, 0.01, dk);
+    mBox(m, 0.95, 0.25, s*0.22, 0.17, 0.008, 0.008, dk);
+  }
+  // eyes on short stalks
+  for (const s of [-1, 1]) mBox(m, 0.42, 0.21, s*0.06, 0.03, 0.045, 0.03, eye);
+  // walking legs tucked under
+  for (const s of [-1, 1]) for (let k = 0; k < 3; k++) mBox(m, 0.12 - k*0.12, 0.02, s*0.16, 0.02, 0.055, 0.02, dk);
+  return m;
+}
 // §fishpolish detailed low-poly fish: rounded body (6-sided lathe) + forked tail, dorsal, paired pectorals, eye, mouth.
 // Convention: nose at +x, tail at -x, back = +y. All species share this builder so icons, in-hand and swimming models match.
 function finFishMesh(col, o) {
@@ -6392,10 +6445,12 @@ const CREATURES = {
   salamander:{ mesh: () => salamanderMesh(),          base: 0.5, max: 60,  label: "Spotted Salamander", desc: "Dark and yellow-spotted, kept damp under a stone — a real treat to turn up.", stoneCritter: 1, land: 1 },
   // §41 horseshoe crab — a living fossil plowing the sandy shallows day & night
   horseshoe:{ mesh: () => horseshoeMesh(),            base: 1.0, max: 50,  label: "Horseshoe Crab", desc: "A living fossil, older than the dinosaurs and closer kin to spiders than to crabs. It plows the sandy shallows on ten legs. Never lift one by the tail — that spike is a rudder and a lever to right itself, not a handle.", horseshoe: 1 },
+  // §lob5 lobster — reef & shallows dweller, out more after dark; two big claws, long antennae, a tail that snaps back when it bolts
+  lobster:  { mesh: () => lobsterMesh(),              base: 0.7, max: 40,  label: "Lobster", desc: "Backs into crevices under the reef rocks by day and ranges out over the shallows after dark. Two heavy claws, long antennae, and a muscular tail it snaps backward to shoot away.", lobster: 1, nocturnal: 1, iconTint: [0.82,0.32,0.24] },
 };
 // §R4 explicit per-creature bucketability — small aquatic & intertidal life only. Never birds (gull, piper,
 // heron, seaduck), mammals (seal, otter, raccoon, goat), or large/game fish (flounder, rockfish, lingcod).
-const BUCKETABLE_TYPES = { crab:1, hermit:1, fish:1, minnow:1, flounder:1, rockfish:1, lingcod:1, star:1, urchin:1, anemone:1, jelly:1, shrimp:1, snail:1, hopper:1, octopus:1, horseshoe:1, gunnel:1, chiton:1 };   // §6 the swimming fish are scoopable too; §21C gunnel/chiton are aquatic; land stone-critters are inspect-only
+const BUCKETABLE_TYPES = { crab:1, hermit:1, fish:1, minnow:1, flounder:1, rockfish:1, lingcod:1, star:1, urchin:1, anemone:1, jelly:1, shrimp:1, snail:1, hopper:1, octopus:1, horseshoe:1, gunnel:1, chiton:1, lobster:1 };   // §6 the swimming fish are scoopable too; §21C gunnel/chiton are aquatic; §lob5 lobsters scoop in too; land stone-critters are inspect-only
 for (const k in CREATURES) CREATURES[k].bucketable = !!BUCKETABLE_TYPES[k];
 const FINDS = {
   shell:    { mesh: () => shellMesh(),               base: 0.5, max: 200, label: "Spiral Shell", desc: "An empty whelk, worn smooth.", rare: 0 },
@@ -6517,10 +6572,18 @@ const VARIANT_TINT = { blue:[0.32,0.5,0.98], albino:[0.97,0.95,0.97], twotone:[0
 const VARIANT_LABEL = { giant:"Giant", blue:"Blue", albino:"Albino", twotone:"Two-tone" };
 const VARIANT_BADGE = { giant:"G", blue:"B", albino:"A", twotone:"T" };   // §A6 plain-text badges (no emoji)
 let variantsSeen = {};   // species → { giant:n, blue:n, albino:n, twotone:n } (persisted)
-function variantEligible(t) { const r = CREATURES[t]; return !!(r && (FISH[t] || r.stoneCritter || t==="crab" || t==="star" || t==="horseshoe" || t==="gull" || t==="hermit" || t==="urchin")); }
+function variantEligible(t) { const r = CREATURES[t]; return !!(r && (FISH[t] || r.stoneCritter || t==="crab" || t==="star" || t==="horseshoe" || t==="gull" || t==="hermit" || t==="urchin" || t==="lobster")); }
+// §lob5 species whose mesh is baked pale, so their everyday colour comes from the entity tint (the blue morph then just swaps it)
+const DEFAULT_TINT = { lobster: [0.82,0.32,0.24] };
 function applyVariant(e) {
+  if (DEFAULT_TINT[e.t]) e.tint = DEFAULT_TINT[e.t].slice();   // its ordinary hue, unless a colour morph overrides below
   if (!variantEligible(e.t)) return;
   const r = rng();
+  if (e.t === "lobster") {                                     // §lob5 lobsters roll only the usual Giant or the rare Blue
+    if (r < VARIANT_GIANT_P) { e.variant = "giant"; e.scale *= 1.8 + rng()*0.7; }
+    else if (r < VARIANT_GIANT_P + VARIANT_MORPH_P) { e.variant = "blue"; e.tint = VARIANT_TINT.blue.slice(); }
+    return;
+  }
   if (r < VARIANT_GIANT_P) { e.variant = "giant"; e.scale *= 1.8 + rng()*0.7; }
   else if (r < VARIANT_GIANT_P + VARIANT_MORPH_P) { const m = VARIANT_MORPHS[(rng()*VARIANT_MORPHS.length)|0]; e.variant = m; e.tint = VARIANT_TINT[m].slice(); }
 }
@@ -6603,6 +6666,13 @@ function populateLife() {
     const h = surfaceAt(x, z).h, ci = cellIndex(x, z), d = -h;
     if (ci < 0 || filled[ci] > waterLevel+0.35 || d < 8 || d > 20) continue;
     if (rng() < 0.3) spawnCreature("lingcod", x, z, { hx:x, hz:z, hr:9, timer: rng()*3 });
+  }
+  for (let i = 0; i < 70; i++) {                                  // §lob5 lobsters — rocky reef & cobble shallows, hiding by the rocks
+    const a = rng()*6.283, r = HALF*(0.3 + rng()*0.55), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const h = surfaceAt(x, z).h, ci = cellIndex(x, z), d = -h, cb = coastBiomeAt(x, z);
+    if (ci < 0 || filled[ci] > waterLevel+0.35 || d < 0.6 || d > 7) continue;
+    if (cb !== "reef" && cb !== "cobble") continue;               // the rocky shores only
+    if (rng() < 0.4) spawnCreature("lobster", x, z, { hx:x, hz:z, hr:7, timer: rng()*2 });
   }
   for (let s = 0; s < 10; s++) {                                  // minnow schools in the shallows
     const a = rng()*6.283, r = HALF*(0.35 + rng()*0.45), cx = Math.sin(a)*r, cz = -Math.cos(a)*r;
@@ -7038,6 +7108,24 @@ const CRIT_SPD = {
   snail:   { cruise: 0.25, flee: 0.25 }, hermit: { cruise: 0.5, flee: 0.5 }, shrimp:  { cruise: 1.8, flee: 5.0 },
   hopper:  { cruise: 0.5, flee: 2.0 },
 };
+// §lob5 reef lobster: tucked near its crevice by day, ranging over the shallows after dark, and bolting tail-first with a hard flick.
+function behaveLobster(e, dt, d, dx, dz) {
+  const night = (typeof isNightNow === "function") ? isNightNow() : false;
+  if (e.flick > 0) e.flick = Math.max(0, e.flick - dt);
+  const fleeR = night ? 6 : 9;                               // bolder (lets you closer) at night
+  if (d < fleeR) {                                           // tail-flick escape: shoots BACKWARD, still facing the threat
+    e.cdState = "flick"; e.flick = Math.max(e.flick, 0.5);
+    const r = Math.hypot(dx, dz) || 1, spd = 6.5;
+    e.x += dx/r*dt*spd; e.z += dz/r*dt*spd; e.yaw = Math.atan2(-dz, -dx);
+  } else {
+    e.cdState = night ? "forage" : "lurk";
+    const range = night ? (e.hr || 7) : 2.4, spd = night ? 1.3 : 0.45;
+    e.timer -= dt; if (e.timer < 0) { e.timer = (night ? 1.2 : 2.6) + rng()*2; e.vx = (rng()-0.5); e.vz = (rng()-0.5); }
+    e.x += e.vx*dt*spd; e.z += e.vz*dt*spd; e.yaw = Math.atan2(e.vz||0.01, e.vx||0.01);
+    if (Math.hypot(e.x-e.hx, e.z-e.hz) > range) { e.vx = (e.hx-e.x)*0.2; e.vz = (e.hz-e.z)*0.2; }
+  }
+  if (waterDepthAt(e.x, e.z) < 0.4) { const grad = groundGradient(e.x, e.z); e.x += grad.dx*dt*2.0; e.z += grad.dz*dt*2.0; }   // keep to the water — slip back down if it drifts too shallow
+}
 function fleeFrom(e, dx, dz, dt, spd) {        // move directly away from the player (dx,dz already = entity − player)
   const r = Math.hypot(dx, dz) || 1;
   e.x += dx/r*dt*spd; e.z += dz/r*dt*spd; e.yaw = Math.atan2(dz, dx) + 1.57;
@@ -7051,6 +7139,7 @@ function behave(e, dt, d, dx, dz) {
   if (FISH[e.t]) { behaveFish(e, dt, d, dx, dz); return; }     // §14C huntable fish / schools
   if (CREATURES[e.t] && CREATURES[e.t].stoneCritter) { behaveStoneCritter(e, dt, d, dx, dz); return; }   // §21C life from under a flipped stone
   if (e.t === "horseshoe") { behaveHorseshoe(e, dt, d, dx, dz); return; }   // §41 horseshoe crab plows the shallows / waits to be turned over
+  if (e.t === "lobster") { behaveLobster(e, dt, d, dx, dz); return; }       // §lob5 reef lobster — lurks by day, forages at night, tail-flicks away
   if (e.returning) {                                           // poured onto dry land → head for the nearest water
     if (waterDepthAt(e.x, e.z) > 0.12) { e.returning = false; e.exposed = 0; e.hx = e.x; e.hz = e.z; return; }
     if (creatureExposureDry(e, dt)) return;                    // §13.3 too slow → dries out and dies
@@ -7217,6 +7306,7 @@ function drawLife(view) {
           sc = e.scale * 1.5 * (e.gtrait ? e.gtrait.size : 1); }    // §13.7 read bigger against sky & sand, with a little per-bird size variety
         else if (e.t === "jelly") sc = e.scale * (0.9 + Math.sin(e.phase*2)*0.1);
         if (e.t === "crab") y = g - (e.burrow || 0) * 0.6;                      // §13.1 sink into the sand (no pop)
+        else if (e.t === "lobster") { y = g + 0.1; if (e.flick > 0) { lean = Math.sin((e.flick/0.5)*Math.PI) * 0.6; ld = e.yaw; } }   // §lob5 sits on the seabed; a quick backward lurch on the tail-flick
         else if (e.t === "anemone") sc = e.scale * (1 - 0.6*e.closed);
         else if (e.t === "seaduck") y = waterSurfaceAt(e.x, e.z) + 0.03 + Math.sin(e.phase*2)*0.03;   // §16.1 bobs on the water
         if (e.t === "star" || e.t === "anemone" || e.t === "urchin" || e.t === "snail" || e.t === "octopus") y += 0.02;
@@ -7543,7 +7633,7 @@ function invDrop(idx, one) {
 
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 function saveState() {
-  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup, stonesBack: stonesPutBack, variants: variantsSeen,
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup, variants: variantsSeen,
     heaves: heaveBoulders.map((b,i)=>b.flipped?[i,+b.refillAt.toFixed(2),+b.flippedAt.toFixed(2)]:0).filter(e=>e),   // §21D heaved boulders (index, refillAt, flippedAt)
     pearls: pearlsSeen, oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)]),   // §23 pearl sightings + oyster-bed stock
     hsFlipped: horseshoesFlipped,   // §41 horseshoe crabs turned back over
@@ -7561,7 +7651,6 @@ function loadState() {
       Inv.selected = Math.min(HOTBAR_SLOTS - 1, s.sel || 0); (s.disc || []).forEach((d) => discovered.add(d));
       starsRescued = s.rescued || 0;
       if (typeof s.cleanup === "number") beachCleanup = s.cleanup;   // §5 beach-cleanup tally
-      if (typeof s.stonesBack === "number") stonesPutBack = s.stonesBack;   // §21 stones put back tally
       if (s.variants && typeof s.variants === "object") variantsSeen = s.variants;   // §22 variant sightings per species
       if (Array.isArray(s.heaves)) _savedHeave = s.heaves;   // §21D heaved boulders (applied in seedHeaveBoulders)
       if (s.pearls && typeof s.pearls === "object") pearlsSeen = s.pearls;   // §23 pearl sightings per variant
@@ -7708,7 +7797,7 @@ function buildIcons() {
   _iconPx = new Uint8Array(64 * 64 * 4);
   _iconProj = M4.perspective(0.6, 1, 0.1, 50); _iconView = M4.lookAt([2.2, 1.9, 2.4], [0, 0.05, 0], [0, 1, 0]);
   for (const k in ITEMS) buildOneIcon(ITEMS[k]);
-  for (const k in CREATURES) CREATURES[k].icon = buildMeshIcon(CREATURES[k].mesh(), [1,1,1]);   // §13.5 journal creature cards
+  for (const k in CREATURES) CREATURES[k].icon = buildMeshIcon(CREATURES[k].mesh(), CREATURES[k].iconTint || [1,1,1]);   // §13.5 journal creature cards (§lob5 pale-baked meshes carry an iconTint)
   for (const k in BUILD_DEFS) BUILD_ICON[k] = buildMeshIcon(BUILD_DEFS[k].mesh(), [1,1,1]);      // §16B Make-tab build icons
   gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 }
@@ -8026,7 +8115,14 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgStormMorn">Skip to post-storm morning</button></div>
     <h3>Sound (squeak hunt)</h3>
     <div class="dbgrow">${["gulls","creatures","footsteps","tools","ui","ambience"].map(c=>`<button class="dbgsnd${SND.catMute[c]?' on':''}" data-sc="${c}" style="${SND.catMute[c]?'background:#b5503a':''}">${c}${SND.catMute[c]?' ✕':''}</button>`).join("")}</div>
-    <div class="dbgrow"><button id="dbgSndLog">Log sounds 30s</button></div>
+    <div class="dbgrow"><button id="dbgSndLog">Log sounds 30s</button><button id="dbgSubs" style="${soundSubs?'background:#b5503a':''}">Captions: ${soundSubs?"ON":"off"}</button></div>
+    <h3>Held tool (fine-tune)</h3>
+    <div class="jhint" id="dbgToolRead" style="margin-bottom:4px">—</div>
+    <label>Yaw offset <b class="tv2" data-tk="yaw">${dbgTool.yaw.toFixed(2)}</b> <input class="dbgtool" data-tk="yaw" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.yaw}"></label>
+    <label>Pitch offset <b class="tv2" data-tk="pitch">${dbgTool.pitch.toFixed(2)}</b> <input class="dbgtool" data-tk="pitch" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.pitch}"></label>
+    <label>Roll offset <b class="tv2" data-tk="roll">${dbgTool.roll.toFixed(2)}</b> <input class="dbgtool" data-tk="roll" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.roll}"></label>
+    <div class="dbgrow"><button id="dbgSwingDir">Swing dir: ${dbgTool.swingDir > 0 ? "forward (+1)" : "reversed (−1)"}</button><button id="dbgToolReset">Reset offsets</button></div>
+    <div class="jhint">base bladed yaw = 45° (0.79 rad); read-out above shows the final applied pose incl. base — send me those numbers.</div>
     <h3>Camera (jump-snap hunt)</h3>
     <div class="dbgrow"><button id="dbgCamRaw" style="${camFx.raw?'background:#b5503a':''}">Raw camera: ${camFx.raw?"ON":"off"}</button><button id="dbgYG">Y graph (Y)</button></div>
     <div class="dbgrow">
@@ -8052,6 +8148,13 @@ function syncDebugPanel() {
   p.querySelector("#dbgAudit").onclick = () => auditRegistries();
   p.querySelectorAll(".dbgsnd").forEach(b => b.onclick = () => { SND.catMute[b.dataset.sc] = !SND.catMute[b.dataset.sc]; syncDebugPanel(); });   // §B4 per-category sound mutes
   { const sl = p.querySelector("#dbgSndLog"); if (sl) sl.onclick = () => SND.startSoundLog(30); }
+  { const su = p.querySelector("#dbgSubs"); if (su) su.onclick = () => { soundSubs = !soundSubs; const el = document.getElementById("soundsubs"); if (el) el.style.display = soundSubs ? "block" : "none"; if (!soundSubs && typeof soundSubList !== "undefined") soundSubList.length = 0; syncDebugPanel(); }; }   // §tools5 caption subtitles
+  p.querySelectorAll(".dbgtool").forEach((el) => el.oninput = (e) => {   // §tools5 held-tool fine-tune offsets
+    const k = el.dataset.tk, v = +e.target.value; dbgTool[k] = v;
+    const b = p.querySelector(`.tv2[data-tk="${k}"]`); if (b) b.textContent = v.toFixed(2);
+  });
+  { const sd = p.querySelector("#dbgSwingDir"); if (sd) sd.onclick = () => { dbgTool.swingDir = -dbgTool.swingDir; syncDebugPanel(); }; }
+  { const tr = p.querySelector("#dbgToolReset"); if (tr) tr.onclick = () => { dbgTool.yaw = 0; dbgTool.pitch = 0; dbgTool.roll = 0; dbgTool.swingDir = 1; syncDebugPanel(); }; }
   p.querySelector("#dbgHints").onclick = () => { hintsOn = !hintsOn; saveHints(); syncDebugPanel(); };
   p.querySelector("#dbgResetHints").onclick = () => { resetHints(); syncDebugPanel(); };
   p.querySelector("#dbgAutoPick").onclick = () => { autoPickup = !autoPickup; saveAutoPick(); syncDebugPanel(); };
@@ -8193,7 +8296,7 @@ function renderJournal() {
   const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["collections","Collections"],["pearls","Pearls"],["events","Events"],["treasure","Treasure"]];   // §A6 Cookbook removed · §B5 Events added
   const tabHtml = tabs.map(([id,lbl]) => { const [n,t] = journalCount(id);
     return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
-  const cleanupLine = `<div class="jstat">Beach cleanup — <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared · Stones put back — <b>${stonesPutBack}</b> · Horseshoes turned over — <b>${horseshoesFlipped}</b></div>`;
+  const cleanupLine = `<div class="jstat">Beach cleanup — <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared · Horseshoes turned over — <b>${horseshoesFlipped}</b></div>`;
   j.innerHTML = `<div id="journalbox"><h2>Field Journal</h2>
     <div class="jtabs">${tabHtml}</div>
     ${cleanupLine}
@@ -8398,7 +8501,7 @@ function targetAlongRay(r, sticky) {
   for (const cr of crops) sphere(cr, "crop", cr.x, cr.z, 0.5*cr.scale, 1.0*cr.scale);   // §17 harvestable crops
   for (const sw of seaweedBeds) if (sw.ripe) sphere(sw, "seaweed", sw.x, sw.z, 0.6*sw.scale, 0.9*sw.scale);   // §17.2 pick sea lettuce
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
-  for (const s of flipStones) if (!s.anim) sphere(s, "flipstone", s.x, s.z, 0.4*s.sc, 0.5 + s.sc*0.4);   // §21 flippable stones
+  for (const s of flipStones) if (!s.anim && (!s.up || selectedTool() === "pickaxe")) sphere(s, "flipstone", s.x, s.z, 0.4*s.sc, 0.5 + s.sc*0.4);   // §stones5 un-turned stones flip; a spent one is only a target for the pickaxe (to break)
   // §heave-removed: heave boulders are no longer targetable
   if (typeof oysterBeds !== "undefined") for (const b of oysterBeds) if (oysterBedExposed(b)) sphere(b, "oysterbed", b.x, b.z, 0.5*b.sc, 0.75);   // §23 oyster beds bared at low tide
   if (typeof geodes !== "undefined") for (const g of geodes) if (!g.taken) sphere(g, "geode", g.x, g.z, 0.4*g.sc, 0.5 + g.sc*0.4);   // §40 geodes to crack with a pickaxe (cracked ones stay targetable so the halves can be picked up — §A3)
@@ -8445,7 +8548,7 @@ function useToolOnTarget(t) {
       genericHitCreature(t.obj); return true;
     case "find": interactWith(t.obj); return true;
     case "rubble": pickRubble(t.obj); return true;
-    case "flipstone": flipStone(t.obj); return true;   // §21 flip a stone / put it back
+    case "flipstone": if (tool === "pickaxe") { breakFlipStone(t.obj); return true; } flipStone(t.obj); return true;   // §stones5 pickaxe smashes it for Stone; any other item flips it over
     case "heaveboulder": return heaveBoulderAction(t.obj);   // §21D lever a heavy boulder over (shovel)
     case "oysterbed": return oysterBedAction(t.obj);   // §23 pick & shuck an oyster at low tide
     case "geode": return geodeAction(t.obj);   // §40 crack a geode open with a pickaxe
@@ -8914,6 +9017,41 @@ function goatPaw(g) {
 
 // the dig action
 let shovelSwing = 0, camNudge = 0, toolRecoilT = 0, camShake = 0, lastFailT = -99;
+// §tools5 live fine-tune offsets for the held tool (debug sliders): extra yaw/pitch/roll in radians, and a swing-direction flip.
+const dbgTool = { yaw: 0, pitch: 0, roll: 0, swingDir: 1 };
+const lastToolPose = { id: "", roll: 0, pitch: 0, yaw: 0, swingDir: 1 };   // final applied pose, read back by the debug readout
+const BLADE_BASE_YAW = Math.PI / 4;   // §tools5 both bladed tools sit rotated 45° (CCW from above) at rest
+let soundSubs = false;                 // §tools5 Minecraft-style sound captions (debug)
+const soundSubList = [];               // §capt5 live caption entries {id,name,dir,bornT,vol,n}
+const SOUND_CAP_TTL = 2.6, SOUND_CAP_FADE = 0.8;   // seconds a caption lingers / fades
+const SOUND_LABEL = {   // §capt5 friendly names for the captions; anything missing prettifies its id
+  gull_call:"Gull calls", gull_alarm:"Gull screeches", gull_squab:"Gulls squabble", gull_whoosh:"Gull wingbeat",
+  peep:"Sandpiper peeps", crab_skitter:"Crab skitters", jet:"Octopus jets", splash:"Splash", fish_splash:"Fish splashes",
+  step_sand:"Footsteps — sand", step_wet:"Footsteps — wet sand", step_rock:"Footsteps — rock", step_grass:"Footsteps — grass", step_wood:"Footsteps — wood",
+  dig:"Digging", thud:"Thud", mine:"Pick strikes rock", chop:"Axe chops", scrape:"Scrape", clink:"Clink", pat:"Pat",
+  whoosh:"Whoosh", hitflesh:"Hit", crack:"Crack", waves:"Waves", surf:"Surf", wind:"Wind", rain:"Rain", thunder:"Thunder",
+  pickup:"Pick up", discover:"New discovery!", craft:"Crafted", splash_big:"Big splash", reel:"Reel", bite:"A bite!",
+  flame:"Fire crackles", birdsong:"Birdsong", goat_bleat:"Goat bleats", gasp:"Gasp", breath:"Breath", womp:"Womp womp",
+};
+function soundCapName(id) { return SOUND_LABEL[id] || id.replace(/_/g," ").replace(/\b\w/g, c => c.toUpperCase()); }
+// §capt5 age out the captions and redraw them, newest at the bottom (Minecraft-style), with a fade as each sound dies away
+let _soundSubHTML = "";
+function updateSoundSubs() {
+  const el = document.getElementById("soundsubs"); if (!el) return;
+  if (!soundSubs) { if (el.style.display !== "none") el.style.display = "none"; return; }
+  if (el.style.display !== "block") el.style.display = "block";
+  for (let i = soundSubList.length - 1; i >= 0; i--) if (clock.t - soundSubList[i].bornT > SOUND_CAP_TTL) soundSubList.splice(i, 1);
+  const rows = soundSubList.slice(-8);   // oldest first, newest at the bottom
+  let html = "";
+  for (const s of rows) {
+    const age = clock.t - s.bornT, fade = age > SOUND_CAP_TTL - SOUND_CAP_FADE ? Math.max(0.15, (SOUND_CAP_TTL - age) / SOUND_CAP_FADE) : 1;
+    const op = (0.55 + Math.min(1, s.vol) * 0.45) * fade;
+    const dir = s.dir ? `<span class="cdir">${s.dir}</span>` : "";
+    const cnt = s.n > 1 ? ` ×${s.n}` : "";
+    html += `<div class="cap" style="opacity:${op.toFixed(2)}">${s.name}${cnt} <span class="cid">${s.id}</span>${dir}</div>`;
+  }
+  if (html !== _soundSubHTML) { el.innerHTML = html; _soundSubHTML = html; }
+}
 // §13.1 landing: a critically-damped camera spring absorbs the impact velocity and
 // settles — a "knee-bend" that eases in AND out, and never touches the player's real position.
 let camYOff = 0, camYVel = 0;
@@ -9162,14 +9300,14 @@ function removeBuiltAt(x, z) {
 const bucket = { water: false, creatures: [] };
 // §6 the bucket holds a fixed volume of SPACE rather than a head-count: little critters take 1 unit, fish 2-3 by size
 const BUCKET_UNITS = 6;                           // total space (tunable)
-const CREATURE_UNITS = { lingcod: 3, rockfish: 2, flounder: 2, fish: 2, octopus: 2, jelly: 2, horseshoe: 2 };   // the rest default to 1
+const CREATURE_UNITS = { lingcod: 3, rockfish: 2, flounder: 2, fish: 2, octopus: 2, jelly: 2, horseshoe: 2, lobster: 3 };   // §lob5 a lobster takes 3 of the bucket's units; the rest default to 1
 function creatureUnits(c) { let u = CREATURE_UNITS[c && c.t] || 1; if (c && c.variant === "giant") u += 1; return Math.min(u, BUCKET_UNITS); }
 function bucketUnitsUsed() { let u = 0; for (const c of bucket.creatures) u += creatureUnits(c); return u; }
 // §13.3 moisture: a creature out of water dries out over DRY_OUT_TIME real-seconds (tunable, ~5 min).
 // A fresh scoop / a refill tops it back to 1; a dry bucket lets it fall to 0, where the creature dies.
 const DRY_OUT_TIME = 300;                        // seconds from soaked to dead when kept dry (tunable)
 // what each creature leaves behind once it dries out completely → a Find
-const DRIED_REMAINS = { crab: "molt", hermit: "shell", star: "driedstar", urchin: "sanddollar",
+const DRIED_REMAINS = { crab: "molt", hermit: "shell", lobster: "molt", star: "driedstar", urchin: "sanddollar",
                         fish: "husk", anemone: "husk", jelly: "husk", hopper: "husk", piper: "husk",
                         snail: "shell", shrimp: "husk", octopus: "husk" };   // §16.1
 // where/when a creature was scooped, for the close-up inspect card (§11.7)
@@ -10585,14 +10723,15 @@ function drawShovel(view) {
     scale = isSpear ? 0.5 : 0.46;
     ox = 0.16 + sway;
     if (bladed) {
-      // §A1 overhead chop: pivot about the bottom of the handle (mesh origin), the blade arcs UP (wind-up) then comes DOWN
-      // through the target in the vertical plane — a pitch-only motion, no sideways yaw twist.
-      const chop = wind*0.75 - sw*1.65;                                                   // +0.75 raised at the start → −1.65 through the strike → 0 back at rest
+      // §A1/§tools5 overhead chop: pivot about the bottom of the handle (mesh origin), the blade arcs in the
+      // vertical plane — a pitch-only motion, no sideways yaw twist. §tools5 reverses the arc direction
+      // (blade now swings the opposite way) and the whole tool rests rotated 45° on the yaw axis.
+      const chop = (-wind*0.75 + sw*1.65) * dbgTool.swingDir;                              // reversed arc: swingDir=1 is the new default, −1 restores the old direction
       oy = -0.3 - sw*0.06 + wind*0.12 + rec*0.2 - swap*0.5 + bob;                          // lifts a touch on the wind-up, drops into the chop
       oz = 0.74 + sw*0.5 - rec*0.3;                                                        // drives forward through the strike
       roll = -0.28 + swayR;                                                               // a little lean, held steady (no twist)
       pitch = -0.15 + chop + rec*0.5;
-      toolYaw = 0;
+      toolYaw = BLADE_BASE_YAW;                                                            // §tools5 45° CCW from above
     } else {
       oy = -0.42 - sw*0.08 + rec*0.2 - swap*0.5 + bob + chg*0.1;
       oz = 0.82 + sw*0.6 - rec*0.35 + jab*0.5 - chg*0.3;
@@ -10601,6 +10740,10 @@ function drawShovel(view) {
     }
     if (id === "shovel") { flipEnd = true; oy = -0.26 - sw*0.08 + rec*0.2 - swap*0.5 + bob; oz = 0.78 + sw*0.5 - rec*0.35; pitch = -0.5 - sw*0.9 + rec*0.6; }   // §playtest1 flip 180°: D-grip up in the hand, spade at the far end pointing down & away
   }
+  // §tools5 apply the live debug fine-tune offsets to whatever is in hand, then record the final pose for the read-back.
+  roll += dbgTool.roll; pitch += dbgTool.pitch; toolYaw += dbgTool.yaw;
+  lastToolPose.id = id; lastToolPose.roll = roll; lastToolPose.pitch = pitch; lastToolPose.yaw = toolYaw; lastToolPose.swingDir = dbgTool.swingDir;
+  if (debugMode) { const rdEl = document.getElementById("dbgToolRead"); if (rdEl) rdEl.textContent = `${id}:  yaw ${toolYaw.toFixed(2)}   pitch ${pitch.toFixed(2)}   roll ${roll.toFixed(2)}   swingDir ${dbgTool.swingDir}`; }
   const cr = Math.cos(roll), sr = Math.sin(roll), cp = Math.cos(pitch), sp2 = Math.sin(pitch);
   const cY = Math.cos(toolYaw), sY = Math.sin(toolYaw);
   const src = fp.mesh.pos, world = fp.world; let p = 0;
@@ -11128,8 +11271,8 @@ const FLIP_REFILL_MIN = 1, FLIP_REFILL_MAX = 2;   // in-game days before a flipp
 const FLIP_CRITTER_P = 0.48, FLIP_ITEM_P = 0.20;  // rest (0.32) = nothing — a good flip is earned
 const FLIP_SCATTER_TIME = 4.5;            // seconds critters scatter before hiding
 const FLIP_ANIM_SPEED = 3.2;              // flip speed
-const FLIP_AUTORESET_DAYS = 1.5;          // a flipped stone left alone settles back after this
-let flipStones = [], flipStoneDyn = null, dampPatchDyn = null, stonesPutBack = 0;
+const FLIP_AUTORESET_DAYS = 1.0;          // §stones5 a spent (flipped-aside) stone resets with fresh loot after ~a day — but only while out of view
+let flipStones = [], flipStoneDyn = null, dampPatchDyn = null;
 const flipScratch = new Float32Array(FLIP_STONE_N * 10), dampScratch = new Float32Array(FLIP_STONE_N * 10);
 function flipStoneMesh() { const m = Mesh(); const dry = [0.54,0.52,0.48], dry2 = [0.48,0.46,0.42], damp = [0.34,0.33,0.3], rim = [0.4,0.38,0.34];
   const R = 0.5, sides = 8, rr = [];
@@ -11181,9 +11324,24 @@ function settleCritters(s) {
   s.critters.length = 0;
 }
 function flipStone(s) {
+  // §stones5 one-way: the stone rolls over and off to the side and STAYS there. No put-back, no toggle.
+  if (s.anim || s.up) return;
+  s.up = true; s.target = 1; s.anim = true; if (onDig) onDig("thud");
+  if (typeof spawnSand === "function") spawnSand(s.x, surfaceAt(s.x,s.z).h+0.1, s.z, 8, [0.58,0.5,0.4]);
+}
+// §stones5 small stones are breakable with a pickaxe → Stone. Breaking an un-flipped one first bares what hid under it.
+function breakFlipStone(s) {
   if (s.anim) return;
-  if (!s.up) { s.up = true; s.target = 1; s.anim = true; if (onDig) onDig("thud"); if (typeof spawnSand === "function") spawnSand(s.x, surfaceAt(s.x,s.z).h+0.1, s.z, 8, [0.58,0.5,0.4]); }
-  else { s.up = false; s.target = 0; s.anim = true; if (onDig) onDig("thud"); settleCritters(s); s.refillAt = tideDay + FLIP_REFILL_MIN + rng()*(FLIP_REFILL_MAX-FLIP_REFILL_MIN); stonesPutBack++; saveState(); if (typeof checkSets === "function") checkSets(); }
+  if (Math.hypot(s.x - player.x, s.z - player.z) > REACH + 1.2) return;
+  if (player.airborne) return;
+  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
+  shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST, true); rootPlayer(); if (onDig) onDig("mine");
+  const gy = surfaceAt(s.x, s.z).h;
+  spawnSand(s.x, gy + 0.12, s.z, 9, [0.5,0.48,0.46]);                 // rock chips
+  if (!s.up && !s.revealedThisFlip) { s.up = true; s.flip = 1; revealStoneContent(s); }   // smashing an un-turned stone bares the damp patch beneath
+  for (let i = 0; i < 2 + (rng() < 0.4 ? 1 : 0); i++) dropRubble(s.x+(rng()-0.5)*1.1, s.z+(rng()-0.5)*1.1, 0.4+rng()*0.35);   // pick the rubble up for Stone
+  const i = flipStones.indexOf(s); if (i >= 0) flipStones.splice(i, 1);
+  if (typeof checkSets === "function") checkSets(); saveState();
 }
 function updateFlipStones(dt) {
   for (const s of flipStones) {
@@ -11212,7 +11370,12 @@ function drawFlipStones(view) {
   if (dn) dampPatchDyn.draw(dampScratch, dn);
   if (n) flipStoneDyn.draw(flipScratch, n);
 }
-function flipStonePrompt(s) { return s.up ? (IS_TOUCH ? "tap to put the stone back" : "click to put the stone back") : (IS_TOUCH ? "tap to flip the stone" : "click to flip the stone"); }
+function flipStonePrompt(s) {
+  const verb = IS_TOUCH ? "tap" : "click";
+  if (selectedTool() === "pickaxe") return `${verb} to break the stone`;   // §stones5 pickaxe → Stone
+  if (s.up) return "";                                                       // already turned over — spent
+  return `${verb} to flip the stone`;
+}
 // §21C which critters hide under a stone, by biome
 function stoneCritterPool(biome) {
   return biome === "forest"
@@ -13871,6 +14034,7 @@ function frame(now) {
   const view = M4.lookAt(cam.pos, [cam.pos[0]+f[0], cam.pos[1]+f[1], cam.pos[2]+f[2]], [0, 1, 0]);
   lastVP = M4.multiply(proj, view);
   updateEventChevron(lastVP);   // §B5 edge chevron pointing to the active event
+  updateSoundSubs();            // §capt5 Minecraft-style sound captions (debug)
   const invVP = M4.invert(lastVP);
   lastInvVP = invVP;
 
