@@ -7119,7 +7119,10 @@ function spawnClusterOnBareRock() {
 }
 // §menu clusters sit on the rock's actual top surface, derived from the DRAW scale (not the coarser collision size),
 // so they never float off; recomputed every frame so they follow the rock as it's damaged or the terrain heals.
-function rockClusterTop(o) { return surfaceAt(o.x, o.z).h + (o.scale || o.sc || 1) * 0.58; }
+// §oyst6 sit the crust ON the rock's broad top-centre surface (was floating ~0.15*scale above it). The
+// shore rock is drawn sunk (base = surfaceAt - sc*0.22) with a mesh that tops out ~0.9; its broad top-centre
+// surface sits near surfaceAt + 0.42*scale, so the cluster base goes a touch under that so it reads as attached.
+function rockClusterTop(o) { return surfaceAt(o.x, o.z).h + (o.scale || o.sc || 1) * 0.44; }
 function rockBarnTop(o) { return rockClusterTop(o); }
 // §menu a rock cluster: pick an oyster off it (goes to the satchel), or scrape a barnacle, with ANY held item.
 // Scraping/picking is the priority action, so it never tries to mine the rock out from under the cluster.
@@ -7181,7 +7184,7 @@ function drawBarnacles(view) {
   // §barnrock crusts on the shore rocks, same shared instance buffer
   if (typeof rockObjs !== "undefined") for (const o of rockObjs) { const bn = o.barn; if (!bn || bn.amt <= 0 || o.gone || n >= 200) continue;
     const dx = o.x-px, dz = o.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const sc = (0.5 + 0.55*(bn.amt/Math.max(1,bn.max))) * (0.8 + (o.scale||o.sc)*0.35), q = n*10;
+    const sc = (0.42 + 0.45*(bn.amt/Math.max(1,bn.max))) * (0.6 + (o.scale||o.sc)*0.24), q = n*10;   // §oyst6 tighter crust so it hugs the rock top
     digScratch[q]=o.x; digScratch[q+1]=rockClusterTop(o); digScratch[q+2]=o.z; digScratch[q+3]=sc; digScratch[q+4]=o.x*1.7; digScratch[q+5]=0; digScratch[q+6]=0;
     digScratch[q+7]=1; digScratch[q+8]=1; digScratch[q+9]=1; n++; }
   if (n) barnacleDyn.draw(digScratch, n);
@@ -7190,14 +7193,14 @@ function drawBarnacles(view) {
     if (!oysterClusterDyn) oysterClusterDyn = makeDynamic(oysterClusterMesh(), 64);
     let no = 0; for (const o of rockObjs) { const oy = o.oyst; if (!oy || oy.amt <= 0 || o.gone || no >= 64) continue;
       const dx = o.x-px, dz = o.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-      const sc = (0.4 + 0.5*(oy.amt/Math.max(1,oy.max))) * (0.8 + (o.scale||o.sc)*0.3), q = no*10;
+      const sc = (0.34 + 0.4*(oy.amt/Math.max(1,oy.max))) * (0.6 + (o.scale||o.sc)*0.2), q = no*10;   // §oyst6 smaller, tighter clump so no oyster overhangs the rock's shoulders
       digScratch[q]=o.x; digScratch[q+1]=rockClusterTop(o); digScratch[q+2]=o.z; digScratch[q+3]=sc; digScratch[q+4]=o.x*1.3; digScratch[q+5]=0; digScratch[q+6]=0;
       digScratch[q+7]=1; digScratch[q+8]=1; digScratch[q+9]=1; no++; }
     if (no) oysterClusterDyn.draw(digScratch, no);
   }
 }
 let oysterClusterDyn = null;
-function oysterClusterMesh() { const m = Mesh(); for (let i = 0; i < 5; i++) { const a = i/5*6.283, r = 0.13; mergeAt(m, oysterMesh(), Math.cos(a)*r, (i%2)*0.05, Math.sin(a)*r); } return m; }
+function oysterClusterMesh() { const m = Mesh(); for (let i = 0; i < 5; i++) { const a = i/5*6.283, r = 0.085; mergeAt(m, oysterMesh(), Math.cos(a)*r, -0.02 + (i%2)*0.03, Math.sin(a)*r); } return m; }   // §oyst6 tighter clump, hugging the rock top
 
 // §1c crab lifecycle logging (toggle with K in debug mode) + a stable id per creature
 let _critId = 0, crabLog = false;
@@ -7385,7 +7388,7 @@ function behave(e, dt, d, dx, dz) {
   if (e.beached) { if (waterDepthAt(e.x, e.z) > 0.12) { e.beached = false; e.flop = false; e.exposed = 0; e.hx = e.x; e.hz = e.z; }
     else { creatureExposureDry(e, dt); return; } }
   if (FISH[e.t]) { behaveFish(e, dt, d, dx, dz); return; }     // §14C huntable fish / schools
-  if (CREATURES[e.t] && CREATURES[e.t].stoneCritter) { behaveStoneCritter(e, dt, d, dx, dz); return; }   // §21C life from under a flipped stone
+  if ((CREATURES[e.t] && CREATURES[e.t].stoneCritter) || (e.fromStone && e.t === "crab")) { behaveStoneCritter(e, dt, d, dx, dz); return; }   // §21C life from under a stone; §weak7 shore crab emerges here then reverts to a normal crab
   if (e.t === "horseshoe") { behaveHorseshoe(e, dt, d, dx, dz); return; }   // §41 horseshoe crab plows the shallows / waits to be turned over
   if (e.t === "lobster") { behaveLobster(e, dt, d, dx, dz); return; }       // §lob5 reef lobster, lurks by day, forages at night, tail-flicks away
   if (e.returning) {                                           // poured onto dry land → head for the nearest water
@@ -7502,6 +7505,14 @@ function creatureOnScreen(e) {
   const m = 48;
   return p[0] > -m && p[0] < innerWidth + m && p[1] > -m && p[1] < innerHeight + m;
 }
+// §weak7 is a ground point currently on screen? (used so weak stones only regrow while truly out of view)
+function onScreenPoint(x, z) {
+  const sdx = x - cam.pos[0], sdz = z - cam.pos[2]; if (sdx*sdx + sdz*sdz > DRAW_R*DRAW_R) return false;
+  const p = projectToScreen(x, surfaceAt(x, z).h + 0.2, z); if (!p) return false;
+  const m = 64;
+  return p[0] > -m && p[0] < innerWidth + m && p[1] > -m && p[1] < innerHeight + m;
+}
+let pillbugBallDyn = null;   // §weak7 curled pill bugs drawn with the ball mesh in their own pass
 function drawLife(view) {
   gl.useProgram(propProg);
   gl.uniformMatrix4fv(propU.uProj, false, proj);
@@ -7526,6 +7537,7 @@ function drawLife(view) {
     let n = 0;
     for (const e of life) {
       if (!filter(e)) continue;
+      if (e.t === "pillbug" && (e.curl||0) > 0.5) continue;   // §weak7 curled pill bugs are drawn as a ball in their own pass
       if (e.fade !== undefined) continue;                // §urgent5 fading corpses are drawn separately (with the dissolve)
       const dx = e.x - px, dz = e.z - pz; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
       if (forceSpawn ? false : !lifeVisible(e)) continue;
@@ -7568,6 +7580,9 @@ function drawLife(view) {
       if (e.dying !== undefined) { lean = 0; y = g + 0.02; }
       if (e.flop && e.beached) { lean = Math.sin(e.phase * 16) * 0.55; ld = (e.yaw || 0) + 1.5708; }   // §playtest1 a stranded fish/shrimp flops in place
       if (e.t === "horseshoe" && e.stranded) { lean = Math.PI - 0.1 + Math.sin(e.phase*7)*0.12; ld = e.yaw || 0; y = g + 0.1; }   // §B2 flipped onto its back, belly-up so the legs show, waving a little
+      if (e.t === "beetle" && e.onBack) { lean = Math.PI - 0.1 + Math.sin(e.legPhase||0)*0.22; ld = e.yaw || 0; y = g + 0.05; }   // §weak7 flipped on its back, legs kicking
+      if (e.t === "crab" && e.fromStone && (e.claws||0) > 0.05) { lean = -0.28*e.claws; ld = e.yaw || 0; }                         // §weak7 reared back with claws up
+      if (e.digging) y = g - Math.min(1, (e.burrow||0)) * 0.55;                                                                     // §weak7 sinks into the ground as it digs in
       e._sc = sc;                                          // §urgent5 remember the drawn scale so the fade pass matches it (no pop)
       const o = n*10;
       lifeScratch[o]=e.x; lifeScratch[o+1]=y; lifeScratch[o+2]=e.z;
@@ -7583,6 +7598,22 @@ function drawLife(view) {
   };
   for (const k in CREATURES) drawType(k, CREATURES[k], (e) => e.kind === "creature" && e.t === k);
   for (const k in FINDS) drawType(k, FINDS[k], (e) => e.kind === "find" && e.t === k);
+  // §weak7 curled pill bugs: drawn as a tight armoured ball
+  { if (!pillbugBallDyn) pillbugBallDyn = makeDynamic(pillbugBallMesh(), 48);
+    let n = 0;
+    for (const e of life) {
+      if (e.kind !== "creature" || e.t !== "pillbug" || (e.curl||0) <= 0.5 || e.fade !== undefined) continue;
+      const dx = e.x - px, dz = e.z - pz; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
+      if (forceSpawn ? false : !lifeVisible(e)) continue; if (n >= 48) break;
+      const g = heightAt(e.x, e.z), o = n*10, y = g - Math.min(1,(e.burrow||0))*0.55 + 0.05;
+      lifeScratch[o]=e.x; lifeScratch[o+1]=y; lifeScratch[o+2]=e.z;
+      lifeScratch[o+3]=e.scale; lifeScratch[o+4]=e.yaw; lifeScratch[o+5]=0; lifeScratch[o+6]=0;
+      lifeScratch[o+7]=e.tint[0]; lifeScratch[o+8]=e.tint[1]; lifeScratch[o+9]=e.tint[2];
+      if (e.hurtT > 0) { const h = e.hurtT/0.32; lifeScratch[o+7]=e.tint[0]*(1-h)+h; lifeScratch[o+8]=e.tint[1]*(1-h)+0.3*h; lifeScratch[o+9]=e.tint[2]*(1-h)+0.3*h; }
+      n++;
+    }
+    if (n) pillbugBallDyn.draw(lifeScratch, n);
+  }
   // §urgent5 fade pass: each fading corpse drawn on its own with a dither-dissolve amount (no shrink)
   for (const e of life) {
     if (e.kind !== "creature" || e.fade === undefined) continue;
@@ -8776,7 +8807,7 @@ function targetAlongRay(r, sticky) {
   if (typeof tallGrass !== "undefined") for (const g of tallGrass) if (!g.cut) sphere(g, "tallgrass", g.x, g.z, 0.4*g.scale, 0.7*g.scale);   // §veg5 strip tall grass for fibre
   for (const sw of seaweedBeds) if (sw.ripe) sphere(sw, "seaweed", sw.x, sw.z, 0.6*sw.scale, 0.9*sw.scale);   // §17.2 pick sea lettuce
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
-  for (const s of flipStones) if (!s.anim && (!s.up || selectedTool() === "pickaxe")) sphere(s, "flipstone", s.x, s.z, 0.4*s.sc, 0.5 + s.sc*0.4);   // §stones5 un-turned stones flip; a spent one is only a target for the pickaxe (to break)
+  for (const s of weakStones) if (!s.broken) sphere(s, "weakstone", s.x, s.z, 0.4*s.sc, 0.55 + s.sc*0.4);   // §weak7 break a weak stone with any item
   // §heave-removed: heave boulders are no longer targetable
   if (typeof oysterBeds !== "undefined") for (const b of oysterBeds) if (oysterBedExposed(b)) sphere(b, "oysterbed", b.x, b.z, 0.5*b.sc, 0.75);   // §23 oyster beds bared at low tide
   if (typeof geodes !== "undefined") for (const g of geodes) if (!g.taken) sphere(g, "geode", g.x, g.z, 0.4*g.sc, 0.5 + g.sc*0.4);   // §40 geodes to crack with a pickaxe (cracked ones stay targetable so the halves can be picked up, §A3)
@@ -8808,7 +8839,7 @@ let curTarget = null;    // recomputed each frame from the crosshair (desktop)
 // something (so a click can fall through to a ground tool-use otherwise).
 // §A3 target kinds that ANY held item can act on (harvest a plant, hit a creature, pick a find, open a thing).
 // The tool-gated kinds (tree/fallentree/rock/searock/stump/geode/heaveboulder) are deliberately excluded.
-const SOFT_INTERACT = new Set(["creature","find","rubble","flipstone","oysterbed","bush","crop","seaweed","tallgrass","salt",
+const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","seaweed","tallgrass","salt",
   "flotsam","barnacle","nest","driftwood","chest","openchest","storagebox","campfire","cotbed","dispslot",
   "cottrophy","aqua","lantern","fence","crate","barrel","searock"]);
 function softTargetUnderCrosshair() { const t = effectiveTarget(); return (t && SOFT_INTERACT.has(t.kind)) ? t : null; }
@@ -8823,7 +8854,7 @@ function useToolOnTarget(t) {
       genericHitCreature(t.obj); return true;
     case "find": interactWith(t.obj); return true;
     case "rubble": pickRubble(t.obj); return true;
-    case "flipstone": if (tool === "pickaxe") { breakFlipStone(t.obj); return true; } flipStone(t.obj); return true;   // §stones5 pickaxe smashes it for Stone; any other item flips it over
+    case "weakstone": breakWeakStone(t.obj); return true;   // §weak7 any item breaks it in one hit
     case "heaveboulder": return heaveBoulderAction(t.obj);   // §21D lever a heavy boulder over (shovel)
     case "oysterbed": return oysterBedAction(t.obj);   // §23 pick & shuck an oyster at low tide
     case "geode": return geodeAction(t.obj);   // §40 crack a geode open with a pickaxe
@@ -11585,116 +11616,84 @@ const palmScratch = new Float32Array(48*10), pineScratch = new Float32Array(48*1
  *   to roll one over (critters scatter / an item / nothing), click again to
  *   put it back (counts in the journal). Refills after a day or two.
  * ===================================================================== */
-const FLIP_STONE_N = 110;                 // stones scattered per island (tunable)
-const FLIP_REFILL_MIN = 1, FLIP_REFILL_MAX = 2;   // in-game days before a flipped stone has fresh loot again
-const FLIP_CRITTER_P = 0.48, FLIP_ITEM_P = 0.20;  // rest (0.32) = nothing, a good flip is earned
-const FLIP_SCATTER_TIME = 4.5;            // seconds critters scatter before hiding
-const FLIP_ANIM_SPEED = 3.2;              // flip speed
-const FLIP_AUTORESET_DAYS = 1.0;          // §stones5 a spent (flipped-aside) stone resets with fresh loot after ~a day, but only while out of view
-let flipStones = [], flipStoneDyn = null, dampPatchDyn = null;
-const flipScratch = new Float32Array(FLIP_STONE_N * 10), dampScratch = new Float32Array(FLIP_STONE_N * 10);
-function flipStoneMesh() { const m = Mesh(); const dry = [0.54,0.52,0.48], dry2 = [0.48,0.46,0.42], damp = [0.34,0.33,0.3], rim = [0.4,0.38,0.34];
-  const R = 0.5, sides = 8, rr = [];
-  for (let i=0;i<sides;i++) rr.push(R*(0.82 + 0.3*Math.abs(Math.sin(i*2.3+1))));   // perturbed outline
+// §weak7 WEAK STONES (replaces stone flipping). Small crumbly, slightly-cracked stones on beaches and the
+// forest floor. ANY item breaks one in a SINGLE hit; sometimes a Stone drops, sometimes a critter scurries
+// out from underneath. A broken spot grows a fresh stone again after a while, only while it's out of view.
+const WEAK_STONE_N = 120;                  // stones scattered per island (tunable)
+const WEAK_REGROW_MIN = 0.6, WEAK_REGROW_MAX = 1.4;   // in-game days before a broken spot grows a new stone
+const WEAK_CRITTER_P = 0.42;               // chance a critter scurries out when broken (tunable)
+const WEAK_STONE_DROP_P = 0.55;            // chance a Stone drops when broken (tunable)
+const WEAK_CRITTER_SCALE = 3.0;            // critters from weak stones are scaled up this much so they're easy to see
+let weakStones = [], weakStoneDyn = null;
+const weakScratch = new Float32Array(WEAK_STONE_N * 10);
+function weakStoneMesh() {
+  // a small, irregular, slightly-cracked cobble: a low domed lump split by a dark crack line
+  const m = Mesh(); const st = [0.54,0.51,0.46], st2 = [0.47,0.45,0.41], crack = [0.24,0.23,0.21];
+  const R = 0.42, sides = 7, rr = [], hh = [];
+  for (let i=0;i<sides;i++) { rr.push(R*(0.76 + 0.36*Math.abs(Math.sin(i*2.7+1)))); hh.push(0.24 + 0.05*Math.sin(i*1.9)); }
   for (let i=0;i<sides;i++){ const a0=i/sides*6.2832, a1=(i+1)/sides*6.2832, r0=rr[i], r1=rr[(i+1)%sides];
-    mTri(m, [0,0.15,0], [Math.cos(a0)*r0,0.03,Math.sin(a0)*r0], [Math.cos(a1)*r1,0.03,Math.sin(a1)*r1], i%2?dry:dry2);          // low flat top
-    mQuad(m, [Math.cos(a0)*r0,0.03,Math.sin(a0)*r0], [Math.cos(a1)*r1,0.03,Math.sin(a1)*r1], [Math.cos(a1)*r1,-0.04,Math.sin(a1)*r1], [Math.cos(a0)*r0,-0.04,Math.sin(a0)*r0], rim);   // damp rim
-    mTri(m, [0,-0.07,0], [Math.cos(a1)*r1,-0.04,Math.sin(a1)*r1], [Math.cos(a0)*r0,-0.04,Math.sin(a0)*r0], damp); }           // damp underside
-  return m; }
-function seedFlipStones() {
-  flipStones = []; let beach = 0, forest = 0;
-  for (let k=0;k<5000 && flipStones.length<FLIP_STONE_N;k++){
+    mTri(m, [0,0.3,0], [Math.cos(a0)*r0,0.04,Math.sin(a0)*r0], [Math.cos(a1)*r1,0.04,Math.sin(a1)*r1], i%2?st:st2);   // domed top
+    mTri(m, [0,0,0], [Math.cos(a1)*r1,0.04,Math.sin(a1)*r1], [Math.cos(a0)*r0,0.04,Math.sin(a0)*r0], st2); }          // underside
+  // a jagged crack across the top so it reads as weak/crumbly
+  mTri(m, [-R*0.55,0.26,0.04], [R*0.5,0.28,-0.03], [0.03,0.31,-0.07], crack);
+  mTri(m, [-R*0.3,0.28,-0.05], [R*0.35,0.26,0.05], [0.0,0.3,0.0], crack);
+  return m;
+}
+function seedWeakStones() {
+  weakStones = []; let beach = 0, forest = 0;
+  for (let k=0;k<5000 && weakStones.length<WEAK_STONE_N;k++){
     const a = rng()*6.283, r = HALF*(0.06+rng()*0.92), x = Math.sin(a)*r, z = -Math.cos(a)*r, s = surfaceAt(x, z), h = s.h;
     if (h < waterLevel-0.6 || s.slope > 0.5) continue;
     if (typeof insideCottage === "function" && insideCottage(x, z)) continue;
+    if (typeof nearCottage === "function" && nearCottage(x, z, 8)) continue;
     if (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, 0.8)) continue;
     const depth = waterDepthAt(x, z); let biome = null;
     if (h < wetLevel+4 && depth < 0.4) biome = "beach";                 // beach + intertidal
     else if (depth < 0.03 && h > waterLevel+0.4) biome = "forest";       // inland dry ground / stream banks / forest floor
     if (!biome) continue;
-    if (biome === "beach") { if (beach >= FLIP_STONE_N*0.62) continue; beach++; } else { if (forest >= FLIP_STONE_N*0.5) continue; forest++; }
-    flipStones.push({ x, z, yaw: rng()*6.283, sc: 0.8+rng()*0.55, biome, flip: 0, target: 0, up: false, anim: false, refillAt: 0, flippedAt: -99, content: null, revealedThisFlip: false, critters: [] });
+    if (biome === "beach") { if (beach >= WEAK_STONE_N*0.6) continue; beach++; } else { if (forest >= WEAK_STONE_N*0.5) continue; forest++; }
+    weakStones.push({ x, z, yaw: rng()*6.283, sc: 0.7+rng()*0.5, biome, broken: false, regrowAt: 0 });
   }
 }
+// a critter scurries out from under a broken stone — one of the three weak-stone critters, scaled up so it's easy to see
 function spawnStoneCritters(s) {
-  const pool = typeof stoneCritterPool === "function" ? stoneCritterPool(s.biome) : (s.biome === "beach" ? ["crab","hopper","star","snail"] : ["hopper","snail"]);
-  const n = 1 + (rng()*2|0);
-  for (let i=0;i<n;i++){ const t = pool[(rng()*pool.length)|0]; if (!CREATURES[t]) continue;
-    const e = spawnCreature(t, s.x+(rng()-0.5)*0.4, s.z+(rng()-0.5)*0.4, { hx: s.x, hz: s.z, hr: 5, fromStone: true, scatterUntil: clock.t + FLIP_SCATTER_TIME });
-    s.critters.push(e); }
+  const pool = (s.biome === "beach") ? ["crab","pillbug","beetle"] : ["pillbug","beetle"];   // shore crabs on the beach; bugs everywhere
+  const t = pool[(rng()*pool.length)|0]; if (!CREATURES[t]) return;
+  const e = spawnCreature(t, s.x+(rng()-0.5)*0.3, s.z+(rng()-0.5)*0.3, { hx: s.x, hz: s.z, hr: 6, fromStone: true, scatterUntil: clock.t + 2.6, homeStone: s });
+  e.scale = CREATURES[t].base * WEAK_CRITTER_SCALE * (0.9 + rng()*0.2);
   if (typeof sparkle === "function") sparkle(s.x, surfaceAt(s.x,s.z).h+0.2, s.z, [0.5,0.45,0.4], 4);
 }
-function giveStoneItem(s) {
-  const r = rng();
-  if (r < 0.5) { const n = 1 + (rng()<0.3?1:0), first = !discovered.has("f_worm"); Inv.add("worm", n); discovered.add("f_worm"); notify("worm", n, first); }   // worms → satchel as bait
-  else if (typeof stoneItemFind === "function") stoneItemFind(s);   // §40 richer item table
-  else spawnFind("coin", s.x+(rng()-0.5)*0.3, s.z+(rng()-0.5)*0.3);
-}
-function revealStoneContent(s) {
-  if (s.revealedThisFlip) return; s.revealedThisFlip = true; s.flippedAt = tideDay;
-  if (tideDay < s.refillAt) { s.content = "nothing"; return; }         // recently disturbed → nothing
-  const roll = rng();
-  if (roll < FLIP_CRITTER_P) { s.content = "critters"; spawnStoneCritters(s); }
-  else if (roll < FLIP_CRITTER_P + FLIP_ITEM_P) { s.content = "item"; giveStoneItem(s); }
-  else s.content = "nothing";
-}
-function settleCritters(s) {
-  for (const e of s.critters) { const i = life.indexOf(e); if (i >= 0) { if (typeof spawnSand === "function") spawnSand(e.x, surfaceAt(e.x,e.z).h+0.05, e.z, 4, [0.5,0.45,0.4]); life.splice(i,1); } }
-  s.critters.length = 0;
-}
-function flipStone(s) {
-  // §stones5 one-way: the stone rolls over and off to the side and STAYS there. No put-back, no toggle.
-  if (s.anim || s.up) return;
-  s.up = true; s.target = 1; s.anim = true; if (onDig) onDig("thud");
-  if (typeof spawnSand === "function") spawnSand(s.x, surfaceAt(s.x,s.z).h+0.1, s.z, 8, [0.58,0.5,0.4]);
-}
-// §stones5 small stones are breakable with a pickaxe → Stone. Breaking an un-flipped one first bares what hid under it.
-function breakFlipStone(s) {
-  if (s.anim) return;
+function breakWeakStone(s) {
+  if (s.broken) return;
   if (Math.hypot(s.x - player.x, s.z - player.z) > REACH + 1.2) return;
   if (player.airborne) return;
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
-  shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST, true); rootPlayer(); if (onDig) onDig("mine");
+  shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST*0.55, true); rootPlayer(); if (onDig) onDig("mine");   // §weak7 one hit, any item
   const gy = surfaceAt(s.x, s.z).h;
-  spawnSand(s.x, gy + 0.12, s.z, 9, [0.5,0.48,0.46]);                 // rock chips
-  if (!s.up && !s.revealedThisFlip) { s.up = true; s.flip = 1; revealStoneContent(s); }   // smashing an un-turned stone bares the damp patch beneath
-  for (let i = 0; i < 2 + (rng() < 0.4 ? 1 : 0); i++) dropRubble(s.x+(rng()-0.5)*1.1, s.z+(rng()-0.5)*1.1, 0.4+rng()*0.35);   // pick the rubble up for Stone
-  const i = flipStones.indexOf(s); if (i >= 0) flipStones.splice(i, 1);
-  if (typeof checkSets === "function") checkSets(); saveState();
+  spawnSand(s.x, gy + 0.12, s.z, 10, [0.5,0.48,0.46]);                   // rock chips
+  s.broken = true; s.regrowAt = tideDay + WEAK_REGROW_MIN + rng()*(WEAK_REGROW_MAX-WEAK_REGROW_MIN);
+  if (rng() < WEAK_STONE_DROP_P) dropRubble(s.x+(rng()-0.5)*0.6, s.z+(rng()-0.5)*0.6, 0.4+rng()*0.3);   // sometimes a Stone (pick the rubble up)
+  if (rng() < WEAK_CRITTER_P) spawnStoneCritters(s);                     // sometimes a critter scurries out
+  if (typeof checkSets === "function") checkSets();
 }
-function updateFlipStones(dt) {
-  for (const s of flipStones) {
-    if (s.anim) {
-      s.flip += (s.target - s.flip) * Math.min(1, dt*FLIP_ANIM_SPEED);
-      if (s.target === 1 && s.flip > 0.6) revealStoneContent(s);
-      if (Math.abs(s.flip - s.target) < 0.02) { s.flip = s.target; s.anim = false;
-        if (s.target === 0) { s.revealedThisFlip = false; s.content = null; } }
-    } else if (s.up && (tideDay - s.flippedAt) > FLIP_AUTORESET_DAYS && Math.hypot(s.x-player.x, s.z-player.z) > 45) {   // settles back on its own
-      settleCritters(s); s.up = false; s.target = 0; s.flip = 0; s.revealedThisFlip = false; s.content = null; s.refillAt = tideDay + FLIP_REFILL_MIN + rng()*(FLIP_REFILL_MAX-FLIP_REFILL_MIN);
-    }
+function updateWeakStones(dt) {
+  // a broken spot grows a fresh weak stone again, but only while it's well out of view
+  for (const s of weakStones) {
+    if (s.broken && tideDay >= s.regrowAt && Math.hypot(s.x-cam.pos[0], s.z-cam.pos[2]) > 48 && (typeof onScreenPoint !== "function" || !onScreenPoint(s.x, s.z)))
+      s.broken = false;
   }
 }
-function drawFlipStones(view) {
-  if (!flipStones.length) return;
-  if (!flipStoneDyn) flipStoneDyn = makeDynamic(flipStoneMesh(), FLIP_STONE_N);
-  if (!dampPatchDyn) dampPatchDyn = makeDynamic(discMesh(0, 0.46, 9, 0.0, [1,1,1]), FLIP_STONE_N);
-  propUniforms(view); let n = 0, dn = 0;
-  for (const s of flipStones) { const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const gy = surfaceAt(s.x, s.z).h, f = s.flip, lean = f*Math.PI, fx = Math.sin(s.yaw), fz = Math.cos(s.yaw);
-    const px = s.x + fx*1.35*s.sc*f, pz = s.z + fz*1.35*s.sc*f, py = gy - 0.04 + Math.sin(f*Math.PI)*0.16;
-    const o = n*10; flipScratch[o]=px;flipScratch[o+1]=py;flipScratch[o+2]=pz;flipScratch[o+3]=s.sc;flipScratch[o+4]=s.yaw;flipScratch[o+5]=lean;flipScratch[o+6]=0;flipScratch[o+7]=1;flipScratch[o+8]=1;flipScratch[o+9]=1; n++;
-    if (f > 0.12) { const d = dn*10, dk = Math.min(1, f*1.6); dampScratch[d]=s.x;dampScratch[d+1]=gy+0.02;dampScratch[d+2]=s.z;dampScratch[d+3]=s.sc*0.95;dampScratch[d+4]=0;dampScratch[d+5]=0;dampScratch[d+6]=0;
-      dampScratch[d+7]=0.26*dk+0.3*(1-dk);dampScratch[d+8]=0.24*dk+0.28*(1-dk);dampScratch[d+9]=0.22*dk+0.26*(1-dk); dn++; }
+function drawWeakStones(view) {
+  if (!weakStones.length) return;
+  if (!weakStoneDyn) weakStoneDyn = makeDynamic(weakStoneMesh(), WEAK_STONE_N);
+  propUniforms(view); let n = 0;
+  for (const s of weakStones) { if (s.broken) continue; const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R || n >= WEAK_STONE_N) continue;
+    const gy = surfaceAt(s.x, s.z).h, o = n*10;
+    weakScratch[o]=s.x;weakScratch[o+1]=gy-0.03;weakScratch[o+2]=s.z;weakScratch[o+3]=s.sc;weakScratch[o+4]=s.yaw;weakScratch[o+5]=0;weakScratch[o+6]=0;weakScratch[o+7]=1;weakScratch[o+8]=1;weakScratch[o+9]=1; n++;
   }
-  if (dn) dampPatchDyn.draw(dampScratch, dn);
-  if (n) flipStoneDyn.draw(flipScratch, n);
+  if (n) weakStoneDyn.draw(weakScratch, n);
 }
-function flipStonePrompt(s) {
-  const verb = IS_TOUCH ? "tap" : "click";
-  if (selectedTool() === "pickaxe") return `${verb} to break the stone`;   // §stones5 pickaxe → Stone
-  if (s.up) return "";                                                       // already turned over, spent
-  return `${verb} to flip the stone`;
-}
+function weakStonePrompt(s) { return (IS_TOUCH ? "tap" : "click") + " to break the stone"; }
 // §21C which critters hide under a stone, by biome
 function stoneCritterPool(biome) {
   return biome === "forest"
@@ -11703,20 +11702,56 @@ function stoneCritterPool(biome) {
 }
 function behaveStoneCritter(e, dt, d, dx, dz) {
   const reg = CREATURES[e.t];
-  if (e.t === "pillbug") { e.curl = (d < 2.2) ? Math.min(1, (e.curl||0)+dt*5) : Math.max(0, (e.curl||0)-dt*2.5); if (e.curl > 0.5) { e.cdState = "curl"; return; } }
-  if (e.fromStone && clock.t < e.scatterUntil) {                 // short window to inspect, then it bolts for cover
-    const ax = e.x-e.hx, az = e.z-e.hz, bx = e.x-player.x, bz = e.z-player.z;
-    let mx = ax*0.3 + bx, mz = az*0.3 + bz; const mm = Math.hypot(mx,mz) || 1;
-    const spd = reg.aquatic ? 2.2 : (e.t==="centipede" ? 3.0 : e.t==="slug" ? 0.5 : 1.6);
-    e.x += mx/mm*dt*spd; e.z += mz/mm*dt*spd; e.yaw = Math.atan2(mz,mx) + (e.t==="gunnel" ? Math.PI : 1.57);
-    if (reg.aquatic && waterDepthAt(e.x,e.z) < 0.02) { const g = groundGradient(e.x,e.z); e.x += g.dx*dt*1.6; e.z += g.dz*dt*1.6; }
-    e.cdState = "scatter"; return;
+  const bucketable = !!(reg && reg.bucketable);          // a shore crab scoots off then behaves like any other crab
+  // --- freshly out from under a broken stone: its signature reaction, then it scatters to cover ---
+  if (e.fromStone) {
+    e.emerge = (e.emerge || 0) + dt;
+    if (e.t === "pillbug") {                              // PILL BUG: rolls into a tight ball when you're close, uncurls once you back off
+      const near = d < 3.4;
+      e.curl = near ? Math.min(1, (e.curl||0)+dt*4.5) : Math.max(0, (e.curl||0)-dt*3);
+      if (e.curl > 0.5) { e.cdState = "ball"; return; }   // a frozen armoured ball: it doesn't move
+    } else if (e.t === "beetle") {                        // BEETLE: flips onto its back and kicks its legs, then rights itself and runs
+      if (e.onBack === undefined) e.onBack = 1;
+      if (e.onBack) { e.legPhase = (e.legPhase||0) + dt*16; e.backT = (e.backT||0) + dt;
+        if (e.backT > 1.3) e.onBack = 0;                  // rights itself
+        e.cdState = "onback"; return; }
+    } else {                                              // SHORE CRAB (and any clawed critter): raises its claws, then sidesteps away
+      e.claws = Math.min(1, (e.claws||0) + dt*5);
+      if (e.emerge < 0.85) { e.cdState = "claws"; return; }
+    }
+    // scatter: hurry away from the player until the window closes
+    if (clock.t < e.scatterUntil) {
+      const bx = e.x-player.x, bz = e.z-player.z, bb = Math.hypot(bx,bz) || 1;
+      const spd = (e.t === "beetle") ? 2.4 : (e.t === "pillbug") ? 1.3 : 2.0;
+      e.x += bx/bb*dt*spd; e.z += bz/bb*dt*spd; e.yaw = Math.atan2(bz,bx) + (bucketable ? 1.57 : 0);
+      e.claws = Math.max(0, (e.claws||0) - dt*2.5);
+      e.cdState = "scatter"; return;
+    }
+    e.fromStone = false;
+    if (bucketable) { e.hx = e.x; e.hz = e.z; e.timer = rng()*2; return; }   // shore crab: now just a (big) ordinary crab
+    e.seekCover = true;                                   // land bug: go find cover and dig itself in
   }
-  if (e.fromStone) {                                             // window over → hide and vanish
-    e.hideT = (e.hideT||0) + dt; e.x += Math.cos(e.yaw)*dt*0.4; e.z += Math.sin(e.yaw)*dt*0.4;
-    if (e.hideT > 1.6 && d > 4) { if (typeof spawnSand === "function") spawnSand(e.x, surfaceAt(e.x,e.z).h+0.03, e.z, 3, [0.5,0.45,0.4]); const i = life.indexOf(e); if (i>=0) life.splice(i,1); }
-    e.cdState = "hiding"; return;
+  // --- land bug: crawl to the nearest stone's edge (or just crawl off), then VISIBLY dig into the ground ---
+  if (e.seekCover) {
+    e.coverT = (e.coverT||0) + dt;
+    let cover = null, cd = 6;
+    if (typeof weakStones !== "undefined") for (const s of weakStones) { if (s.broken) continue; const q = Math.hypot(s.x-e.x, s.z-e.z); if (q < cd) { cd = q; cover = s; } }
+    if (!e.digging && cover && cd > 0.4) {                // head for a stone to tuck under
+      const ax = cover.x-e.x, az = cover.z-e.z, aa = Math.hypot(ax,az) || 1;
+      e.x += ax/aa*dt*1.4; e.z += az/aa*dt*1.4; e.yaw = Math.atan2(az,ax); e.cdState = "cover";
+    } else if (!e.digging && !cover && e.coverT < 2.2) {  // no stone near: just crawl off a little first
+      e.x += Math.cos(e.yaw)*dt*1.4; e.z += Math.sin(e.yaw)*dt*1.4; e.cdState = "cover";
+    } else {                                              // at cover → dig in (the mesh sinks and kicks up sand)
+      e.digging = true; e.burrow = Math.min(1, (e.burrow||0) + dt*0.8);
+      if (!e._dug && e.burrow > 0.12) { e._dug = true; if (typeof spawnSand === "function") spawnSand(e.x, surfaceAt(e.x,e.z).h+0.05, e.z, 5, [0.5,0.45,0.4]); }
+      e.cdState = "digging";
+      // only once it's fully buried AND the player is well away AND it's off screen does it quietly disappear
+      if (e.burrow >= 1 && d > 7 && (typeof creatureOnScreen !== "function" || !creatureOnScreen(e))) { const i = life.indexOf(e); if (i>=0) life.splice(i,1); return; }
+    }
+    return;
   }
+  // --- settled stone critter (legacy / not actively spawned now): gentle wander, curl or flee when crowded ---
+  if (e.t === "pillbug") { e.curl = (d < 2.2) ? Math.min(1, (e.curl||0)+dt*5) : Math.max(0, (e.curl||0)-dt*2.5); if (e.curl > 0.5) { e.cdState = "ball"; return; } }
   if (d < 3) { const a = Math.atan2(e.z-player.z, e.x-player.x); e.x += Math.cos(a)*dt*1.2; e.z += Math.sin(a)*dt*1.2; e.yaw = a; e.cdState = "flee"; return; }
   e.timer -= dt; if (e.timer < 0) { e.timer = 1+rng()*2; e.vx = (rng()-0.5); e.vz = (rng()-0.5); }
   e.x += e.vx*dt*0.5; e.z += e.vz*dt*0.5; e.yaw = Math.atan2(e.vz,e.vx);
@@ -11777,7 +11812,7 @@ function spawnBoulderCritters(b) {
   for (let i = 0; i < n; i++) {
     const useRare = rng() < 0.6 && rare.length, src = useRare ? rare : pool, t = src[(rng()*src.length)|0];
     if (!CREATURES[t]) continue;
-    const e = spawnCreature(t, b.x+(rng()-0.5)*0.6, b.z+(rng()-0.5)*0.6, { hx: b.x, hz: b.z, hr: 6, fromStone: true, scatterUntil: clock.t + FLIP_SCATTER_TIME });
+    const e = spawnCreature(t, b.x+(rng()-0.5)*0.6, b.z+(rng()-0.5)*0.6, { hx: b.x, hz: b.z, hr: 6, fromStone: true, scatterUntil: clock.t + 2.5 });
     e.scale *= 1.25; b.critters.push(e);
   }
   if (typeof sparkle === "function") sparkle(b.x, surfaceAt(b.x,b.z).h+0.2, b.z, [0.5,0.45,0.4], 5);
@@ -11849,21 +11884,7 @@ function updateHeaveBoulders(dt) {
   }
 }
 function drawHeaveBoulders(view) {
-  return;   // §heave-removed: no longer drawn (boulder heaving is gone)
-  if (!heaveBoulders.length) return;
-  if (!heaveBoulderDyn) heaveBoulderDyn = makeDynamic(heaveBoulderMesh(), HEAVE_BOULDER_N);
-  if (!dampPatchDyn) dampPatchDyn = makeDynamic(discMesh(0, 0.46, 9, 0.0, [1,1,1]), FLIP_STONE_N);
-  propUniforms(view); let n = 0, dn = 0;
-  for (const b of heaveBoulders) {
-    const dx = b.x-cam.pos[0], dz = b.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const gy = surfaceAt(b.x, b.z).h, f = b.flip, lean = f*2.0, fx = Math.sin(b.yaw), fz = Math.cos(b.yaw);
-    const px = b.x + fx*1.1*b.sc*f, pz = b.z + fz*1.1*b.sc*f, py = gy - 0.28*b.sc*(1-f) + Math.sin(f*Math.PI)*0.24*b.sc;   // sunk at rest, rises as it rolls
-    const o = n*10; heaveScratch[o]=px;heaveScratch[o+1]=py;heaveScratch[o+2]=pz;heaveScratch[o+3]=b.sc;heaveScratch[o+4]=b.yaw;heaveScratch[o+5]=lean;heaveScratch[o+6]=0;heaveScratch[o+7]=1;heaveScratch[o+8]=1;heaveScratch[o+9]=1; n++;
-    if (f > 0.15) { const d = dn*10; heaveDampScratch[d]=b.x;heaveDampScratch[d+1]=gy+0.02;heaveDampScratch[d+2]=b.z;heaveDampScratch[d+3]=b.sc*0.9;heaveDampScratch[d+4]=0;heaveDampScratch[d+5]=0;heaveDampScratch[d+6]=0;
-      heaveDampScratch[d+7]=0.24;heaveDampScratch[d+8]=0.22;heaveDampScratch[d+9]=0.2; dn++; }
-  }
-  if (dn) dampPatchDyn.draw(heaveDampScratch, dn);
-  if (n) heaveBoulderDyn.draw(heaveScratch, n);
+  return;   // §heave-removed: boulder heaving is gone, nothing to draw (seeding kept only to preserve the RNG stream)
 }
 function drawHeave() {
   const cv = document.getElementById("prycv"); if (!pryCtx) pryCtx = cv.getContext("2d");
@@ -12447,6 +12468,8 @@ function cottageDoorMesh() { const m = Mesh(), w = 2*C_DW;   // hinge-local: doo
 function cotLocalToWorld(lx, lz) { const c = cottage, cy = Math.cos(c.yaw), sy = Math.sin(c.yaw); return [ c.x + lx*cy + lz*sy, c.z - lx*sy + lz*cy ]; }
 function cotWorldToLocal(wx, wz) { const c = cottage, cy = Math.cos(c.yaw), sy = Math.sin(c.yaw), dx = wx-c.x, dz = wz-c.z; return [ dx*cy - dz*sy, dx*sy + dz*cy ]; }
 function insideCottage(wx, wz) { if (!cottage) return false; const l = cotWorldToLocal(wx, wz); return Math.abs(l[0]) < C_OX+0.1 && Math.abs(l[1]) < C_OZ+0.1; }
+// §cot7 within `pad` metres of the cottage (its footprint plus a buffer) — used to keep nests, water and clutter away from home
+function nearCottage(wx, wz, pad) { if (!cottage) return false; return Math.hypot(wx-cottage.x, wz-cottage.z) < (pad || 8); }
 
 // §2 the cottage must sit well above the highest tide + storm wash, off the cliffs, with a clear door approach
 const COTTAGE_MIN_Y = MAX_HIGH_TIDE + 1.6;         // floor sits this far above spring high (tunable), never floods (the sim's water never exceeds spring high)
@@ -12490,6 +12513,9 @@ function flattenCottagePad() {
     const out = Math.hypot(ox, oz); if (out > BLEND) continue;
     const t = out <= 0 ? 1 : 1 - out/BLEND, f = t*t*(3-2*t), i = gz*GRID+gx;               // smoothstep blend
     built[i] = f * (padY - (heightmap[i] + dig[i]));                                        // absolute: lift/cut toward padY (re-applied each load; not persisted)
+    // §cot7 the core pad (inside the footprint) is forced DRY: drop its water-fill below the floor and clear any pond,
+    // so a basin/tide-pool/filled hole the cottage happens to sit over never renders water inside the home.
+    if (out <= 0.001) { filled[i] = Math.min(filled[i], padY - 3); if (ponded.has(i)) ponded.delete(i); }
   }
   rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz);
   resnapPropsRegion(c.x-reach, c.z-reach, c.x+reach, c.z+reach);
@@ -13249,13 +13275,13 @@ function seedGullNests() {
       const s = surfaceAt(x, z);
       const dune  = s.h > 6 && s.h < 20 && s.slope < 0.5;             // dune shelf
       const ledge = s.h > 20 && s.h < 44 && s.slope > 0.32 && s.slope < 1.1;   // cliff ledge
-      if ((dune || ledge) && !spotUnderwater(x, z) && !bigPropBlocking(x, z, 1.2) && !nearPOI(x, z, 6)) site = { x, z };
+      if ((dune || ledge) && !spotUnderwater(x, z) && !bigPropBlocking(x, z, 1.2) && !nearPOI(x, z, 6) && !nearCottage(x, z, 10)) site = { x, z };   // §cot7 keep colonies clear of the home
     }
     if (!site) continue;
     const nPer = 1 + (rng()*3|0);
     for (let n = 0; n < nPer; n++) {
       const a = rng()*6.283, r = rng()*5, x = site.x + Math.cos(a)*r, z = site.z + Math.sin(a)*r;
-      if (spotUnderwater(x, z) || bigPropBlocking(x, z, 0.8)) continue;
+      if (spotUnderwater(x, z) || bigPropBlocking(x, z, 0.8) || nearCottage(x, z, 8)) continue;   // §cot7 no nests inside / right by the cottage
       const maxEggs = 1 + (rng()*3|0);
       gullNests.push({ x, z, eggs: maxEggs, maxEggs, replenishAt: 0, abandonedUntil: -1e9, defendCd: 0 });
     }
@@ -14112,7 +14138,7 @@ initShovelFP();
 initWorldObjs();
 seedBarnacles();   // §5 barnacle crusts on intertidal rocks (needs rockObjs)
 initCottage();     // §19 the home-base cottage near spawn (needs terrain + colliders)
-seedFlipStones();  // §21 flippable stones scattered on beach & forest floor
+seedWeakStones();  // §weak7 weak breakable stones scattered on beach & forest floor
 seedHeaveBoulders();  // §21D heavy boulders to lever over (needs colliders + cottage)
 seedOysterBeds();  // §23 oyster beds on the intertidal flats
 seedGeodes();  // §40 geodes on cobble & rocky shores
@@ -14204,7 +14230,7 @@ function frame(now) {
   updateCampfires(dt);   // §Cooking fuel burns, food roasts, stews simmer
   updateWeather(dt);     // §20 weather state machine, fog/light/wind, lightning, after-storm
   updateCottage(dt);     // §19 door swing + creak
-  updateFlipStones(dt);  // §21 flip animations + refill
+  updateWeakStones(dt);  // §weak7 broken spots regrow a stone, out of view
   updateHeaveBoulders(dt);  // §21D heavy-boulder roll + reset
   updateHeave(dt);       // §21D the boulder heave mini-game
   updateOysterBeds();    // §23 oyster beds reseed over days
@@ -14494,7 +14520,7 @@ function frame(now) {
   drawGulls(view);
   drawFlotsam(view);   // §5 floating debris on the water surface (drawn before the transparent water)
   drawTells(view, dt);
-  drawFlipStones(view);   // §21 flippable stones + their damp patches
+  drawWeakStones(view);   // §weak7 weak breakable stones
   drawHeaveBoulders(view);   // §21D heavy boulders (and their bared ground)
   drawOysterBeds(view);   // §23 oyster beds on the intertidal flats
   drawGeodes(view);   // §40 geodes on the cobble & rocky shores
@@ -14645,8 +14671,8 @@ function frame(now) {
         promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
         crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block"; }
     }
-    if (!buildMode && curTarget && curTarget.kind === "flipstone") {   // §21 flip-stone tooltip
-      promptEl.textContent = flipStonePrompt(curTarget.obj);
+    if (!buildMode && curTarget && curTarget.kind === "weakstone") {   // §weak7 weak-stone tooltip
+      promptEl.textContent = weakStonePrompt(curTarget.obj);
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
