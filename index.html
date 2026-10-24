@@ -3198,13 +3198,22 @@ const BITE_MIN = 4, BITE_MAX = 40;     // seconds to a bite in plain water (wide
 const HOTSPOT_BITE_MUL = 0.28;         // a hotspot cuts the wait to ~this fraction
 const CANCEL_DIST = 30;                // walk this far from the bobber and the cast reels itself in
 // rod species — weights in kg, strength drives the fight, rare steers the odds, dmin = min water depth it favours
+// §fish5 each species carries a `mini` descriptor so the reel-in mini-game plays differently:
+//   half = safe-zone half-width · reel/drain = needle speed up/down · runCd = seconds between surges · runStr = surge force · quirk = flavour behaviour
 const FISH_SPECIES = {
-  surfperch: { label: "Surfperch", item: "surfperch", w: [0.2,1.3],  strength: 0.55, fight: 6,  dmin: 0.5 },
-  rockfish:  { label: "Rockfish",  item: "rockfish",  w: [0.5,2.8],  strength: 0.9,  fight: 9,  dmin: 1.2, creature: "rockfish" },
-  lingcod:   { label: "Lingcod",   item: "lingcod",   w: [2.0,11.0], strength: 1.5,  fight: 14, dmin: 2.2, creature: "lingcod" },
-  ratfish:   { label: "Ratfish",   item: "ratfish",   w: [0.7,2.4],  strength: 1.15, fight: 12, dmin: 3.0 },
+  surfperch: { label: "Surfperch", item: "surfperch", w: [0.2,1.3],  strength: 0.55, fight: 6,  dmin: 0.5, mini: { half: 0.17, reel: 0.8,  drain: 0.78, runCd: 2.2, runStr: 0.7 } },
+  rockfish:  { label: "Rockfish",  item: "rockfish",  w: [0.5,2.8],  strength: 0.9,  fight: 9,  dmin: 1.2, creature: "rockfish", mini: { half: 0.13, reel: 0.85, drain: 0.72, runCd: 1.8, runStr: 1.0 } },
+  lingcod:   { label: "Lingcod",   item: "lingcod",   w: [2.0,11.0], strength: 1.5,  fight: 14, dmin: 2.2, creature: "lingcod",  mini: { half: 0.12, reel: 0.9,  drain: 0.66, runCd: 1.3, runStr: 1.4 } },
+  ratfish:   { label: "Ratfish",   item: "ratfish",   w: [0.7,2.4],  strength: 1.15, fight: 12, dmin: 3.0, mini: { half: 0.1,  reel: 1.0,  drain: 0.6,  runCd: 1.1, runStr: 1.1, quirk: "twitch" } },
+  // §fish5 new species
+  eel:       { label: "Moray Eel",   item: "eel",      w: [0.3,2.0],  strength: 0.95, fight: 9,  dmin: 0.6, mini: { half: 0.1,  reel: 1.05, drain: 0.62, runCd: 1.0, runStr: 1.0, quirk: "thrash" } },
+  puffer:    { label: "Pufferfish",  item: "puffer",   w: [0.3,1.6],  strength: 0.7,  fight: 7,  dmin: 1.0, mini: { half: 0.2,  reel: 0.8,  drain: 0.8,  runCd: 2.6, runStr: 0.6, quirk: "puff" } },
+  flyingfish:{ label: "Flying Fish", item: "flyingfish", w: [0.2,0.9],strength: 0.6,  fight: 6,  dmin: 0.5, mini: { half: 0.11, reel: 1.1,  drain: 0.6,  runCd: 0.8, runStr: 1.2, quirk: "jump" } },
+  sunfish:   { label: "Ocean Sunfish", item: "sunfish", w: [18,120], strength: 2.1,  fight: 22, dmin: 6.0, wLand: 0.08, mini: { half: 0.22, reel: 0.7, drain: 0.82, runCd: 3.0, runStr: 1.3 } },
+  ghostfish: { label: "Ghostfish",   item: "ghostfish", w: [0.6,2.2], strength: 1.3,  fight: 13, dmin: 5.0, mini: { half: 0.13, reel: 0.9, drain: 0.7, runCd: 1.6, runStr: 1.0, quirk: "fade" } },
 };
-const JUNK_POOL = ["drinkcan","plasticbottle","bottle","netscrap","kelp","rope","seabean"];   // snagged odds-and-ends
+// §fish5 fun snags from the seabed — the junk card, with the sad trombone
+const JUNK_POOL = ["drinkcan","plasticbottle","bottle","netscrap","kelp","rope","seabean","boot","tire","maptube","watch","rubberduck"];   // snagged odds-and-ends
 const JUNK_META = { label: "Junk", strength: 0.35, fight: 3 };
 
 const rod = {
@@ -3262,6 +3271,7 @@ function rodTap() {                                            // single-press p
 }
 
 function castRod(charge) {
+  if (player.swimming || player.underwater) { hintText = "Wade in to cast — you can't fish while swimming"; hintT = 1.6; rod.state = "idle"; rod.charge = 0; return; }   // §fish5 wade-only
   const b = bestBait(); if (!b) { rod.state = "idle"; ensureBait(); return; }
   const tgt = castTarget(Math.max(0.12, charge));
   if (waterDepthAt(tgt.x, tgt.z) < 0.35) { hintText = "Aim at the water"; hintT = 1.4; rod.state = "idle"; rod.charge = 0; return; }   // §fishpolish crosshair hint, no card
@@ -3287,12 +3297,19 @@ function onBobberLanded() {
 }
 function rollSpecies() {                                       // weighted by spot quality (depth+signs) & bait quality
   const q = rod.spotQ, bq = rod.baitQ;
+  const hot = hotspotNear(rod.bob.tx, rod.bob.tz) ? 1 : 0;   // §fish5 a hotspot sharply lifts the odds of the rare, prize species
   const w = {
-    junk:      20 * (1 - q * 0.6) * (bq === 0 ? 1.4 : bq === 1 ? 1.0 : 0.65),
+    junk:      20 * (1 - q * 0.6) * (bq === 0 ? 1.4 : bq === 1 ? 1.0 : 0.65) * (hot ? 0.5 : 1),
     surfperch: 42 * (1 - q * 0.25) * (bq === 0 ? 1.15 : 1.0),
     rockfish:  22 * (0.7 + q * 0.9) * (1 + bq * 0.14),
-    lingcod:    9 * (0.25 + q * 1.9) * (1 + bq * 0.4),
-    ratfish:    3 * (0.1 + q * 2.6) * (1 + bq * 0.5),
+    lingcod:    9 * (0.25 + q * 1.9) * (1 + bq * 0.4) * (1 + hot * 0.6),
+    ratfish:    3 * (0.1 + q * 2.6) * (1 + bq * 0.5) * (1 + hot * 0.8),
+    // §fish5 new species
+    eel:       10 * (0.5 + q * 0.6) * (1 + bq * 0.2),
+    puffer:     7 * (0.4 + q * 0.9) * (1 + bq * 0.2),
+    flyingfish: 8 * (1.1 - q * 0.4),                                   // likes the shallow surface
+    sunfish:   1.2 * (0.02 + q * 2.4) * (1 + hot * 2.5),               // deep & rare — a hotspot is your best shot at the mola
+    ghostfish:  2 * (0.05 + q * 2.2) * (1 + hot * 1.8),
   };
   // species that want deeper water than this spot get damped
   const d = waterDepthAt(rod.bob.tx, rod.bob.tz);
@@ -3325,24 +3342,33 @@ function missBite() {                                          // struck during 
 }
 function setHook() {
   const f = rod.fish; const meta = f.species === "junk" ? JUNK_META : FISH_SPECIES[f.species];
+  const mini = meta.mini || {}, wLand = meta.wLand != null ? meta.wLand : 1.3;   // §fish5 per-species mini-game feel + weight→length scaling
   rod.fight = { progress: 0, tension: 0.42, strain: 0, slack: 0, run: 0, runActive: false, runUntil: 0,
-    runCd: 1.6 + Math.random() * 2, land: (meta.fight + f.weight * 1.3) * (relaxedFishing ? 0.75 : 1), str: meta.strength + f.weight * 0.04,
-    snaps: 0, snapFlash: 0, zoneGlow: 0 };   // §fishpolish three knots; each full strain snaps one, three snapped = line breaks
+    runCd: (mini.runCd || 1.6) + Math.random() * 2, land: (meta.fight + f.weight * wLand) * (relaxedFishing ? 0.75 : 1), str: meta.strength + f.weight * 0.04,
+    snaps: 0, snapFlash: 0, zoneGlow: 0,
+    mini, quirk: mini.quirk || null, zoneVis: 1, puffT: 1 + Math.random() * 1.5, jitter: 0 };
   rod.state = "fighting"; rod.bend = 0.5;
   if (typeof SND !== "undefined") SND.play("whoosh");
 }
 function updateFight(dt) {
-  const fg = rod.fight, relaxed = relaxedFishing;
+  const fg = rod.fight, relaxed = relaxedFishing, mini = fg.mini || {};
+  const runStr = mini.runStr != null ? mini.runStr : 1;   // §fish5 per-species surge strength / cadence
   // runs: the fish surges, driving the needle up — ease off the reel or the line strains
-  if (fg.runActive) { if (clock.t > fg.runUntil) { fg.runActive = false; fg.runCd = 1.4 + Math.random() * 2.6; } }
-  else { fg.runCd -= dt; if (fg.runCd <= 0) { fg.runActive = true; fg.runUntil = clock.t + 0.7 + Math.random() * 1.1; if (typeof SND !== "undefined") SND.play("scrape", { position: [rod.bob.x, rod.bob.surf, rod.bob.z] }); } }
-  const runTgt = fg.runActive ? (0.65 + fg.str * 0.3) : 0;
+  if (fg.runActive) { if (clock.t > fg.runUntil) { fg.runActive = false; fg.runCd = (mini.runCd || 1.4) + Math.random() * 2.2; } }
+  else { fg.runCd -= dt; if (fg.runCd <= 0) { fg.runActive = true; fg.runUntil = clock.t + 0.6 + Math.random() * (fg.quirk === "jump" ? 0.5 : 1.1); if (typeof SND !== "undefined") SND.play("scrape", { position: [rod.bob.x, rod.bob.surf, rod.bob.z] }); } }
+  const runTgt = fg.runActive ? (0.65 + fg.str * 0.3) * runStr : 0;
   fg.run += (runTgt - fg.run) * Math.min(1, dt * 4);
-  // the safe zone drifts, and shifts up during a run
-  const half = relaxed ? 0.2 : 0.13, bandC = 0.5 + Math.sin(clock.t * 0.8) * 0.1 + fg.run * 0.26;
+  // §fish5 quirks: eel thrashes (fast band jitter), ghostfish's zone flickers in and out
+  if (fg.quirk === "thrash") fg.jitter = Math.sin(clock.t * 9) * 0.07;
+  if (fg.quirk === "fade") fg.zoneVis = 0.3 + 0.7 * (0.5 + 0.5 * Math.sin(clock.t * 2.1));
+  else fg.zoneVis = 1;
+  // the safe zone drifts, and shifts up during a run; §fish5 its width comes from the species
+  const half = (relaxed ? (mini.half || 0.13) + 0.07 : (mini.half || 0.13)), bandC = 0.5 + Math.sin(clock.t * 0.8) * 0.1 + fg.run * 0.26 + (fg.jitter || 0);
   const lo = Math.max(0.02, Math.min(0.98 - 2 * half, bandC - half)), hi = lo + 2 * half;
   const reeling = rod.press || rod.pulse > 0; if (rod.pulse > 0) rod.pulse = Math.max(0, rod.pulse - dt);
-  fg.tension += (reeling ? 0.85 : -0.72) * dt + fg.run * 0.75 * dt;
+  // §fish5 pufferfish randomly "puffs" — a sudden tension spike you have to ride out
+  if (fg.quirk === "puff") { fg.puffT -= dt; if (fg.puffT <= 0) { fg.puffT = 1.6 + Math.random() * 2; fg.tension = Math.min(1, fg.tension + 0.32); if (typeof SND !== "undefined") SND.play("plop", { volume: 0.4 }); } }
+  fg.tension += (reeling ? (mini.reel || 0.85) : -(mini.drain || 0.72)) * dt + fg.run * 0.75 * dt;
   fg.tension = Math.max(0, Math.min(1, fg.tension));
   if (fg.snapFlash > 0) fg.snapFlash = Math.max(0, fg.snapFlash - dt);
   const inZone = fg.tension >= lo && fg.tension <= hi;
@@ -3447,6 +3473,8 @@ function updateFishing(dt) {
   updateFishSigns(dt);
   // put the rod away mid-cast → quietly reel in
   if (rod.state !== "idle" && rod.state !== "reveal" && selectedTool() !== "rod") { if (rod.state === "fighting" || rod.state === "bite") { /* lose it */ } endCast(0.3); return; }
+  // §fish5 wade-only: if you end up swimming (stepped into deep water) while a line is out, it's reeled in
+  if (rod.state !== "idle" && rod.state !== "reveal" && (player.swimming || player.underwater)) { hintText = "Too deep — line reeled in"; hintT = 1.4; if (typeof SND !== "undefined") SND.play("plop"); endCast(0.4); return; }
   if (rod.state === "charging") rod.charge = Math.min(1, (clock.t - rod.chargeT) / 1.0);
   if (rod.state === "casting") {
     rod.bob.cast = Math.min(1, rod.bob.cast + dt / 0.6); const t = rod.bob.cast;
@@ -3513,12 +3541,18 @@ function releaseFish() { const sp = FISH_SPECIES[rod.fish.species]; showCard("Re
 // ===== §fishpolish the EPIC catch: rod jerks → fish arcs out of the water → slow-mo apex → lands in hand flapping → catch card =====
 const CATCH_RARITY = {
   surfperch: { tier: "Common",   col: [0.72,0.82,0.68] },
+  eel:       { tier: "Uncommon", col: [0.4,0.7,0.45] },
+  puffer:    { tier: "Uncommon", col: [0.95,0.82,0.4] },
+  flyingfish:{ tier: "Uncommon", col: [0.6,0.78,0.95] },
+  sunfish:   { tier: "Prize",    col: [0.82,0.88,0.95] },
+  ghostfish: { tier: "Rare",     col: [0.6,0.95,0.98] },
   rockfish:  { tier: "Uncommon", col: [1.0,0.56,0.22] },
   ratfish:   { tier: "Rare",     col: [0.5,0.86,0.92] },
   lingcod:   { tier: "Prize",    col: [1.0,0.82,0.34] },
 };
 let catchCine = null, catchDyn = null;
 function catchSpeciesMesh(sp) { return sp === "rockfish" ? rockfishMesh() : sp === "lingcod" ? lingcodMesh() : sp === "ratfish" ? ratfishMesh()
+  : sp === "eel" ? eelMesh() : sp === "puffer" ? pufferMesh() : sp === "flyingfish" ? flyingFishMesh() : sp === "sunfish" ? sunfishMesh() : sp === "ghostfish" ? ghostfishMesh()
   : sp === "surfperch" ? finFishMesh([0.76,0.72,0.52], { h: 0.18, stripes: [0.12,-0.08], stripeW: 0.05 }) : fishMesh([0.7,0.75,0.8]); }
 function junkCatchMesh(id) { const it = ITEMS[id]; if (it && it.model) { try { return it.model(); } catch (e) {} } const m = Mesh(); mBox(m, 0, 0, 0, 0.2, 0.16, 0.2, [0.52,0.52,0.56]); return m; }
 function startCatchCine() {
@@ -3580,7 +3614,7 @@ function updateCatchCine(dt) {
   const cc = catchCine; if (!cc) return;
   cc.t += dt;
   if (cc.phase === "arc") {
-    const dur = 1.25;
+    const dur = 0.8;                                         // §fish5 faster fly-in
     cc.mt += dt;                                             // §catch5 real time — no slow-mo, so the player keeps full control
     const u = Math.min(1, cc.mt / dur);
     const a = cc.from, b = cc.to;
@@ -3606,7 +3640,7 @@ function updateCatchCine(dt) {
     cc.lean = Math.sin(cc.mt * 17) * 0.5 * Math.max(0.3, 1 - cc.mt*0.5);   // flapping, easing a touch
     cc.leanDir = Math.PI/2;
     if (!cc.popped) { cc.popped = true; showCatchPop(cc.f, cc.isJunk, cc.itemId, cc.added); }   // §catch5 the small, non-blocking card
-    if (cc.mt >= 0.9) { catchCine = null; endCast(0.5); }    // §catch5 fish model drops away; rod frees up — the card lingers ~4s on its own
+    if (cc.mt >= 0.55) { catchCine = null; endCast(0.5); }   // §fish5 quicker hand-off; the card lingers ~4s on its own
   }
 }
 // §catch5 the catch card lives on its own short timer (independent of the flight animation)
@@ -3709,7 +3743,8 @@ function drawCastMeter(g) {
   g.fillStyle = "rgba(230,240,245,0.92)"; g.font = "700 12px system-ui,sans-serif"; g.textAlign = "center"; g.fillText("CAST POWER", innerWidth / 2, y - 8);
   g.restore();
 }
-const SPECIES_HUD_COL = { surfperch: [0.75,0.77,0.64], rockfish: [0.86,0.32,0.2], lingcod: [0.42,0.46,0.35], ratfish: [0.6,0.63,0.7], junk: [0.55,0.57,0.6] };
+const SPECIES_HUD_COL = { surfperch: [0.75,0.77,0.64], rockfish: [0.86,0.32,0.2], lingcod: [0.42,0.46,0.35], ratfish: [0.6,0.63,0.7],
+  eel: [0.4,0.6,0.4], puffer: [0.9,0.8,0.42], flyingfish: [0.6,0.72,0.9], sunfish: [0.68,0.72,0.78], ghostfish: [0.66,0.9,0.95], junk: [0.55,0.57,0.6] };
 function hudChamfer(g, x, y, w, h, c) { g.beginPath(); g.moveTo(x+c,y); g.lineTo(x+w-c,y); g.lineTo(x+w,y+c); g.lineTo(x+w,y+h-c); g.lineTo(x+w-c,y+h); g.lineTo(x+c,y+h); g.lineTo(x,y+h-c); g.lineTo(x,y+c); g.closePath(); }
 function hudFishToken(g, cx, cy, col, s) {   // a tiny side-on fish facing the hook (right)
   s = s || 1; const C = `rgb(${col[0]*255|0},${col[1]*255|0},${col[2]*255|0})`;
@@ -3735,8 +3770,8 @@ function drawReelGauge(g) {
   g.fillStyle = "rgba(38,48,54,0.92)"; hudChamfer(g, x, yT, w, h, 4); g.fill();
   const zx = x + fg.lo * w, zw = (fg.hi - fg.lo) * w;
   if (strainF > 0) { g.fillStyle = `rgba(230,${90-70*strainF|0},${75-55*strainF|0},${0.55+0.35*strainF})`; g.fillRect(zx, yT, zw, h); }
-  else { g.fillStyle = `rgba(95,205,125,${0.4+0.5*glow})`; g.fillRect(zx, yT, zw, h);
-    if (glow > 0.25) { g.save(); g.shadowColor = "rgba(130,235,160,0.95)"; g.shadowBlur = 12 * glow; g.fillStyle = `rgba(150,245,180,${0.35*glow})`; g.fillRect(zx, yT, zw, h); g.restore(); } }
+  else { const zv = fg.zoneVis == null ? 1 : fg.zoneVis; g.fillStyle = `rgba(95,205,125,${(0.4+0.5*glow)*zv})`; g.fillRect(zx, yT, zw, h);   // §fish5 ghostfish: the safe zone flickers (zoneVis)
+    if (glow > 0.25) { g.save(); g.shadowColor = "rgba(130,235,160,0.95)"; g.shadowBlur = 12 * glow; g.fillStyle = `rgba(150,245,180,${0.35*glow*zv})`; g.fillRect(zx, yT, zw, h); g.restore(); } }
   const nx = x + Math.max(0, Math.min(1, fg.tension)) * w;      // needle
   g.fillStyle = strainF > 0 ? "#ff6a52" : (fg.tension > fg.hi || fg.tension < fg.lo ? "#ffd06a" : "#f0f5f8");
   g.fillRect(nx - 2, yT - 5, 4, h + 10);
@@ -4888,10 +4923,49 @@ function driftwoodMesh() {
   return m;
 }
 function grassMesh(col) {
+  // §veg5 a fuller, more varied tuft: 5 blades at differing heights, fan-out leans and a little per-blade tint drift
   const m = Mesh(); col = col || [0.45, 0.5, 0.28];
-  for (let k = 0; k < 3; k++) {
-    const a = (k / 3) * 6.2832 + 0.4, dx = Math.cos(a) * 0.05, dz = Math.sin(a) * 0.05;
-    mTri(m, [-dx, 0, -dz], [dx, 0, dz], [dx * 2.2, 1.0, dz * 2.2], col);
+  const n = 5;
+  for (let k = 0; k < n; k++) {
+    const a = (k / n) * 6.2832 + 0.4, r = 0.04 + (k % 3) * 0.02, dx = Math.cos(a) * r, dz = Math.sin(a) * r;
+    const hh = 0.72 + ((k * 3) % 4) * 0.16, lean = ((k % 3) - 1) * 0.12;
+    const s = 0.86 + ((k * 7) % 5) / 5 * 0.3, tc = [col[0]*s, col[1]*s, col[2]*(0.85 + (k % 2) * 0.3)];
+    mTri(m, [-dx, 0, -dz], [dx, 0, dz], [dx * 2.0 + lean, hh, dz * 2.0], tc);
+  }
+  return m;
+}
+// §veg5 decorative instanced foliage — ferns in the shade, mixed wildflowers, low clover carpets
+function fernMesh() {
+  const m = Mesh(), g = [0.3, 0.42, 0.22], g2 = [0.34, 0.47, 0.24], n = 6;
+  for (let k = 0; k < n; k++) { const a = (k / n) * 6.2832, dx = Math.cos(a), dz = Math.sin(a), c = k % 2 ? g : g2;
+    mTri(m, [-dz*0.03, 0.02, dx*0.03], [dz*0.03, 0.02, -dx*0.03], [dx*0.5, 0.55, dz*0.5], c);       // arching frond
+    mTri(m, [dx*0.5, 0.55, dz*0.5], [dx*0.9, 0.46, dz*0.9], [dx*0.56, 0.44, dz*0.56], c);           // drooping tip
+  }
+  return m;
+}
+function wildflowerMesh() {
+  const m = Mesh(), stem = [0.34, 0.44, 0.24], cols = [[0.93,0.82,0.3], [0.88,0.48,0.68], [0.58,0.6,0.95]];
+  for (let k = 0; k < 3; k++) { const a = k * 2.12, bx = Math.cos(a)*0.08, bz = Math.sin(a)*0.08, hh = 0.3 + (k % 2) * 0.14, c = cols[k % 3];
+    mBox(m, bx, hh/2, bz, 0.012, hh/2, 0.012, stem);                                                 // stem
+    for (let p = 0; p < 5; p++) { const pa = p/5*6.2832; mTri(m, [bx, hh, bz], [bx+Math.cos(pa)*0.06, hh+0.02, bz+Math.sin(pa)*0.06], [bx+Math.cos(pa+0.65)*0.06, hh+0.02, bz+Math.sin(pa+0.65)*0.06], c); }
+    mTri(m, [bx, hh+0.015, bz], [bx+0.022, hh+0.03, bz], [bx, hh+0.03, bz+0.022], [0.96,0.9,0.42]);  // bright centre
+  }
+  return m;
+}
+function cloverMesh() {
+  const m = Mesh(), g = [0.3, 0.5, 0.26], g2 = [0.35, 0.55, 0.3], n = 5;
+  for (let k = 0; k < n; k++) { const a = (k / n) * 6.2832 + 0.3, dx = Math.cos(a)*0.1, dz = Math.sin(a)*0.1, hh = 0.1 + (k % 2) * 0.06, c = k % 2 ? g : g2;
+    mBox(m, dx*0.5, hh/2, dz*0.5, 0.008, hh/2, 0.008, g2);
+    for (let l = 0; l < 3; l++) { const la = l/3*6.2832; mTri(m, [dx, hh, dz], [dx+Math.cos(la)*0.05, hh+0.012, dz+Math.sin(la)*0.05], [dx+Math.cos(la+2.1)*0.05, hh+0.012, dz+Math.sin(la+2.1)*0.05], c); }
+  }
+  return m;
+}
+// §veg5 a harvestable tall-grass clump (strip it for Plant Fiber). "cut" = the short stubble left behind.
+function tallGrassMesh(cut) {
+  const m = Mesh(), base = [0.6, 0.58, 0.32], tip = [0.8, 0.74, 0.42], n = cut ? 4 : 10, H = cut ? 0.26 : 1.5;
+  for (let k = 0; k < n; k++) { const a = (k / n) * 6.2832 + 0.7, r = 0.06 + (k % 3) * 0.04, dx = Math.cos(a)*r, dz = Math.sin(a)*r;
+    const hh = H * (0.68 + ((k * 7) % 5) / 5 * 0.5), lean = (((k * 13) % 7) / 7 - 0.5) * 0.5;
+    mTri(m, [-dz*0.02, 0, dx*0.02], [dz*0.02, 0, -dx*0.02], [dx*1.8 + lean, hh, dz*1.8], k % 2 ? base : tip);
   }
   return m;
 }
@@ -5225,11 +5299,31 @@ function buildProps() {
     const scale = 1.5 + rng()*2.2;
     driftObjs.push({ x, z, scale, yaw: rng()*6.28, roll: (rng()-0.5)*0.5, tint: vary([0.6,0.55,0.48], 0.15), gone: false, big: scale > 2.2 });
   });
-  // dune grass (walkable)
+  // dune grass (walkable) — §veg5 much more varied: wider height range, a per-tuft lean, and colour from fresh green to dry gold
   const grass = scatter(5.5, 1.0, 7000, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 5 || s.h > 26 || s.slope > 0.5) return;
     if (rng() > 0.7 || nearPOI(x, z, 2) || spotUnderwater(x, z)) return;
-    pushInst(inst, x, s.h, z, 0.6 + rng()*0.8, rng()*6.28, 0, 0, vary([0.5,0.54,0.3], 0.25));
+    const dry = rng();   // some patches cure to straw-gold
+    const base = [0.44 + dry*0.22, 0.5 - dry*0.06, 0.28 + dry*0.06];
+    pushInst(inst, x, s.h, z, 0.5 + rng()*1.3, rng()*6.28, rng()*0.22, rng()*6.28, vary(base, 0.22));
+  });
+  // §veg5 ferns tucked in the damper, shadier interior (under the trees)
+  const ferns = scatter(8, 0.9, 2600, (x, z, inst) => {
+    const s = surfaceAt(x, z); if (s.h < 11 || s.h > 40 || s.slope > 0.5) return;
+    if (rng() > 0.4 || nearPOI(x, z, 2) || spotUnderwater(x, z, 0.1)) return;
+    pushInst(inst, x, s.h, z, 0.8 + rng()*0.9, rng()*6.28, 0.04 + rng()*0.1, rng()*6.28, vary([1,1,1], 0.18));
+  });
+  // §veg5 wildflower clusters sprinkled across the dune meadows
+  const wildflowers = scatter(9, 1.0, 2200, (x, z, inst) => {
+    const s = surfaceAt(x, z); if (s.h < 6 || s.h > 24 || s.slope > 0.45) return;
+    if (rng() > 0.3 || nearPOI(x, z, 2) || spotUnderwater(x, z)) return;
+    pushInst(inst, x, s.h, z, 0.8 + rng()*0.6, rng()*6.28, 0, 0, vary([1,1,1], 0.12));
+  });
+  // §veg5 low clover carpets on the lower grassy flats
+  const clover = scatter(7, 0.9, 2600, (x, z, inst) => {
+    const s = surfaceAt(x, z); if (s.h < 6 || s.h > 20 || s.slope > 0.4) return;
+    if (rng() > 0.4 || nearPOI(x, z, 2) || spotUnderwater(x, z)) return;
+    pushInst(inst, x, s.h, z, 0.9 + rng()*0.7, rng()*6.28, 0, 0, vary([1,1,1], 0.16));
   });
   // palms at the beach/dune edge (collide)
   const palms = scatter(15, 0.9, 1500, (x, z, inst) => {
@@ -5316,6 +5410,9 @@ function buildProps() {
 
   propTypes = [
     { kind: "grass",   foliage: true,  snap: true, inst: makeInstanced(grassMesh(), grass) },
+    { kind: "fern",    foliage: true,  snap: true, inst: makeInstanced(fernMesh(), ferns) },            // §veg5 shady interior ferns
+    { kind: "wildflower", foliage: true, snap: true, inst: makeInstanced(wildflowerMesh(), wildflowers) },  // §veg5 meadow wildflowers
+    { kind: "clover",  foliage: true,  snap: true, inst: makeInstanced(cloverMesh(), clover) },         // §veg5 clover carpets
     { kind: "seaweed", foliage: true,  snap: true, inst: makeInstanced(grassMesh([0.28,0.32,0.22]), seaweed) },
     { kind: "eelgrass", foliage: true, snap: true, inst: makeInstanced(eelgrassMesh(), eelgrass) },   // §14B
     { kind: "seamoss", foliage: true, snap: true, inst: makeInstanced(seaMossMesh(), seamoss) },      // §17.2 low carpet
@@ -5726,6 +5823,43 @@ function minnowMesh(col) { col = col || [0.72,0.77,0.84];
   return finFishMesh(col, { len: 0.42, tail: -0.4, h: 0.1, wz: 0.05, top: 1.16, belly: 0.82,
     prof: [[1,0.14,0.14],[0.8,0.6,0.64],[0.55,1,1],[0.3,0.78,0.72],[0.08,0.3,0.22],[0,0.12,0.08]],
     tailH: 0.17, tlen: 0.16, fork: 0.07, dorFront: 0.58, dorBack: 0.34, finH: 0.08, eyeCol: [0.95,0.95,0.95] }); }
+// §fish5 five new rod species — each a distinct silhouette
+function eelMesh(col) { col = col || [0.3,0.42,0.3];
+  return finFishMesh(col, { len: 0.88, tail: -0.92, h: 0.08, wz: 0.065, top: 1.1, belly: 0.82,
+    prof: [[1,0.5,0.5],[0.78,0.82,0.82],[0.52,1,0.92],[0.28,0.9,0.85],[0.1,0.66,0.55],[0,0.3,0.24]],
+    tailH: 0.12, tlen: 0.12, fork: 0.0, dorFront: 0.85, dorBack: 0.08, finH: 0.05, eyeCol: [0.92,0.86,0.3] }); }
+function pufferMesh(col) { col = col || [0.88,0.78,0.44];
+  const m = finFishMesh(col, { len: 0.28, tail: -0.26, h: 0.24, wz: 0.22, sides: 8, top: 1.0, belly: 0.95,
+    prof: [[1,0.45,0.45],[0.74,0.95,0.95],[0.46,1.05,1.05],[0.22,0.96,0.96],[0.06,0.6,0.6],[0,0.3,0.3]],
+    tailH: 0.1, tlen: 0.08, fork: 0.02, eyeCol: [0.1,0.1,0.12] });
+  const sp = [col[0]*0.78,col[1]*0.72,col[2]*0.5];
+  for (let i = 0; i < 12; i++) { const a = i/12*6.2832, cx = 0.08, sy = Math.sin(a), sz = Math.cos(a);
+    mTri(m, [cx, sy*0.17, sz*0.16], [cx-0.02, sy*0.27, sz*0.26], [cx+0.05, sy*0.19, sz*0.18], sp); }   // quills
+  return m; }
+function flyingFishMesh(col) { col = col || [0.6,0.68,0.82];
+  const m = finFishMesh(col, { len: 0.5, tail: -0.5, h: 0.11, wz: 0.06, top: 1.1, belly: 0.72,
+    prof: [[1,0.14,0.14],[0.82,0.62,0.66],[0.56,1,1],[0.3,0.76,0.7],[0.08,0.3,0.22],[0,0.12,0.08]],
+    tailH: 0.2, tlen: 0.18, fork: 0.11, eyeCol: [0.95,0.95,0.98] });
+  const wing = [col[0]*0.92,col[1]*0.94,col[2]*1.02];
+  for (const s of [1,-1]) { mTri(m, [0.16,0.0,s*0.05], [-0.12,0.03,s*0.42], [-0.02,0.0,s*0.09], wing);
+    mTri(m, [0.16,0.0,s*0.05], [-0.12,0.03,s*0.42], [0.1,0.0,s*0.3], wing); }
+  return m; }
+function sunfishMesh(col) { col = col || [0.58,0.61,0.66];   // ocean sunfish (mola): tall, laterally flat disc
+  const m = Mesh(), n = 12, R = 0.42, W = 0.09, rim = [col[0]*0.86,col[1]*0.86,col[2]*0.9];
+  for (let i = 0; i < n; i++) { const a0 = i/n*6.2832, a1 = (i+1)/n*6.2832;
+    const x0 = Math.cos(a0)*R*0.82+0.05, y0 = Math.sin(a0)*R, x1 = Math.cos(a1)*R*0.82+0.05, y1 = Math.sin(a1)*R;
+    mTri(m, [0.05,0,W], [x0,y0,W*0.3], [x1,y1,W*0.3], col);
+    mTri(m, [0.05,0,-W], [x1,y1,-W*0.3], [x0,y0,-W*0.3], [col[0]*0.9,col[1]*0.9,col[2]*0.95]);
+    mQuad(m, [x0,y0,W*0.3], [x1,y1,W*0.3], [x1,y1,-W*0.3], [x0,y0,-W*0.3], rim); }
+  mTri(m, [0.05,0.1,W*0.3], [0.42,0,0], [0.05,-0.1,W*0.3], col); mTri(m, [0.05,0.1,-W*0.3], [0.05,-0.1,-W*0.3], [0.42,0,0], col);   // blunt snout
+  mTri(m, [0.0,R*0.7,0], [-0.12,R*1.45,0], [0.14,R*0.7,0], rim);         // tall dorsal
+  mTri(m, [0.0,-R*0.7,0], [0.14,-R*0.7,0], [-0.12,-R*1.45,0], rim);      // tall anal fin
+  mQuad(m, [-0.28,R*0.5,0.02], [-0.42,R*0.42,0], [-0.42,-R*0.42,0], [-0.28,-R*0.5,0.02], [col[0]*0.8,col[1]*0.8,col[2]*0.85]);   // clavus rudder
+  return m; }
+function ghostfishMesh(col) { col = col || [0.74,0.84,0.92];
+  return finFishMesh(col, { len: 0.56, tail: -0.56, h: 0.13, wz: 0.06, top: 1.08, belly: 0.82,
+    prof: [[1,0.16,0.16],[0.82,0.66,0.7],[0.56,1,0.95],[0.3,0.78,0.72],[0.08,0.34,0.26],[0,0.14,0.1]],
+    tailH: 0.24, tlen: 0.24, fork: 0.08, dorFront: 0.66, dorBack: 0.2, finH: 0.12, eyeCol: [0.3,0.9,0.95] }); }
 // §12B bigger, high-contrast gull: white body, grey wings, dark wingtips, yellow beak.
 function gullMesh() {
   const m = Mesh(), white=[0.95,0.95,0.96], grey=[0.55,0.57,0.62], dark=[0.18,0.19,0.22], yellow=[0.96,0.78,0.24];
@@ -6312,6 +6446,34 @@ function netScrapMesh(){ const m=Mesh(); const c=[0.44,0.52,0.54], c2=[0.36,0.44
     mBox(m, 0, sag, t, span, r, r, i%2?c:c2);   // strands running along x
     mBox(m, t, sag, 0, r, r, span, i%2?c2:c); }  // strands running along z
   return m; }
+// §fish5 fun junk catches
+function bootMesh(){ const m=Mesh(); const rub=[0.28,0.22,0.18], sole=[0.15,0.13,0.12];
+  mBox(m,0,0.26,0,0.1,0.26,0.12,rub);                       // leg/shaft
+  mBox(m,0.12,0.06,0,0.22,0.06,0.12,rub);                   // foot
+  mBox(m,0.12,-0.01,0,0.24,0.025,0.13,sole);                // sole
+  mBox(m,0.3,0.08,0,0.06,0.07,0.11,rub);                    // toe cap
+  return m; }
+function tireMesh(){ const m=Mesh(); const t=[0.14,0.14,0.16];
+  mArcTube(m,0,0,0.3,0.12,0,6.2832,14,8,t);                 // the tyre torus
+  for(let i=0;i<8;i++){ const a=i/8*6.2832; mBox(m,Math.cos(a)*0.18,Math.sin(a)*0.18,0,0.03,0.03,0.05,[0.4,0.4,0.42]); }   // hubby spokes hint
+  return m; }
+function mapTubeMesh(){ const m=Mesh(); const paper=[0.86,0.8,0.6], paper2=[0.78,0.72,0.52], tie=[0.6,0.3,0.28];
+  mCyl(m,-0.22,0.22,0.07,0.07,10,paper); mergeMesh(m,discMesh(0.22,0.07,10,0.01,paper2)); mergeMesh(m,discMesh(-0.22,0.07,10,-0.01,paper2));
+  mBox(m,0,0,0,0.015,0.08,0.08,tie);                        // ribbon tie
+  return m; }
+function watchMesh(){ const m=Mesh(); const gold=[0.84,0.7,0.3], face=[0.9,0.88,0.82];
+  mCyl(m,-0.03,0.03,0.18,0.18,14,gold); mergeMesh(m,discMesh(0.03,0.17,14,0.005,face)); mergeMesh(m,discMesh(-0.03,0.18,14,-0.01,gold));
+  mArcTube(m,0,0.22,0.05,0.02,0,6.2832,10,6,gold);          // ring/bail at top
+  mBox(m,0,0.06,0.031,0.01,0.06,0.004,[0.2,0.2,0.22]); mBox(m,0.05,0,0.031,0.05,0.01,0.004,[0.2,0.2,0.22]);   // hands
+  return m; }
+function rubberDuckMesh(){ const m=Mesh(); const yel=[0.96,0.82,0.2], yel2=[0.9,0.74,0.16], beak=[0.95,0.55,0.15], eye=[0.1,0.1,0.12];
+  mergeMesh(m,discMesh(0.0,0.2,8,0.16,yel));                // body dome
+  mBox(m,0.02,0.1,0,0.2,0.1,0.16,yel2);                     // body block
+  mBox(m,-0.18,0.12,0,0.06,0.14,0.05,yel);                  // tail flip-up
+  mBox(m,0.16,0.26,0,0.1,0.1,0.09,yel);                     // head
+  mBox(m,0.27,0.24,0,0.07,0.035,0.05,beak);                 // beak
+  mBox(m,0.19,0.3,0.07,0.018,0.018,0.018,eye); mBox(m,0.19,0.3,-0.07,0.018,0.018,0.018,eye);  // eyes
+  return m; }
 function plasticStrawMesh(){ const m=Mesh(); mCyl(m,0,0.42,0.018,0.018,5,[0.9,0.35,0.5]); mCyl(m,0.1,0.14,0.02,0.02,5,[0.95,0.5,0.6]); return m; }
 // §17.2 varied seabed plants — a low moss carpet, a mid red algae, and harvestable sea lettuce
 function seaMossMesh(){ const m=Mesh(); const c=[0.42,0.5,0.36], c2=[0.5,0.42,0.34];
@@ -6570,6 +6732,12 @@ const FINDS = {
   foamchunk: { mesh: () => foamChunkMesh(),          base: 0.5, max: 60,  label: "Foam Chunk", desc: "A crumbling lump of packing foam.", rare: 0, litter: 1 },
   netscrap:  { mesh: () => netScrapMesh(),           base: 0.55,max: 50,  label: "Net Scrap", desc: "A knot of lost fishing net. Best off the beach.", rare: 0, litter: 1 },
   strawbit:  { mesh: () => plasticStrawMesh(),       base: 0.4, max: 80,  label: "Plastic Straw", desc: "A faded straw, washed in from somewhere far.", rare: 0, litter: 1 },
+  // §fish5 fun junk you can snag on the rod
+  boot:      { mesh: () => bootMesh(),               base: 0.8, max: 40,  label: "Old Boot", desc: "A sodden rubber boot. The classic catch.", rare: 0, litter: 1 },
+  tire:      { mesh: () => tireMesh(),               base: 1.0, max: 30,  label: "Worn Tyre", desc: "A bald tyre, long rolled into the sea. Heavy and useless.", rare: 0, litter: 1 },
+  maptube:   { mesh: () => mapTubeMesh(),            base: 0.6, max: 40,  label: "Rolled Map", desc: "A water-stained map in a ribbon. The ink's too faded to read... mostly.", rare: 1 },
+  watch:     { mesh: () => watchMesh(),              base: 0.5, max: 50,  label: "Pocket Watch", desc: "A tarnished gold pocket watch, stopped at some forgotten hour.", rare: 1 },
+  rubberduck:{ mesh: () => rubberDuckMesh(),         base: 0.6, max: 50,  label: "Rubber Duck", desc: "A cheery little bath duck, impossibly far from any bath.", rare: 1 },
   nautilus: { mesh: () => nautilusMesh(),            base: 0.5, max: 60,  label: "Nautilus Shell", desc: "A pearly chambered spiral, drifted from deep water.", rare: 2 },
   oyster:   { mesh: () => oysterMesh(),              base: 0.5, max: 80,  label: "Oyster", desc: "A craggy grey oyster, clamped shut. Good food, better cooked.", rare: 0 },
   barnacle: { mesh: () => barnacleMesh(),            base: 0.5, max: 80,  label: "Barnacles", desc: "Acorn barnacles scraped off a tidal rock — prized fishing bait.", rare: 0, bait: 1 },
@@ -7434,12 +7602,18 @@ ITEMS.rod = { id: "rod", name: "Fishing Rod", category: "tool", rarity: "tool", 
  ["rockfish","Rockfish",[0.82,0.3,0.18],0.22,"common"],
  ["lingcod","Lingcod",[0.4,0.42,0.33],0.26,"uncommon"],
  ["ratfish","Ratfish",[0.55,0.58,0.6],0.2,"uncommon"],
+ ["eel","Moray Eel",[0.3,0.42,0.3],0.22,"uncommon"],              // §fish5
+ ["puffer","Pufferfish",[0.88,0.78,0.44],0.16,"uncommon"],
+ ["flyingfish","Flying Fish",[0.6,0.68,0.82],0.16,"common"],
+ ["sunfish","Ocean Sunfish",[0.58,0.61,0.66],0.3,"rare"],
+ ["ghostfish","Ghostfish",[0.74,0.84,0.92],0.26,"rare"],
 ].forEach(([id,name,col,ev,rar]) => {
   ITEMS[id] = { id, name, category: "consumable", rarity: rar, stackable: true, maxStack: 99,
-    desc: "A fish caught on the rod. Good food, and better still cooked over a campfire.",
-    model: () => id==="rockfish" ? rockfishMesh() : id==="lingcod" ? lingcodMesh() : id==="ratfish" ? ratfishMesh() : fishMesh(col), tint: [1,1,1] };
+    desc: id==="puffer" ? "A pufferfish from the rod. Edible once cooked — a curiosity either way." : "A fish caught on the rod. Good food, and better still cooked over a campfire.",
+    model: () => catchSpeciesMesh(id), tint: [1,1,1] };
   EDIBLE[id] = ev; COOKABLE[id] = 1; });
 FOOD_BOOST.surfperch={m:1.6,d:30}; FOOD_BOOST.rockfish={m:1.75,d:42}; FOOD_BOOST.lingcod={m:1.95,d:54}; FOOD_BOOST.ratfish={m:1.7,d:40};
+FOOD_BOOST.eel={m:1.85,d:48}; FOOD_BOOST.puffer={m:1.5,d:26}; FOOD_BOOST.flyingfish={m:1.55,d:28}; FOOD_BOOST.sunfish={m:2.2,d:70}; FOOD_BOOST.ghostfish={m:2.0,d:60};
 // §13.2 one Tool Kit replaces the three tool slots; Auto picks the right tool as you aim.
 ITEMS.toolkit = { id: "toolkit", name: "Tool Kit", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
                   desc: "Shovel, axe and pickaxe in one. Auto mode picks the right one as you aim; press its slot again (or middle-click) to lock Shovel, Axe or Pickaxe.", model: () => shovelMesh(), tint: [1,1,1] };
@@ -8547,6 +8721,7 @@ function targetAlongRay(r, sticky) {
   for (const s of stumps) { const gy = surfaceAt(s.x, s.z).h; capsule(s, "stump", s.x, s.z, s.x, gy-0.1, s.z, s.x, gy+0.9, s.z, 1.15); }
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
   for (const cr of crops) sphere(cr, "crop", cr.x, cr.z, 0.5*cr.scale, 1.0*cr.scale);   // §17 harvestable crops
+  if (typeof tallGrass !== "undefined") for (const g of tallGrass) if (!g.cut) sphere(g, "tallgrass", g.x, g.z, 0.4*g.scale, 0.7*g.scale);   // §veg5 strip tall grass for fibre
   for (const sw of seaweedBeds) if (sw.ripe) sphere(sw, "seaweed", sw.x, sw.z, 0.6*sw.scale, 0.9*sw.scale);   // §17.2 pick sea lettuce
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
   for (const s of flipStones) if (!s.anim && (!s.up || selectedTool() === "pickaxe")) sphere(s, "flipstone", s.x, s.z, 0.4*s.sc, 0.5 + s.sc*0.4);   // §stones5 un-turned stones flip; a spent one is only a target for the pickaxe (to break)
@@ -8581,7 +8756,7 @@ let curTarget = null;    // recomputed each frame from the crosshair (desktop)
 // something (so a click can fall through to a ground tool-use otherwise).
 // §A3 target kinds that ANY held item can act on (harvest a plant, hit a creature, pick a find, open a thing).
 // The tool-gated kinds (tree/fallentree/rock/searock/stump/geode/heaveboulder) are deliberately excluded.
-const SOFT_INTERACT = new Set(["creature","find","rubble","flipstone","oysterbed","bush","crop","seaweed","salt",
+const SOFT_INTERACT = new Set(["creature","find","rubble","flipstone","oysterbed","bush","crop","seaweed","tallgrass","salt",
   "flotsam","barnacle","nest","driftwood","chest","openchest","storagebox","campfire","cotbed","dispslot",
   "cottrophy","aqua","lantern","fence","crate","barrel","searock"]);
 function softTargetUnderCrosshair() { const t = effectiveTarget(); return (t && SOFT_INTERACT.has(t.kind)) ? t : null; }
@@ -8603,6 +8778,7 @@ function useToolOnTarget(t) {
     case "bush": harvestBush(t.obj); return true;
     case "crop": harvestCrop(t.obj); return true;
     case "seaweed": harvestSeaweed(t.obj); return true;
+    case "tallgrass": harvestTallGrass(t.obj); return true;   // §veg5 strip for Plant Fiber
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "flotsam": collectFlotsam(t.obj); return true;   // §5 scoop floating debris straight from the water
     case "barnacle": scrapeBarnacle(t.obj); return true;   // §5 scrape with the Tool Kit (or a shovel) for bait
@@ -9823,6 +9999,43 @@ function drawBerryBushes(view) {
     for (const b of berryBushes) { if (berryState(b) !== st) continue; const dx = b.x-cam.pos[0], dz = b.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R || n >= 60) continue;
       const o = n*10, y = surfaceAt(b.x, b.z).h; a[o]=b.x;a[o+1]=y;a[o+2]=b.z;a[o+3]=b.scale;a[o+4]=0;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
     if (n) dyns[st].draw(a, n);
+  }
+}
+/* §veg5 TALL GRASS — harvestable clumps you strip for Plant Fiber (the rope material).
+   Tall clumps give a good handful; smaller tufts give the odd strand. Cut clumps regrow over a couple of days. */
+let tallGrass = [], tallGrassFullDyn = null, tallGrassCutDyn = null;
+const TALLGRASS_REGROW = 2;    // §veg5 in-game days to grow back after cutting (tunable)
+function seedTallGrass() {
+  tallGrass = [];
+  for (let i = 0; i < 150; i++) {
+    const a = rng()*6.283, r = HALF*(0.1 + rng()*0.62), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const s = surfaceAt(x, z); if (s.h < 5 || s.h > 26 || s.slope > 0.45) continue;
+    if (waterDepthAt(x, z) > 0.03 || (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, 1.0)) || nearPOI(x, z, 1.5)) continue;
+    if (typeof insideCottage === "function" && insideCottage(x, z)) continue;
+    const small = rng() < 0.4;   // a mix of full clumps and lesser tufts
+    tallGrass.push({ x, z, cut: false, regrowAt: 0, small, scale: (small ? 0.6 : 0.95) + rng()*0.4 });
+  }
+}
+function updateTallGrass() { for (const g of tallGrass) if (g.cut && clock.t >= g.regrowAt) g.cut = false; }
+function harvestTallGrass(g) {
+  if (g.cut) { showCard("Already cut", "This clump will grow back in a day or two."); return; }
+  let n = g.small ? (rng() < 0.6 ? 1 : 0) : harvestYield("fiber");   // tall clumps reliable; small tufts give the odd strand
+  if (n > 0) { const first = !discovered.has("f_fiber"); for (let i = 0; i < n; i++) Inv.add("fiber", 1); discovered.add("f_fiber"); notify("fiber", n, first); }
+  else showCard("Just stubble", "Nothing much to strip from this little tuft.");
+  g.cut = true; g.regrowAt = clock.t + TALLGRASS_REGROW * DAY_PERIOD;
+  const gy = surfaceAt(g.x, g.z).h; if (typeof spawnSand === "function") spawnSand(g.x, gy + 0.3, g.z, 5, [0.74, 0.7, 0.42]);
+  if (onDig) onDig("pluck"); saveWorld();
+}
+function tallGrassPrompt(g) { const verb = IS_TOUCH ? "tap" : "click"; return g.cut ? "" : `${verb} to strip grass for fibre`; }
+function drawTallGrass(view) {
+  if (!tallGrass.length) return;
+  if (!tallGrassFullDyn) { tallGrassFullDyn = makeDynamic(tallGrassMesh(false), 120); tallGrassCutDyn = makeDynamic(tallGrassMesh(true), 120); }
+  propUniforms(view);
+  const a = rockScratch;
+  for (const cut of [false, true]) { let n = 0;
+    for (const g of tallGrass) { if (g.cut !== cut) continue; const dx = g.x-cam.pos[0], dz = g.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R || n >= 120) continue;
+      const o = n*10, y = surfaceAt(g.x, g.z).h; a[o]=g.x;a[o+1]=y;a[o+2]=g.z;a[o+3]=g.scale;a[o+4]=g.x*0.7+g.z;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
+    if (n) (cut ? tallGrassCutDyn : tallGrassFullDyn).draw(a, n);
   }
 }
 
@@ -11186,6 +11399,7 @@ function updateTools(dt, gdt) {
   updateFallen(dt, gdt);
   updateErosion(gdt);
   updateBerries();
+  if (typeof updateTallGrass === "function") updateTallGrass();
   updateCrops();
   updateSeaweed();
   updateForagePatches();
@@ -12746,6 +12960,7 @@ function saveWorld() {
     // player-built terrain (sparse): [cell index, built height, material]
     build: [...builtCells].map(i => [i, +built[i].toFixed(2), material[i]]),
     berries: berryBushes.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),   // 0 = ripe, else seconds left
+    tallgrass: tallGrass.map(g => g.cut ? Math.max(1, +(g.regrowAt - clock.t).toFixed(0)) : 0),   // §veg5 0 = standing, else seconds until it grows back
     digcells: (() => { const out = []; for (const c of digCells.values()) if (c.depleted) out.push([c.cx, c.cz, Math.max(0, +(c.refillAt - clock.t).toFixed(0))]); return out; })(),   // §urgent3 spent dig-cells + seconds left to refill
     fires: campfires.filter(c => !c.hearth).map(c => ({ x: +c.x.toFixed(1), z: +c.z.toFixed(1), f: +(c.fuel||0).toFixed(2), lit: c.lit ? 1 : 0,
       roast: c.roast ? [c.roast.id, +c.roast.t.toFixed(1)] : null,
@@ -12787,6 +13002,7 @@ function loadWorld() {
       rebuildRegion(0, 0, GRID-1, GRID-1); updateHeightTex(0, 0, GRID-1, GRID-1);
     }
     if (Array.isArray(w.berries)) w.berries.forEach((v, i) => { if (berryBushes[i]) { if (v > 0) { berryBushes[i].ripe = false; berryBushes[i].regrowAt = clock.t + v; } else berryBushes[i].ripe = true; } });
+    if (Array.isArray(w.tallgrass)) w.tallgrass.forEach((v, i) => { if (tallGrass[i]) { if (v > 0) { tallGrass[i].cut = true; tallGrass[i].regrowAt = clock.t + v; } else tallGrass[i].cut = false; } });   // §veg5
     if (Array.isArray(w.digcells)) for (const [cx, cz, left] of w.digcells) digCells.set(digCellKey(cx, cz), { cx, cz, loot: rollCellFind(cx, cz), depleted: true, refillAt: clock.t + (left || 0) });   // §urgent3 restore spent cells
     if (Array.isArray(w.fires)) campfires = w.fires.map(c => Array.isArray(c)
       ? newCampfire(c[0], c[1])    // migrate old saves (position only) → a fresh lit fire
@@ -13772,6 +13988,7 @@ computeBasins();
 buildProps();
 seedSetPieces();
 seedBerryBushes();
+seedTallGrass();   // §veg5 harvestable tall-grass clumps (Plant Fiber)
 seedWildCrops();
 populateLife();
 seedSeaweedBeds();   // §17.2 after life[], so bed-dwelling critters aren't wiped
@@ -14165,6 +14382,7 @@ function frame(now) {
   drawDriftwood(view);
   drawSetPieces(view);
   drawBerryBushes(view);
+  drawTallGrass(view);   // §veg5
   drawBarnacles(view);   // §5 barnacle crusts on intertidal rocks (before the transparent water)
   drawCrops(view);
   drawSeaweedBeds(view);
@@ -14341,6 +14559,11 @@ function frame(now) {
     }
     if (!buildMode && curTarget && curTarget.kind === "flipstone") {   // §21 flip-stone tooltip
       promptEl.textContent = flipStonePrompt(curTarget.obj);
+      promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
+      crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
+    }
+    if (!buildMode && curTarget && curTarget.kind === "tallgrass") {   // §veg5 tall-grass tooltip
+      promptEl.textContent = tallGrassPrompt(curTarget.obj);
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
