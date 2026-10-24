@@ -202,6 +202,12 @@
   #card b { font-size: 17px; letter-spacing: .02em; }
   #card span { opacity: .8; font-size: 13px; }
   /* field journal (§13.5 redesigned: compact, tabbed, 3D-icon cards) */
+  /* §B5 findable events: a quiet direction line at the top + a subtle edge chevron pointing to the site */
+  #eventline { position: fixed; top: 54px; left: 50%; transform: translateX(-50%); z-index: 15; display: none;
+    font-size: 15px; letter-spacing: .02em; color: #ecdfc4; text-shadow: 0 1px 3px rgba(0,0,0,.7); background: rgba(10,16,20,.42);
+    padding: 7px 16px; border-radius: 20px; pointer-events: none; white-space: nowrap; transition: opacity .6s; opacity: 0; }
+  #eventchev { position: fixed; z-index: 14; display: none; color: rgba(236,223,196,.7); pointer-events: none;
+    filter: drop-shadow(0 1px 3px rgba(0,0,0,.6)); transition: opacity .3s; }
   /* §A6 one shared scrim behind every modal; the panels themselves sit above it */
   #scrim { position: fixed; inset: 0; z-index: 11; display: none; background: var(--dim); backdrop-filter: blur(2px); }
   /* §menu the combined satchel + bucket view: both panels laid out side by side */
@@ -558,6 +564,8 @@
 <div id="hotbar"></div>
 <div id="journal"></div>
 <div id="invpanel"></div>
+<div id="eventline"></div>
+<div id="eventchev"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div>
 <div id="menutabs"></div>
 <div id="combined"></div>
 <div id="pausemenu"></div>
@@ -1441,6 +1449,9 @@ const SND = {
   play(id, opt = {}) {
     if (!this.ctx || this.unlocked === false || this.muted) return;
     const r = this.reg[id]; const bufs = this.buf[id]; if (!r || !bufs || !bufs.length) return;
+    // §B4 debug: log every sound id while a sound-log window is open, and honor per-category mutes
+    if (this.logUntil && performance.now() < this.logUntil) this.playLog[id] = (this.playLog[id] || 0) + 1;
+    if (this.catMute && this.catMute[soundCategory(id, r.bus)]) return;
     const now = this.ctx.currentTime;
     if (r.cd && (now - (this.lastAt[id] || -9)) < r.cd) return;       // per-sound cooldown
     // voice caps
@@ -1480,7 +1491,30 @@ const SND = {
     if (this.voices.length > 64) this.voices = this.voices.filter(v => v.playing);
   },
   activeVoices() { return this.voices.filter(v => v.playing).length; },
+  // §B4 per-category mutes (debug) + a rolling log of which sound ids are playing
+  catMute: { gulls:false, creatures:false, footsteps:false, tools:false, ui:false, ambience:false },
+  playLog: {}, logUntil: 0,
+  startSoundLog(sec) {   // log every sound id played over the next `sec` seconds, then print a summary
+    this.playLog = {}; this.logUntil = performance.now() + sec*1000;
+    if (typeof showCard === "function") showCard("Sound log started", `Listening for ${sec}s — play normally; a breakdown prints to the console.`);
+    setTimeout(() => {
+      const rows = Object.entries(this.playLog).sort((a,b)=>b[1]-a[1]);
+      console.log("%c[sound log] " + sec + "s — ids by count:", "font-weight:bold", rows);
+      const top = rows.slice(0,6).map(([k,v])=>`${k}×${v}`).join(", ");
+      if (typeof showCard === "function") showCard("Sound log", rows.length ? top : "nothing played");
+    }, sec*1000 + 50);
+  },
 };
+// §B4 classify a sound id into the debug mute categories
+function soundCategory(id, bus) {
+  if (/^gull/.test(id)) return "gulls";
+  if (/^step|^land_/.test(id)) return "footsteps";
+  if (bus === "ui") return "ui";
+  if (bus === "ambience") return "ambience";
+  if (/^dig_|chop|timber|clang|clink|scrape|sift|crack|thud|fail_thud|snap|hitflesh|^pat$|whoosh|crash|mine|crumble/.test(id)) return "tools";
+  if (/peep|skitter|seal_bark|^jet$|squirt|owl|^bat$|raccoon|hcrab|chirp|cricket|frog|toad|^duck|heron|seal|growl/.test(id)) return "creatures";
+  return "other";
+}
 // ---- the sound library (synth params per id) ----
 (function registerSounds() {
   const D = (id, p, o) => SND.def(id, p, o);
@@ -1551,10 +1585,10 @@ const SND = {
   D("gull_call",   [{ freq:760, freq2:1020, shape:"tri", atk:0.012, sus:0.05, rel:0.1, gain:0.24, vib:40, vibf:14 },
                     { freq:840, freq2:700, shape:"tri", atk:0.012, sus:0.06, rel:0.12, gain:0.24, vib:55, vibf:12 },
                     { freq:700, freq2:940, shape:"tri", atk:0.02, sus:0.08, rel:0.1, gain:0.22, vib:38, vibf:16 }], { vol:0.17, cd:0.2, pv:0.1 });
-  D("gull_alarm",  { freq:1000, freq2:1350, shape:"tri", atk:0.005, sus:0.04, rel:0.08, gain:0.3, vib:140, vibf:22 }, { vol:0.26, cd:0.12 });
+  D("gull_alarm",  { freq:900, freq2:1150, shape:"tri", atk:0.01, sus:0.04, rel:0.09, gain:0.26, vib:30, vibf:16 }, { vol:0.22, cd:0.25 });   // §B4 much less vibrato → no squeaky warble
   D("gull_whoosh", { shape:"noise", lpf:0.18, atk:0.02, sus:0.08, rel:0.12, gain:0.4, freq:1 }, { vol:0.34 });
-  D("gull_squab",  { freq:640, freq2:1200, shape:"tri", atk:0.003, sus:0.03, rel:0.05, gain:0.26, vib:180, vibf:30 }, { vol:0.2, cd:0.12 });
-  D("peep",        { freq:2200, freq2:2600, shape:"sine", atk:0.002, sus:0.012, rel:0.03, gain:0.25 }, { vol:0.26, cd:0.1 });
+  D("gull_squab",  { freq:620, freq2:900, shape:"tri", atk:0.006, sus:0.03, rel:0.06, gain:0.22, vib:40, vibf:16 }, { vol:0.18, cd:0.25 });   // §B4 gentler, far less vibrato
+  D("peep",        { freq:900, freq2:1150, shape:"tri", atk:0.006, sus:0.02, rel:0.05, gain:0.2, vib:30, vibf:12 }, { vol:0.15, cd:0.4 });   // §B4 was a 2200-2600Hz sine "blip" — now a soft, low rounded chirp
   D("skitter",     { shape:"noise", lpf:0.55, atk:0.001, sus:0.015, rel:0.03, gain:0.3, crush:12 }, { vol:0.22, cd:0.08 });
   D("squirt",      { freq:1400, freq2:600, shape:"sine", atk:0.001, sus:0.01, rel:0.05, noise:0.3, gain:0.3 }, { vol:0.28 });
   D("seal_bark",   { freq:300, freq2:220, shape:"saw", atk:0.01, sus:0.08, rel:0.1, gain:0.4, vib:30, vibf:10 }, { vol:0.4, cd:0.2 });
@@ -1656,7 +1690,7 @@ function updateFootsteps() {
 let _critSndT = 0;
 function updateCreatureSound(dt) {
   if (!SND.ctx || mode !== "walk") return;
-  _critSndT -= dt; if (_critSndT > 0) return; _critSndT = 0.5 + Math.random()*0.7;
+  _critSndT -= dt; if (_critSndT > 0) return; _critSndT = 1.1 + Math.random()*1.3;   // §B4 slower cadence — fewer ambient calls
   const night = typeof dayFactor === "function" ? dayFactor() < 0.35 : false;
   const near = []; for (const e of life) { if (e.kind !== "creature") continue; const d = Math.hypot(e.x-player.x, e.z-player.z); if (d < SND.MAX_DIST) near.push(e); }
   if (!near.length) return;
@@ -1664,7 +1698,7 @@ function updateCreatureSound(dt) {
   const say = (id, chance) => { if (Math.random() < chance) SND.play(id, { position: pos }); };
   // §playtest1 gulls are quieter and only call from nearby (not from 48 m away) — no constant distant squeaking
   if (e.t === "gull" && (e.gstate === "forage" || e.gstate === "perch" || e.gstate === "soar")) { if (Math.hypot(e.x-player.x, e.z-player.z) < 26) say("gull_call", 0.3); }
-  else if (e.t === "piper") say("peep", 0.5);
+  else if (e.t === "piper") say("peep", 0.28);
   else if (e.t === "crab") say("skitter", 0.25);
   else if (e.t === "seal") say("seal_bark", 0.3);
   else if (e.t === "octopus") say("jet", 0.1);
@@ -3010,6 +3044,8 @@ function creatureAt(x, y, z, r) { let best = null, bd = r*r;
     const ey = e.y !== undefined ? e.y : heightAt(e.x, e.z) + 0.3;
     const dd = (e.x-x)*(e.x-x) + (ey-y)*(ey-y) + (e.z-z)*(e.z-z); if (dd < bd) { bd = dd; best = e; } }
   return best; }
+const DEATH_FLASH = 0.28;      // §B1 seconds of red flash before a creature dissolves (tunable)
+const DEATH_DISSOLVE = 1.0;    // §B1 seconds for the dither-dissolve to finish (tunable)
 function hurtCreature(e, hx, hz) {
   if (!e || e.dying !== undefined) return;
   if (e.hp === undefined) e.hp = creatureHP(e.t);
@@ -3018,7 +3054,7 @@ function hurtCreature(e, hx, hz) {
   if (e.t === "gull") { e.gstate = "flee"; e.timer = 1.6 + rng(); } else { e.alert = 1; e.fleeT = 3; e.jet = 0.7; e.state = "flee"; e.timer = 1; }
   if (onSpear) onSpear("hitflesh");
   sparkle(e.x, (e.y !== undefined ? e.y : heightAt(e.x,e.z)+0.3), e.z, [0.8,0.3,0.3], 5);
-  if (e.hp <= 0) { e.dying = 0; e.deathYaw = e.yaw; e.lingerT = 30 + rng()*30; }   // §urgent5 topple, lie still ~30–60s, then dither-dissolve
+  if (e.hp <= 0) { e.dying = 0; e.deathYaw = e.yaw; }   // §B1 red flash → dissolve in place (no topple, no linger)
 }
 // §playtest1 a generic hit on a creature with whatever's in hand (Minecraft-style) — logs it to the journal, swings, deals small damage
 const WEAPON_DMG = { spear: 3, axe: 2, pickaxe: 2, shovel: 1 };   // a real weapon/tool hits harder than a bare hand
@@ -6907,11 +6943,12 @@ function updateLife(dt, tSec) {
     const dx = e.x - px, dz = e.z - pz, d2 = dx*dx + dz*dz;
     // §urgent5 the dying/fade timeline runs even for distant corpses, so they never linger forever if you walk off
     if (e.dying !== undefined) {
+      // §B1 Minecraft-style death: a brief red flash, then a dither-dissolve in place — no topple, no long linger
       e.dying += dt;
-      if (!e.dropped && e.dying > 0.55) { e.dropped = true; const drop = CREATURE_DROP[e.t];
-        if (drop) { const a = (e.deathYaw||0) + 1.57; spawnFind(drop, e.x + Math.cos(a)*0.6, e.z + Math.sin(a)*0.6); } }
-      if (e.fade === undefined && e.dying > 1.2 && (e.dying > (e.lingerT || 40) || !creatureOnScreen(e))) e.fade = 0;
-      if (e.fade !== undefined) { e.fade += dt / 1.3; if (e.fade >= 1) { queueRespawn(e.t); life.splice(i, 1); } }
+      if (!e.dropped && e.dying > DEATH_FLASH) { e.dropped = true; const drop = CREATURE_DROP[e.t];
+        if (drop) spawnFind(drop, e.x + (rng()-0.5)*0.3, e.z + (rng()-0.5)*0.3); }   // the drop appears where it was
+      if (e.fade === undefined && e.dying > DEATH_FLASH) e.fade = 0;                 // after the flash, start the dissolve in place
+      if (e.fade !== undefined) { e.fade += dt / DEATH_DISSOLVE; if (e.fade >= 1) { queueRespawn(e.t); life.splice(i, 1); } }
       continue;
     }
     if (d2 > UPDATE_R*UPDATE_R) continue;                // sleep distant entities
@@ -7189,14 +7226,10 @@ function drawLife(view) {
         yawOut = e.phase + animT*FIND_SPIN; lean = 0;
         glint = Math.pow(Math.max(0, Math.sin(animT*0.8 + e.phase*5)), 60);   // a rare, faint sparkle of light across it
       }
-      // §urgent5 death: topple onto its side with a small settle, then lie still (NO shrink; the fade is a dither-dissolve)
-      if (e.dying !== undefined) {
-        const tp = Math.min(1, e.dying / 0.45);
-        lean = 1.5 * (1 - (1-tp)*(1-tp));                                            // ease over onto its side
-        if (e.dying > 0.45 && e.dying < 0.95) lean += Math.sin((e.dying-0.45)/0.5*Math.PI) * 0.06;   // a little settle bounce
-        ld = e.deathYaw || e.yaw; y = g + 0.04;
-      }
+      // §B1 death: NO topple/rotation (flat creatures like sea stars stay flat) — it stays put; the red flash + dissolve do the work
+      if (e.dying !== undefined) { lean = 0; y = g + 0.02; }
       if (e.flop && e.beached) { lean = Math.sin(e.phase * 16) * 0.55; ld = (e.yaw || 0) + 1.5708; }   // §playtest1 a stranded fish/shrimp flops in place
+      if (e.t === "horseshoe" && e.stranded) { lean = Math.PI - 0.1 + Math.sin(e.phase*7)*0.12; ld = e.yaw || 0; y = g + 0.1; }   // §B2 flipped onto its back — belly-up so the legs show, waving a little
       e._sc = sc;                                          // §urgent5 remember the drawn scale so the fade pass matches it (no pop)
       const o = n*10;
       lifeScratch[o]=e.x; lifeScratch[o+1]=y; lifeScratch[o+2]=e.z;
@@ -7204,6 +7237,7 @@ function drawLife(view) {
       lifeScratch[o+7]=e.tint[0]; lifeScratch[o+8]=e.tint[1]; lifeScratch[o+9]=e.tint[2];
       if (glint > 0.001) { const gg = glint*0.55; lifeScratch[o+7]=e.tint[0]*(1-gg)+gg; lifeScratch[o+8]=e.tint[1]*(1-gg)+gg; lifeScratch[o+9]=e.tint[2]*(1-gg)+gg; }   // §A2 faint glint
       if (e.hurtT > 0) { const h = e.hurtT/0.32; lifeScratch[o+7]=e.tint[0]*(1-h)+1.0*h; lifeScratch[o+8]=e.tint[1]*(1-h)+0.3*h; lifeScratch[o+9]=e.tint[2]*(1-h)+0.3*h; }   // §R4 red hurt flash
+      if (e.dying !== undefined && e.dying < DEATH_FLASH) { const h = 1 - e.dying/DEATH_FLASH; lifeScratch[o+7]=e.tint[0]*(1-h)+1.0*h; lifeScratch[o+8]=e.tint[1]*(1-h)+0.18*h; lifeScratch[o+9]=e.tint[2]*(1-h)+0.18*h; }   // §B1 the death red flash
       if (showAlert && FISH[e.t]) { const al = e.alert || 0; lifeScratch[o+7]=0.3+al*0.7; lifeScratch[o+8]=0.9-al*0.7; lifeScratch[o+9]=0.3; }   // §14C green→red by alertness
       n++;
     }
@@ -7218,7 +7252,7 @@ function drawLife(view) {
     const reg = CREATURES[e.t]; if (!reg) continue;
     const g = heightAt(e.x, e.z), o = 0;
     lifeScratch[0]=e.x; lifeScratch[1]=g+0.04; lifeScratch[2]=e.z;
-    lifeScratch[3]=e._sc || e.scale; lifeScratch[4]=e.yaw; lifeScratch[5]=1.5; lifeScratch[6]=e.deathYaw || e.yaw;
+    lifeScratch[3]=e._sc || e.scale; lifeScratch[4]=e.yaw; lifeScratch[5]=0; lifeScratch[6]=e.yaw;   // §B1 no topple — dissolve flat in place
     lifeScratch[7]=e.tint[0]; lifeScratch[8]=e.tint[1]; lifeScratch[9]=e.tint[2];
     gl.uniform1f(propU.uDissolve, Math.min(0.98, e.fade));
     reg.dyn.draw(lifeScratch, 1);
@@ -7513,6 +7547,7 @@ function saveState() {
     heaves: heaveBoulders.map((b,i)=>b.flipped?[i,+b.refillAt.toFixed(2),+b.flippedAt.toFixed(2)]:0).filter(e=>e),   // §21D heaved boulders (index, refillAt, flippedAt)
     pearls: pearlsSeen, oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)]),   // §23 pearl sightings + oyster-bed stock
     hsFlipped: horseshoesFlipped,   // §41 horseshoe crabs turned back over
+    events: seenEvents.slice(0, 40),   // §B5 the journal's seen-events log
     geodes: geodes.map((g,i)=>g.cracked?i:-1).filter(i=>i>=0),   // §40 which geodes are already cracked
     geodesTaken: geodes.map((g,i)=>g.taken?i:-1).filter(i=>i>=0),   // §A3 which cracked geodes have had their halves taken
     recipes: [...knownRecipes], spearHard: spearHardened,   // §16 crafting
@@ -7534,6 +7569,7 @@ function loadState() {
       if (Array.isArray(s.geodes)) _savedGeodes = s.geodes;   // §40 cracked geodes (applied in seedGeodes)
       if (Array.isArray(s.geodesTaken)) _savedGeodesTaken = s.geodesTaken;   // §A3 geodes whose halves were taken
       if (typeof s.hsFlipped === "number") horseshoesFlipped = s.hsFlipped;   // §41 horseshoe crabs turned back over
+      if (Array.isArray(s.events)) seenEvents = s.events;   // §B5
       if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
       if (Array.isArray(s.recipes)) knownRecipes = new Set(s.recipes);   // §16 crafting
@@ -7988,6 +8024,9 @@ function syncDebugPanel() {
     <h3>Weather — ${weather ? (weather.forced ? "forced " : "") + WEATHER_LABEL[weather.state] : "—"}</h3>
     <div class="dbgrow"><button data-wx="clear">Clear</button><button data-wx="overcast">Overcast</button><button data-wx="fog">Fog</button><button data-wx="rain">Rain</button><button data-wx="storm">Storm</button><button data-wx="">Auto</button></div>
     <div class="dbgrow"><button id="dbgStormMorn">Skip to post-storm morning</button></div>
+    <h3>Sound (squeak hunt)</h3>
+    <div class="dbgrow">${["gulls","creatures","footsteps","tools","ui","ambience"].map(c=>`<button class="dbgsnd${SND.catMute[c]?' on':''}" data-sc="${c}" style="${SND.catMute[c]?'background:#b5503a':''}">${c}${SND.catMute[c]?' ✕':''}</button>`).join("")}</div>
+    <div class="dbgrow"><button id="dbgSndLog">Log sounds 30s</button></div>
     <h3>Camera (jump-snap hunt)</h3>
     <div class="dbgrow"><button id="dbgCamRaw" style="${camFx.raw?'background:#b5503a':''}">Raw camera: ${camFx.raw?"ON":"off"}</button><button id="dbgYG">Y graph (Y)</button></div>
     <div class="dbgrow">
@@ -8011,6 +8050,8 @@ function syncDebugPanel() {
   p.querySelector("#dbgPerf").onclick = () => { debugOn = !debugOn; syncDebugPanel(); };
   p.querySelector("#dbgBounds").onclick = () => { showBounds = !showBounds; syncDebugPanel(); };
   p.querySelector("#dbgAudit").onclick = () => auditRegistries();
+  p.querySelectorAll(".dbgsnd").forEach(b => b.onclick = () => { SND.catMute[b.dataset.sc] = !SND.catMute[b.dataset.sc]; syncDebugPanel(); });   // §B4 per-category sound mutes
+  { const sl = p.querySelector("#dbgSndLog"); if (sl) sl.onclick = () => SND.startSoundLog(30); }
   p.querySelector("#dbgHints").onclick = () => { hintsOn = !hintsOn; saveHints(); syncDebugPanel(); };
   p.querySelector("#dbgResetHints").onclick = () => { resetHints(); syncDebugPanel(); };
   p.querySelector("#dbgAutoPick").onclick = () => { autoPickup = !autoPickup; saveAutoPick(); syncDebugPanel(); };
@@ -8100,6 +8141,7 @@ function journalCount(tab) {
   if (tab === "cookbook") return [cookbook.size, DISHES.length];
   if (tab === "collections") { let n = 0; for (const set of COLLECTION_SETS) { const [a,b] = setProgress(set); if (b>0 && a>=b) n++; } return [n, COLLECTION_SETS.length]; }
   if (tab === "pearls") { let n = 0; for (const v of PEARL_ORDER) if (pearlsSeen[v] > 0) n++; return [n, PEARL_ORDER.length]; }
+  if (tab === "events") return [seenEvents.length, seenEvents.length];   // §B5
   const opened = chests.filter(c => c.opened).length; return [opened, chests.length];
 }
 function journalGrid(tab) {
@@ -8140,11 +8182,15 @@ function journalGrid(tab) {
       return `<div class="jcard"><img src="${ic[v]}"><div class="jname">${PEARL_LABEL[v]}</div><div class="jqty">×${pearlsSeen[v]}</div></div>`;
     }).join("");
   }
+  if (tab === "events") {   // §B5 a log of the natural events you've witnessed
+    if (!seenEvents.length) return `<div class="makehint">No events yet. Watch the shore — gulls circling and a line at the top of the screen will point you to the next one.</div>`;
+    return seenEvents.map(e => `<div class="jcard" style="width:auto;min-width:200px"><div class="jname" style="white-space:normal">${e.label}</div><div class="jqty">day ${e.day}</div></div>`).join("");
+  }
   return treasureCards();
 }
 function renderJournal() {
   const j = document.getElementById("journal");
-  const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["collections","Collections"],["pearls","Pearls"],["treasure","Treasure"]];   // §A6 Cookbook tab removed
+  const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["collections","Collections"],["pearls","Pearls"],["events","Events"],["treasure","Treasure"]];   // §A6 Cookbook removed · §B5 Events added
   const tabHtml = tabs.map(([id,lbl]) => { const [n,t] = journalCount(id);
     return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
   const cleanupLine = `<div class="jstat">Beach cleanup — <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared · Stones put back — <b>${stonesPutBack}</b> · Horseshoes turned over — <b>${horseshoesFlipped}</b></div>`;
@@ -11641,14 +11687,33 @@ const HS_SEED_N = 6;                               // ambient horseshoe crabs ke
 const HS_NIGHT_P = 0.4;                            // chance per night of a spawning stranding event (tunable)
 const HS_NIGHT_BATCH = 8;                          // crabs that come ashore on a spawning night (tunable)
 const HS_STRAND_FRAC = 0.6;                        // fraction of a spawning batch that strands upside-down (tunable)
-const HS_STRAND_TTL = 120;                         // seconds a stranded crab waits before it's quietly washed back (if unseen)
+const HS_STRAND_TTL = 330;                         // §B5 seconds a stranded crab waits before it's washed back (now spans the ~5-min event)
 let horseshoesFlipped = 0, _hsNightKey = -1;
-function horseshoeMesh() { const m = Mesh(); const sh=[0.44,0.37,0.28], sh2=[0.52,0.44,0.32], tail=[0.3,0.26,0.21];
-  mergeMesh(m, discMesh(0.0, 0.52, 9, 0.24, sh));                                     // prosoma: the big domed front shell
-  mergeMesh(m, discMesh(0.02, 0.54, 9, 0.02, sh2));                                   // a thin rim lip
-  mergeAt(m, discMesh(0.0, 0.3, 7, 0.13, sh), -0.52, 0.01, 0);                        // opisthosoma: the smaller hinged rear plate
-  mTri(m, [-0.56,0.06,0.07], [-0.56,0.06,-0.07], [-1.3,0.05,0], tail);               // telson (tail spike): top
-  mTri(m, [-0.56,0.0,0.07],  [-1.3,0.05,0], [-0.56,0.0,-0.07], tail);                //   and underside
+// §B2 a proper horseshoe crab: one smooth domed horseshoe front shell, a hinged spined rear plate, a long tail spike,
+// two eyes on top, and legs tucked UNDERNEATH (only seen when it's flipped onto its back). Faces +x; tail trails -x.
+function horseshoeMesh() { const m = Mesh();
+  const sh=[0.46,0.38,0.29], sh2=[0.54,0.46,0.34], dk=[0.33,0.27,0.21], tail=[0.3,0.26,0.21], leg=[0.3,0.25,0.2], eye=[0.1,0.09,0.08];
+  // --- prosoma: the big domed horseshoe-shaped front carapace ---
+  const apex = [0.26, 0.4, 0], N = 22, ring = [];
+  for (let i = 0; i <= N; i++) { const a = -Math.PI*0.8 + Math.PI*1.6*(i/N); ring.push([0.26 + Math.cos(a)*0.64, 0, Math.sin(a)*0.82]); }   // wide front arc → two rear horns
+  for (let i = 0; i < ring.length-1; i++) mTri(m, apex, ring[i], ring[i+1], i%2?sh:sh2);   // the domed front
+  const hinge = [-0.2, 0, 0];
+  mTri(m, apex, ring[ring.length-1], hinge, sh); mTri(m, apex, hinge, ring[0], sh);        // concave back, meeting at the hinge
+  // --- opisthosoma: a hinged, roughly triangular rear plate ---
+  const oApex=[-0.52,0.24,0], oL=[-0.2,0.01,0.34], oR=[-0.2,0.01,-0.34], oT=[-0.84,0.01,0];
+  mTri(m, oApex, oL, oR, sh); mTri(m, oApex, oR, oT, sh2); mTri(m, oApex, oT, oL, sh2);
+  mTri(m, oL, oR, oT, dk);                                                                  // flat underside
+  // small spines along the rear plate's side edges
+  for (const s of [-1,1]) for (let k = 0; k < 3; k++) { const t = 0.2 + k*0.24, ex = -0.2 + (-0.84+0.2)*t, ez = s*0.34*(1-t);
+    mTri(m, [ex,0.03,ez], [ex-0.08,0.03,ez+s*0.13], [ex-0.12,0.03,ez], dk); }               // little triangular spines
+  // --- telson: the long straight tail spike ---
+  mTri(m, [-0.84,0.09,0.05],[-0.84,0.09,-0.05],[-1.55,0.03,0], tail);
+  mTri(m, [-0.84,0.0,0.05],[-1.55,0.03,0],[-0.84,0.0,-0.05], tail);
+  // --- two small eyes on top of the front shell ---
+  for (const s of [-1,1]) mBox(m, 0.3, 0.3, s*0.26, 0.05, 0.035, 0.06, eye);
+  // --- legs: tucked under the shell (y < 0), only visible when the crab is flipped belly-up ---
+  for (const s of [-1,1]) for (let k = 0; k < 5; k++) { const px = 0.42 - k*0.15;
+    mBox(m, px, -0.09, s*(0.08 + 0.02*k), 0.02, 0.02, 0.13, leg); }
   return m; }
 // slow plow through the shallow sandy band; refloats at high tide; crawls back to sea once flipped upright
 function behaveHorseshoe(e, dt, d, dx, dz) {
@@ -11683,18 +11748,99 @@ function flipHorseshoe(e) {
   if (typeof checkSets === "function") checkSets(); saveState();
 }
 function isNightNow() { const t = (typeof timeOfDay === "number") ? timeOfDay : 0.3; return (t > 0.62 || t < 0.03); }   // after dusk (~0.55) to before dawn (~0.05)
+/* ===================================================================== *
+ * §B5 FINDABLE EVENTS — a quiet direction line, an edge chevron, circling gulls
+ *      and a distant sound cue point you to where something is happening.
+ * ===================================================================== */
+let activeEvent = null, seenEvents = [], eventTraces = [];
+const EVENT_DURATION = 300;            // §B5 an event stays "active" (findable) for ~5 real minutes (tunable)
+const EVENT_CHEVRON_RANGE = 150;       // §B5 the edge chevron shows within this many metres (tunable)
+let _eventLineT = 0;
+function compassDir(dx, dz) {          // a compass word for a world direction (−z = north, +x = east)
+  const dirs = ["north","north-east","east","south-east","south","south-west","west","north-west"];
+  const ang = Math.atan2(dx, -dz), i = (Math.round((((ang % (2*Math.PI)) + 2*Math.PI) % (2*Math.PI)) / (Math.PI/4))) % 8;
+  return dirs[i];
+}
+function showEventLine(text) {
+  const el = document.getElementById("eventline"); if (!el) return;
+  el.textContent = text; el.style.display = "block"; el.style.opacity = "0";
+  requestAnimationFrame(() => { el.style.opacity = "1"; });
+  clearTimeout(_eventLineT);
+  _eventLineT = setTimeout(() => { el.style.opacity = "0"; setTimeout(() => { el.style.display = "none"; }, 700); }, 6500);
+}
+function startFindableEvent(kind, x, z, label) {
+  activeEvent = { kind, x, z, startT: clock.t, endAt: performance.now() + EVENT_DURATION*1000, soundT: 1 };
+  showEventLine(`${label} to the ${compassDir(x - player.x, z - player.z)}.`);
+  seenEvents.unshift({ kind, label, day: Math.floor(tideDay)+1 }); if (seenEvents.length > 40) seenEvents.pop();
+  try { saveState(); } catch (e) {}
+}
+function endFindableEvent() {
+  if (!activeEvent) return;
+  for (let i = 0; i < 10; i++) { const a = rng()*6.283, r = rng()*6; eventTraces.push({ x: activeEvent.x + Math.cos(a)*r, z: activeEvent.z + Math.sin(a)*r, yaw: rng()*6.283 }); }   // crab trails left in the sand
+  if (eventTraces.length > 60) eventTraces.splice(0, eventTraces.length - 60);
+  activeEvent = null;
+  const chev = document.getElementById("eventchev"); if (chev) chev.style.display = "none";
+}
+function updateFindableEvent(dt) {
+  if (!activeEvent) return;
+  if (performance.now() > activeEvent.endAt) { endFindableEvent(); return; }
+  activeEvent.soundT -= dt;
+  if (activeEvent.soundT <= 0) { activeEvent.soundT = 4 + Math.random()*4;
+    if (typeof SND !== "undefined") SND.play("gull_call", { position: [activeEvent.x, 0, activeEvent.z], volume: 0.5 }); }   // a distant cue from the site
+  let circ = 0; for (const e of life) { if (e.t !== "gull" || e.dying !== undefined || circ >= 3) continue;   // a few gulls drift over to circle the site
+    const d = Math.hypot(e.x-activeEvent.x, e.z-activeEvent.z); if (d < 70 && d > 4) { e.hx = activeEvent.x; e.hz = activeEvent.z; if (e.hr !== undefined) e.hr = 12; circ++; } }
+}
+function updateEventChevron(vp) {
+  const chev = document.getElementById("eventchev"); if (!chev) return;
+  if (!activeEvent || mode !== "walk" || isPanelOpen()) { if (chev.style.display !== "none") chev.style.display = "none"; return; }
+  const dx = activeEvent.x - cam.pos[0], dz = activeEvent.z - cam.pos[2];
+  if (Math.hypot(dx, dz) > EVENT_CHEVRON_RANGE) { chev.style.display = "none"; return; }
+  const sy = surfaceAt(activeEvent.x, activeEvent.z).h + 0.8, W = innerWidth, H = innerHeight;
+  const cx = vp[0]*activeEvent.x + vp[4]*sy + vp[8]*activeEvent.z + vp[12];
+  const cy = vp[1]*activeEvent.x + vp[5]*sy + vp[9]*activeEvent.z + vp[13];
+  const cw = vp[3]*activeEvent.x + vp[7]*sy + vp[11]*activeEvent.z + vp[15];
+  let ex, ey, ang;
+  if (cw > 0.01) {
+    let nx = cx/cw, ny = cy/cw;
+    if (nx > -0.92 && nx < 0.92 && ny > -0.92 && ny < 0.92) { chev.style.display = "none"; return; }   // in view → no chevron
+    const s = 0.9 / Math.max(Math.abs(nx), Math.abs(ny)); nx *= s; ny *= s;
+    ex = (nx*0.5 + 0.5)*W; ey = (1 - (ny*0.5 + 0.5))*H; ang = Math.atan2(-(ny), nx);
+  } else {   // behind the camera: push it to the bottom edge, pointing to the correct side
+    const f = camForward(); let rx = -f[2], rz = f[0]; const rl = Math.hypot(rx,rz)||1; rx/=rl; rz/=rl;
+    const right = dx*rx + dz*rz; ex = W/2 + (right >= 0 ? W*0.42 : -W*0.42); ey = H*0.8; ang = right >= 0 ? 0 : Math.PI;
+  }
+  chev.style.display = "block"; chev.style.left = (ex-15)+"px"; chev.style.top = (ey-15)+"px";
+  chev.style.transform = `rotate(${-ang*180/Math.PI}deg)`;
+}
+let eventTraceDyn = null;
+function drawEventTraces(view) {
+  if (!eventTraces.length) return;
+  if (!eventTraceDyn) eventTraceDyn = makeDynamic(discMesh(0, 0.26, 6, 0.0, [0.34,0.28,0.22]), 64);
+  propUniforms(view); const a = rockScratch; let n = 0;
+  for (const t of eventTraces) { if (n >= 64) break; const dx = t.x-cam.pos[0], dz = t.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    const o = n*10, y = surfaceAt(t.x, t.z).h + 0.02; a[o]=t.x;a[o+1]=y;a[o+2]=t.z;a[o+3]=1;a[o+4]=t.yaw;a[o+5]=1.5;a[o+6]=t.yaw;a[o+7]=0.7;a[o+8]=0.66;a[o+9]=0.58; n++; }
+  if (n) eventTraceDyn.draw(a, n);
+}
 function spawnHorseshoeStranding() {
+  // §B5 pick ONE site (a bared upper-beach spot away from the player) and cluster the spawning crabs there
+  let site = null;
+  for (let k = 0; k < 400 && !site; k++) {
+    const a = rng()*6.283, r = HALF*(0.3+rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z);
+    if (!(h > waterLevel+0.1 && h < wetLevel+3)) continue;
+    if (Math.hypot(x-player.x, z-player.z) < 25) continue;
+    site = { x, z };
+  }
+  if (!site) return;
   let placed = 0, stranded = 0;
   for (let k = 0; k < 400 && placed < HS_NIGHT_BATCH; k++) {
-    const a = rng()*6.283, r = HALF*(0.3+rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z);
-    if (!(h > waterLevel+0.1 && h < wetLevel+3)) continue;                           // the bared upper beach
-    if (Math.hypot(x-player.x, z-player.z) < 18) continue;                           // never pop in right on top of the player
+    const a = rng()*6.283, r = rng()*8, x = site.x + Math.cos(a)*r, z = site.z + Math.sin(a)*r, h = heightAt(x, z);
+    if (!(h > waterLevel+0.05 && h < wetLevel+3.5)) continue;                         // keep them on the bared beach near the site
     const strand = rng() < HS_STRAND_FRAC;
     const e = spawnCreature("horseshoe", x, z, { hr: 8, stranded: strand, timer: rng()*2 });
     if (strand) { e.flop = true; e.strandT = 0; stranded++; }
     placed++;
   }
-  if (stranded) showCard("Horseshoe crabs are spawning", `A knot of horseshoe crabs has come ashore to spawn tonight — ${stranded} of them flipped onto their backs by the surge. Turn them over by the shell and they'll find their way back to the sea.`);
+  if (placed) startFindableEvent("horseshoe", site.x, site.z, "Horseshoe crabs are coming ashore");
 }
 function updateHorseshoeNight(dt) {
   if (typeof dayNightEnabled !== "undefined" && !dayNightEnabled) return;            // only with the day/night cycle running
@@ -12890,8 +13036,18 @@ function gullWingMesh(side) { const m = Mesh(), grey=[0.6,0.62,0.67], dark=[0.2,
   mTri(m, [side*0.06,0.08,0.12],[side*0.8,0.12,-0.02],[side*0.1,0.06,-0.28], grey);
   mTri(m, [side*0.8,0.12,-0.02],[side*1.05,0.1,-0.16],[side*0.5,0.09,-0.34], dark);
   return m; }
-let gullBodyDyn = null, gullWingRDyn = null, gullWingLDyn = null;
-const _gullBody = new Float32Array(GULL_DRAW_MAX*10), _gullWR = new Float32Array(GULL_DRAW_MAX*10), _gullWL = new Float32Array(GULL_DRAW_MAX*10);
+// §B3 two yellow-orange webbed feet on legs that hang down from the hip; the draw tucks them up in flight
+function gullFeetMesh() { const m = Mesh(), yo=[0.96,0.62,0.2], yo2=[0.9,0.52,0.16];
+  for (const s of [-1,1]) {
+    mBox(m, s*0.07, -0.22, 0.0, 0.018, 0.12, 0.018, yo);                               // leg
+    const fy=-0.34, fx=s*0.07;                                                          // a little webbed foot (toes + webbing)
+    mTri(m, [fx,fy,0.11],[fx-0.06,fy,-0.03],[fx+0.06,fy,-0.03], yo2);
+    mTri(m, [fx,fy,0.11],[fx+0.06,fy,-0.03],[fx-0.06,fy,-0.03], yo2);
+  }
+  return m; }
+const GULL_FOOT_TUCK = 2.1;   // §B3 how far the feet swing up/back when flying (tucked under the tail; tunable)
+let gullBodyDyn = null, gullWingRDyn = null, gullWingLDyn = null, gullFeetDyn = null;
+const _gullBody = new Float32Array(GULL_DRAW_MAX*10), _gullWR = new Float32Array(GULL_DRAW_MAX*10), _gullWL = new Float32Array(GULL_DRAW_MAX*10), _gullFeet = new Float32Array(GULL_DRAW_MAX*10);
 function drawGulls(view) {
   drawGullShadows(view);   // §3 soft, elongated, height-aware contact shadows (no night shadows)
   propUniforms(view);
@@ -12901,7 +13057,7 @@ function drawGulls(view) {
     const d = Math.hypot(e.x - player.x, e.z - player.z); if (d > 90) continue;
     digScratch.set([e.x, (e.y||0) - 0.22, e.z, 0.5, e.yaw||0, 0, 0, 1,1,1], 0); reg.dyn.draw(digScratch, 1);
   }
-  if (!gullBodyDyn) { gullBodyDyn = makeDynamic(gullBodyMesh(), GULL_DRAW_MAX); gullWingRDyn = makeDynamic(gullWingMesh(1), GULL_DRAW_MAX); gullWingLDyn = makeDynamic(gullWingMesh(-1), GULL_DRAW_MAX); }
+  if (!gullBodyDyn) { gullBodyDyn = makeDynamic(gullBodyMesh(), GULL_DRAW_MAX); gullWingRDyn = makeDynamic(gullWingMesh(1), GULL_DRAW_MAX); gullWingLDyn = makeDynamic(gullWingMesh(-1), GULL_DRAW_MAX); gullFeetDyn = makeDynamic(gullFeetMesh(), GULL_DRAW_MAX); }
   let n = 0; const px = cam.pos[0], pz = cam.pos[2];
   for (const e of life) {
     if (e.t !== "gull" || e.gstate === undefined || e.dying !== undefined || e.fade !== undefined) continue;
@@ -12921,9 +13077,10 @@ function drawGulls(view) {
     set(_gullBody, pit, 0);               // body pitch about the body-right axis (+x) — no roll, so it never tumbles
     set(_gullWR, flapAng, 1.5708);        // right wing flaps about the forward axis (+z)
     set(_gullWL, -flapAng, 1.5708);       // left wing mirrors it
+    set(_gullFeet, pit + (settled ? 0 : GULL_FOOT_TUCK), 0);   // §B3 legs hang down when standing/walking, tuck up under the tail in flight
     n++;
   }
-  if (n) { gullBodyDyn.draw(_gullBody, n); gullWingRDyn.draw(_gullWR, n); gullWingLDyn.draw(_gullWL, n); }
+  if (n) { gullBodyDyn.draw(_gullBody, n); gullWingRDyn.draw(_gullWR, n); gullWingLDyn.draw(_gullWL, n); gullFeetDyn.draw(_gullFeet, n); }
 }
 function drawNests(view) {
   propUniforms(view);
@@ -13535,6 +13692,7 @@ function frame(now) {
   updateOysterBeds();    // §23 oyster beds reseed over days
   updateShuck(dt);       // §23 the oyster shucking mini-game
   updateHorseshoeNight(dt);  // §41 horseshoe-crab spawning / stranding on spring nights
+  updateFindableEvent(dt);   // §B5 keep the active event's chevron/gulls/sound cue going
   updatePry(dt);
   updateSalt();
   updateAutoPickup();
@@ -13712,6 +13870,7 @@ function frame(now) {
   if (catchCine && catchCine.fov) proj = M4.perspective(catchCine.fov, canvas.width / canvas.height, 0.1, 3200);   // §fishpolish camera punch-in during the catch
   const view = M4.lookAt(cam.pos, [cam.pos[0]+f[0], cam.pos[1]+f[1], cam.pos[2]+f[2]], [0, 1, 0]);
   lastVP = M4.multiply(proj, view);
+  updateEventChevron(lastVP);   // §B5 edge chevron pointing to the active event
   const invVP = M4.invert(lastVP);
   lastInvVP = invVP;
 
@@ -13818,6 +13977,7 @@ function frame(now) {
   drawHeaveBoulders(view);   // §21D heavy boulders (and their bared ground)
   drawOysterBeds(view);   // §23 oyster beds on the intertidal flats
   drawGeodes(view);   // §40 geodes on the cobble & rocky shores
+  drawEventTraces(view);   // §B5 crab trails left in the sand after an event
   drawDigCellDebug(view);   // §urgent3 dig-cell state overlay (debug)
   drawPlaceGhost(view);
   drawParticles(view);
