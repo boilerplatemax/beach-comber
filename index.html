@@ -12444,6 +12444,19 @@ function cottageBodyMesh() { const m = Mesh();
   // §cot5 the 4-slot glass display cabinet is removed
   mBox(m, C_XL+0.16, C_WY-0.04, C_WZ+C_WW/2, C_TH+0.12, 0.05, C_WW/2+0.1, CWC.frame);     // left windowsill
   for (const sx of [C_XL+1.0, C_XR-1.0]) for (let k=0;k<3;k++) mergeAt(m, cotShelfMesh(1.4), sx, 1.1+k*0.62, C_ZB+0.14);   // shelves flanking the hearth on the back wall
+  // §cotstilt FOUNDATION STILTS + SKIRT. On sloped sites the flattened pad only pins the coarse terrain grid, so the
+  // ground dips a little below the floor at the downhill wall line and the house reads as "floating". Timber piles plus
+  // a recessed skirt board close that gap: the buried parts (flat / uphill sides) are hidden under the opaque terrain,
+  // the exposed parts (downhill) look like a proper raised beach-cottage foundation. All geometry lives below the floor (y<0).
+  const SK_D = 1.3, SK_T = 0.06, POST = 0.15, PILE = 1.55;   // skirt depth, skirt board thickness, pile half-width, pile length
+  // recessed skirt boards (back + both sides solid; front split around the doorway)
+  mBox(m, 0, -SK_D/2, C_ZB, C_OX-0.04, SK_D/2, SK_T, CWC.plankDk);
+  mBox(m, C_XL, -SK_D/2, 0, SK_T, SK_D/2, C_OZ-0.04, CWC.plankDk);
+  mBox(m, C_XR, -SK_D/2, 0, SK_T, SK_D/2, C_OZ-0.04, CWC.plankDk);
+  for (const seg of [[-C_OX,-C_DW],[C_DW,C_OX]]) { const cx=(seg[0]+seg[1])/2, hx=(seg[1]-seg[0])/2; if (hx>0.02) mBox(m, cx, -SK_D/2, C_ZF, hx, SK_D/2, SK_T, CWC.plankDk); }   // front skirt flanks the door
+  // timber piles at the corners and the midpoints of each side, standing proud of the skirt so they read as stilts
+  const piles = [[-C_OX,-C_OZ],[C_OX,-C_OZ],[-C_OX,C_OZ],[C_OX,C_OZ],[0,-C_OZ],[0,C_OZ],[-C_OX,0],[C_OX,0]];
+  for (const [px,pz] of piles) mBox(m, px, -PILE/2, pz, POST, PILE/2, POST, CWC.beam);
   return m; }
 function cottageRoofMesh() { const m = Mesh();
   const X = C_OX + C_EAVE, Z = C_OZ + C_EAVE, y0 = C_H, yp = C_H + C_ROOF_RISE;
