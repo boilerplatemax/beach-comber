@@ -4677,6 +4677,10 @@ if (IS_TOUCH) (function mobileControls() {
     audioUnlocked = true;
     if (typeof window.startAudio === "function") window.startAudio();
   }
+  // §music5 start the title theme on the FIRST interaction of ANY kind (a click anywhere, a key, a touch),
+  // not just the speaker button. Browsers require one user gesture before audio can play; this makes that
+  // gesture "anything the player does" instead of a specific button. unlockAudio() is idempotent.
+  for (const ev of ["pointerdown", "keydown", "touchstart"]) addEventListener(ev, unlockAudio, { capture: true });
 
   // ---- forward a button press as a key event (Phase 4 adds E / Journal) ----
   function tapKey(code) {
@@ -6036,37 +6040,46 @@ function mapPieceMesh() { const m = Mesh(); const pa=[0.82,0.73,0.54], e=[0.66,0
 function shardMesh() { const m = Mesh(); const w=[0.9,0.88,0.84]; mTri(m,[-0.2,0,-0.1],[0.25,0.02,0.05],[0,0.03,0.22],w); mTri(m,[-0.2,0,-0.1],[0,0.03,0.22],[-0.25,0.01,0.12],w); return m; }
 // §R4 chest body: plank walls with gaps, iron corner brackets & bands, a lock plate + hasp, and rope handles.
 const CHEST_H = 0.26, CHEST_W = 0.5, CHEST_D = 0.34;        // half-extents; lid hinges at y = 2*CHEST_H, z = -CHEST_D
+// §chest6 a simple classic treasure chest: a solid wooden box, metal rim trim, three vertical straps
+// that wrap over the domed lid and down the body, and a hexagonal lock plate on the front.
+const CHEST_WOOD = [0.5,0.34,0.19], CHEST_WOOD2 = [0.44,0.3,0.17], CHEST_TRIM = [0.6,0.62,0.66], CHEST_TRIMHI = [0.74,0.76,0.8];
+const CHEST_STRAP_X = [-CHEST_W*0.72, 0, CHEST_W*0.72];
 function chestBodyMesh(barnacled) {
   const m = Mesh();
-  const wood=[0.4,0.28,0.17], wood2=[0.48,0.34,0.2], wood3=[0.33,0.23,0.14], iron=[0.27,0.28,0.32], ironHi=[0.4,0.42,0.46], gold=[0.72,0.58,0.26], rope=[0.58,0.48,0.3];
+  const wood=CHEST_WOOD, wood2=CHEST_WOOD2, trim=CHEST_TRIM, trimHi=CHEST_TRIMHI, dark=[0.1,0.1,0.12];
   const W=CHEST_W, H=CHEST_H, D=CHEST_D;
-  for (const sz of [-1,1]) for (let i=-2;i<=2;i++){ const px=i*0.19; mBox(m, px, H, sz*D, 0.085, H, 0.018, i%2?wood:wood2); }   // front/back vertical planks (gaps between)
-  for (const sx of [-1,1]) for (let j=-1;j<=1;j++){ const pz=j*0.21; mBox(m, sx*W, H, pz, 0.018, H, 0.095, j%2?wood:wood2); }    // side planks
-  mBox(m, 0, 0.03, 0, W, 0.03, D, wood3);                     // floor
-  for (const sx of [-1,1]) for (const sz of [-1,1]) { mBox(m, sx*W, 0.06, sz*D, 0.03, 0.06, 0.03, iron); mBox(m, sx*W, H*1.85, sz*D, 0.03, 0.05, 0.03, iron); }   // corner brackets
-  mBox(m, 0, 0.1, 0, W+0.012, 0.028, D+0.012, iron); mBox(m, 0, H*1.65, 0, W+0.012, 0.028, D+0.012, ironHi);   // bands
-  mBox(m, 0, H*1.25, D+0.012, 0.09, 0.1, 0.02, iron);         // lock plate
-  mBox(m, 0, H*1.5, D+0.02, 0.028, 0.055, 0.02, gold);        // hasp
-  mBox(m, 0, H*1.18, D+0.03, 0.03, 0.03, 0.015, [0.1,0.1,0.11]);   // keyhole
-  for (const sx of [-1,1]) for (let k=0;k<4;k++){ const a=k/3*Math.PI; mBox(m, sx*(W+0.03), H+Math.cos(a)*0.08, Math.sin(a)*0.06, 0.02, 0.024, 0.024, rope); }   // rope handles
+  mBox(m, 0, H, 0, W, H, D, wood);                              // solid body box
+  mBox(m, 0, 2*H-0.015, 0, W+0.02, 0.035, D+0.02, trim);        // top rim trim (where the lid rests)
+  mBox(m, 0, 0.035, 0, W+0.02, 0.035, D+0.02, trim);            // bottom rim trim
+  // three vertical straps on the front & back faces (they line up with the lid straps)
+  for (const sx of CHEST_STRAP_X) for (const sz of [-1,1]) mBox(m, sx, H, sz*(D+0.01), 0.05, H-0.02, 0.012, trim);
+  // hexagonal lock plate on the front centre, with a keyhole
+  const lpY = H, lpZ = D + 0.018, r = 0.085;
+  for (let i=0;i<6;i++){ const a0=i/6*6.2832+0.5236, a1=(i+1)/6*6.2832+0.5236;
+    mTri(m, [0,lpY,lpZ], [Math.cos(a0)*r, lpY+Math.sin(a0)*r, lpZ], [Math.cos(a1)*r, lpY+Math.sin(a1)*r, lpZ], trimHi); }
+  mBox(m, 0, lpY+0.012, lpZ+0.006, 0.013, 0.028, 0.008, dark);  // keyhole slot
+  mBox(m, 0, lpY-0.012, lpZ+0.006, 0.024, 0.016, 0.008, dark);  // keyhole base
   if (barnacled) { for (let i=0;i<11;i++){ const a=i*2.3; mBox(m, Math.cos(a)*W*0.92, 0.07+0.32*((i*5)%3)/3, Math.sin(a*1.3)*D, 0.033,0.033,0.033, [0.82,0.8,0.74]); }
     for (let i=0;i<4;i++){ const a=i*1.7; mBox(m, Math.cos(a)*W*0.8, 0.22, Math.sin(a)*D, 0.02,0.14,0.04, [0.3,0.42,0.26]); } }   // seaweed
   return m;
 }
-// §R4 chest lid: curved slats with iron straps, hinged at the origin (back-top edge), arching forward +z.
+// §chest6 chest lid: a smooth domed barrel (ridge runs left-right), hinged at the origin (back-top edge),
+// arching forward +z; three metal straps curve over it, lining up with the body straps.
 function chestLidMesh(barnacled) {
   const m = Mesh();
-  const wood=[0.42,0.3,0.18], wood2=[0.5,0.36,0.22], iron=[0.27,0.28,0.32];
-  const segs=4, L=0.68;
-  for (let i=0;i<segs;i++){ const z0=i/segs*L, z1=(i+1)/segs*L;
-    const y0=Math.sin((i/segs)*Math.PI)*0.11, y1=Math.sin(((i+1)/segs)*Math.PI)*0.11;
-    for (const sx of [[-CHEST_W,-0.17],[-0.17,0.17],[0.17,CHEST_W]]) {   // three slats across
-      mQuad(m, [sx[0],y0,z0],[sx[1],y0,z0],[sx[1],y1,z1],[sx[0],y1,z1], i%2?wood:wood2); }
-    mQuad(m, [-CHEST_W,y0,z0],[-CHEST_W,y1,z1],[-CHEST_W,-0.02,z1],[-CHEST_W,-0.02,z0], wood);   // end caps (closed)
-    mQuad(m, [CHEST_W,y1,z1],[CHEST_W,y0,z0],[CHEST_W,-0.02,z0],[CHEST_W,-0.02,z1], wood);
+  const wood=CHEST_WOOD, wood2=CHEST_WOOD2, trim=CHEST_TRIM, W=CHEST_W, L=2*CHEST_D, domeH=0.22, segs=7;
+  const prof = (t) => Math.sin(t*Math.PI)*domeH;               // 0 at both ends, peak in the middle
+  for (let i=0;i<segs;i++){ const t0=i/segs, t1=(i+1)/segs, z0=t0*L, z1=t1*L, y0=prof(t0), y1=prof(t1);
+    mQuad(m, [-W,y0,z0],[W,y0,z0],[W,y1,z1],[-W,y1,z1], i%2?wood:wood2);                 // top shell (full width)
+    mQuad(m, [-W,y0,z0],[-W,y1,z1],[-W,-0.02,z1],[-W,-0.02,z0], wood2);                  // left end cap
+    mQuad(m, [W,y1,z1],[W,y0,z0],[W,-0.02,z0],[W,-0.02,z1], wood2);                      // right end cap
   }
-  for (const sx of [-0.33,0,0.33]) mBox(m, sx, 0.11, L*0.5, 0.025, 0.02, L*0.5, iron);   // iron straps front-to-back
-  if (barnacled) for (let i=0;i<5;i++){ const a=i*1.3; mBox(m, Math.cos(a)*0.38, 0.11, 0.2+Math.sin(a)*0.18, 0.03,0.03,0.03, [0.82,0.8,0.74]); }
+  mQuad(m, [-W,0,0],[W,0,0],[W,-0.02,0],[-W,-0.02,0], wood2);                            // back closing face
+  mQuad(m, [W,0,L],[-W,0,L],[-W,-0.02,L],[W,-0.02,L], wood2);                            // front closing face
+  for (const sx of CHEST_STRAP_X)                                                       // metal straps curving over the dome
+    for (let i=0;i<segs;i++){ const t0=i/segs,t1=(i+1)/segs,z0=t0*L,z1=t1*L,y0=prof(t0)+0.012,y1=prof(t1)+0.012;
+      mQuad(m, [sx-0.05,y0,z0],[sx+0.05,y0,z0],[sx+0.05,y1,z1],[sx-0.05,y1,z1], trim); }
+  if (barnacled) for (let i=0;i<5;i++){ const a=i*1.3; mBox(m, Math.cos(a)*0.38, 0.14, 0.2+Math.sin(a)*0.18, 0.03,0.03,0.03, [0.82,0.8,0.74]); }
   return m;
 }
 function chestMesh(open, barnacled) {   // composed (for the journal icon): body + lid, flat when closed
@@ -8367,8 +8380,9 @@ function syncDebugPanel() {
     <label>Yaw offset <b class="tv2" data-tk="yaw">${dbgTool.yaw.toFixed(2)}</b> <input class="dbgtool" data-tk="yaw" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.yaw}"></label>
     <label>Pitch offset <b class="tv2" data-tk="pitch">${dbgTool.pitch.toFixed(2)}</b> <input class="dbgtool" data-tk="pitch" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.pitch}"></label>
     <label>Roll offset <b class="tv2" data-tk="roll">${dbgTool.roll.toFixed(2)}</b> <input class="dbgtool" data-tk="roll" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.roll}"></label>
-    <div class="dbgrow"><button id="dbgSwingDir">Swing dir: ${dbgTool.swingDir > 0 ? "forward (+1)" : "reversed (−1)"}</button><button id="dbgToolReset">Reset offsets</button></div>
-    <div class="jhint">base bladed yaw = 135° (2.36 rad); read-out above shows the final applied pose incl. base, send me those numbers.</div>
+    <label>Handle spin (NEW axis) <b class="tv2" data-tk="spin">${dbgTool.spin.toFixed(2)}</b> <input class="dbgtool" data-tk="spin" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.spin}"></label>
+    <div class="dbgrow"><button id="dbgSwingDir">Swing dir: ${dbgTool.swingDir > 0 ? "forward (+1)" : "reversed (-1)"}</button><button id="dbgToolReset">Reset offsets</button></div>
+    <div class="jhint">axis options to try: Yaw/Pitch/Roll offsets (view axes) + Handle spin (NEW, about the tool's own shaft). Tell me which looks right and I'll bake it. Read-out above shows the final pose, send me those numbers.</div>
     <h3>Slopes</h3>
     <label>Full-speed grade <b class="tvs" data-sk="easy">${(SLOPE_EASY*180/Math.PI).toFixed(0)}°</b> <input class="dbgslope" data-sk="easy" type="range" min="5" max="40" step="1" value="${(SLOPE_EASY*180/Math.PI).toFixed(0)}"></label>
     <label>Block grade <b class="tvs" data-sk="block">${(SLOPE_BLOCK*180/Math.PI).toFixed(0)}°</b> <input class="dbgslope" data-sk="block" type="range" min="45" max="85" step="1" value="${(SLOPE_BLOCK*180/Math.PI).toFixed(0)}"></label>
@@ -8406,7 +8420,7 @@ function syncDebugPanel() {
     const b = p.querySelector(`.tv2[data-tk="${k}"]`); if (b) b.textContent = v.toFixed(2);
   });
   { const sd = p.querySelector("#dbgSwingDir"); if (sd) sd.onclick = () => { dbgTool.swingDir = -dbgTool.swingDir; syncDebugPanel(); }; }
-  { const tr = p.querySelector("#dbgToolReset"); if (tr) tr.onclick = () => { dbgTool.yaw = 0; dbgTool.pitch = 0; dbgTool.roll = 0; dbgTool.swingDir = 1; syncDebugPanel(); }; }
+  { const tr = p.querySelector("#dbgToolReset"); if (tr) tr.onclick = () => { dbgTool.yaw = 0; dbgTool.pitch = 0; dbgTool.roll = 0; dbgTool.spin = 0; dbgTool.swingDir = 1; syncDebugPanel(); }; }
   p.querySelectorAll(".dbgslope").forEach((el) => el.oninput = (e) => {   // §slope5 live slope thresholds
     const k = el.dataset.sk, v = +e.target.value, rad = v * Math.PI / 180;
     if (k === "easy") SLOPE_EASY = rad; else if (k === "block") { SLOPE_BLOCK = rad; SLOPE_IMPASS = rad; } else if (k === "limit") SLOPE_LIMIT = rad; else if (k === "trudge") SLOPE_TRUDGE = v; else if (k === "sprint") SPRINT_SLOPE_MAX = rad;
@@ -9280,9 +9294,10 @@ function goatPaw(g) {
 // the dig action
 let shovelSwing = 0, camNudge = 0, toolRecoilT = 0, camShake = 0, lastFailT = -99;
 // §tools5 live fine-tune offsets for the held tool (debug sliders): extra yaw/pitch/roll in radians, and a swing-direction flip.
-const dbgTool = { yaw: 0, pitch: 0, roll: 0, swingDir: 1 };
+const dbgTool = { yaw: 0, pitch: 0, roll: 0, swingDir: 1, spin: 0 };   // §tools7 `spin` = a NEW rotation axis: about the tool's own long (handle) axis, in local space before the pose tilt
 const lastToolPose = { id: "", roll: 0, pitch: 0, yaw: 0, swingDir: 1 };   // final applied pose, read back by the debug readout
-const BLADE_BASE_YAW = 3 * Math.PI / 4;   // §tools6 was 45°; rotated a further 90° clockwise (from above) → 135° (2.36 rad). +toolYaw is CW from above in this engine.
+let BLADE_BASE_YAW = 3 * Math.PI / 4;          // §tools6 pickaxe rest yaw (135°, about the view-up axis)
+let BLADE_BASE_YAW_AXE = BLADE_BASE_YAW - Math.PI;   // §tools7 the AXE alone is rotated a further 180° counter-clockwise from the pickaxe
 let soundSubs = false;                 // §tools5 Minecraft-style sound captions (debug)
 const soundSubList = [];               // §capt5 live caption entries {id,name,dir,bornT,vol,n}
 const SOUND_CAP_TTL = 2.6, SOUND_CAP_FADE = 0.8;   // seconds a caption lingers / fades
@@ -11030,7 +11045,7 @@ function drawShovel(view) {
       oz = 0.74 + sw*0.5 - rec*0.3;                                                        // drives forward through the strike
       roll = -0.28 + swayR;                                                               // a little lean, held steady (no twist)
       pitch = -0.15 + chop + rec*0.5;
-      toolYaw = BLADE_BASE_YAW;                                                            // §tools5 45° CCW from above
+      toolYaw = (id === "axe") ? BLADE_BASE_YAW_AXE : BLADE_BASE_YAW;                      // §tools7 the axe sits 180° round from the pickaxe
     } else {
       oy = -0.42 - sw*0.08 + rec*0.2 - swap*0.5 + bob + chg*0.1;
       oz = 0.82 + sw*0.6 - rec*0.35 + jab*0.5 - chg*0.3;
@@ -11042,13 +11057,17 @@ function drawShovel(view) {
   // §tools5 apply the live debug fine-tune offsets to whatever is in hand, then record the final pose for the read-back.
   roll += dbgTool.roll; pitch += dbgTool.pitch; toolYaw += dbgTool.yaw;
   lastToolPose.id = id; lastToolPose.roll = roll; lastToolPose.pitch = pitch; lastToolPose.yaw = toolYaw; lastToolPose.swingDir = dbgTool.swingDir;
-  if (debugMode) { const rdEl = document.getElementById("dbgToolRead"); if (rdEl) rdEl.textContent = `${id}:  yaw ${toolYaw.toFixed(2)}   pitch ${pitch.toFixed(2)}   roll ${roll.toFixed(2)}   swingDir ${dbgTool.swingDir}`; }
+  // §tools7 NEW axis to try: a "handle spin" about the tool's OWN long axis (local +y), applied in local space before the pose tilt
+  const bladeSpin = (id === "axe" || id === "pickaxe") ? dbgTool.spin : 0;
+  const cSpin = Math.cos(bladeSpin), sSpin = Math.sin(bladeSpin);
+  if (debugMode) { const rdEl = document.getElementById("dbgToolRead"); if (rdEl) rdEl.textContent = `${id}:  yaw ${toolYaw.toFixed(2)}  pitch ${pitch.toFixed(2)}  roll ${roll.toFixed(2)}  spin ${bladeSpin.toFixed(2)}  swingDir ${dbgTool.swingDir}`; }
   const cr = Math.cos(roll), sr = Math.sin(roll), cp = Math.cos(pitch), sp2 = Math.sin(pitch);
   const cY = Math.cos(toolYaw), sY = Math.sin(toolYaw);
   const src = fp.mesh.pos, world = fp.world; let p = 0;
   for (let i = 0; i < src.length; i += 3) {
     let vx = src[i] * scale, vy = src[i+1] * scale, vz = src[i+2] * scale;
     if (flipEnd) { vy = -vy; vz = -vz; }                                                   // §playtest1 180° end-for-end flip (shovel)
+    if (bladeSpin) { const nx = vx*cSpin - vz*sSpin, nz = vx*sSpin + vz*cSpin; vx = nx; vz = nz; }   // §tools7 spin about the handle axis (local y)
     const x2 = vx*cr - vy*sr, y2 = vx*sr + vy*cr;                                          // roll about the view forward
     let y3 = y2*cp - vz*sp2, z3 = y2*sp2 + vz*cp;                                          // pitch about the view right
     let x3 = x2;
