@@ -39,6 +39,21 @@
     z-index: 10; transition: opacity .5s ease; padding: 24px 16px;
   }
   #overlay.hidden { opacity: 0; pointer-events: none; }
+  /* §enter8 the Press-Enter / Tap-to-start gate shown before the title (lets us unlock audio + start music on a real gesture) */
+  #entergate {
+    position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(140% 120% at 50% 38%, rgba(16,30,38,0.82), rgba(6,10,14,0.96));
+    cursor: pointer; transition: opacity .55s ease; text-align: center; padding: 24px;
+  }
+  #entergate.hidden { opacity: 0; pointer-events: none; }
+  #egcard { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+  #egtitle { font-size: clamp(38px, 9vw, 72px); font-weight: 700; letter-spacing: .04em;
+    color: #f3e8d2; text-shadow: 0 4px 22px rgba(0,0,0,.6); }
+  #egsub { font-size: clamp(13px, 2.6vw, 17px); color: #b9c6cc; letter-spacing: .14em; text-transform: lowercase; opacity: .82; }
+  #egprompt { margin-top: 26px; font-size: clamp(16px, 3vw, 22px); letter-spacing: .12em; color: #e7cf9f;
+    border: 1px solid rgba(231,207,159,.5); border-radius: 10px; padding: 10px 22px;
+    animation: egpulse 1.9s ease-in-out infinite; }
+  @keyframes egpulse { 0%,100% { opacity: .55; } 50% { opacity: 1; } }
   #wordmark { width: min(680px, 92vw); height: auto; filter: drop-shadow(0 6px 18px rgba(0,0,0,.55)); }
   #islandName { font-size: clamp(16px, 2.6vw, 22px); font-weight: 600; letter-spacing: .18em;
     text-transform: uppercase; color: var(--ink-dim); margin-bottom: 8px; }
@@ -561,6 +576,13 @@
       <div class="reclabel">Recent islands</div>
       <div id="recentList"></div>
     </div>
+  </div>
+</div>
+<div id="entergate">
+  <div id="egcard">
+    <div id="egtitle">Beachcomber</div>
+    <div id="egsub">a quiet shore to wander</div>
+    <div id="egprompt">Press Enter</div>
   </div>
 </div>
 <div id="settingspanel"></div>
@@ -1680,12 +1702,83 @@ function soundCategory(id, bus) {
 SND.loadVol();   // reflect saved volumes in Settings before the first gesture unlocks audio
 // surfAudio kept as an alias so older checks still read "audio is on"
 let surfAudio = null;
-const MUSIC_URL = "beachcombing_theme.mp3";   // §music the title theme (sits beside index.html)
 const CAT_BALLAD_URL = "cat_ballad.mp3";       // §catbard the cat bard's tune (sits beside index.html)
 window.startAudio = function () { SND.init(); if (SND.ctx) surfAudio = SND;
-  if (SND.ctx && (mode === "preview" || mode === "intro")) SND.playMusic(MUSIC_URL);   // §music start the title theme on the first gesture, while still on the menu
   SND.initCat(CAT_BALLAD_URL);                  // §catbard ready the ballad element on the first gesture (plays later, only when you're near the cat)
-  if (typeof refreshMusicToggle === "function") refreshMusicToggle(); };
+  if (typeof refreshMusicToggle === "function") refreshMusicToggle(); };   // §music8 the playlist is started by the Enter gate (MUSIC.start), not here
+
+// §music8 BACKGROUND MUSIC MANAGER. A shuffled playlist of full songs, played through each song's own <audio>
+// element volume (never Web Audio, same CORS-safe reason as before). Starts on the Enter gate and plays straight
+// into the world with no restart. On the title screen songs play back to back; in game there's a quiet gap between
+// them. Any system can ask for quiet via requestSilence(id)/releaseSilence(id) (the cat bard does this while he sings).
+const MUSIC_TRACKS = ["beachcombing_theme.mp3", "unknown_sentiment.mp3", "forest_home.mp3"];   // the playlist (files sit beside index.html)
+const MUSIC = {
+  tracks: MUSIC_TRACKS,
+  els: {}, order: [], lastUrl: null, curUrl: null, curEl: null,
+  started: false, wantPlay: false,
+  mode: "title",                     // "title" = back-to-back · "game" = a quiet gap between songs
+  gapMin: 120, gapMax: 240,          // §music8 TUNABLE: quiet gap between songs in game (seconds); ~2–4 min
+  resumeGap: 4,                      // §music8 TUNABLE: short gap after a silence request is released before resuming
+  fadeRate: 2.2,                     // §music8 TUNABLE: music fade in/out speed
+  vol: 0, fadeTarget: 0, state: "idle",   // idle | play | songgap
+  songGapT: 0, resumeGapT: 0, silences: new Set(), _wasReqSilenced: false,
+  elFor(url) { let a = this.els[url];
+    if (!a) { try { a = new Audio(url); a.preload = "auto"; a.volume = 0; a.addEventListener("ended", () => this._onEnded(url)); this.els[url] = a; } catch (e) { a = null; } }
+    return a; },
+  nextUrl() {
+    if (!this.order.length) {
+      const arr = this.tracks.slice();
+      for (let i = arr.length - 1; i > 0; i--) { const j = (Math.random()*(i+1))|0, t = arr[i]; arr[i] = arr[j]; arr[j] = t; }
+      if (arr.length > 1 && arr[0] === this.lastUrl) arr.push(arr.shift());   // never the same song twice in a row, even across a reshuffle
+      this.order = arr;
+    }
+    const u = this.order.shift(); this.lastUrl = u; return u; },
+  _startTrack(url) {
+    if (this.curEl && this.curEl !== this.els[url]) { try { this.curEl.pause(); this.curEl.currentTime = 0; } catch (e) {} }
+    this.curUrl = url; this.curEl = this.elFor(url);
+    if (this.curEl) { try { this.curEl.currentTime = 0; } catch (e) {} }
+    this.state = "play"; this.resumeGapT = 0; },
+  start() {                          // on the Enter gate: a real user gesture, so the first play() is allowed
+    this.wantPlay = true;
+    if (this.started) return; this.started = true;
+    this._startTrack(this.nextUrl());
+    this.fadeTarget = 1; this.vol = 0.02;
+    if (this.curEl) { const p = this.curEl.play(); if (p && p.catch) p.catch(() => {}); }
+    setTimeout(() => { for (const u of this.tracks) if (u !== this.curUrl) this.elFor(u); }, 400);   // preload the rest in the background
+  },
+  setMode(m) { this.mode = m; },
+  requestSilence(id) { this.silences.add(id); },
+  releaseSilence(id) { this.silences.delete(id); },
+  _onEnded(url) { if (url !== this.curUrl) return;
+    if (this.mode === "game") { this.state = "songgap"; this.songGapT = this.gapMin + Math.random()*(this.gapMax - this.gapMin); }
+    else this._startTrack(this.nextUrl()); },   // title: straight into the next song
+  _applyVol() { if (!this.curEl) return;
+    const off = SND.muted || SND.musicEnabled === false;
+    const v = off ? 0 : Math.max(0, Math.min(1, (SND.vol.master ?? 0.75) * (SND.vol.music ?? 0.55) * this.vol));
+    try { this.curEl.volume = v; } catch (e) {} },
+  update(dt) {
+    if (!this.started || !this.wantPlay) return;
+    const reqSilenced = this.silences.size > 0, hardOff = SND.muted || SND.musicEnabled === false;
+    if (reqSilenced || hardOff) { this.fadeTarget = 0; if (reqSilenced) this._wasReqSilenced = true; }
+    else {
+      if (this._wasReqSilenced) { this._wasReqSilenced = false; if (this.state === "play") this.resumeGapT = this.resumeGap; }   // continue after a short gap
+      if (this.resumeGapT > 0) { this.resumeGapT -= dt; this.fadeTarget = 0; }
+      else if (this.state === "songgap") { this.songGapT -= dt; this.fadeTarget = 0; if (this.songGapT <= 0) this._startTrack(this.nextUrl()); }
+      else if (this.state === "play") this.fadeTarget = 1;
+      else this.fadeTarget = 0;
+    }
+    this.vol += (this.fadeTarget - this.vol) * Math.min(1, dt * this.fadeRate);
+    if (this.vol < 0.001 && this.fadeTarget === 0) this.vol = 0;
+    this._applyVol();
+    const el = this.curEl;
+    if (el) {
+      const shouldPlay = this.fadeTarget > 0;   // the Enter gate already unlocked audio, so play() is allowed from here on
+      if (shouldPlay && el.paused) { const p = el.play(); if (p && p.catch) p.catch(() => {}); }
+      else if (!shouldPlay && this.vol <= 0.02 && !el.paused) { try { el.pause(); } catch (e) {} }
+    }
+  },
+  playing() { return !!(this.started && this.wantPlay && !SND.muted && SND.musicEnabled !== false); },
+};
 // §playtest1 surf wave cycle: a swell builds, crashes, washes up, retreats, then a quieter gap, looped
 let _surfPhase = Math.random(), _surfT = performance.now();
 const SURF_PERIOD = 8.5;   // seconds per wave (tunable)
@@ -2852,7 +2945,7 @@ function enterWalk() {
   cam.yaw = s.yaw; cam.pitch = -0.04;
   mode = "walk";
   timeOfDay = MORNING_TIME; updateSun();   // §13.9 the game opens in the morning (then advances only if day/night is on)
-  if (typeof SND !== "undefined" && SND.fadeOutMusic) SND.fadeOutMusic();   // §music the title theme gives way to the island's own sounds
+  if (typeof MUSIC !== "undefined") MUSIC.setMode("game");   // §music8 keep the current song playing into the world (no restart); switch to the gapped in-game rhythm
 }
 
 /* ===================================================================== *
@@ -4087,6 +4180,25 @@ addEventListener("wheel", (e) => {
 const overlay = document.getElementById("overlay");
 let lookSensMobile = 0.0045;   // look sensitivity (Settings slider; used by mobile look)
 
+// §enter8 the Press-Enter / Tap-to-start gate: a real user gesture here unlocks audio and starts the music, which
+// sidesteps the browser autoplay block, then reveals the title screen underneath.
+(function () {
+  const gate = document.getElementById("entergate"); if (!gate) return;
+  const prompt = document.getElementById("egprompt"); if (prompt) prompt.textContent = IS_TOUCH ? "Tap to start" : "Press Enter";
+  let done = false;
+  function enter() {
+    if (done) return; done = true;
+    try { if (typeof window.startAudio === "function") window.startAudio(); } catch (e) {}   // unlock audio on this gesture
+    try { if (typeof MUSIC !== "undefined" && SND.musicEnabled !== false) MUSIC.start(); } catch (e) {}   // start the playlist (title mode, back to back)
+    if (typeof refreshMusicToggle === "function") refreshMusicToggle();
+    gate.classList.add("hidden");
+    setTimeout(() => { gate.style.display = "none"; }, 600);
+  }
+  gate.addEventListener("click", enter);
+  gate.addEventListener("touchstart", (e) => { e.preventDefault(); enter(); }, { passive: false });
+  addEventListener("keydown", (e) => { if (!done && (e.code === "Enter" || e.code === "NumpadEnter" || e.code === "Space")) { e.preventDefault(); enter(); } });
+})();
+
 /* --------------------------------------------------------------------- *
  * § 12A  TITLE SCREEN, seeded island name, faceted wordmark, menu, swoop
  * --------------------------------------------------------------------- */
@@ -4252,9 +4364,9 @@ function refreshMusicToggle() {
   el.addEventListener("click", (e) => {
     e.stopPropagation();
     if (typeof window.startAudio === "function") window.startAudio();   // this click is a valid gesture to unlock/resume audio
-    const m = SND.music, playing = !!(m && m.el && !m.el.paused && m.want > 0);
-    if (!playing) { SND.musicEnabled = true; SND.saveVol(); if (mode === "preview" || mode === "intro") SND.playMusic(MUSIC_URL); }
-    else { SND.musicEnabled = false; SND.saveVol(); SND.fadeOutMusic(); }
+    SND.musicEnabled = (SND.musicEnabled === false);   // §music8 flip the music preference; the MUSIC manager fades in/out to match
+    SND.saveVol();
+    if (SND.musicEnabled && typeof MUSIC !== "undefined" && !MUSIC.started) MUSIC.start();   // if audio wasn't gated yet, this gesture can start it
     refreshMusicToggle();
   });
 })();
@@ -4372,7 +4484,7 @@ function openSettings() {
       <div class="srow"><label>Interface</label><input data-sv="ui" type="range" min="0" max="1" step="0.05" value="${SND.vol.ui}"></div>
       <div class="srow"><label>Audio status</label><span class="sstat">${SND.ctx ? (SND.ctx.state + (SND.muted ? " · muted" : "")) : "not started"}</span></div>
       <div class="srow"><label>Test sound</label><button data-snd="test">Play ▶</button></div>
-      <div class="srow"><label>Test music</label><button data-snd="testmusic">${SND.musicPlaying() ? "Stop ■" : "Play ▶"}</button></div>`,
+      <div class="srow"><label>Music</label><button data-snd="testmusic">${(typeof MUSIC !== "undefined" && MUSIC.playing()) ? "On ■" : "Off ▶"}</button></div>`,
     controls: `
       <div class="srow"><label>Crouch key</label><button data-k="crouchkey">${crouchKey === "ControlLeft" ? "Ctrl" : "C"}</button></div>
       <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
@@ -4417,15 +4529,13 @@ function openSettings() {
   { const sb = p.querySelector("#setBright"); if (sb) sb.oninput = (e) => setBrightness(+e.target.value); }   // §18 brightness
   { const ss = p.querySelector("#setShake"); if (ss) ss.oninput = (e) => setScreenShake(+e.target.value); }   // §R4 screen shake
   p.querySelectorAll("input[data-sv]").forEach(inp => inp.oninput = (e) => SND.setVol(inp.dataset.sv, +e.target.value));   // §Sound bus volumes
-  { const mb = p.querySelector("button[data-snd=mute]"); if (mb) mb.onclick = () => { SND.setMute(!SND.muted);
-      if (!SND.muted && (mode === "preview" || mode === "intro")) SND.playMusic(MUSIC_URL);   // §music unmuting on the title brings the theme back
-      openSettings(); }; }
+  { const mb = p.querySelector("button[data-snd=mute]"); if (mb) mb.onclick = () => { SND.setMute(!SND.muted); openSettings(); }; }   // §music8 the MUSIC manager follows mute on its own
   { const tb = p.querySelector("button[data-snd=test]"); if (tb) tb.onclick = () => {   // §urgent6 unlock if needed, then play a clearly-audible test sound
       try { if (typeof window.startAudio === "function") window.startAudio(); if (SND.ctx && SND.ctx.state === "suspended") SND.ctx.resume(); } catch (e) {}
       SND.play("discover"); setTimeout(() => SND.play("pickup"), 180); setTimeout(openSettings, 60); }; }
-  { const tm = p.querySelector("button[data-snd=testmusic]"); if (tm) tm.onclick = () => {   // §music5 play/stop the title theme to confirm music is audible
+  { const tm = p.querySelector("button[data-snd=testmusic]"); if (tm) tm.onclick = () => {   // §music8 turn the background music on/off (and start the playlist if it hasn't begun)
       try { if (typeof window.startAudio === "function") window.startAudio(); if (SND.ctx && SND.ctx.state === "suspended") SND.ctx.resume(); } catch (e) {}
-      if (SND.musicPlaying()) SND.fadeOutMusic(); else { SND.musicEnabled = true; SND.saveVol(); SND.playMusic(MUSIC_URL); }
+      const on = MUSIC.playing(); SND.musicEnabled = !on; SND.saveVol(); if (!on && !MUSIC.started) MUSIC.start();
       setTimeout(openSettings, 60); }; }
   p.querySelectorAll("button[data-gc]").forEach(b => b.onclick = () => {
     const k = b.dataset.gc;
@@ -8432,8 +8542,9 @@ function syncDebugPanel() {
     <label>Pitch offset <b class="tv2" data-tk="pitch">${dbgTool.pitch.toFixed(2)}</b> <input class="dbgtool" data-tk="pitch" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.pitch}"></label>
     <label>Roll offset <b class="tv2" data-tk="roll">${dbgTool.roll.toFixed(2)}</b> <input class="dbgtool" data-tk="roll" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.roll}"></label>
     <label>Handle spin (NEW axis) <b class="tv2" data-tk="spin">${dbgTool.spin.toFixed(2)}</b> <input class="dbgtool" data-tk="spin" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.spin}"></label>
-    <div class="dbgrow"><button id="dbgSwingDir">Swing dir: ${dbgTool.swingDir > 0 ? "forward (+1)" : "reversed (-1)"}</button><button id="dbgToolReset">Reset offsets</button></div>
-    <div class="jhint">axis options to try: Yaw/Pitch/Roll offsets (view axes) + Handle spin (NEW, about the tool's own shaft). Tell me which looks right and I'll bake it. Read-out above shows the final pose, send me those numbers.</div>
+    <div class="dbgrow"><button id="dbgSwingDir">Pickaxe swing dir: ${dbgTool.swingDir > 0 ? "forward (+1)" : "reversed (-1)"}</button><button id="dbgToolReset">Reset offsets</button></div>
+    <div class="dbgrow"><button id="dbgAxeAxis">Axe swing axis: ${dbgAxe.axis.toUpperCase()}</button><button id="dbgAxeDir">Axe swing dir: ${dbgAxe.dir > 0 ? "+1" : "-1"}</button></div>
+    <div class="jhint">§axe8 Hold the AXE and chop: the two buttons above cycle its swing axis (X=overhead pitch, Y=yaw twist, Z=screen-plane sweep) and flip its direction, axe only (pickaxe unaffected). Tell me which axis+dir looks right and I'll bake it as the default. Other sliders fine-tune the resting pose; read-out above shows the final numbers.</div>
     <h3>Slopes</h3>
     <label>Full-speed grade <b class="tvs" data-sk="easy">${(SLOPE_EASY*180/Math.PI).toFixed(0)}°</b> <input class="dbgslope" data-sk="easy" type="range" min="5" max="40" step="1" value="${(SLOPE_EASY*180/Math.PI).toFixed(0)}"></label>
     <label>Block grade <b class="tvs" data-sk="block">${(SLOPE_BLOCK*180/Math.PI).toFixed(0)}°</b> <input class="dbgslope" data-sk="block" type="range" min="45" max="85" step="1" value="${(SLOPE_BLOCK*180/Math.PI).toFixed(0)}"></label>
@@ -8472,6 +8583,8 @@ function syncDebugPanel() {
   });
   { const sd = p.querySelector("#dbgSwingDir"); if (sd) sd.onclick = () => { dbgTool.swingDir = -dbgTool.swingDir; syncDebugPanel(); }; }
   { const tr = p.querySelector("#dbgToolReset"); if (tr) tr.onclick = () => { dbgTool.yaw = 0; dbgTool.pitch = 0; dbgTool.roll = 0; dbgTool.spin = 0; dbgTool.swingDir = 1; syncDebugPanel(); }; }
+  { const aa = p.querySelector("#dbgAxeAxis"); if (aa) aa.onclick = () => { dbgAxe.axis = dbgAxe.axis === "x" ? "y" : dbgAxe.axis === "y" ? "z" : "x"; syncDebugPanel(); }; }   // §axe8 cycle X→Y→Z
+  { const ad = p.querySelector("#dbgAxeDir"); if (ad) ad.onclick = () => { dbgAxe.dir = -dbgAxe.dir; syncDebugPanel(); }; }
   p.querySelectorAll(".dbgslope").forEach((el) => el.oninput = (e) => {   // §slope5 live slope thresholds
     const k = el.dataset.sk, v = +e.target.value, rad = v * Math.PI / 180;
     if (k === "easy") SLOPE_EASY = rad; else if (k === "block") { SLOPE_BLOCK = rad; SLOPE_IMPASS = rad; } else if (k === "limit") SLOPE_LIMIT = rad; else if (k === "trudge") SLOPE_TRUDGE = v; else if (k === "sprint") SPRINT_SLOPE_MAX = rad;
@@ -9348,6 +9461,10 @@ function goatPaw(g) {
 let shovelSwing = 0, camNudge = 0, toolRecoilT = 0, camShake = 0, lastFailT = -99;
 // §tools5 live fine-tune offsets for the held tool (debug sliders): extra yaw/pitch/roll in radians, and a swing-direction flip.
 const dbgTool = { yaw: 0, pitch: 0, roll: 0, swingDir: 1, spin: 0 };   // §tools7 `spin` = a NEW rotation axis: about the tool's own long (handle) axis, in local space before the pose tilt
+// §axe8 the AXE gets its OWN chop-swing settings so the pickaxe is unaffected. `axis` picks which rotation the chop
+// animates: "x" = pitch (overhead, the old behaviour), "y" = yaw (sideways twist), "z" = roll (sweeps across the
+// screen plane, a true chopping arc, the new default). `dir` flips the swing direction. Toggle both live in debug.
+const dbgAxe = { axis: "z", dir: 1 };
 const lastToolPose = { id: "", roll: 0, pitch: 0, yaw: 0, swingDir: 1 };   // final applied pose, read back by the debug readout
 let BLADE_BASE_YAW = 3 * Math.PI / 4;          // §tools6 pickaxe rest yaw (135°, about the view-up axis)
 let BLADE_BASE_YAW_AXE = BLADE_BASE_YAW - Math.PI;   // §tools7 the AXE alone is rotated a further 180° counter-clockwise from the pickaxe
@@ -11093,12 +11210,20 @@ function drawShovel(view) {
       // §A1/§tools5 overhead chop: pivot about the bottom of the handle (mesh origin), the blade arcs in the
       // vertical plane, a pitch-only motion, no sideways yaw twist. §tools5 reverses the arc direction
       // (blade now swings the opposite way) and the whole tool rests rotated 45° on the yaw axis.
-      const chop = (-wind*0.75 + sw*1.65) * dbgTool.swingDir;                              // reversed arc: swingDir=1 is the new default, −1 restores the old direction
+      const chopAmt = (-wind*0.75 + sw*1.65);                                              // the swing arc amount (unchanged magnitude); axis/direction applied below
       oy = -0.3 - sw*0.06 + wind*0.12 + rec*0.2 - swap*0.5 + bob;                          // lifts a touch on the wind-up, drops into the chop
       oz = 0.74 + sw*0.5 - rec*0.3;                                                        // drives forward through the strike
       roll = -0.28 + swayR;                                                               // a little lean, held steady (no twist)
-      pitch = -0.15 + chop + rec*0.5;
+      pitch = -0.15 + rec*0.5;
       toolYaw = (id === "axe") ? BLADE_BASE_YAW_AXE : BLADE_BASE_YAW;                      // §tools7 the axe sits 180° round from the pickaxe
+      if (id === "axe") {                                                                 // §axe8 AXE: chop animates the axis chosen in debug (default roll/z = screen-plane sweep)
+        const d = chopAmt * dbgAxe.dir;
+        if (dbgAxe.axis === "x") pitch += d;                                              // local X → pitch (overhead chop, the old axis)
+        else if (dbgAxe.axis === "y") toolYaw += d;                                       // local Y → yaw (sideways twist)
+        else roll += d;                                                                  // local Z → roll (sweeps across the screen)
+      } else {
+        pitch += chopAmt * dbgTool.swingDir;                                              // §axe8 PICKAXE keeps the shared overhead (pitch) swing, untouched
+      }
     } else {
       oy = -0.42 - sw*0.08 + rec*0.2 - swap*0.5 + bob + chg*0.1;
       oz = 0.82 + sw*0.6 - rec*0.35 + jab*0.5 - chg*0.3;
@@ -11113,7 +11238,7 @@ function drawShovel(view) {
   // §tools7 NEW axis to try: a "handle spin" about the tool's OWN long axis (local +y), applied in local space before the pose tilt
   const bladeSpin = (id === "axe" || id === "pickaxe") ? dbgTool.spin : 0;
   const cSpin = Math.cos(bladeSpin), sSpin = Math.sin(bladeSpin);
-  if (debugMode) { const rdEl = document.getElementById("dbgToolRead"); if (rdEl) rdEl.textContent = `${id}:  yaw ${toolYaw.toFixed(2)}  pitch ${pitch.toFixed(2)}  roll ${roll.toFixed(2)}  spin ${bladeSpin.toFixed(2)}  swingDir ${dbgTool.swingDir}`; }
+  if (debugMode) { const rdEl = document.getElementById("dbgToolRead"); if (rdEl) rdEl.textContent = `${id}:  yaw ${toolYaw.toFixed(2)}  pitch ${pitch.toFixed(2)}  roll ${roll.toFixed(2)}  spin ${bladeSpin.toFixed(2)}  ${id==="axe" ? `axeSwing ${dbgAxe.axis.toUpperCase()}/${dbgAxe.dir>0?"+":"-"}` : `swingDir ${dbgTool.swingDir}`}`; }
   const cr = Math.cos(roll), sr = Math.sin(roll), cp = Math.cos(pitch), sp2 = Math.sin(pitch);
   const cY = Math.cos(toolYaw), sY = Math.sin(toolYaw);
   const src = fp.mesh.pos, world = fp.world; let p = 0;
@@ -14316,6 +14441,7 @@ function frame(now) {
   if (raw > 0) fpsSmooth += (1 / raw - fpsSmooth) * 0.1;
   frameDraws = 0; frameTris = 0;
 
+  if (typeof MUSIC !== "undefined") MUSIC.update(dt);   // §music8 background playlist runs on real time, in every mode (title, walk, paused)
   // ---- shared clock: advance world in capped fixed substeps (stable at 60x) ----
   clock.t += clock.paused ? 0 : dt;
   let gdt = clock.paused ? 0 : dt * clock.speed * (catchCine ? catchCine.warp : 1), gdtTotal = gdt;   // §fishpolish slow-mo on the catch
@@ -14348,7 +14474,10 @@ function frame(now) {
   updateWeather(dt);     // §20 weather state machine, fog/light/wind, lightning, after-storm
   updateCottage(dt);     // §19 door swing + creak
   updateCatBard(dt);     // §catbard idle sway / pet wiggle
-  if (typeof SND !== "undefined" && SND.updateCat) SND.updateCat(catBardAudioGain());   // §catbard ballad fades with distance
+  { const cg = catBardAudioGain();
+    if (typeof SND !== "undefined" && SND.updateCat) SND.updateCat(cg);   // §catbard ballad fades with distance
+    if (typeof MUSIC !== "undefined") { if (cg > 0.05) MUSIC.requestSilence("catbard"); else MUSIC.releaseSilence("catbard"); }   // §music8 the background playlist hushes while the cat sings
+  }
   updateWeakStones(dt);  // §weak7 broken spots regrow a stone, out of view
   updateHeaveBoulders(dt);  // §21D heavy-boulder roll + reset
   updateHeave(dt);       // §21D the boulder heave mini-game
