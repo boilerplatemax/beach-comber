@@ -293,17 +293,21 @@
     border-radius: 6px 6px 0 0; cursor: pointer; opacity: .75; }
   .mtab.on { background: rgba(72,50,28,.65); opacity: 1; color: #fbeccd; box-shadow: inset 0 -2px 0 #e0b571; }
   .mlist { display: flex; flex-direction: column; gap: 6px; }
+  /* §A7 clean recipe cards: output icon + name, ingredient icon chips, one Craft button; greyed when unaffordable; desc on hover (title) */
   .recipe { display: flex; align-items: center; gap: 10px; padding: 7px 9px; border-radius: 8px;
-    background: rgba(40,26,14,.4); border: 1px solid rgba(30,18,8,.5); }
+    background: rgba(40,26,14,.4); border: 1px solid rgba(30,18,8,.5); transition: opacity .12s; }
+  .recipe.locked { opacity: .5; filter: grayscale(.5); }
   .recipe .mkleft { width: 44px; height: 44px; flex: 0 0 44px; border-radius: 6px; overflow: hidden;
     background: rgba(20,12,6,.45); box-shadow: inset 0 1px 3px rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; }
   .recipe .mkic { width: 100%; height: 100%; background: repeating-linear-gradient(45deg,#4a3420 0 6px,#3a2818 6px 12px); }
   .recipe .mkbody { flex: 1; min-width: 0; }
   .recipe .mkname { font-size: 13px; font-weight: 600; color: #fbeccd; }
-  .recipe .mkcost { font-size: 11px; margin-top: 1px; }
-  .recipe .mkcost .ok { color: #bfe6a6; } .recipe .mkcost .no { color: #e9a79a; }
-  .recipe .mkcost .malt { opacity: .6; } .recipe .mkcost .mkneed, .mkneed { opacity: .6; font-weight: 400; }
-  .recipe .mkdesc { font-size: 11px; opacity: .62; margin-top: 2px; line-height: 1.25; }
+  .recipe .mkings { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 4px; }
+  .recipe .ming { display: inline-flex; align-items: center; gap: 2px; background: rgba(20,12,6,.4); border-radius: 5px; padding: 1px 5px 1px 1px; font-size: 12px; color: #e4d6b4; }
+  .recipe .ming img { image-rendering: pixelated; }
+  .recipe .ming b { font-weight: 700; }
+  .recipe .ming.short { color: #e9a79a; } .recipe .ming.short img { filter: grayscale(.6) brightness(.82); }
+  .recipe .marrow, .mkneed { opacity: .6; font-size: 11px; font-weight: 400; margin: 0 2px; }
   .recipe .mk { flex: 0 0 auto; font-size: 12px; font-weight: 600; padding: 7px 14px; cursor: pointer; align-self: center; }
   .recipe .mk:disabled { opacity: .4; cursor: default; }
   .makehint { font-size: 12px; opacity: .7; padding: 18px 8px; text-align: center; line-height: 1.4; }
@@ -5837,6 +5841,11 @@ function saltPanMesh() { const m = Mesh();
 function leafPileMesh() { const m = Mesh(); const cols = [[0.52,0.46,0.26],[0.46,0.4,0.22],[0.58,0.5,0.3],[0.5,0.44,0.24]];
   for (let i = 0; i < 10; i++) { const a = i/10*6.283, r = 0.05 + (i%4)*0.07; mBox(m, Math.cos(a)*r, 0.04+(i%2)*0.03, Math.sin(a)*r, 0.11, 0.03, 0.11, cols[i%4]); } return m; }
 function stickMesh() { const m = Mesh(); mBox(m,0,0.04,0,0.38,0.03,0.035,[0.45,0.34,0.22]); mBox(m,0.03,0.08,0.02,0.33,0.03,0.035,[0.4,0.3,0.2]); mBox(m,-0.02,0.06,-0.03,0.3,0.028,0.03,[0.48,0.36,0.24]); return m; }
+// §A7/§C2 Plant Fiber: a small splayed bundle of dry grass strands (stripped from tall grass → twisted into rope)
+function fiberMesh() { const m = Mesh(); const c = [0.84,0.78,0.52], c2 = [0.72,0.65,0.42];
+  for (let i = 0; i < 9; i++) { const a = i/9*6.283, r = 0.05, st = Mesh(), h = 0.2 + (i%3)*0.07;
+    mCyl(st, 0, h, 0.013, 0.004, 3, i%2 ? c : c2); mergeAt(m, st, Math.cos(a)*r, 0, Math.sin(a)*r); }
+  return m; }
 // --- inland raw-material meshes (§5) ---
 function wormMesh() { const m = Mesh(); for (let i = 0; i < 6; i++) { const a = i*0.55; mBox(m, Math.sin(a)*0.11, 0.05, i*0.05-0.15, 0.055, 0.05, 0.05, [0.8-i*0.02,0.46,0.46]); } return m; }
 function rootMesh() { const m = Mesh(); const c = [0.6,0.45,0.3]; mCyl(m,-0.02,0.3,0.05,0.02,6,c); mCyl(m,0.0,0.22,0.035,0.015,6,[0.55,0.4,0.26]); mBox(m,0.08,0.12,0.03,0.12,0.025,0.025,[0.5,0.38,0.24]); mBox(m,-0.06,0.08,-0.04,0.1,0.022,0.022,[0.52,0.4,0.26]); return m; }
@@ -6337,6 +6346,7 @@ const FINDS = {
   salt:     { mesh: () => saltMesh(),                base: 0.45,max: 40,  label: "Sea Salt", desc: "Coarse crystals scraped from a dried pool rim. Goats love it.", rare: 1 },
   leaves:   { mesh: () => leafPileMesh(),            base: 0.6, max: 60,  label: "Leaves", desc: "A handful of dry leaves. Compost for saplings, or a treat for goats.", rare: 0 },
   stick:    { mesh: () => stickMesh(),               base: 0.5, max: 60,  label: "Sticks", desc: "Snapped twigs from a tree's crown.", rare: 0 },
+  fiber:    { mesh: () => fiberMesh(),               base: 0.4, max: 80,  label: "Plant Fiber", desc: "Tough strands stripped from tall grass. Twist a few together into rope.", rare: 0 },
   // --- inland raw materials (dug from grass / dirt / forest) ---
   sand:     { mesh: () => sandMatMesh(),             base: 0.5, max: 60,  label: "Sand", desc: "A double handful of sand. Place it to raise the ground.", rare: 0 },
   dirt:     { mesh: () => dirtMatMesh(),             base: 0.5, max: 60,  label: "Dirt", desc: "Dark earth. Place it to build up the ground.", rare: 0 },
@@ -7762,18 +7772,29 @@ function recipeIcon(r) {
   if (r.special === "campfire") return ITEMS.stone && ITEMS.stone.icon;
   return null;
 }
+// §A7 one ingredient as a small icon chip with its count (greyed when you're short)
+function ingChip(id, n) {
+  const have = Inv.count(id) >= n, icon = ITEMS[id] && ITEMS[id].icon;
+  const ig = icon ? `<img src="${icon}" width="26" height="26">` : "";
+  return `<span class="ming ${have ? "" : "short"}" title="${ITEMS[id] ? ITEMS[id].name : id}">${ig}<b>${n}</b></span>`;
+}
 function recipeRow(r) {
   const ok = canCraft(r), icon = recipeIcon(r);
   const name = r.label + (r.qty > 1 ? ` ×${r.qty}` : "");
-  let costHtml;
-  if (r.special === "cook") { const raw = firstCookableRaw(); costHtml = raw ? `<span class="ok">1 raw food → ${ITEMS[COOKED_OF[raw] || raw].name}</span>` : `<span class="no">needs a raw food</span>`; }
-  else {
-    const fmt = (cost) => cost.map(([id, n]) => `<span class="${Inv.count(id) >= n ? "ok" : "no"}">${n} ${ITEMS[id].name}</span>`).join(" + ");
-    costHtml = fmt(r.cost) + (r.altCost ? ` <span class="malt">or</span> ` + fmt(r.altCost) : "");
+  let ingHtml;
+  if (r.special === "cook") {
+    const raw = firstCookableRaw(), cooked = raw ? (COOKED_OF[raw] || raw) : null;
+    ingHtml = raw ? `${ingChip(raw, 1)}<span class="marrow">makes</span><span class="ming" title="${ITEMS[cooked].name}"><img src="${ITEMS[cooked].icon}" width="26" height="26"></span>` : `<span class="mkneed">needs a raw food</span>`;
+  } else {
+    ingHtml = r.cost.map(([id, n]) => ingChip(id, n)).join("");
+    if (r.altCost) ingHtml += `<span class="marrow">or</span>` + r.altCost.map(([id, n]) => ingChip(id, n)).join("");
   }
-  const ig = icon ? `<img src="${icon}" width="42" height="42" style="image-rendering:pixelated">` : `<div class="mkic"></div>`;
-  return `<div class="recipe"><div class="mkleft">${ig}</div><div class="mkbody"><div class="mkname">${name}</div><div class="mkcost">${costHtml}</div><div class="mkdesc">${r.desc}</div></div>`
-    + `<button class="mk" data-rid="${r.id}" ${ok ? "" : "disabled"}>${r.build ? "Place" : "Make"}</button></div>`;
+  const ig = icon ? `<img src="${icon}" width="44" height="44" style="image-rendering:pixelated">` : `<div class="mkic"></div>`;
+  const need = !recipeStationOK(r) ? ` <span class="mkneed">(by a fire)</span>` : "";
+  const title = (r.desc || "").replace(/"/g, "&quot;");
+  return `<div class="recipe ${ok ? "" : "locked"}" title="${title}"><div class="mkleft">${ig}</div>`
+    + `<div class="mkbody"><div class="mkname">${name}${need}</div><div class="mkings">${ingHtml}</div></div>`
+    + `<button class="mk" data-rid="${r.id}" ${ok ? "" : "disabled"}>${r.build ? "Build" : "Craft"}</button></div>`;
 }
 /* ---- item actions (§10.3) ---- */
 function equipToBelt(idx) {
@@ -9935,8 +9956,8 @@ function updateFireHud() {
 const RECIPES = [
   { id: "stake",    label: "Wooden Stake", out: "stake", qty: 2, cost: [["stick", 2]], station: "hand",
     desc: "Two stakes from a bundle of sticks. The start of fences, spears and torches." },
-  { id: "rope",     label: "Rope", out: "rope", qty: 1, cost: [["kelp", 2]], altCost: [["leaves", 4]], station: "hand",
-    desc: "Twisted from kelp, or from a double handful of dry beach leaves." },
+  { id: "rope",     label: "Rope", out: "rope", qty: 1, cost: [["fiber", 3]], station: "hand",
+    desc: "Twisted together from three handfuls of plant fiber stripped from tall grass." },
   { id: "torch",    label: "Torch", out: "torch", qty: 1, cost: [["stick", 1], ["rope", 1]], station: "hand",
     desc: "A brand you can plant on a stake for a standing light." },
   { id: "campfire", label: "Campfire", special: "campfire", cost: [["stick", 3], ["stone", 3]], station: "hand",
