@@ -9456,7 +9456,8 @@ function goatPaw(g) {
 let shovelSwing = 0, camNudge = 0, toolRecoilT = 0, camShake = 0, lastFailT = -99;
 // §tools5 live fine-tune offsets for the held tool (debug sliders): extra yaw/pitch/roll in radians, and a swing-direction flip.
 const dbgTool = { yaw: 0, pitch: 0, roll: 0, swingDir: 1, spin: 0 };   // §tools7 `spin` = a NEW rotation axis: about the tool's own long (handle) axis, in local space before the pose tilt
-const PICK_X_SHIFT = 0.12;        // §tool-pick how far further right the pickaxe is held than the other tools (tunable)
+const TOOL_X_SHIFT = 0.12;        // §tool-right how far further right every held tool/item sits (tunable)
+const PICK_X_SHIFT = 0.12;        // §tool-pick extra rightward offset for the pickaxe on top of TOOL_X_SHIFT (tunable)
 const SPEAR_REST_PITCH = 0.6;     // §tool-spear resting tilt that points the spear tip up-and-forward toward the crosshair (tunable)
 // §axe8 the AXE gets its OWN chop-swing settings so the pickaxe is unaffected. `axis` picks which rotation the chop
 // animates: "x" = pitch (overhead, the old behaviour), "y" = yaw (sideways twist), "z" = roll (sweeps across the
@@ -11214,8 +11215,8 @@ function drawShovel(view) {
       pitch = -0.15 + rec*0.5;
       toolYaw = (id === "axe") ? BLADE_BASE_YAW_AXE : BLADE_BASE_YAW;                      // §tools7 the axe sits 180° round from the pickaxe
       if (id === "pickaxe") ox += PICK_X_SHIFT;                                           // §tool-pick nudge the pickaxe further to the right of the screen (tunable)
-      // §tool-pick the pickaxe now swings on the SAME axis and direction as the axe (default roll/z, the screen-plane sweep)
-      const d = chopAmt * dbgAxe.dir;
+      // §tool-pick the pickaxe swings on the axe's axis, but the OPPOSITE direction (it dug the wrong way round)
+      const d = chopAmt * dbgAxe.dir * (id === "pickaxe" ? -1 : 1);
       if (dbgAxe.axis === "x") pitch += d;                                                // local X → pitch (overhead chop, the old axis)
       else if (dbgAxe.axis === "y") toolYaw += d;                                         // local Y → yaw (sideways twist)
       else roll += d;                                                                    // local Z → roll (sweeps across the screen)
@@ -11243,6 +11244,7 @@ function drawShovel(view) {
   const bladeSpin = (id === "axe" || id === "pickaxe") ? dbgTool.spin : 0;
   const cSpin = Math.cos(bladeSpin), sSpin = Math.sin(bladeSpin);
   if (debugMode) { const rdEl = document.getElementById("dbgToolRead"); if (rdEl) rdEl.textContent = `${id}:  yaw ${toolYaw.toFixed(2)}  pitch ${pitch.toFixed(2)}  roll ${roll.toFixed(2)}  spin ${bladeSpin.toFixed(2)}  ${id==="axe" ? `axeSwing ${dbgAxe.axis.toUpperCase()}/${dbgAxe.dir>0?"+":"-"}` : `swingDir ${dbgTool.swingDir}`}`; }
+  ox += TOOL_X_SHIFT;   // §tool-right shift every held tool/item further to the right of the screen (tunable)
   const cr = Math.cos(roll), sr = Math.sin(roll), cp = Math.cos(pitch), sp2 = Math.sin(pitch);
   const cY = Math.cos(toolYaw), sY = Math.sin(toolYaw);
   const src = fp.mesh.pos, world = fp.world; let p = 0;
