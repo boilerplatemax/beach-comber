@@ -42,7 +42,8 @@
   /* §enter8 the Press-Enter / Tap-to-start gate shown before the title (lets us unlock audio + start music on a real gesture) */
   #entergate {
     position: fixed; inset: 0; z-index: 30; display: flex; align-items: center; justify-content: center;
-    background: radial-gradient(140% 120% at 50% 38%, rgba(16,30,38,0.82), rgba(6,10,14,0.96));
+    background: #080e12;   /* §enter fully opaque base so the title screen never shows through */
+    background-image: radial-gradient(140% 120% at 50% 38%, rgb(16,30,38), rgb(6,10,14));
     cursor: pointer; transition: opacity .55s ease; text-align: center; padding: 24px;
   }
   #entergate.hidden { opacity: 0; pointer-events: none; }
@@ -2970,6 +2971,11 @@ function enterWalk() {
   lastSafe.x = s.x; lastSafe.z = s.z;
   cam.yaw = s.yaw; cam.pitch = -0.04;
   mode = "walk";
+  // §unstuck make sure we didn't land on the cottage pad / a trap: if we can't set off, relocate to open ground
+  if (typeof unstickPlayer === "function" && (inCottageProtected(player.x, player.z) || !canMoveFrom(player.x, player.z))) {
+    unstickPlayer(false);
+    spawnPoint = { x: player.x, z: player.z, yaw: cam.yaw };   // remember the corrected, reachable spawn
+  }
   timeOfDay = MORNING_TIME; updateSun();   // §13.9 the game opens in the morning (then advances only if day/night is on)
   if (typeof MUSIC !== "undefined") MUSIC.setMode("game");   // §music8 keep the current song playing into the world (no restart); switch to the gapped in-game rhythm
 }
@@ -3921,6 +3927,41 @@ function nearestWalkable(x, z) {                            // spiral search
     }
   return [lastSafe.x, lastSafe.z];
 }
+// §unstuck can the player actually set off from here? Probe 8 directions for open, gentle, non-wall ground.
+function canMoveFrom(x, z) {
+  if (!isWalkable(x, z)) return false;
+  const h0 = surfaceAt(x, z).h; let open = 0;
+  for (let a = 0; a < 8; a++) {
+    const an = a/8*6.2832, nx = x + Math.cos(an)*0.8, nz = z + Math.sin(an)*0.8;
+    if (!isWalkable(nx, nz)) continue;
+    const grade = Math.atan2(Math.abs(surfaceAt(nx, nz).h - h0), 0.8);   // steep wall out of here?
+    if (grade < SLOPE_BLOCK) open++;
+  }
+  return open >= 2;   // at least a couple of ways out
+}
+// §unstuck nearest open, walkable spot OUTSIDE the cottage footprint + protected zone that isn't a steep trap
+function openSpawnSpot(x, z) {
+  const prot = (nx, nz) => (typeof inCottageProtected === "function" && inCottageProtected(nx, nz)) || (typeof insideCottage === "function" && insideCottage(nx, nz));
+  const ok = (nx, nz) => isWalkable(nx, nz) && !prot(nx, nz) && canMoveFrom(nx, nz);
+  if (ok(x, z)) return [x, z];
+  for (let r = 2; r < 160; r += 2)
+    for (let a = 0; a < 24; a++) {
+      const an = a/24*6.2832, nx = x + Math.cos(an)*r, nz = z + Math.sin(an)*r;
+      if (ok(nx, nz)) return [nx, nz];
+    }
+  return nearestWalkable(x, z);   // last resort: any walkable ground
+}
+// §unstuck move the player onto safe open ground and reset vertical state (used at spawn and by the Unstuck button)
+function unstickPlayer(announce) {
+  if (player.swimming && typeof stopSwim === "function") stopSwim();
+  const [nx, nz] = openSpawnSpot(player.x, player.z);
+  const h = surfaceAt(nx, nz).h;
+  player.x = nx; player.z = nz; player.feetY = h; player.eyeY = h + EYE;
+  player.vy = 0; player.airborne = false; player.landStun = 0;
+  lastSafe.x = nx; lastSafe.z = nz;
+  if (typeof cancelPath === "function") cancelPath();
+  if (announce && typeof showCard === "function") showCard("Unstuck", "Moved you to open ground nearby.");
+}
 function toggleFly() {
   if (mode === "walk") { cam.pos = [player.x, player.eyeY, player.z]; mode = "free"; }
   else if (mode === "free") {
@@ -4384,6 +4425,7 @@ function showPause() {
     <button data-pm="journal">Field Journal</button>
     <button data-pm="settings">Settings</button>
     <button data-pm="controls">Controls</button>
+    <button data-pm="unstuck">Unstuck</button>
     <button class="danger" data-pm="quit">Save &amp; quit</button></div>`;
   el.classList.add("show"); wirePause(el);
 }
@@ -4416,6 +4458,7 @@ function wirePause(el) {
   el.querySelectorAll("button[data-pm]").forEach(b => b.onclick = () => {
     const a = b.dataset.pm;
     if (a === "resume") closePause();
+    else if (a === "unstuck") { if (typeof unstickPlayer === "function") unstickPlayer(true); closePause(); }   // §unstuck free the player to open ground
     else if (a === "journal") openJournalFromPause();   // §menu the Field Journal now lives in the pause menu
     else if (a === "controls") showControls();
     else if (a === "back") showPause();
@@ -12798,7 +12841,7 @@ function cottageSiteOK(x, z, yaw) {
 function flattenCottagePad() {
   if (!cottage) return; const c = cottage, padY = c.floorY + 0.02;
   // the terrain grid is coarse (cells several metres wide), so flatten a generous landing and blend out over a long, gentle ramp
-  const APR = COTTAGE_APPROACH + CELL, BLEND = Math.max(5.5, CELL*2), reach = Math.max(C_OX_PAD, C_OZ_PAD + APR) + BLEND + CELL;
+  const APR = COTTAGE_APPROACH + CELL, BLEND = Math.max(11, CELL*3), reach = Math.max(C_OX_PAD, C_OZ_PAD + APR) + BLEND + CELL;   // §unstuck longer, gentler blend so every pad edge stays walkable
   const gcx = (c.x+HALF)/CELL, gcz = (c.z+HALF)/CELL, rg = reach/CELL;
   const minx = Math.max(0, Math.floor(gcx-rg)), maxx = Math.min(GRID-1, Math.ceil(gcx+rg));
   const minz = Math.max(0, Math.floor(gcz-rg)), maxz = Math.min(GRID-1, Math.ceil(gcz+rg));
