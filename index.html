@@ -973,9 +973,15 @@ function buildHeightmap() {
 
       // Sandbars & tidal channels: alternating ridges/troughs across the wide
       // intertidal band so a falling tide drains through the channels first (§B).
+      // §tide the bar height is capped to a fraction of the tide range so the bars always
+      // submerge at high tide. Without this the bars are a FIXED height while the high-water
+      // line scales with TIDE_RANGE, so shrinking the range leaves the fixed bars standing
+      // proud of the lowered water, i.e. dry stripes / gaps along the shore. BAR_SAFE_FRAC is
+      // chosen so no current island changes (min range 6.0 * 0.4 == the max barAmp 2.4).
       const barBand = 1 - smoothstep(0, 9, Math.abs(height));
       const barPhase = d * AP.barFreq + (nBar.fbm(wu * 2.6, wv * 2.6, 3, 2, 0.5) - 0.5) * 1.6;
-      height += barBand * Math.sin(barPhase * 6.2831853) * AP.barAmp;
+      const barAmpSafe = Math.min(AP.barAmp, TIDE_RANGE * BAR_SAFE_FRAC);
+      height += barBand * Math.sin(barPhase * 6.2831853) * barAmpSafe;
 
       // Deepen toward open sea so the island reads as surrounded (and bounds you).
       height -= smoothstep(AP.coastInner, 1.5, d) * 14.0;
@@ -1238,6 +1244,12 @@ updateSun();
 
 let TIDE_PERIOD = 300;          // seconds for a full high→low→high cycle (~5 min)
 let TIDE_RANGE = AP.tideRange;
+// §tide the rising half of the cycle takes this many times as long as the falling half (same high/low
+// levels, only the timing is reshaped). Tunable; 1.0 = symmetric.
+const TIDE_RISE_SLOW = 1.5;
+// §tide sandbar height is capped to this fraction of the tide range so bars always submerge at high tide,
+// keeping the water filling smoothly to the shore when the range is changed. Tunable.
+const BAR_SAFE_FRAC = 0.4;
 const TIDE_MID = 0.0;
 let tideT = 0.60;               // phase 0..1 (start part-way down)
 let tideDay = 0;                // in-game days elapsed (drives the spring/neap envelope)
@@ -1273,8 +1285,19 @@ function nextMinusTide(sec) {
   }
   return -1;
 }
+// §tide phase-advance multiplier: slower while the tide is rising (low→high) so the rising half of the
+// cycle takes TIDE_RISE_SLOW times as long as the falling half, with the TOTAL period unchanged. levelAt /
+// tideShape are untouched, so the high/low LEVELS and their phase positions (0.25 high, 0.75 low) stay put;
+// only the real time spent in each half changes. Rising phase spans 0.5, falling spans 0.5.
+function tideRateAt(ph) {
+  const k = TIDE_RISE_SLOW;
+  const rr = 0.5 * (1 + 1 / k);        // rising multiplier (preserves the total period)
+  const fr = k * rr;                   // falling multiplier (= k × rising → falling is quicker)
+  const rising = (ph < 0.25 || ph >= 0.75);
+  return rising ? rr : fr;
+}
 function updateTide(gdt) {       // gdt = game-time seconds (already clock-scaled)
-  tideT = (tideT + gdt / TIDE_PERIOD) % 1;
+  tideT = (tideT + gdt * tideRateAt(tideT) / TIDE_PERIOD) % 1;   // §tide rise slower than the fall
   if (tideT < 0) tideT += 1;
   tideDay += gdt / DAY_PERIOD;
   if (dayNightEnabled) timeOfDay = (timeOfDay + gdt / DAY_PERIOD) % 1;   // §13.9 frozen at morning when disabled
