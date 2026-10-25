@@ -8974,7 +8974,7 @@ function targetAlongRay(r, sticky) {
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
   for (const s of weakStones) if (!s.lifted && !s.lift) sphere(s, "weakstone", s.x, s.z, 0.4*s.sc, 0.55 + s.sc*0.4);   // §stonebug lift a dome stone with any item (already-lifted ones aren't targetable)
   // §heave-removed: heave boulders are no longer targetable
-  if (typeof oysterBeds !== "undefined") for (const b of oysterBeds) if (oysterBedExposed(b)) sphere(b, "oysterbed", b.x, b.z, 0.5*b.sc, 0.75);   // §23 oyster beds bared at low tide
+  if (typeof oysterBeds !== "undefined") for (const b of oysterBeds) sphere(b, "oysterbed", b.x, b.z, 0.5*b.sc, 0.75);   // §water oyster beds are workable at any depth within reach (no longer only when bared)
   if (typeof geodes !== "undefined") for (const g of geodes) if (!g.taken) sphere(g, "geode", g.x, g.z, 0.4*g.sc, 0.5 + g.sc*0.4);   // §40 geodes to crack with a pickaxe (cracked ones stay targetable so the halves can be picked up, §A3)
   for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
@@ -9712,10 +9712,16 @@ function digAt(x, z) {
   const sy = surfaceAt(x, z).h, depth = waterSurfaceAt(x, z) - sy;
   shovelSwing = 1; camNudge = 0.05; rootPlayer();            // every strike commits: short wind-up, rooted
 
-  // Past knee depth in open water: no digging or sifting.
-  if (!inBasin && depth > KNEE) { if (onDig) onDig("splash"); spawnSand(x, sy + 0.1, z, 8, [0.82, 0.86, 0.9]); return; }   // too deep
-  // In a pool, or ankle–knee open water: the shovel sifts, no terrain change, a cloudy plume, top-layer finds.
-  if (inBasin || depth > ANKLE) { camNudge = 0.04; spendStamina(SIFT_COST, true); if (onDig) onDig("sift"); spawnSand(x, sy + 0.05, z, 16, [0.72, 0.68, 0.6]); revealSpot(x, z, true); return; }
+  // §water underwater (a tide pool, or any open water past ankle depth): the shovel SIFTS at ANY depth
+  // within reach. No terrain change (the depth limit only blocks reshaping the ground), just a cloudy sand
+  // plume that reveals top-layer finds and exposes any buried chest, which rises out of the sand onto the seabed.
+  if (inBasin || depth > ANKLE) {
+    camNudge = 0.04; spendStamina(SIFT_COST, true); if (onDig) onDig("sift");
+    spawnSand(x, sy + 0.05, z, 16, [0.72, 0.68, 0.6]);
+    revealSpot(x, z, true);
+    if (typeof digTreasure === "function") digTreasure(x, z);
+    return;
+  }
   // Too many roots: can't dig under trees / boulders / POIs.
   if (bigPropBlocking(x, z, 1.0)) { failStrike(true, x, sy + 0.4, z); return; }   // roots/boulder block → clink + recoil
 
@@ -12216,9 +12222,8 @@ function drawOysterBeds(view) {
   if (n) oysterBedDyn.draw(oysterScratch, n);
 }
 function oysterBedExposed(b) { return waterDepthAt(b.x, b.z) < OYSTER_EXPOSE; }
-function oysterBedPrompt(b) { return !oysterBedExposed(b) ? "covered, wait for low tide" : b.n <= 0 ? "picked clean, give it a day or two" : (IS_TOUCH ? "tap to pick & shuck" : "pick & shuck an oyster"); }
+function oysterBedPrompt(b) { return b.n <= 0 ? "picked clean, give it a day or two" : (IS_TOUCH ? "tap to pick & shuck" : "pick & shuck an oyster"); }   // §water workable underwater too
 function oysterBedAction(b) {
-  if (!oysterBedExposed(b)) { showCard("Still underwater", "The bed's covered by the tide, come back when the water's drawn back to pick and shuck."); return true; }
   if (b.n <= 0) { showCard("Picked clean", "You've worked this bed recently. Give it a day or two to seed again."); return true; }
   startShuck(b); return true;
 }
@@ -12233,7 +12238,7 @@ function cancelShuck() { shuck = null; document.getElementById("pryoverlay").sty
 function updateShuck(dt) {
   if (!shuck) return;
   const b = shuck.b;
-  if (b.n <= 0 || !oysterBedExposed(b) || Math.hypot(b.x-player.x, b.z-player.z) > REACH+4) { cancelShuck(); return; }
+  if (b.n <= 0 || Math.hypot(b.x-player.x, b.z-player.z) > REACH+4) { cancelShuck(); return; }   // §water no longer cancels when the tide covers the bed
   shuck.cool = Math.max(0, shuck.cool - dt);
   shuck.pos += shuck.dir * shuck.speed * dt;
   if (shuck.pos > 1) { shuck.pos = 1; shuck.dir = -1; } if (shuck.pos < 0) { shuck.pos = 0; shuck.dir = 1; }
@@ -13739,7 +13744,7 @@ function seedChests() {
 function digTreasure(x, z) {
   for (const c of chests) { if (c.opened || c.exposed) continue;
     if (Math.hypot(c.x - x, c.z - z) < DIG_R*0.8) {
-      if (c.intertidal && waterDepthAt(c.x, c.z) > KNEE) { showCard("Underwater", "Come back at low tide to dig this out."); return; }
+      // §water a buried chest surfaces at any water depth now (sifting underwater uncovers it, and it rises onto the seabed)
       c.expose = Math.min(1, c.expose + CHEST_TUNE.exposePerDig);
       if (c.expose >= 1) { c.exposed = true; if (onDig) onDig("clang"); sparkle(c.x, surfaceAt(c.x,c.z).h + 0.6, c.z, [0.9,0.8,0.4], 12);
         showCard("A chest!", c.barnacles ? "Barnacle-crusted. Scrape it clean with the shovel, then open it." : "Open it with its key, a shovel (pry) or a pickaxe (smash)."); saveChests(); }
