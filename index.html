@@ -167,6 +167,12 @@
     color: #8fd8cf; opacity: .88; line-height: 1.5; white-space: pre;
     text-shadow: 0 1px 2px var(--ink-shadow); display: none;
   }
+  /* §fps lightweight FPS readout, toggled in Settings (top-right, clear of the debug overlay) */
+  #fpscounter {
+    position: fixed; right: 12px; top: 12px; z-index: 6; pointer-events: none;
+    font-family: var(--ui); font-size: 13px; letter-spacing: .04em; font-variant-numeric: tabular-nums;
+    color: #bdeee6; opacity: .9; text-shadow: 0 1px 2px var(--ink-shadow); display: none;
+  }
   /* creature/find name card */
   #card {
     position: fixed; left: 50%; bottom: 20%; transform: translateX(-50%);
@@ -591,6 +597,7 @@
 <canvas id="tidecurve" width="150" height="46"></canvas>
 <canvas id="hungershells" width="170" height="34"></canvas>
 <div id="dbg"></div>
+<div id="fpscounter"></div>
 <div id="stamina"></div>
 <div id="hungerArc"></div>
 <div id="breathArc"></div>
@@ -2470,6 +2477,11 @@ function buildMaterialTexture() {
 const HALF_F = HALF.toFixed(1);
 const WORLD_F = WORLD.toFixed(1);
 
+// §smoothedge2 tunables for the soft, rounded shoreline, in metres of water depth (same at any tide/seed).
+// Cheap: just an alpha fade in the fragment shader, no extra texture samples. Live-tweakable from the console.
+let WATER_EDGE_SOFT = 0.35;    // depth band the waterline fades over (bigger = softer, rounder edge)
+let WATER_FOAM_WIDTH = 1.3;    // how far up from the waterline the foam band reaches
+
 const waterVS = `#version 300 es
 precision highp float;
 uniform mat4 uProj, uView;
@@ -2513,15 +2525,19 @@ in float vPool;
 out vec4 frag;
 uniform vec3 uCamPos, uSunDir, uZenith, uHorizon, uWarm;
 uniform float uTime, uFogDensity, uFogNear, uWaterLevel, uWaterQ;
+uniform float uEdgeSoft, uFoamW;                  // §smoothedge2 shoreline fade width & foam width (metres of depth)
 uniform sampler2D uHeight, uFilled;
 ${SKY_GLSL}
 void main() {
   vec2 uv = clamp((vWorld.xz + ${HALF_F}) / ${WORLD_F}, 0.0, 1.0);
-  float terr = texture(uHeight, uv).r;
+  float terr = texture(uHeight, uv).r;            // §smoothedge2 hardware-filtered (bilinear where supported) — no extra taps
   float rim = texture(uFilled, uv).r;
   float local = max(uWaterLevel, rim);
-  if (terr > local - 0.02) discard;               // ground above the local surface
   float depth = local - terr;
+  // §smoothedge2 rounded waterline: fade alpha in across a soft depth band just offshore instead of a hard
+  // 1-pixel cut. This is pure arithmetic (no extra texture samples), so it's essentially free on every device.
+  float edge = smoothstep(0.0, uEdgeSoft, depth);
+  if (edge <= 0.002) discard;                     // ground above the local surface (as before)
 
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));  // faceted wave normals
   if (n.y < 0.0) n = -n;
@@ -2545,10 +2561,12 @@ void main() {
     col += uWarm * pow(max(dot(v, reflect(-normalize(uSunDir), n)), 0.0), 48.0) * 0.6;
     // foam band that follows the shoreline as the tide moves (dialled down at low water quality)
     float lap = sin(vWorld.x * 0.6 + uTime * 2.0) * sin(vWorld.z * 0.55 - uTime * 1.6);
-    float foam = clamp((1.0 - smoothstep(0.0, 1.3, depth)) * (0.5 + 0.5 * lap), 0.0, 1.0) * smoothstep(0.1, 0.6, uWaterQ);
+    float foam = clamp((1.0 - smoothstep(0.0, uFoamW, depth)) * (0.5 + 0.5 * lap), 0.0, 1.0) * smoothstep(0.1, 0.6, uWaterQ);
     col = mix(col, vec3(0.92, 0.95, 0.95), foam * 0.85);
     alpha = max(mix(0.4, 0.9, dmix), foam * 0.9);
   }
+
+  alpha *= edge;                                  // §smoothedge2 soft, rounded waterline (pools and open sea alike)
 
   // Fog → sky; fully-fogged water becomes opaque sky so no far edge shows.
   vec3 viewVec = vWorld - uCamPos;
@@ -3996,6 +4014,12 @@ try { const s = JSON.parse(localStorage.getItem("bc_gfx") || "null");
 function saveGFX() { try { const o = { preset: GFX.preset }; for (const k of GFX_CUSTOM_KEYS) o[k] = GFX[k]; localStorage.setItem("bc_gfx", JSON.stringify(o)); } catch (e) {} }
 function setGFXPreset(name) { GFX.preset = name; if (GFX_PRESETS[name]) Object.assign(GFX, GFX_PRESETS[name]); applyGFX(); saveGFX(); }
 function setGFXCustom(k, v) { GFX[k] = v; GFX.preset = "custom"; applyGFX(); saveGFX(); }
+// §fps optional on-screen FPS readout (a performance-tracking convenience), toggled in Settings. Standalone
+// from the GFX preset system so it survives preset changes; persisted on its own key.
+let showFps = false;
+try { showFps = localStorage.getItem("bc_showfps") === "1"; } catch (e) {}
+function setShowFps(v) { showFps = !!v; try { localStorage.setItem("bc_showfps", showFps ? "1" : "0"); } catch (e) {}
+  const el = document.getElementById("fpscounter"); if (el && !showFps) el.style.display = "none"; }
 // §18 brightness / gamma, a standalone comfort setting (helps on dark, new-moon nights)
 let nightBrightness = 1.0;
 try { const b = parseFloat(localStorage.getItem("bc_bright")); if (!isNaN(b)) nightBrightness = Math.max(0.6, Math.min(1.8, b)); } catch (e) {}
@@ -4403,7 +4427,8 @@ function openSettings() {
       ${toggle("aa","Anti-aliasing", GFX.aa)}
       ${slider("simRadius","Creature radius", 0.6, 1.4, 0.05, GFX.simRadius)}
       <div class="srow"><label>Pixel-ratio cap</label><button data-gc="dprCap">${GFX.dprCap}×</button></div>
-      <div class="srow"><label>FPS cap</label><button data-gc="fpsCap">${FPS_LBL[GFX.fpsCap]||GFX.fpsCap}</button></div>`,
+      <div class="srow"><label>FPS cap</label><button data-gc="fpsCap">${FPS_LBL[GFX.fpsCap]||GFX.fpsCap}</button></div>
+      <div class="srow"><label>Show FPS</label><button data-k="showfps">${onoff(showFps)}</button></div>`,
     audio: `
       <div class="srow"><label>Mute</label><button data-snd="mute">${SND.muted ? "On" : "Off"}</button></div>
       <div class="srow"><label>Master</label><input data-sv="master" type="range" min="0" max="1" step="0.05" value="${SND.vol.master}"></div>
@@ -4449,6 +4474,7 @@ function openSettings() {
     else if (k === "infworms") { infiniteWorms = !infiniteWorms; try { localStorage.setItem("bc_infworms", infiniteWorms ? "1" : "0"); } catch (e) {} }   // §climb never run out of bait
     else if (k === "nostarve") { noStarvation = !noStarvation; try { localStorage.setItem("bc_nostarve", noStarvation ? "1" : "0"); } catch (e) {} }   // §climb hunger never reaches starving
     else if (k === "crouchkey") { crouchKey = crouchKey === "KeyC" ? "ControlLeft" : "KeyC"; try { localStorage.setItem("bc_crouchKey", crouchKey); } catch (e) {} }
+    else if (k === "showfps") { setShowFps(!showFps); }   // §fps toggle the on-screen FPS readout
     openSettings();
   });
   p.querySelectorAll("button[data-gp]").forEach(b => b.onclick = () => { setGFXPreset(b.dataset.gp); openSettings(); });
@@ -14333,6 +14359,7 @@ applyGFX();
 let last = performance.now();
 let fpsSmooth = 60, washedThisLow = false;
 const dbgEl = document.getElementById("dbg");
+const fpsEl = document.getElementById("fpscounter");   // §fps standalone readout, toggled in Settings
 let _fpsGate = 0;
 function frame(now) {
   // §13.6 FPS cap: skip drawing until the frame budget has elapsed (0 = uncapped)
@@ -14700,6 +14727,8 @@ function frame(now) {
   gl.uniform1f(waterU.uFogNear, FOG_NEAR);
   gl.uniform1f(waterU.uWaterLevel, waterLevel);
   gl.uniform1f(waterU.uWaterQ, (GFX.water <= 0 ? 0.2 : 1) * (weather ? weather.waveMul : 1));   // §13.6 flatter at low quality · §20 bigger waves in wind/storm
+  gl.uniform1f(waterU.uEdgeSoft, WATER_EDGE_SOFT);   // §smoothedge2 rounded-shoreline fade width
+  gl.uniform1f(waterU.uFoamW, WATER_FOAM_WIDTH);     // §smoothedge2 foam-band width
   // snap the water sheet to the camera so wave detail stays nearby
   const wsnap = (WATER_HALF * 2) / 256;
   gl.uniform2f(waterU.uCenter, Math.round(cam.pos[0] / wsnap) * wsnap,
@@ -14872,6 +14901,11 @@ function frame(now) {
   updateInspectView();
   drawFishHUD();                       // §Fishing line, bobber marker, reel gauge, fish-signs (2D overlay)
   updateFireHud();                     // §Cooking compact readout while looking at a campfire
+
+  if (fpsEl) {   // §fps lightweight readout, independent of the full debug overlay; hidden on the title screen
+    if (showFps && !titleUp) { fpsEl.style.display = "block"; fpsEl.textContent = `${fpsSmooth.toFixed(0)} fps`; }
+    else if (fpsEl.style.display !== "none") fpsEl.style.display = "none";
+  }
 
   if (debugOn) {
     dbgEl.style.display = "block";
