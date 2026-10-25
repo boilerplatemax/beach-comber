@@ -2477,11 +2477,6 @@ function buildMaterialTexture() {
 const HALF_F = HALF.toFixed(1);
 const WORLD_F = WORLD.toFixed(1);
 
-// §smoothedge2 tunables for the soft, rounded shoreline, in metres of water depth (same at any tide/seed).
-// Cheap: just an alpha fade in the fragment shader, no extra texture samples. Live-tweakable from the console.
-let WATER_EDGE_SOFT = 0.35;    // depth band the waterline fades over (bigger = softer, rounder edge)
-let WATER_FOAM_WIDTH = 1.3;    // how far up from the waterline the foam band reaches
-
 const waterVS = `#version 300 es
 precision highp float;
 uniform mat4 uProj, uView;
@@ -2525,19 +2520,15 @@ in float vPool;
 out vec4 frag;
 uniform vec3 uCamPos, uSunDir, uZenith, uHorizon, uWarm;
 uniform float uTime, uFogDensity, uFogNear, uWaterLevel, uWaterQ;
-uniform float uEdgeSoft, uFoamW;                  // §smoothedge2 shoreline fade width & foam width (metres of depth)
 uniform sampler2D uHeight, uFilled;
 ${SKY_GLSL}
 void main() {
   vec2 uv = clamp((vWorld.xz + ${HALF_F}) / ${WORLD_F}, 0.0, 1.0);
-  float terr = texture(uHeight, uv).r;            // §smoothedge2 hardware-filtered (bilinear where supported) — no extra taps
+  float terr = texture(uHeight, uv).r;
   float rim = texture(uFilled, uv).r;
   float local = max(uWaterLevel, rim);
+  if (terr > local - 0.02) discard;               // ground above the local surface
   float depth = local - terr;
-  // §smoothedge2 rounded waterline: fade alpha in across a soft depth band just offshore instead of a hard
-  // 1-pixel cut. This is pure arithmetic (no extra texture samples), so it's essentially free on every device.
-  float edge = smoothstep(0.0, uEdgeSoft, depth);
-  if (edge <= 0.002) discard;                     // ground above the local surface (as before)
 
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));  // faceted wave normals
   if (n.y < 0.0) n = -n;
@@ -2561,12 +2552,10 @@ void main() {
     col += uWarm * pow(max(dot(v, reflect(-normalize(uSunDir), n)), 0.0), 48.0) * 0.6;
     // foam band that follows the shoreline as the tide moves (dialled down at low water quality)
     float lap = sin(vWorld.x * 0.6 + uTime * 2.0) * sin(vWorld.z * 0.55 - uTime * 1.6);
-    float foam = clamp((1.0 - smoothstep(0.0, uFoamW, depth)) * (0.5 + 0.5 * lap), 0.0, 1.0) * smoothstep(0.1, 0.6, uWaterQ);
+    float foam = clamp((1.0 - smoothstep(0.0, 1.3, depth)) * (0.5 + 0.5 * lap), 0.0, 1.0) * smoothstep(0.1, 0.6, uWaterQ);
     col = mix(col, vec3(0.92, 0.95, 0.95), foam * 0.85);
     alpha = max(mix(0.4, 0.9, dmix), foam * 0.9);
   }
-
-  alpha *= edge;                                  // §smoothedge2 soft, rounded waterline (pools and open sea alike)
 
   // Fog → sky; fully-fogged water becomes opaque sky so no far edge shows.
   vec3 viewVec = vWorld - uCamPos;
@@ -14727,8 +14716,6 @@ function frame(now) {
   gl.uniform1f(waterU.uFogNear, FOG_NEAR);
   gl.uniform1f(waterU.uWaterLevel, waterLevel);
   gl.uniform1f(waterU.uWaterQ, (GFX.water <= 0 ? 0.2 : 1) * (weather ? weather.waveMul : 1));   // §13.6 flatter at low quality · §20 bigger waves in wind/storm
-  gl.uniform1f(waterU.uEdgeSoft, WATER_EDGE_SOFT);   // §smoothedge2 rounded-shoreline fade width
-  gl.uniform1f(waterU.uFoamW, WATER_FOAM_WIDTH);     // §smoothedge2 foam-band width
   // snap the water sheet to the camera so wave detail stays nearby
   const wsnap = (WATER_HALF * 2) / 256;
   gl.uniform2f(waterU.uCenter, Math.round(cam.pos[0] / wsnap) * wsnap,
