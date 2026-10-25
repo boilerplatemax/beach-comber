@@ -1249,14 +1249,14 @@ updateSun();
  *   extremes; wetLevel is a lagging high-water mark that dries back.)
  * --------------------------------------------------------------------- */
 
-let TIDE_PERIOD = 600;          // seconds for a full high→low→high cycle (~10 min; slower, calmer tide)
+let TIDE_PERIOD = 720;          // seconds for a full high→low→high cycle (~12 min; slower, calmer tide)
 // §tide a gentle global trim to how far the tide rises/falls (1.0 = archetype default). The sandbar cap
 // below scales with the range, so lowering this does NOT reopen the old shoreline gaps. Tunable.
 const TIDE_RANGE_MUL = 0.85;
 let TIDE_RANGE = AP.tideRange * TIDE_RANGE_MUL;
 // §tide the rising half of the cycle takes this many times as long as the falling half (same high/low
 // levels, only the timing is reshaped). Tunable; 1.0 = symmetric.
-const TIDE_RISE_SLOW = 1.5;
+const TIDE_RISE_SLOW = 2.0;
 // §tide sandbar height is capped to this fraction of the tide range so bars always submerge at high tide,
 // keeping the water filling smoothly to the shore when the range is changed. Tunable.
 const BAR_SAFE_FRAC = 0.4;
@@ -2545,7 +2545,11 @@ float sampleH(sampler2D tex, vec2 uv) {
 void main() {
   vec2 uv = clamp((vWorld.xz + ${HALF_F}) / ${WORLD_F}, 0.0, 1.0);
   float terr = sampleH(uHeight, uv);              // §smoothline bilinear → continuous waterline, no tile steps
-  float rim = sampleH(uFilled, uv);               // §smoothline bilinear the rim DEM too, else local still steps at the open-coast line
+  float rim = texture(uFilled, uv).r;             // §smoothline NEAREST on purpose: bilinear-ing the fill-level DEM
+  // smears it up toward the land near the coast, which spikes local and paints the shallow shoreline with the
+  // DEEP water colour (a dark band) and stops it filling. In the open-water region local is just uWaterLevel, so
+  // the smooth waterline comes entirely from the bilinear terrain above; rim only matters inland (pools), where
+  // NEAREST is correct. depth below is therefore the true shallow depth again.
   float local = max(uWaterLevel, rim);
   if (terr > local - 0.02) discard;               // ground above the local surface (opaque hard edge, as before)
   float depth = local - terr;
