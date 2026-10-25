@@ -2848,6 +2848,9 @@ function groundGradient(x, z) {
 }
 // Jump feel (§6): a snappy rise under lighter gravity, a faster, heavier fall.
 const JUMP_V = 8.4, GRAVITY_UP = 24, GRAVITY_DOWN = 42, COYOTE_TIME = 0.1, JUMP_BUFFER = 0.11;
+// §nodeath master switch for every death / respawn path (big-fall fade-to-black + wake-on-land, the
+// hard-landing stamina wipe, and drowning). Off for now; flip to true to bring the old death code back.
+const DEATH_ENABLED = false;
 // §P1 vertical movement: ONE fixed-timestep simulation owns player.feetY; rendering interpolates between steps.
 const PHYS_STEP = 1 / 60;       // physics tick (s)
 const JUMP_COST = 0;            // §playtest2 jumping is free, no energy cost (walk/sprint and jump freely)
@@ -2926,13 +2929,15 @@ function landJump(g, fall) {
   camNudge = Math.max(camNudge, Math.min(0.14, 0.02 + fall * 0.01));          // a pitch nod on top
   if (onFootstep) onFootstep(surfaceType(g.h, g.slope), Math.min(1, 0.4 + fall * 0.08));   // landing thud
   if (fall > 6) camShake = Math.max(camShake, Math.min(0.3, (fall - 6) * 0.03));   // §R4 the one remaining shake: a subtle hard-landing jolt
-  if (fall > 9) { player.landStun = Math.min(0.8, (fall - 9) * 0.08);        // §15 hard landing: a stagger…
-    if (fall > 10) { stamina = 0; exhausted = true; } }                       // …that empties stamina
-  // §15 a very big fall: fade to black and wake at the base (nothing is lost)
-  if (fall > BIG_FALL && !fade.active) {
-    const base = shelterSpawn || ((lastSafe.x || lastSafe.z) ? { x: lastSafe.x, z: lastSafe.z } : { x: player.x, z: player.z });   // §16C a shelter catches big falls too
-    startFade(() => { player.x = base.x; player.z = base.z; const bh = surfaceAt(base.x, base.z).h;
-      player.feetY = bh; player.eyeY = bh + EYE; player.vy = 0; player.airborne = false; stamina = Math.max(stamina, 0.4); exhausted = false; });
+  if (fall > 9) player.landStun = Math.min(0.8, (fall - 9) * 0.08);          // §15/§nodeath hard landing: just the stagger (always)
+  if (DEATH_ENABLED) {
+    if (fall > 10) { stamina = 0; exhausted = true; }                         // (disabled) hard landing also wipes stamina
+    // (disabled) §15 a very big fall: fade to black and wake at the base (nothing is lost)
+    if (fall > BIG_FALL && !fade.active) {
+      const base = shelterSpawn || ((lastSafe.x || lastSafe.z) ? { x: lastSafe.x, z: lastSafe.z } : { x: player.x, z: player.z });   // §16C a shelter catches big falls too
+      startFade(() => { player.x = base.x; player.z = base.z; const bh = surfaceAt(base.x, base.z).h;
+        player.feetY = bh; player.eyeY = bh + EYE; player.vy = 0; player.airborne = false; stamina = Math.max(stamina, 0.4); exhausted = false; });
+    }
   }
   // landing on a too-steep slope slides you back to safe ground
   if (g.slope > SLOPE_LIMIT && lastSafe) { player.x = lastSafe.x; player.z = lastSafe.z; }
@@ -2998,7 +3003,7 @@ function swimStep(dt, right) {
   if (Math.abs(analog.x) + Math.abs(analog.y) > 0.01) { wx += right[0]*analog.x + camF[0]*analog.y; wy += camF[1]*analog.y; wz += right[2]*analog.x + camF[2]*analog.y; moving = true; }
   if (keys["Space"] || mobileSwimUp) { wy += 1; moving = true; }
   if (keys[crouchKey] || mobileSwimDown) { wy -= 1; moving = true; }
-  const diving = keys[crouchKey] || mobileSwimDown || (moving && wy < -0.05);
+  const diving = !outOfAir && (keys[crouchKey] || mobileSwimDown || (moving && wy < -0.05));   // §nodeath out of air: can't dive, you float up
   const wl = Math.hypot(wx, wy, wz);
   const tired = exhausted || stamina < 0.02;
   player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01 && !tired && !isPanelOpen();
@@ -3021,7 +3026,7 @@ function swimStep(dt, right) {
   // vertical: input + gentle buoyancy toward the surface unless actively diving; tired players can't sink fast
   const surf = waterSurfaceAt(player.x, player.z), floor = surfaceAt(player.x, player.z).h;
   let ny = player.eyeY + wy*dist;
-  if (!diving) ny += (tired ? 0.9 : 0.5) * dt;                 // bob up to the surface
+  if (!diving) ny += (outOfAir ? 2.6 : (tired ? 0.9 : 0.5)) * dt;   // §nodeath bob up; a firm, gentle rise when out of air
   ny = Math.max(floor + 0.5, Math.min(surf + 0.12, ny));
   if (ny >= surf - 0.04) ny = surf + Math.sin(clock.t*1.3 + player.x*0.1)*0.05;   // ride the surface with a bob
   player.eyeY = ny; player.feetY = ny - 1.0;
@@ -3033,11 +3038,20 @@ function swimStep(dt, right) {
 }
 function bubbleParticle(x, y, z) { if (particles.length >= 200) return;
   particles.push({ x, y, z, vx: (rng()-0.5)*0.3, vy: 1.2 + rng()*0.8, vz: (rng()-0.5)*0.3, t: 0, life: 0.8 + rng()*0.6, col: [0.8, 0.9, 0.98], rise: true }); }
-// §nodeath the player can't drown any more. Breath stays full, so running out of air never
-// kills, never fades to black, and never drops a lost-item sack. The whole drowning-death and
-// recoverable-sack system was removed; only this no-op keeps the breath value pinned full.
-let breathLow = 0;
-function updateBreath(dt) { player.breath = BREATH_MAX; breathLow = 0; }
+// §nodeath the player can't drown any more. Breath still ticks down underwater (for the HUD arc and a little
+// tension), but when it runs out the player simply, gently floats up to the surface, no fade, no item loss.
+// The old drowning-death and recoverable-sack system is gone (kept behind DEATH_ENABLED elsewhere).
+let breathLow = 0, outOfAir = false;
+function updateBreath(dt) {
+  if (infiniteBreath || !player.underwater) {                        // at/above the surface: recover air
+    player.breath = Math.min(BREATH_MAX, player.breath + dt * 8);
+    breathLow = 0; outOfAir = false;
+    return;
+  }
+  player.breath = Math.max(0, player.breath - dt);                   // submerged: air drains
+  breathLow = Math.max(0, Math.min(1, 1 - player.breath / 8));       // gentle darkening as it gets low
+  outOfAir = player.breath <= 0;                                     // swimStep reads this to buoy the player up
+}
 let heartT = 0;
 function updateSacks(dt) {}   // §nodeath drown-sacks removed
 // screen fade: to black, run mid() at the peak, then back
@@ -3935,7 +3949,10 @@ function safetyCheck(dt) {
     if (cam.pos[1] < floor) cam.pos[1] = floor;
   }
   const bad = !isFinite(cam.pos[0]) || !isFinite(cam.pos[1]) || !isFinite(cam.pos[2]) || cam.pos[1] < -40;
-  if (bad) {                                                   // teleport to safety
+  if (bad) {                                                   // §nodeath SILENT teleport to safety (no fade), and log every time it fires
+    console.warn("[safetyCheck] rescue fired: cam.pos=", cam.pos.map(n => (isFinite(n) ? +n.toFixed(2) : n)),
+      "player=", { x: +player.x.toFixed(2), z: +player.z.toFixed(2), feetY: +player.feetY.toFixed(2), vy: +player.vy.toFixed(2) },
+      "→ lastSafe=", { x: +lastSafe.x.toFixed(2), z: +lastSafe.z.toFixed(2) });
     player.x = lastSafe.x; player.z = lastSafe.z;
     player.eyeY = surfaceAt(lastSafe.x, lastSafe.z).h + EYE;
     player.feetY = surfaceAt(lastSafe.x, lastSafe.z).h; player.vy = 0; player.airborne = false;
