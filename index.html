@@ -11382,11 +11382,17 @@ function drawShovel(view) {
     world[p++] = cam.pos[1] + upy*(oy+y3) + f[1]*(oz+z3);
     world[p++] = cam.pos[2] + rz*(ox+x3) + upz*(oy+y3) + f[2]*(oz+z3);
   }
-  if (isRod) {                                                                            // §fishpolish world position of the rod TIP, so the line can start there
-    const ty = 1.62 * scale, tx2 = -ty*sr, ty2 = ty*cr, ty3 = ty2*cp, tz3 = ty2*sp2;
-    rodTipWorld[0] = cam.pos[0] + rx*(ox+tx2) + upx*(oy+ty3) + f[0]*(oz+tz3);
-    rodTipWorld[1] = cam.pos[1] + upy*(oy+ty3) + f[1]*(oz+tz3);
-    rodTipWorld[2] = cam.pos[2] + rz*(ox+tx2) + upz*(oy+ty3) + f[2]*(oz+tz3);
+  if (isRod) {
+    // §fishline the rod is drawn in this separate first-person pass, so its tip only exists in these transformed
+    // world[] verts. Take the ACTUAL tip vertex (the mesh's highest local-y point, cached once) straight from the
+    // transformed buffer, so the line always starts exactly at the drawn tip, whatever the pose/scale/sway.
+    if (fp.tipIdx === undefined) {
+      let mi = 0, my = -1e9; const sp = fp.mesh.pos;
+      for (let i = 0; i < sp.length; i += 3) if (sp[i+1] > my) { my = sp[i+1]; mi = i/3; }
+      fp.tipIdx = mi;
+    }
+    const o3 = fp.tipIdx * 3;
+    rodTipWorld[0] = world[o3]; rodTipWorld[1] = world[o3+1]; rodTipWorld[2] = world[o3+2];
   }
   propUniforms(view);
   gl.uniform1f(propU.uFogDensity, 0);                          // §13.1 no fog on the held tool
