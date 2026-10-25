@@ -3286,7 +3286,7 @@ try { rodRecord = JSON.parse(localStorage.getItem("bc_rodrec") || "{}"); } catch
 function saveRodRec() { try { localStorage.setItem("bc_rodrec", JSON.stringify(rodRecord)); } catch (e) {} }
 
 // §fishpolish bait is worms only for now (other baits removed). q = quality (0 = basic).
-const ROD_BAIT = [ ["worm", 0, "Earthworm"] ];
+const ROD_BAIT = [ ["worm", 0, "Earthworm"], ["bug", 0, "Bug"] ];   // §stonebug bugs work as bait like worms
 // §fishpolish tunables, bite timing, how a hotspot speeds it up, and how far you can wander before the cast cancels
 const BITE_MIN = 4, BITE_MAX = 40;     // seconds to a bite in plain water (wide variance)
 const HOTSPOT_BITE_MUL = 0.28;         // a hotspot cuts the wait to ~this fraction
@@ -6813,6 +6813,7 @@ const FINDS = {
   gravel:   { mesh: () => gravelMatMesh(),          base: 0.5, max: 60, label: "Gravel", desc: "Loose pebbles. Place it to build up the ground.", rare: 0 },
   mud:      { mesh: () => mudMatMesh(),             base: 0.5, max: 60, label: "Mud", desc: "Heavy, wet mud from the flats. Place it to build.", rare: 0 },
   worm:     { mesh: () => wormMesh(),               base: 0.4, max: 80, label: "Earthworm", desc: "A fat worm from the dark soil. Good bait.", rare: 0 },
+  bug:      { mesh: () => beetleMesh(),             base: 0.4, max: 80, label: "Bug", desc: "A little bug from under a stone. Good on a hook, or drop it to let it go.", rare: 0 },   // §stonebug pickable from under a lifted stone; works as fishing bait like a worm
   root:     { mesh: () => rootMesh(),               base: 0.45,max: 70, label: "Root", desc: "A knotty taproot, prised from the dirt.", rare: 0 },
   flint:    { mesh: () => flintMesh(),              base: 0.4, max: 70, label: "Flint", desc: "A dark, sharp-edged nodule.", rare: 0 },
   driftwood:{ mesh: () => driftwoodMesh(),          base: 0.6, max: 50, label: "Driftwood", desc: "Grey, sea-worn and sun-bleached.", rare: 0 },
@@ -7701,7 +7702,6 @@ function drawLife(view) {
     let n = 0;
     for (const e of life) {
       if (!filter(e)) continue;
-      if (e.t === "pillbug" && (e.curl||0) > 0.5) continue;   // §weak7 curled pill bugs are drawn as a ball in their own pass
       if (e.fade !== undefined) continue;                // §urgent5 fading corpses are drawn separately (with the dissolve)
       const dx = e.x - px, dz = e.z - pz; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
       if (forceSpawn ? false : !lifeVisible(e)) continue;
@@ -7762,22 +7762,7 @@ function drawLife(view) {
   };
   for (const k in CREATURES) drawType(k, CREATURES[k], (e) => e.kind === "creature" && e.t === k);
   for (const k in FINDS) drawType(k, FINDS[k], (e) => e.kind === "find" && e.t === k);
-  // §weak7 curled pill bugs: drawn as a tight armoured ball
-  { if (!pillbugBallDyn) pillbugBallDyn = makeDynamic(pillbugBallMesh(), 48);
-    let n = 0;
-    for (const e of life) {
-      if (e.kind !== "creature" || e.t !== "pillbug" || (e.curl||0) <= 0.5 || e.fade !== undefined) continue;
-      const dx = e.x - px, dz = e.z - pz; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
-      if (forceSpawn ? false : !lifeVisible(e)) continue; if (n >= 48) break;
-      const g = heightAt(e.x, e.z), o = n*10, y = g - Math.min(1,(e.burrow||0))*0.55 + 0.05;
-      lifeScratch[o]=e.x; lifeScratch[o+1]=y; lifeScratch[o+2]=e.z;
-      lifeScratch[o+3]=e.scale; lifeScratch[o+4]=e.yaw; lifeScratch[o+5]=0; lifeScratch[o+6]=0;
-      lifeScratch[o+7]=e.tint[0]; lifeScratch[o+8]=e.tint[1]; lifeScratch[o+9]=e.tint[2];
-      if (e.hurtT > 0) { const h = e.hurtT/0.32; lifeScratch[o+7]=e.tint[0]*(1-h)+h; lifeScratch[o+8]=e.tint[1]*(1-h)+0.3*h; lifeScratch[o+9]=e.tint[2]*(1-h)+0.3*h; }
-      n++;
-    }
-    if (n) pillbugBallDyn.draw(lifeScratch, n);
-  }
+  // §stonebug pill bug no longer curls into a ball, it draws like any other land bug
   // §urgent5 fade pass: each fading corpse drawn on its own with a dither-dissolve amount (no shrink)
   for (const e of life) {
     if (e.kind !== "creature" || e.fade === undefined) continue;
@@ -8185,6 +8170,7 @@ function updateAutoPickup() {
 
 let worldDrops = [];
 function dropItemWorld(id, qty) {
+  if (id === "bug") { releaseBugs(qty); return; }   // §stonebug a dropped bug is let go as a live bug, not a static drop
   if (!FINDS[id]) return;                       // only items with an in-world mesh can be dropped
   const fx = Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);
   for (let k = 0; k < qty && k < 30; k++) {
@@ -8986,7 +8972,7 @@ function targetAlongRay(r, sticky) {
   if (typeof tallGrass !== "undefined") for (const g of tallGrass) if (!g.cut) sphere(g, "tallgrass", g.x, g.z, 0.4*g.scale, 0.7*g.scale);   // §veg5 strip tall grass for fibre
   for (const sw of seaweedBeds) if (sw.ripe) sphere(sw, "seaweed", sw.x, sw.z, 0.6*sw.scale, 0.9*sw.scale);   // §17.2 pick sea lettuce
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
-  for (const s of weakStones) if (!s.broken) sphere(s, "weakstone", s.x, s.z, 0.4*s.sc, 0.55 + s.sc*0.4);   // §weak7 break a weak stone with any item
+  for (const s of weakStones) if (!s.lifted && !s.lift) sphere(s, "weakstone", s.x, s.z, 0.4*s.sc, 0.55 + s.sc*0.4);   // §stonebug lift a dome stone with any item (already-lifted ones aren't targetable)
   // §heave-removed: heave boulders are no longer targetable
   if (typeof oysterBeds !== "undefined") for (const b of oysterBeds) if (oysterBedExposed(b)) sphere(b, "oysterbed", b.x, b.z, 0.5*b.sc, 0.75);   // §23 oyster beds bared at low tide
   if (typeof geodes !== "undefined") for (const g of geodes) if (!g.taken) sphere(g, "geode", g.x, g.z, 0.4*g.sc, 0.5 + g.sc*0.4);   // §40 geodes to crack with a pickaxe (cracked ones stay targetable so the halves can be picked up, §A3)
@@ -9031,12 +9017,13 @@ function useToolOnTarget(t) {
   switch (t.kind) {
     case "creature": if (t.obj.t === "horseshoe" && t.obj.stranded) { flipHorseshoe(t.obj); return true; }      // §41 turn a stranded horseshoe crab back over (by the shell, always)
       if (tool === "bucket" && bucketScoop(t.obj)) return true;                                 // bucket scoops; otherwise any item hits it
-      if (CREATURES[t.obj.t] && CREATURES[t.obj.t].stoneCritter) { inspectCritter(t.obj); return true; }        // §21C stone critters: inspect to discover (land = look only)
+      if (STONE_BUGS.indexOf(t.obj.t) >= 0) { pickBug(t.obj); return true; }                                   // §stonebug pick a land bug up into the pack (works as bait)
+      if (CREATURES[t.obj.t] && CREATURES[t.obj.t].stoneCritter) { inspectCritter(t.obj); return true; }        // §21C other stone critters: inspect to discover (look only)
       if (t.obj.stranded) { interactWith(t.obj); return true; }                                                // a stranded star is still picked up by hand
       genericHitCreature(t.obj); return true;
     case "find": interactWith(t.obj); return true;
     case "rubble": pickRubble(t.obj); return true;
-    case "weakstone": breakWeakStone(t.obj); return true;   // §weak7 any item breaks it in one hit
+    case "weakstone": liftStone(t.obj); return true;   // §stonebug lift and roll the dome stone aside
     case "heaveboulder": return heaveBoulderAction(t.obj);   // §21D lever a heavy boulder over (shovel)
     case "oysterbed": return oysterBedAction(t.obj);   // §23 pick & shuck an oyster at low tide
     case "geode": return geodeAction(t.obj);   // §40 crack a geode open with a pickaxe
@@ -11829,24 +11816,33 @@ const palmScratch = new Float32Array(48*10), pineScratch = new Float32Array(48*1
 // §weak7 WEAK STONES (replaces stone flipping). Small crumbly, slightly-cracked stones on beaches and the
 // forest floor. ANY item breaks one in a SINGLE hit; sometimes a Stone drops, sometimes a critter scurries
 // out from underneath. A broken spot grows a fresh stone again after a while, only while it's out of view.
-const WEAK_STONE_N = 120;                  // stones scattered per island (tunable)
-const WEAK_REGROW_MIN = 0.6, WEAK_REGROW_MAX = 1.4;   // in-game days before a broken spot grows a new stone
-const WEAK_CRITTER_P = 0.42;               // chance a critter scurries out when broken (tunable)
-const WEAK_STONE_DROP_P = 0.55;            // chance a Stone drops when broken (tunable)
-const WEAK_CRITTER_SCALE = 3.0;            // critters from weak stones are scaled up this much so they're easy to see
+const WEAK_STONE_N = 120;                  // dome stones scattered per island (tunable)
+const WEAK_REGROW_MIN = 0.6, WEAK_REGROW_MAX = 1.4;   // in-game days before a lifted stone settles back (out of view)
+const STONE_BUG_P = 0.5;                   // §stonebug chance a bug is hiding under a lifted stone (tunable)
+const STONE_BUGS = ["pillbug", "beetle", "centipede", "slug"];   // §stonebug the land bugs that hide under stones (pickable as bait)
+const WEAK_CRITTER_SCALE = 3.0;            // bugs are scaled up this much so they're easy to see / click
 let weakStones = [], weakStoneDyn = null;
 const weakScratch = new Float32Array(WEAK_STONE_N * 10);
 function weakStoneMesh() {
-  // a small, irregular, slightly-cracked cobble: a low domed lump split by a dark crack line
-  const m = Mesh(); const st = [0.54,0.51,0.46], st2 = [0.47,0.45,0.41], crack = [0.24,0.23,0.21];
-  const R = 0.42, sides = 7, rr = [], hh = [];
-  for (let i=0;i<sides;i++) { rr.push(R*(0.76 + 0.36*Math.abs(Math.sin(i*2.7+1)))); hh.push(0.24 + 0.05*Math.sin(i*1.9)); }
-  for (let i=0;i<sides;i++){ const a0=i/sides*6.2832, a1=(i+1)/sides*6.2832, r0=rr[i], r1=rr[(i+1)%sides];
-    mTri(m, [0,0.3,0], [Math.cos(a0)*r0,0.04,Math.sin(a0)*r0], [Math.cos(a1)*r1,0.04,Math.sin(a1)*r1], i%2?st:st2);   // domed top
-    mTri(m, [0,0,0], [Math.cos(a1)*r1,0.04,Math.sin(a1)*r1], [Math.cos(a0)*r0,0.04,Math.sin(a0)*r0], st2); }          // underside
-  // a jagged crack across the top so it reads as weak/crumbly
-  mTri(m, [-R*0.55,0.26,0.04], [R*0.5,0.28,-0.03], [0.03,0.31,-0.07], crack);
-  mTri(m, [-R*0.3,0.28,-0.05], [R*0.35,0.26,0.05], [0.0,0.3,0.0], crack);
+  // §stonebug a small low-poly half-sphere dome: instantly recognisable as a liftable stone
+  const m = Mesh(); const st = [0.55,0.52,0.47], st2 = [0.48,0.46,0.42];
+  const R = 0.4, H = 0.3, seg = 9, rings = 3;
+  for (let ri = 0; ri < rings; ri++) {
+    const t0 = ri/rings, t1 = (ri+1)/rings;
+    const y0 = Math.sin(t0*Math.PI/2)*H, y1 = Math.sin(t1*Math.PI/2)*H;
+    const r0 = Math.cos(t0*Math.PI/2)*R, r1 = Math.cos(t1*Math.PI/2)*R;
+    for (let i = 0; i < seg; i++) {
+      const a0 = i/seg*6.2832, a1 = (i+1)/seg*6.2832, c = (ri+i)%2 ? st : st2;
+      const A=[Math.cos(a0)*r0,y0,Math.sin(a0)*r0], B=[Math.cos(a1)*r0,y0,Math.sin(a1)*r0];
+      const C=[Math.cos(a0)*r1,y1,Math.sin(a0)*r1], D=[Math.cos(a1)*r1,y1,Math.sin(a1)*r1];
+      mTri(m, A, C, B, c);                               // fan to the apex on the top ring, quad below
+      if (ri < rings-1) mTri(m, B, C, D, c);
+    }
+  }
+  for (let i = 0; i < seg; i++) {                        // flat underside
+    const a0 = i/seg*6.2832, a1 = (i+1)/seg*6.2832;
+    mTri(m, [0,0,0], [Math.cos(a1)*R,0,Math.sin(a1)*R], [Math.cos(a0)*R,0,Math.sin(a0)*R], st2);
+  }
   return m;
 }
 function seedWeakStones() {
@@ -11862,48 +11858,72 @@ function seedWeakStones() {
     else if (depth < 0.03 && h > waterLevel+0.4) biome = "forest";       // inland dry ground / stream banks / forest floor
     if (!biome) continue;
     if (biome === "beach") { if (beach >= WEAK_STONE_N*0.6) continue; beach++; } else { if (forest >= WEAK_STONE_N*0.5) continue; forest++; }
-    weakStones.push({ x, z, yaw: rng()*6.283, sc: 0.7+rng()*0.5, biome, broken: false, regrowAt: 0 });
+    weakStones.push({ x, z, yaw: rng()*6.283, sc: 0.7+rng()*0.5, biome, lifted: false, lift: 0, rollDir: 0, regrowAt: 0 });
   }
 }
 // a critter scurries out from under a broken stone — one of the three weak-stone critters, scaled up so it's easy to see
-function spawnStoneCritters(s) {
-  const pool = (s.biome === "beach") ? ["crab","pillbug","beetle"] : ["pillbug","beetle"];   // shore crabs on the beach; bugs everywhere
-  const t = pool[(rng()*pool.length)|0]; if (!CREATURES[t]) return;
-  const e = spawnCreature(t, s.x+(rng()-0.5)*0.3, s.z+(rng()-0.5)*0.3, { hx: s.x, hz: s.z, hr: 6, fromStone: true, scatterUntil: clock.t + 2.6, homeStone: s });
+// §stonebug reveal a bug hiding under a lifted stone, scaled up so it's easy to see / click as bait
+function revealBug(s) {
+  const t = STONE_BUGS[(rng()*STONE_BUGS.length)|0]; if (!CREATURES[t]) return;
+  const e = spawnCreature(t, s.x+(rng()-0.5)*0.3, s.z+(rng()-0.5)*0.3, { hx: s.x, hz: s.z, hr: 6, fromStone: true, scatterUntil: clock.t + 2.2, homeStone: s });
   e.scale = CREATURES[t].base * WEAK_CRITTER_SCALE * (0.9 + rng()*0.2);
   if (typeof sparkle === "function") sparkle(s.x, surfaceAt(s.x,s.z).h+0.2, s.z, [0.5,0.45,0.4], 4);
 }
-function breakWeakStone(s) {
-  if (s.broken) return;
-  if (Math.hypot(s.x - player.x, s.z - player.z) > REACH + 1.2) return;
+// §stonebug clicking a dome stone LIFTS it and rolls it aside (it never breaks, never goes to the pack); sometimes a bug is underneath
+function liftStone(s) {
+  if (s.lifted || s.lift) return;
+  if (Math.hypot(s.x - player.x, s.z - player.z) - (0.5 + s.sc*0.4) > REACH + 0.3) return;   // §tool-reach measure to the stone's surface
   if (player.airborne) return;
-  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
-  shovelSwing = 1; camNudge = 0.04; spendStamina(MINE_COST*0.55, true); rootPlayer(); if (onDig) onDig("mine");   // §weak7 one hit, any item
-  const gy = surfaceAt(s.x, s.z).h;
-  spawnSand(s.x, gy + 0.12, s.z, 10, [0.5,0.48,0.46]);                   // rock chips
-  s.broken = true; s.regrowAt = tideDay + WEAK_REGROW_MIN + rng()*(WEAK_REGROW_MAX-WEAK_REGROW_MIN);
-  if (rng() < WEAK_STONE_DROP_P) dropRubble(s.x+(rng()-0.5)*0.6, s.z+(rng()-0.5)*0.6, 0.4+rng()*0.3);   // sometimes a Stone (pick the rubble up)
-  if (rng() < WEAK_CRITTER_P) spawnStoneCritters(s);                     // sometimes a critter scurries out
+  s.rollDir = Math.atan2(s.z - player.z, s.x - player.x);   // roll away from the player
+  s.lift = 0.0001;                                          // start the roll-aside animation
+  s.regrowAt = tideDay + WEAK_REGROW_MIN + rng()*(WEAK_REGROW_MAX-WEAK_REGROW_MIN);
+  shovelSwing = Math.max(shovelSwing, 0.4); camNudge = 0.03; if (onDig) onDig("thud");   // a light lift, no stamina
+  const gy = surfaceAt(s.x, s.z).h; spawnSand(s.x, gy + 0.08, s.z, 6, [0.5,0.48,0.46]);
+  if (rng() < STONE_BUG_P) revealBug(s);                    // sometimes a bug is hiding under it
   if (typeof checkSets === "function") checkSets();
 }
 function updateWeakStones(dt) {
-  // a broken spot grows a fresh weak stone again, but only while it's well out of view
   for (const s of weakStones) {
-    if (s.broken && tideDay >= s.regrowAt && Math.hypot(s.x-cam.pos[0], s.z-cam.pos[2]) > 48 && (typeof onScreenPoint !== "function" || !onScreenPoint(s.x, s.z)))
-      s.broken = false;
+    if (s.lift && s.lift < 1) { s.lift = Math.min(1, s.lift + dt*2.4); if (s.lift >= 1) s.lifted = true; }   // roll-aside anim
+    // a lifted stone quietly settles back (a fresh one) only while it is well out of view
+    if (s.lifted && tideDay >= s.regrowAt && Math.hypot(s.x-cam.pos[0], s.z-cam.pos[2]) > 48 && (typeof onScreenPoint !== "function" || !onScreenPoint(s.x, s.z)))
+      { s.lifted = false; s.lift = 0; s.regrowAt = 0; }
   }
 }
 function drawWeakStones(view) {
   if (!weakStones.length) return;
   if (!weakStoneDyn) weakStoneDyn = makeDynamic(weakStoneMesh(), WEAK_STONE_N);
   propUniforms(view); let n = 0;
-  for (const s of weakStones) { if (s.broken) continue; const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R || n >= WEAK_STONE_N) continue;
-    const gy = surfaceAt(s.x, s.z).h, o = n*10;
-    weakScratch[o]=s.x;weakScratch[o+1]=gy-0.03;weakScratch[o+2]=s.z;weakScratch[o+3]=s.sc;weakScratch[o+4]=s.yaw;weakScratch[o+5]=0;weakScratch[o+6]=0;weakScratch[o+7]=1;weakScratch[o+8]=1;weakScratch[o+9]=1; n++;
+  for (const s of weakStones) { const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R || n >= WEAK_STONE_N) continue;
+    const roll = s.lift || 0, off = roll * (0.5 + s.sc*0.4);                 // §stonebug lifted stones roll aside and tip over
+    const px = s.x + Math.cos(s.rollDir||0)*off, pz = s.z + Math.sin(s.rollDir||0)*off;
+    const gy = surfaceAt(px, pz).h, o = n*10;
+    weakScratch[o]=px;weakScratch[o+1]=gy-0.03+roll*0.06;weakScratch[o+2]=pz;weakScratch[o+3]=s.sc;weakScratch[o+4]=s.yaw;weakScratch[o+5]=roll*1.5;weakScratch[o+6]=(s.rollDir||0);weakScratch[o+7]=1;weakScratch[o+8]=1;weakScratch[o+9]=1; n++;
   }
   if (n) weakStoneDyn.draw(weakScratch, n);
 }
-function weakStonePrompt(s) { return (IS_TOUCH ? "tap" : "click") + " to break the stone"; }
+function weakStonePrompt(s) { return (IS_TOUCH ? "tap" : "click") + " to lift the stone"; }
+// §stonebug pick a live bug up into the pack (as a "bug" bait item), removing the creature
+function pickBug(e) {
+  const added = Inv.add("bug", 1);
+  if (added <= 0) { showCard("Pack full", "No room for the bug."); if (typeof bagShake === "function") bagShake(); return; }
+  const first = !discovered.has("f_bug"); discovered.add("f_bug"); discovered.add(e.t);
+  if (typeof notify === "function") notify("bug", 1, first);
+  if (typeof SND !== "undefined") SND.play("pickup");
+  const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
+  if (typeof checkSets === "function") checkSets();
+}
+// §stonebug dropping a "bug" item releases live bugs back into the world instead of a static drop
+function releaseBugs(qty) {
+  const fx = Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);
+  for (let k = 0; k < qty && k < 12; k++) {
+    const a = rng()*6.283, r = 0.6 + rng()*1.0, x = player.x + fx*1.6 + Math.cos(a)*r, z = player.z + fz*1.6 + Math.sin(a)*r;
+    const t = STONE_BUGS[(rng()*STONE_BUGS.length)|0]; if (!CREATURES[t]) continue;
+    const e = spawnCreature(t, x, z, { hx: x, hz: z, hr: 5, scatterUntil: clock.t + 0.8 });
+    e.scale = CREATURES[t].base * WEAK_CRITTER_SCALE * (0.9 + rng()*0.2);
+  }
+  if (typeof SND !== "undefined") SND.play("plop");
+}
 // §21C which critters hide under a stone, by biome
 function stoneCritterPool(biome) {
   return biome === "forest"
@@ -11916,11 +11936,7 @@ function behaveStoneCritter(e, dt, d, dx, dz) {
   // --- freshly out from under a broken stone: its signature reaction, then it scatters to cover ---
   if (e.fromStone) {
     e.emerge = (e.emerge || 0) + dt;
-    if (e.t === "pillbug") {                              // PILL BUG: rolls into a tight ball when you're close, uncurls once you back off
-      const near = d < 3.4;
-      e.curl = near ? Math.min(1, (e.curl||0)+dt*4.5) : Math.max(0, (e.curl||0)-dt*3);
-      if (e.curl > 0.5) { e.cdState = "ball"; return; }   // a frozen armoured ball: it doesn't move
-    } else if (e.t === "beetle") {                        // BEETLE: flips onto its back and kicks its legs, then rights itself and runs
+    if (e.t === "beetle") {                               // BEETLE: flips onto its back and kicks its legs, then rights itself and runs
       if (e.onBack === undefined) e.onBack = 1;
       if (e.onBack) { e.legPhase = (e.legPhase||0) + dt*16; e.backT = (e.backT||0) + dt;
         if (e.backT > 1.3) e.onBack = 0;                  // rights itself
@@ -11945,7 +11961,7 @@ function behaveStoneCritter(e, dt, d, dx, dz) {
   if (e.seekCover) {
     e.coverT = (e.coverT||0) + dt;
     let cover = null, cd = 6;
-    if (typeof weakStones !== "undefined") for (const s of weakStones) { if (s.broken) continue; const q = Math.hypot(s.x-e.x, s.z-e.z); if (q < cd) { cd = q; cover = s; } }
+    if (typeof weakStones !== "undefined") for (const s of weakStones) { if (s.lifted || s.lift) continue; const q = Math.hypot(s.x-e.x, s.z-e.z); if (q < cd) { cd = q; cover = s; } }
     if (!e.digging && cover && cd > 0.4) {                // head for a stone to tuck under
       const ax = cover.x-e.x, az = cover.z-e.z, aa = Math.hypot(ax,az) || 1;
       e.x += ax/aa*dt*1.4; e.z += az/aa*dt*1.4; e.yaw = Math.atan2(az,ax); e.cdState = "cover";
@@ -11961,8 +11977,7 @@ function behaveStoneCritter(e, dt, d, dx, dz) {
     return;
   }
   // --- settled stone critter (legacy / not actively spawned now): gentle wander, curl or flee when crowded ---
-  if (e.t === "pillbug") { e.curl = (d < 2.2) ? Math.min(1, (e.curl||0)+dt*5) : Math.max(0, (e.curl||0)-dt*2.5); if (e.curl > 0.5) { e.cdState = "ball"; return; } }
-  if (d < 3) { const a = Math.atan2(e.z-player.z, e.x-player.x); e.x += Math.cos(a)*dt*1.2; e.z += Math.sin(a)*dt*1.2; e.yaw = a; e.cdState = "flee"; return; }
+  if (d < 3) { const a = Math.atan2(e.z-player.z, e.x-player.x); e.x += Math.cos(a)*dt*1.2; e.z += Math.sin(a)*dt*1.2; e.yaw = a; e.cdState = "flee"; return; }   // §stonebug pill bug no longer curls, it just walks / flees
   e.timer -= dt; if (e.timer < 0) { e.timer = 1+rng()*2; e.vx = (rng()-0.5); e.vz = (rng()-0.5); }
   e.x += e.vx*dt*0.5; e.z += e.vz*dt*0.5; e.yaw = Math.atan2(e.vz,e.vx);
   if (Math.hypot(e.x-e.hx, e.z-e.hz) > (e.hr||5)) { e.vx = (e.hx-e.x)*0.1; e.vz = (e.hz-e.z)*0.1; }
