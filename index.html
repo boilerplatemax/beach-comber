@@ -2799,7 +2799,10 @@ function camForward() {
 
 const EYE = 1.7;             // eye height above the ground
 // §foot stride lengths: one footstep (and one head-bob) per this many metres travelled (tunable)
-const STRIDE_WALK = 0.7, STRIDE_SPRINT = 1.1, STRIDE_SCRAMBLE = 1.3;
+// §foot2 stride length = metres per footstep (and per head-bob). ROOT CAUSE of the machine-gun steps: the map
+// speed is high (WALK_SPEED 9.5 m/s), so the old 0.7 m stride fired ~13 steps/sec. Size the stride from the
+// real speed to hit a human cadence: walk ≈ 1.8 steps/sec (9.5/1.8), sprint ≈ 2.6 (9.5*1.8 / 2.6). Tunable.
+let STRIDE_WALK = 5.3, STRIDE_SPRINT = 6.6, STRIDE_SCRAMBLE = 4.5;
 const WALK_SPEED = 9.5;      // units / second (vast map, so not too slow)
 const SPRINT = 1.8;          // sprint multiplier
 // §slope5 steep ground is now WALKABLE, just slower, down to a trudge. Only near-vertical faces block you.
@@ -4013,6 +4016,8 @@ function surfaceType(h, slope) {
 // Footstep hook: audio wires into this later. Called once per footfall.
 let onFootstep = null;   // (surfaceType, strength) => {}
 let _stepPhase = 0;
+let _stepLog = [];       // §foot2 timestamps of recent footfalls, for the debug steps/sec readout
+function stepsPerSec() { const t = (typeof clock !== "undefined" ? clock.t : 0); while (_stepLog.length && t - _stepLog[0] > 1) _stepLog.shift(); return _stepLog.length; }
 
 /* --------------------------------------------------------------------- *
  * § COLLISION  (circle colliders, trunks, boulders, POIs, in a spatial
@@ -8662,6 +8667,10 @@ function syncDebugPanel() {
     <label>Jump/stand limit <b class="tvs" data-sk="limit">${(SLOPE_LIMIT*180/Math.PI).toFixed(0)}°</b> <input class="dbgslope" data-sk="limit" type="range" min="40" max="85" step="1" value="${(SLOPE_LIMIT*180/Math.PI).toFixed(0)}"></label>
     <label>Trudge min speed <b class="tvs" data-sk="trudge">${SLOPE_TRUDGE.toFixed(2)}</b> <input class="dbgslope" data-sk="trudge" type="range" min="0.02" max="0.5" step="0.01" value="${SLOPE_TRUDGE}"></label>
     <label>Sprint max grade <b class="tvs" data-sk="sprint">${(SPRINT_SLOPE_MAX*180/Math.PI).toFixed(0)}°</b> <input class="dbgslope" data-sk="sprint" type="range" min="10" max="45" step="1" value="${(SPRINT_SLOPE_MAX*180/Math.PI).toFixed(0)}"></label>
+    <h3>Footsteps</h3>
+    <div class="jhint" id="dbgStepRate" style="margin-bottom:4px">steps/sec: 0</div>
+    <label>Walk stride <b class="tvs" data-fk="walk">${STRIDE_WALK.toFixed(1)}m</b> <input class="dbgstride" data-fk="walk" type="range" min="1" max="10" step="0.1" value="${STRIDE_WALK}"></label>
+    <label>Sprint stride <b class="tvs" data-fk="sprint">${STRIDE_SPRINT.toFixed(1)}m</b> <input class="dbgstride" data-fk="sprint" type="range" min="1" max="12" step="0.1" value="${STRIDE_SPRINT}"></label>
     <h3>Camera (jump-snap hunt)</h3>
     <div class="dbgrow"><button id="dbgCamRaw" style="${camFx.raw?'background:#b5503a':''}">Raw camera: ${camFx.raw?"ON":"off"}</button><button id="dbgYG">Y graph (Y)</button></div>
     <div class="dbgrow">
@@ -8701,6 +8710,11 @@ function syncDebugPanel() {
     const k = el.dataset.sk, v = +e.target.value, rad = v * Math.PI / 180;
     if (k === "easy") SLOPE_EASY = rad; else if (k === "block") { SLOPE_BLOCK = rad; SLOPE_IMPASS = rad; } else if (k === "limit") SLOPE_LIMIT = rad; else if (k === "trudge") SLOPE_TRUDGE = v; else if (k === "sprint") SPRINT_SLOPE_MAX = rad;
     const b = p.querySelector(`.tvs[data-sk="${k}"]`); if (b) b.textContent = k === "trudge" ? v.toFixed(2) : v + "°";
+  });
+  p.querySelectorAll(".dbgstride").forEach((el) => el.oninput = (e) => {   // §foot2 live stride lengths (steps per metre)
+    const k = el.dataset.fk, v = +e.target.value;
+    if (k === "walk") STRIDE_WALK = v; else if (k === "sprint") STRIDE_SPRINT = v;
+    const b = p.querySelector(`.tvs[data-fk="${k}"]`); if (b) b.textContent = v.toFixed(1) + "m";
   });
   p.querySelector("#dbgHints").onclick = () => { hintsOn = !hintsOn; saveHints(); syncDebugPanel(); };
   p.querySelector("#dbgResetHints").onclick = () => { resetHints(); syncDebugPanel(); };
@@ -14614,6 +14628,7 @@ function frame(now) {
       player.bob += dist * (Math.PI / strideLen);
       if (Math.floor(player.bob / Math.PI) !== Math.floor(prevBob / Math.PI)) {
         if (onFootstep) onFootstep(surfaceType(here.h, here.slope), scrambleTarget > 0.5 ? 1 : (player.sprinting ? 0.9 : 0.55));
+        _stepLog.push(clock.t);   // §foot2 for the debug steps/sec readout
       }
     }
     player.scramble += (scrambleTarget - player.scramble) * Math.min(1, dt * 4);
@@ -14984,6 +14999,7 @@ function frame(now) {
     else if (fpsEl.style.display !== "none") fpsEl.style.display = "none";
   }
 
+  if (debugMode) { const sr = document.getElementById("dbgStepRate"); if (sr) sr.textContent = `steps/sec: ${stepsPerSec()}  (${player.sprinting ? "sprinting" : "walking"})`; }   // §foot2 live cadence readout
   if (debugOn) {
     dbgEl.style.display = "block";
     dbgEl.textContent =
@@ -14992,7 +15008,7 @@ function frame(now) {
       `tris  ${(frameTris / 1000).toFixed(0)}k\n` +
       `res   ${fbo.w}x${fbo.h}\n` +
       `pos   ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}\n` +
-      `slope ${_curSlopeDeg.toFixed(0)}°  spd ×${_curSpeedMul.toFixed(2)}${player.sprinting ? " sprint" : ""}\n` +
+      `slope ${_curSlopeDeg.toFixed(0)}°  spd ×${_curSpeedMul.toFixed(2)}${player.sprinting ? " sprint" : ""}  steps ${stepsPerSec()}/s\n` +
       `audio ${SND.ctx ? SND.ctx.state : "not started"}${SND.muted ? " muted" : ""}  vox ${SND.ctx ? SND.activeVoices() : 0}\n` +
       `  bus m${SND.vol.master.toFixed(2)} s${SND.vol.sfx.toFixed(2)} a${SND.vol.ambience.toFixed(2)} u${SND.vol.ui.toFixed(2)}\n` +
       `fish  ${rod.state}${rod.fish ? " " + rod.fish.species + (rod.fish.weight ? " " + rod.fish.weight + "kg" : "") : ""}${rod.fight ? " p" + rod.fight.progress.toFixed(2) + " t" + rod.fight.tension.toFixed(2) + " s" + rod.fight.strain.toFixed(2) : ""}  ${fishForceBite ? "[forceBite]" : ""}${fishOddsLog ? "[odds]" : ""}`;
