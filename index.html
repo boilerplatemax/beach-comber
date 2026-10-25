@@ -2979,61 +2979,13 @@ function swimStep(dt, right) {
 }
 function bubbleParticle(x, y, z) { if (particles.length >= 200) return;
   particles.push({ x, y, z, vx: (rng()-0.5)*0.3, vy: 1.2 + rng()*0.8, vz: (rng()-0.5)*0.3, t: 0, life: 0.8 + rng()*0.6, col: [0.8, 0.9, 0.98], rise: true }); }
-// §14A breath: drains underwater, refills fast at the surface; zero → drown.
-let breathLow = 0;   // 0..1 how urgent (for vignette / heartbeat), smoothed
-function updateBreath(dt) {
-  if (player.swimming && player.underwater) {
-    if (!infiniteBreath) player.breath = Math.max(0, player.breath - dt);
-    if (player.breath <= 0 && !fade.active) drown();
-  } else {
-    player.breath = Math.min(BREATH_MAX, player.breath + dt*5);
-  }
-  const urgency = player.swimming && player.underwater ? Math.max(0, 1 - player.breath/12) : 0;
-  breathLow += (urgency - breathLow) * Math.min(1, dt*3);
-  if (breathLow > 0.25) { heartT -= dt; if (heartT <= 0) { heartT = 0.9 - breathLow*0.4; if (onHeartbeat) onHeartbeat(breathLow); } }
-}
+// §nodeath the player can't drown any more. Breath stays full, so running out of air never
+// kills, never fades to black, and never drops a lost-item sack. The whole drowning-death and
+// recoverable-sack system was removed; only this no-op keeps the breath value pinned full.
+let breathLow = 0;
+function updateBreath(dt) { player.breath = BREATH_MAX; breathLow = 0; }
 let heartT = 0;
-// §14A sacks of items dropped on drowning, recoverable, and wash ashore after a few days.
-let sacks = [];
-function makeDrownSack(x, z) {
-  const items = {};
-  const take = (cell) => { if (!cell) return 0; const it = ITEMS[cell.id];
-    if (!it || it.category === "tool" || NEVER_LOST[cell.id]) return 0;
-    const q = Math.round(cell.qty * DROWN_LOSS); if (q <= 0) return 0;
-    items[cell.id] = (items[cell.id] || 0) + q; cell.qty -= q; return q; };
-  for (let i = 0; i < INV_SLOTS; i++) { const c = Inv.main[i]; if (c) { take(c); if (c.qty <= 0) Inv.setCell(i, null); } }
-  for (let i = 0; i < Inv.hotbar.length; i++) { const c = Inv.hotbar[i]; if (c) { take(c); if (c.qty <= 0) Inv.hotbar[i] = null; } }
-  if (Object.keys(items).length) sacks.push({ x, z, items, washUpAt: clock.t + 3*DAY_PERIOD, onShore: false, bob: rng()*6.28 });
-  Inv.emit();
-}
-function updateSacks(dt) {
-  for (let i = sacks.length - 1; i >= 0; i--) { const s = sacks[i];
-    if (!s.onShore && clock.t >= s.washUpAt) {                 // wash it up onto the nearest beach
-      const a = Math.atan2(s.x, -s.z); for (let rr = HALF*0.95; rr > 4; rr -= 2) { const bx = Math.sin(a)*rr, bz = -Math.cos(a)*rr; if (heightAt(bx,bz) > 1.5 && heightAt(bx,bz) < 4) { s.x = bx; s.z = bz; break; } }
-      s.onShore = true;
-    }
-    if (Math.hypot(s.x - player.x, s.z - player.z) < 2.6) {     // walk / swim over it to recover
-      for (const id in s.items) Inv.add(id, s.items[id]);
-      showCard("Recovered your things", "Your lost sack is back in your satchel.");
-      if (onSplash) onSplash(); sacks.splice(i, 1); Inv.emit();
-    }
-  }
-}
-// §14A drowning: fade to black, drop a sack, wake on the nearest safe shore. Bucket creatures go free.
-function drown() {
-  startFade(() => {
-    makeDrownSack(player.x, player.z);
-    if (bucket.creatures.length) { bucket.creatures = []; bucket.water = true; }   // creatures released to the sea
-    const s = shelterSpawn || ((lastSafe.x || lastSafe.z) ? { x: lastSafe.x, z: lastSafe.z } : findSpawn());   // §16C wake at your shelter if set
-    player.x = s.x; player.z = s.z;
-    stopSwim();
-    const g = surfaceAt(s.x, s.z).h; player.feetY = g; player.eyeY = g + EYE; player.vy = 0; player.airborne = false;
-    player.breath = BREATH_MAX; breathLow = 0;
-    stamina = Math.max(stamina, 0.5); exhausted = false;
-    cam.pitch = -0.04;
-  });
-  if (onDrown) onDrown();
-}
+function updateSacks(dt) {}   // §nodeath drown-sacks removed
 // screen fade: to black, run mid() at the peak, then back
 const fade = { active: false, t: 0, dur: 1.4, mid: null, fired: false };
 function startFade(mid) { fade.active = true; fade.t = 0; fade.mid = mid; fade.fired = false; }
@@ -4012,8 +3964,9 @@ const GFX_PRESETS = {
 };
 const GFX_CUSTOM_KEYS = ["resScale","dither","quantize","fog","propDist","foliage","water","shadows","aa","simRadius","dprCap","fpsCap"];
 // device-based default (computed here; IS_TOUCH's const is declared a little further down, so avoid its TDZ)
-const _gfxDefault = (matchMedia("(pointer: coarse)").matches || navigator.maxTouchPoints > 0) ? "low" : "high";
+const _gfxDefault = "medium";   // §settings first-load graphics preset defaults to Medium
 let GFX = { preset: _gfxDefault, ...GFX_PRESETS[_gfxDefault], ssaa: 1.4 };
+GFX.water = 0;                  // §settings water quality OFF by default (the shiny reflections are too much); toggle it on in Settings
 try { const s = JSON.parse(localStorage.getItem("bc_gfx") || "null");
   if (s && s.preset) { GFX.preset = s.preset; if (s.preset === "custom") for (const k of GFX_CUSTOM_KEYS) { if (s[k] !== undefined) GFX[k] = s[k]; }
     else Object.assign(GFX, GFX_PRESETS[s.preset] || {}); } } catch (e) {}
@@ -6543,6 +6496,11 @@ function cropMesh(type, stage) {
 }
 // §17 harvested crop foods & plantable seeds
 function cassavaFoodMesh(){ const m=Mesh(); const s=[0.56,0.43,0.3], f=[0.84,0.76,0.62]; mCyl(m,-0.02,0.44,0.07,0.035,6,s); mCyl(m,0.4,0.48,0.035,0.02,5,f); mergeMesh(m, discMesh(-0.02,0.07,6,-0.04,f)); return m; }
+// §banana a single classic crescent banana (the satchel icon): one fat curved finger with a short brown stem
+function bananaIconMesh(){ const m=Mesh(); const y=[0.97,0.83,0.26], stem=[0.42,0.34,0.2];
+  bananaFinger(m, -0.22, 0.52, 0, 0, 0.5, y);                 // sweeps right and hooks up → the half-moon shape, in the icon plane
+  mBox(m, -0.22, 0.52, 0, 0.03, 0.05, 0.03, stem);            // a little stem at the base
+  return m; }
 function bananaFoodMesh(){ const m=Mesh(); const y=[0.95,0.85,0.3], t=[0.4,0.34,0.2];   // a hand of 5 curved faceted fingers joined at a crown
   for(let i=0;i<5;i++){ const a=(i/4-0.5)*1.3; bananaFinger(m, Math.sin(a)*0.03, 0.34, 0, a+1.5708, 0.3, [y[0],y[1]-i*0.015,y[2]]); }
   mCyl(m,0.3,0.4,0.05,0.03,6,t); return m; }   // the stem crown they hang from
@@ -7894,7 +7852,7 @@ const COOKED_OF = {};
   EDIBLE[id] = (EDIBLE[raw] || 0.1) * 2; });
 // §17 wild & farmed crops, foods and their plantable seeds
 digItem("cassava", "Cassava", "consumable", "common", "A starchy root. Filling, and far better roasted.", () => cassavaFoodMesh(), [0.82,0.72,0.56]);
-digItem("banana", "Banana", "consumable", "common", "A hand of sweet ripe bananas.", () => bananaFoodMesh(), [0.95,0.85,0.3]);
+digItem("banana", "Banana", "consumable", "common", "A sweet ripe banana.", () => bananaIconMesh(), [0.95,0.85,0.3]);   // §banana classic single crescent icon
 digItem("pineapple", "Pineapple", "consumable", "common", "Golden and sweet-sharp, under a spiky crown.", () => pineappleFoodMesh(), [0.9,0.75,0.3]);
 digItem("taro", "Taro", "consumable", "common", "An earthy corm, cook it well before eating.", () => taroFoodMesh(), [0.72,0.64,0.62]);
 digItem("seed_cassava", "Cassava Cutting", "seed", "common", "A stem cutting, plant it on dug soil to grow cassava.", () => cropSeedMesh([0.55,0.62,0.36]), [0.55,0.62,0.36]);
@@ -9166,7 +9124,11 @@ const ANKLE = 0.45, KNEE = 1.0;   // water-depth thresholds: dig < ANKLE < sift 
 let healMul = 1.0;                // debug-tunable restoration-rate multiplier
 
 /* ---- stamina & action commit (Phase 8 §4; costs/rates tunable in debug) ---- */
-let stamina = 1, resting = false, exhausted = false, digCommit = 0;
+// §tune energy & hunger balance (all tunable): more stamina headroom, faster recovery, slower hunger
+const STAMINA_MAX = 1.3;          // +30% max stamina (was effectively 1.0)
+const STAMINA_REGEN_MUL = 1.15;   // +15% stamina regeneration
+const HUNGER_DRAIN_MUL = 0.75;    // -25% passive hunger drain
+let stamina = STAMINA_MAX, resting = false, exhausted = false, digCommit = 0;
 // A full ring is ~10 strikes; empty → exhausted until you recover ~1/3.
 // §11.5 stamina costs, relative to the old 0.1 reference dig:
 //   sand 2×, dirt/grass 4×, chop = dirt, mine ≈ 1.5× chop, gravel/mud between sand and dirt.
@@ -9187,11 +9149,11 @@ let hunger = 1, growlT = 0;
 let hungerEnabled = true;
 try { const hv = localStorage.getItem("bc_hunger"); if (hv !== null) hungerEnabled = hv === "1"; } catch (e) {}
 function setHungerEnabled(on) { hungerEnabled = on; if (!on) hunger = 1; try { localStorage.setItem("bc_hunger", on ? "1" : "0"); } catch (e) {} }
-const HUNGER_DRAIN = 1 / (2.6 * DAY_PERIOD);   // full → empty in ~2.6 in-game days at rest, a slow, gentle drain
+const HUNGER_DRAIN = (1 / (2.6 * DAY_PERIOD)) * HUNGER_DRAIN_MUL;   // full → empty at rest, a slow gentle drain (§tune -25%)
 const H_FULL = 0.7, H_PECKISH = 0.4, H_HUNGRY = 0.18;   // tier thresholds
 function hungerTier() { return hunger > H_FULL ? "full" : hunger > H_PECKISH ? "peckish" : hunger > H_HUNGRY ? "hungry" : "starving"; }
 // §Cooking the one and only hunger penalty: a softer max-stamina cap when hungry (you tire sooner, never slower)
-function maxStamina() { if (!hungerEnabled) return 1; const t = hungerTier(); return t === "starving" ? 0.55 : t === "hungry" ? 0.8 : 1; }
+function maxStamina() { if (!hungerEnabled) return STAMINA_MAX; const t = hungerTier(); return (t === "starving" ? 0.55 : t === "hungry" ? 0.8 : 1) * STAMINA_MAX; }   // §tune +30% headroom
 function heavyCostMul() { return 1; }    // §Cooking no extra cost when hungry
 function swingRateMul() { return 1; }    // §Cooking no slower swings when hungry
 // §tools effort & hunger: labour burns hunger (∝ stamina spent), recovery scales with fullness, and being fed makes heavy jobs land harder
@@ -9208,7 +9170,7 @@ function updateHunger(gdt) { if (!hungerEnabled) { hunger = 1; return; }
   if (noStarvation && hunger < H_HUNGRY + 0.03) hunger = H_HUNGRY + 0.03;  // §climb no-starvation mode: never drops into the starving tier
   if (hungerTier() === "starving") { growlT -= gdt; if (growlT <= 0) { growlT = 11 + rng()*7; if (onDig) onDig("growl"); } } }
 function updateStamina(dt) {
-  if (mode !== "walk") { stamina = 1; resting = false; exhausted = false; digCommit = 0; crouching = false; crouchStillT = 0; return; }
+  if (mode !== "walk") { stamina = STAMINA_MAX; resting = false; exhausted = false; digCommit = 0; crouching = false; crouchStillT = 0; return; }
   if (digCommit > 0) digCommit = Math.max(0, digCommit - dt);
   const moving = Math.abs(analog.x) + Math.abs(analog.y) > 0.01 || keys["KeyW"] || keys["KeyA"] || keys["KeyS"] || keys["KeyD"];
   if (moving) resting = false;
@@ -9217,7 +9179,7 @@ function updateStamina(dt) {
   if (player.sprinting) spendStamina(SPRINT_DRAIN * dt * (1 + Math.max(0, player.incline || 0) * 4) * (tier === "hungry" ? 2 : 1));
   if (player.scramble > 0.3) spendStamina(SCRAMBLE_DRAIN * dt * player.scramble);
   // §playtest1 don't regen while actively sprinting, otherwise regen cancels the drain and sprint is effectively infinite
-  const regen = player.sprinting ? 0 : (resting ? REGEN_REST : (moving ? REGEN_ACTIVE : REGEN_IDLE)) * hungerRegenMul() * staminaBoostMult();
+  const regen = player.sprinting ? 0 : (resting ? REGEN_REST : (moving ? REGEN_ACTIVE : REGEN_IDLE)) * hungerRegenMul() * staminaBoostMult() * STAMINA_REGEN_MUL;   // §tune +15% regen
   const cap = maxStamina();
   stamina = Math.min(cap, stamina + regen * dt);
   if (stamina > cap) stamina = cap;
@@ -9834,21 +9796,31 @@ function updateBucketMoisture(dt) {
   }
 }
 function spawnFromBucket(c, x, z, extra) { const e = spawnCreature(c.t, x, z, extra || {}); e.scale = c.scale; e.tint = c.tint; e.special = c.special; e.name = c.name; return e; }
+// §bucket what kind of water is actually AT this spot: "sea" (open ocean), "fresh" (a trapped
+// inland pond / lagoon or a dug water hole), or null (dry ground). Used so the bucket only fills
+// when the target itself is water, never just because the player is wading.
+function waterKindAt(x, z) {
+  if (waterDepthAt(x, z) > 0.08) return "sea";                 // open sea water
+  const i = cellIndex(x, z);
+  if (i >= 0 && waterSurfaceAt(x, z) - surfaceAt(x, z).h > 0.08 &&
+      ((filled[i] > heightmap[i] + 0.1) || (typeof ponded !== "undefined" && ponded.has(i))))
+    return "fresh";                                            // a pond / lagoon / dug water hole
+  return null;
+}
 function useBucket(x, z) {
   if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;
   const depth = waterDepthAt(x, z), atWater = depth > 0.08;
   const i = cellIndex(x, z), inHole = i >= 0 && dig[i] < -0.3 && !atWater;
   const sy = surfaceAt(x, z).h;
-  const wading = waterDepthAt(player.x, player.z) > 0.12;       // §13.3 standing in deep enough water
-  // §13.3 if the bucket isn't full of water yet, clicking water (or just wading) tops it up,
-  // creatures already inside stay in and get re-soaked. No need to empty it first.
-  if (!bucket.water && (atWater || wading)) {
-    bucket.water = true; for (const c of bucket.creatures) c.moist = 1;
+  // §bucket fill ONLY when the target spot is actually water (sea or fresh), never just from wading.
+  const kind = waterKindAt(x, z);
+  if (!bucket.water && kind) {
+    bucket.water = true; bucket.fresh = (kind === "fresh"); for (const c of bucket.creatures) c.moist = 1;
     if (onDig) onDig("splash"); spawnSand(x, sy + 0.1, z, 10, [0.72, 0.86, 0.96]); saveState();
-    showCard("Bucket filled", bucket.creatures.length ? "Fresh water, the creatures perk up." : "Full of clear seawater.");
+    showCard(kind === "fresh" ? "Filled with fresh water" : "Filled with sea water", "");
     return;
   }
-  if (!bucket.water && bucket.creatures.length === 0) {         // dry, empty, and not aimed at water
+  if (!bucket.water && bucket.creatures.length === 0) {         // dry, empty, and not aimed at water → nothing happens
     failStrike(false, x, sy + 0.3, z);                          // nothing to scoop water from
     return;
   }
@@ -10077,7 +10049,7 @@ function updateBucketLook() {
   blitMini(fbo, bucketLook.ctx);
   const cEl = document.getElementById("bucketlookcount");
   if (cEl) cEl.textContent = bucket.creatures.length
-    ? `${bucketUnitsUsed()}/${BUCKET_UNITS} units` + (bucket.water ? " · in fresh water" : " · drying out")
+    ? `${bucketUnitsUsed()}/${BUCKET_UNITS} units` + (bucket.water ? (bucket.fresh ? " · in fresh water" : " · in sea water") : " · drying out")
     : (bucket.water ? "empty · just water" : "empty · scoop a critter or fill with water");
 }
 
@@ -10524,22 +10496,7 @@ function drawGlints(view) {
   gl.disable(gl.BLEND); gl.depthMask(true);
 }
 
-/* §14A drowned-item sacks, a little bundle with a glint, on the seabed or washed ashore */
-let sackDyn = null;
-function sackMesh() { const m = Mesh(); const c = [0.46,0.39,0.28];
-  mBox(m, 0, 0.16, 0, 0.28, 0.2, 0.28, c); mBox(m, 0, 0.34, 0, 0.1, 0.12, 0.1, [0.32,0.26,0.18]);
-  for (const s of [-1,1]) mTri(m, [s*0.1,0.42,0], [s*0.22,0.58,0.06], [s*0.22,0.58,-0.06], [0.3,0.25,0.18]); return m; }
-function drawSacks(view) {
-  if (!sacks.length) return;
-  if (!sackDyn) sackDyn = makeDynamic(sackMesh(), 20);
-  propUniforms(view); const a = rockScratch; let n = 0;
-  for (const s of sacks) { if (n >= 20) break; const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const y = surfaceAt(s.x, s.z).h + 0.1 + Math.sin(clock.t*1.5 + s.bob)*0.03;
-    const o = n*10; a[o]=s.x;a[o+1]=y;a[o+2]=s.z;a[o+3]=1;a[o+4]=s.bob;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++;
-    if (Math.random() < 0.05) sparkle(s.x, y+0.35, s.z, [0.95,0.9,0.65], 2);   // a glint so it's easy to find
-  }
-  if (n) sackDyn.draw(a, n);
-}
+function drawSacks(view) {}   // §nodeath drown-sacks removed (the player can't drown)
 
 /* ---- §Cooking campfire: built from Sticks + Stone; burns fuel, refuels & relights; roasts food and
    holds a cook-pot for stews. A lit fire within reach still doubles the value of food eaten nearby. ---- */
@@ -12528,15 +12485,19 @@ function endFindableEvent() {
 function updateFindableEvent(dt) {
   if (!activeEvent) return;
   if (performance.now() > activeEvent.endAt) { endFindableEvent(); return; }
-  activeEvent.soundT -= dt;
-  if (activeEvent.soundT <= 0) { activeEvent.soundT = 4 + Math.random()*4;
-    if (typeof SND !== "undefined") SND.play("gull_call", { position: [activeEvent.x, 0, activeEvent.z], volume: 0.5 }); }   // a distant cue from the site
+  // §event once you've laid eyes on the site (it came into view), stop the distant sound cue for it
+  if (!activeEvent.seen) {
+    activeEvent.soundT -= dt;
+    if (activeEvent.soundT <= 0) { activeEvent.soundT = 4 + Math.random()*4;
+      if (typeof SND !== "undefined") SND.play("gull_call", { position: [activeEvent.x, 0, activeEvent.z], volume: 0.5 }); }   // a distant cue from the site
+  }
   let circ = 0; for (const e of life) { if (e.t !== "gull" || e.dying !== undefined || circ >= 3) continue;   // a few gulls drift over to circle the site
     const d = Math.hypot(e.x-activeEvent.x, e.z-activeEvent.z); if (d < 70 && d > 4) { e.hx = activeEvent.x; e.hz = activeEvent.z; if (e.hr !== undefined) e.hr = 12; circ++; } }
 }
 function updateEventChevron(vp) {
   const chev = document.getElementById("eventchev"); if (!chev) return;
-  if (!activeEvent || mode !== "walk" || isPanelOpen()) { if (chev.style.display !== "none") chev.style.display = "none"; return; }
+  // §event once the event has come into view (been discovered), the chevron stays off for good
+  if (!activeEvent || activeEvent.seen || mode !== "walk" || isPanelOpen()) { if (chev.style.display !== "none") chev.style.display = "none"; return; }
   const dx = activeEvent.x - cam.pos[0], dz = activeEvent.z - cam.pos[2];
   if (Math.hypot(dx, dz) > EVENT_CHEVRON_RANGE) { chev.style.display = "none"; return; }
   const sy = surfaceAt(activeEvent.x, activeEvent.z).h + 0.8, W = innerWidth, H = innerHeight;
@@ -12546,7 +12507,7 @@ function updateEventChevron(vp) {
   let ex, ey, ang;
   if (cw > 0.01) {
     let nx = cx/cw, ny = cy/cw;
-    if (nx > -0.92 && nx < 0.92 && ny > -0.92 && ny < 0.92) { chev.style.display = "none"; return; }   // in view → no chevron
+    if (nx > -0.92 && nx < 0.92 && ny > -0.92 && ny < 0.92) { activeEvent.seen = true; chev.style.display = "none"; return; }   // §event in view → discovered: stop the chevron (and the sound cue) from here on
     const s = 0.9 / Math.max(Math.abs(nx), Math.abs(ny)); nx *= s; ny *= s;
     ex = (nx*0.5 + 0.5)*W; ey = (1 - (ny*0.5 + 0.5))*H; ang = Math.atan2(-(ny), nx);
   } else {   // behind the camera: push it to the bottom edge, pointing to the correct side
@@ -14758,9 +14719,10 @@ function frame(now) {
   // ---- hud ----
   // stamina ring near the crosshair, only visible while it isn't full (or flashing a "too tired" refusal, §13.2)
   if (staminaFlash > 0) staminaFlash = Math.max(0, staminaFlash - dt * 2.4);
-  if (mode === "walk" && (stamina < 0.995 || staminaFlash > 0)) {
-    const deg = Math.max(0, stamina) * 360;
-    let col = stamina < 0.25 ? "#d9694e" : staminaBoostActive() ? "#e3b36a" : resting ? "#8fd0a0" : "#79bcc6";   // §R4 warm tint while a food boost is active
+  const staFrac = Math.max(0, Math.min(1, stamina / STAMINA_MAX));   // §tune ring is relative to the (raised) max
+  if (mode === "walk" && (staFrac < 0.995 || staminaFlash > 0)) {
+    const deg = staFrac * 360;
+    let col = staFrac < 0.25 ? "#d9694e" : staminaBoostActive() ? "#e3b36a" : resting ? "#8fd0a0" : "#79bcc6";   // §R4 warm tint while a food boost is active
     if (staminaFlash > 0) col = "#ff8a6b";
     staminaEl.style.display = "block";
     staminaEl.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.1) ${deg}deg 360deg)`;
