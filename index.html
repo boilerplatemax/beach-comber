@@ -678,6 +678,23 @@
   .tmark.food { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Ccircle cx='6' cy='7.2' r='4.3' fill='%23c0392b'/%3E%3Ccircle cx='6' cy='7.2' r='4.3' fill='none' stroke='%23000' stroke-opacity='.4' stroke-width='.6'/%3E%3Cpath d='M6 3.2 C6.6 1.6 8.2 1.3 9 1.6 C8.4 3.2 6.9 3.4 6 3.2 Z' fill='%235aa02f'/%3E%3C/svg%3E"); }
   /* journal cards show the rarity marker too (bottom-left of the thumbnail) */
   .jcard { position: relative; }
+  /* ---- §UI new-discovery announcement: icon pops in (bounce) with a red ! badge, name below ---- */
+  .toast.disc { flex-direction: column; align-items: center; gap: 3px; padding: 8px 14px 7px; min-width: 78px; }
+  .toast.disc .disc-ic { position: relative; width: 44px; height: 44px; animation: discpop .42s cubic-bezier(.2,1.5,.35,1); }
+  .toast.disc .disc-ic img { width: 44px; height: 44px; image-rendering: pixelated; }
+  .toast.disc .disc-bang { position: absolute; right: -7px; top: -7px; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--red); color: #fff; font-weight: 800; font-size: 13px; line-height: 18px; text-align: center;
+    border: 2px solid var(--parch); box-shadow: 0 1px 3px rgba(0,0,0,.5); animation: bangpop .5s ease .1s both; }
+  .toast.disc .disc-nm { font-size: 13px; font-weight: 700; color: #7a4a12; letter-spacing: .02em; }
+  @keyframes discpop { 0% { transform: scale(0) rotate(-14deg); } 60% { transform: scale(1.18) rotate(4deg); } 100% { transform: scale(1) rotate(0); } }
+  @keyframes bangpop { 0% { transform: scale(0); } 70% { transform: scale(1.35); } 100% { transform: scale(1); } }
+  /* ---- §UI journal "not yet viewed" markers ---- */
+  .jcard .jnew { position: absolute; right: -4px; top: -4px; z-index: 4; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--red); color: #fff; font-weight: 800; font-size: 12px; line-height: 18px; text-align: center;
+    border: 2px solid var(--parch); box-shadow: 0 1px 3px rgba(0,0,0,.55); }
+  .jtab { position: relative; }
+  .jtab .jtabnew { position: absolute; right: 3px; top: 3px; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--red); box-shadow: 0 0 0 1.5px var(--parch), 0 1px 2px rgba(0,0,0,.5); }
 </style>
 </head>
 <body>
@@ -4097,6 +4114,7 @@ function startIntro() {
 }
 function finishIntro() {
   intro = null; enterWalk();
+  jTrack = true;   // §UI from now on, genuine discoveries flag the journal as "new"
   if (!IS_TOUCH) canvas.requestPointerLock();
 }
 
@@ -7366,6 +7384,14 @@ function drawLife(view) {
  * --------------------------------------------------------------------- */
 
 const discovered = new Set();         // discovered creature/find/item keys
+// §UI "new to the journal" tracking: a discovery made during actual play is flagged unseen (red !)
+// until the player views it. jTrack gates this so loading a save / generating the world never flags
+// anything (it flips true once gameplay starts, in finishIntro).
+const jUnseen = new Set();
+let jTrack = false;
+{ const _add = discovered.add.bind(discovered);
+  discovered.add = function (k) { if (jTrack && !discovered.has(k)) jUnseen.add(k); return _add(k); }; }
+function journalSeen(key) { if (jUnseen.delete(key)) { try { saveState(); } catch (e) {} } }   // mark one entry viewed
 let forceSpawn = false;               // debug: draw every entity regardless of tide
 
 /* ---- item registry (plain data) ---- */
@@ -7642,6 +7668,7 @@ function migrateInvV2(s) {
 function purgeSeedSaves() { for (const suf of ["bc_","bcw_","bcd_","bcs_","bcc_","bcg_","bcsets_"]) { try { localStorage.removeItem(suf + SEED_STR); } catch (e) {} } }
 function saveState() {
   try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ v: SAVE_VERSION, main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, cleanup: beachCleanup, variants: variantsSeen,
+    junseen: [...jUnseen],   // §UI journal entries not yet viewed (red !)
     heaves: heaveBoulders.map((b,i)=>b.flipped?[i,+b.refillAt.toFixed(2),+b.flippedAt.toFixed(2)]:0).filter(e=>e),  // §21D heaved boulders (index, refillAt, flippedAt)
     oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)]),  // §23 oyster-bed stock
     hsFlipped: horseshoesFlipped,  // §41 horseshoe crabs turned back over
@@ -7661,6 +7688,7 @@ function loadState() {
         else { Inv.main = padArr(s.main, INV_SLOTS); Inv.hotbar = padArr(s.hotbar || [], HOTBAR_SLOTS); }
       }
       Inv.selected = Math.min(HOTBAR_SLOTS - 1, s.sel || 0); (s.disc || []).forEach((d) => discovered.add(d));
+      jUnseen.clear(); (s.junseen || []).forEach((k) => jUnseen.add(k));   // §UI restore not-yet-viewed flags
       starsRescued = s.rescued || 0;
       if (typeof s.cleanup === "number") beachCleanup = s.cleanup;   // §5 beach-cleanup tally
       if (s.variants && typeof s.variants === "object") variantsSeen = s.variants;   // §22 variant sightings per species
@@ -7751,7 +7779,10 @@ function renderToasts() {
   el.innerHTML = toasts.map((x) => {
     const ic = ITEMS[x.id] && ITEMS[x.id].icon ? `<img src="${ITEMS[x.id].icon}">` : "";
     const q = x.qty > 1 ? ` ×${x.qty}` : "";
-    return `<div class="toast${x.special ? " new" : ""}" style="opacity:${Math.min(1, x.t / 0.6)}">${ic}<span>${x.special ? "New: " : ""}${x.name}${q}${x.special ? "<i>, see journal</i>" : ""}</span></div>`;
+    if (x.special) {   // §UI a NEW discovery: the icon pops in with a bounce + a red ! badge, name below
+      return `<div class="toast disc" style="opacity:${Math.min(1, x.t / 0.6)}"><div class="disc-ic">${ic}<span class="disc-bang">!</span></div><span class="disc-nm">${x.name}${q}</span></div>`;
+    }
+    return `<div class="toast" style="opacity:${Math.min(1, x.t / 0.6)}">${ic}<span>${x.name}${q}</span></div>`;
   }).join("");
 }
 
@@ -8196,18 +8227,24 @@ function journalCount(tab) {
   if (tab === "events") return [seenEvents.length, seenEvents.length];   // §B5
   const opened = chests.filter(c => c.opened).length; return [opened, chests.length];
 }
+function jBadge(key) { return jUnseen.has(key) ? `<span class="jnew">!</span>` : ""; }   // §UI red ! on a not-yet-viewed entry
+function tabHasNew(id) {   // §UI any not-yet-viewed entry on this tab → a red dot on the tab
+  if (id === "creatures") { for (const k in CREATURES) if (jUnseen.has(k)) return true; return false; }
+  if (id === "finds") { for (const k in FINDS) if (jUnseen.has("f_" + k)) return true; return false; }
+  return false;
+}
 function journalGrid(tab) {
   if (tab === "creatures") return Object.keys(CREATURES).map((k) => {
     const got = discovered.has(k), reg = CREATURES[k];
     if (!got) return `<div class="jcard unk"><img src="${reg.icon||""}"><div class="jname">??? </div></div>`;
     const rec = fishRecord[k] ? `<div class="jqty">record ${Math.round(fishRecord[k]*50)}cm</div>` : "";   // §14C largest speared
     const vs = variantsSeen[k] ? `<div class="jqty" style="letter-spacing:1px">${Object.keys(variantsSeen[k]).map(v=>VARIANT_BADGE[v]||"◆").join(" ")}</div>` : "";   // §22 variant badges
-    return `<div class="jcard" data-jk="c:${k}"><img src="${reg.icon||""}"><div class="jname">${reg.label}</div>${rec}${vs}</div>`;
+    return `<div class="jcard" data-jk="c:${k}">${jBadge(k)}<img src="${reg.icon||""}"><div class="jname">${reg.label}</div>${rec}${vs}</div>`;
   }).join("");
   if (tab === "finds") return Object.keys(FINDS).map((k) => {
     const got = discovered.has("f_" + k), it = ITEMS[k], cnt = Inv.count(k);
     if (!got) return `<div class="jcard unk"><img src="${(it&&it.icon)||""}"><div class="jname">??? </div></div>`;
-    return `<div class="jcard" data-jk="f:${k}"><img src="${(it&&it.icon)||""}"><div class="jname">${it?it.name:k}</div>${cnt?`<div class="jqty">×${cnt}</div>`:""}</div>`;
+    return `<div class="jcard" data-jk="f:${k}">${jBadge("f_"+k)}<img src="${(it&&it.icon)||""}"><div class="jname">${it?it.name:k}</div>${cnt?`<div class="jqty">×${cnt}</div>`:""}</div>`;
   }).join("");
   if (tab === "angling") return Object.keys(FISH_SPECIES).map((k) => {
     const sp = FISH_SPECIES[k], it = ITEMS[sp.item], rec = rodRecord[k];
@@ -8233,7 +8270,7 @@ function renderJournal() {
   const j = document.getElementById("journal");
   const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["collections","Collections"],["events","Events"],["treasure","Treasure"]];   // §A6 Cookbook removed · §B5 Events added · §strip Pearls removed
   const tabHtml = tabs.map(([id,lbl]) => { const [n,t] = journalCount(id);
-    return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
+    return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${tabHasNew(id)?`<span class="jtabnew"></span>`:""}${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
   const cleanupLine = `<div class="jstat">Beach cleanup, <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared · Horseshoes turned over, <b>${horseshoesFlipped}</b></div>`;
   j.innerHTML = `<div id="journalbox"><h2>Field Journal</h2>
     <div class="jtabs">${tabHtml}</div>
@@ -8243,6 +8280,7 @@ function renderJournal() {
   j.querySelectorAll(".jtab").forEach(b => b.onclick = () => { journalTab = b.dataset.jtab; renderJournal(); });
   j.querySelectorAll(".jcard[data-jk]").forEach(card => card.onclick = () => {
     const [kind, k] = card.dataset.jk.split(":");
+    journalSeen(kind === "c" ? k : "f_" + k);   // §UI viewing the entry clears its red ! (angling "a:" has no unseen key)
     if (kind === "c") openInspect({ t: k, scale: CREATURES[k].base, tint: [1,1,1], moist: 1 }, "journal");
     else openInspect(k, "item");   // f: and a: both inspect the item model
   });
@@ -12282,6 +12320,7 @@ function generateWorld() {
 function newIsland(seedStr) {
   const s = String(seedStr == null ? "" : seedStr).trim();
   if (!s) return;
+  jTrack = false;                   // §UI don't flag journal "new" during regeneration (re-enabled on finishIntro)
   disposeWorldGL();                 // 1. free the old island's seeded GPU resources
   resetWorldState();                // 2. clear the arrays the loaders don't
   deriveSeedState(s);               // 3. recompute the per-seed constants (exact draw order)
