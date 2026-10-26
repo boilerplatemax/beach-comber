@@ -462,6 +462,8 @@
     clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px); }
   #ctxmenu div { padding: 7px 12px; font-size: 13px; cursor: pointer; color: #f0e4cc; text-align: left; letter-spacing: .03em; }
   #ctxmenu div:hover { background: rgba(255,230,180,.16); }
+  #ctxmenu div.disabled { opacity: .4; cursor: default; }
+  #ctxmenu div.disabled:hover { background: none; }
   #bagBtn { position: fixed; z-index: 9; right: 14px; bottom: 74px; width: 54px; height: 54px; display: none;
     border-radius: 50%; border: 2px solid #6e4a2a; background: rgba(60,40,22,.8); color:#f0d9b0; font-size: 22px;
     align-items: center; justify-content: center; pointer-events: auto; }
@@ -2947,6 +2949,10 @@ function camForward() {
  * --------------------------------------------------------------------- */
 
 const EYE = 1.7;             // eye height above the ground
+// §camfix keep the camera clear of the terrain, and a hysteresis band for the underwater tint (so neither flickers)
+const CAM_MIN_CLEAR = 0.35;  // the eye never sits closer than this above the ground surface
+const UW_ENTER = -0.3;       // go underwater only when the eye is this far BELOW the water surface
+const UW_EXIT = 0.05;        // stay underwater until the eye rises this far ABOVE it
 // §foot stride lengths: one footstep (and one head-bob) per this many metres travelled (tunable)
 // §foot2 stride length = metres per footstep (and per head-bob). ROOT CAUSE of the machine-gun steps: the map
 // speed is high (WALK_SPEED 9.5 m/s), so the old 0.7 m stride fired ~13 steps/sec. Size the stride from the
@@ -4027,8 +4033,10 @@ addEventListener("keyup", (e) => { keys[e.code] = false;
 canvas.addEventListener("mousedown", (e) => {
   if (IS_TOUCH) return;
   if (menuModalOpen()) return;   // §A6 a menu is open: no world clicks, and don't re-grab pointer lock (which would let the camera turn)
-  if (e.button === 2) {   // §P2 right-click is the HELD-ITEM action: eat food (hold), or set down / pick up a lantern or bucket
+  if (e.button === 2) {   // §P2 right-click is the HELD-ITEM action: release a live critter/fish, eat food (hold), or set down / pick up a lantern or bucket
     if (mode === "walk" && !isPanelOpen() && document.pointerLockElement === canvas) {
+      const held = selectedTool();
+      if (held && isReleasable(held)) { releaseAtAim(INV_SLOTS + Inv.selected, true); return; }   // §bugfix a live critter / fish → release it where aiming (takes priority over eating)
       if (startEat()) return;    // §P2 food in hand: hold right-click to eat (release cancels)
       rightClickWorld();
     }
@@ -4041,7 +4049,7 @@ canvas.addEventListener("mousedown", (e) => {
   if (mode === "walk" && selectedTool() === "rod" && !isPanelOpen()) { if (softTargetUnderCrosshair()) { useHeld = true; clickAt(0,0); return; } rodPressStart(); return; }        // §Fishing charge/hook/reel
   useHeld = true; clickAt(0, 0);                 // §13.2 hold to keep swinging at a work target
 });
-addEventListener("mouseup", (e) => { if (e.button === 0) { useHeld = false; breakIgnoreUntil = 0; rodPressEnd(); } if (e.button === 2) cancelEat(); });   // §P3 release ends the post-break terrain lockout early; §P2 releasing right-click cancels a meal
+addEventListener("mouseup", (e) => { if (e.button === 0) { useHeld = false; clearBreakLock(); rodPressEnd(); } if (e.button === 2) cancelEat(); });   // §P3 release ends the post-break terrain lockout; §P2 releasing right-click cancels a meal
 // §13.2 scroll wheel cycles belt slots (skips empties)
 addEventListener("wheel", (e) => {
   if (mode !== "walk" || isPanelOpen()) return;
@@ -4049,6 +4057,7 @@ addEventListener("wheel", (e) => {
   for (let k = 0; k < HOTBAR_SLOTS; k++) { i = (i + dir + HOTBAR_SLOTS) % HOTBAR_SLOTS; if (Inv.hotbar[i]) { selectHotbar(i); break; } }
 }, { passive: true });
 canvas.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
+addEventListener("pointerup", (e) => { if (e.pointerType === "touch") clearBreakLock(); });   // §bugfix touch taps don't fire mouseup, so lift the break-lockout on the pointer release
 // §P2 right-click is a game action everywhere (held-item use, satchel actions menu); never let the
 // browser's own context menu pop up over the game. Text inputs (the seed box) keep their native menu.
 addEventListener("contextmenu", (e) => { if (!(e.target.closest && e.target.closest("input, textarea"))) e.preventDefault(); }, false);
@@ -7213,7 +7222,12 @@ function updateLife(dt, tSec) {
     e.phase += dt;
     if (e.kind === "find") continue;
     if (e.hurtT > 0) e.hurtT = Math.max(0, e.hurtT - dt);
+    const _px0 = e.x, _pz0 = e.z, _yawWas = e.yaw;      // §bugfix remember pose before AI moves it this frame
     behave(e, dt, d, dx, dz);
+    // §bugfix one owner for heading, and only re-aim when actually moving above a min speed. A near-stationary
+    // creature (hovering, reached home, flee ended) kept recomputing its desired yaw from a near-zero velocity,
+    // so atan2 flipped and it spun/flickered. If it barely moved this frame, hold the previous heading.
+    if (dt > 0 && _yawWas != null) { const sp = Math.hypot(e.x - _px0, e.z - _pz0) / dt; if (sp < CRIT_MIN_SPEED) e.yaw = _yawWas; }
     smoothYaw(e, dt);                                    // §P3 slew the rendered heading toward the AI's desired yaw (max turn rate + hysteresis) so nothing snaps back and forth
     if (e.dead) life.splice(i, 1);                       // §13.3 dried out, removed, remains already dropped
   }
@@ -7222,8 +7236,9 @@ function updateLife(dt, tSec) {
 // the AI's target direction wobbled a hair. e.yaw stays the AI's instantaneous DESIRED heading; e.yawR is
 // the smoothed heading actually drawn. Hysteresis ignores tiny target flips, and a max turn rate keeps the
 // turn gradual, so a near-zero velocity or a jittery target can't spin the model.
-const CRIT_TURN_RATE = 7.0;    // rad/s, the fastest a creature re-aims (fast enough to not feel laggy)
+const CRIT_TURN_RATE = 5.0;    // §bugfix rad/s, the fastest a creature re-aims (a touch gentler than before)
 const CRIT_TURN_HYST = 0.40;   // rad (~23°): a new desired heading must beat this before we re-commit to it
+const CRIT_MIN_SPEED = 0.18;   // §bugfix m/s: below this the creature isn't "really moving" → hold its heading (no atan2 spin)
 function smoothYaw(e, dt) {
   if (e.yaw == null || dt <= 0) return;
   if (e.yawR == null) { e.yawR = e.yaw; e.yawCommit = e.yaw; return; }   // first frame: adopt as-is (no spin-up)
@@ -7582,6 +7597,10 @@ function tooTired() {
   if (clock.t - lastTooTiredShown > 2.6) { lastTooTiredShown = clock.t; tooTiredT = 1.1; if (onBreath) onBreath(); }
   staminaFlash = Math.max(staminaFlash, 0.9);   // flash the ring on every blocked attempt, even inside the throttle window
 }
+// §bugfix "Can't dig here": a short crosshair message (same style as "Too tired") whenever a dig does nothing
+// (solid rock, roots/boulder blocking, water too deep to reshape). Throttled so a held click doesn't spam it.
+let cantDigT = 0, lastCantDigShown = -99;
+function cantDig() { if (clock.t - lastCantDigShown > 1.4) { lastCantDigShown = clock.t; cantDigT = 1.1; } }
 const WORK_LOCK_TIME = 1.5;
 const WORK_KINDS = { tree: 1, fallentree: 1, rock: 1, stump: 1, fence: 1, chest: 1, heaveboulder: 1, geode: 1, searock: 1 };   // multi-strike targets
 function workLockActive() { return !!(workLock && clock.t < workLock.until && workLock.obj && !workLock.obj.gone && !(workLock.kind === "fence" && workLock.obj.r <= 0)); }
@@ -7682,8 +7701,18 @@ function setLanternUniform(U) {   // call after the program + its uniforms are b
 }
 // §P2 you can only set a bucket / lantern down on dry ground (not in water, not on a tide-pool floor)
 function isDryGround(x, z) { return waterDepthAt(x, z) < 0.04; }
+// §bugfix a spot is blocked for placing if it overlaps any object: natural trees/rocks/POIs (the world-spawn
+// footprint registry), live colliders (incl. planted trees/stumps), or something already set down there.
+function placeBlocked(x, z, r) {
+  if (typeof footprintClear === "function" && !footprintClear(x, z, r)) return true;   // same check world-gen uses
+  if (typeof colliders !== "undefined") for (const c of colliders) { if (!c || c.r <= 0) continue; const rr = c.r + r; if ((c.x-x)**2 + (c.z-z)**2 < rr*rr) return true; }
+  for (const pb of placedBuckets) { const rr = 0.4 + r; if ((pb.x-x)**2 + (pb.z-z)**2 < rr*rr) return true; }
+  for (const L of placedLanterns) { const rr = 0.4 + r; if ((L.x-x)**2 + (L.z-z)**2 < rr*rr) return true; }
+  return false;
+}
 function placeLantern(x, z) {
   if (!isDryGround(x, z)) { hintText = "Set it down on dry ground"; hintT = 1.4; return; }   // §P2 dry ground only
+  if (placeBlocked(x, z, 0.35)) { hintText = "No room to set it down here"; hintT = 1.4; return; }   // §bugfix not inside trees/rocks/objects
   if (placedLanterns.length >= 64) { showCard("That's plenty", "You can't set out any more lanterns here."); return; }
   const gy = surfaceAt(x, z).h;
   placedLanterns.push({ x, y: gy, z });
@@ -7700,6 +7729,7 @@ function pickUpLantern(L) {
 function placeBucket(x, z) {
   const s = Inv.hotbar[Inv.selected]; if (!s || s.id !== "bucket") return;
   if (!isDryGround(x, z)) { hintText = "Set it down on dry ground"; hintT = 1.4; return; }   // §P2 dry ground only
+  if (placeBlocked(x, z, 0.4)) { hintText = "No room to set it down here"; hintT = 1.4; return; }   // §bugfix not inside trees/rocks/objects
   if (placedBuckets.length >= 64) { showCard("That's plenty", "No room to set another bucket down here."); return; }
   placedBuckets.push({ x, y: surfaceAt(x, z).h, z, bk: bkOfSlot(s) });
   Inv.hotbar[Inv.selected] = null; Inv.emit(); syncBucket();   // that one bucket leaves the belt and stays on the ground
@@ -7721,6 +7751,7 @@ function rightClickWorld() {
   if (t && t.kind === "lantern") { pickUpLantern(t.obj); return; }
   if (t && t.kind === "placedbucket" && typeof pickUpBucket === "function") { pickUpBucket(t.obj); return; }
   const tool = selectedTool();
+  // §bugfix (releasing a held critter/fish is handled in the mousedown handler, before eating)
   if (tool !== "lantern" && tool !== "bucket") return;
   const pt = rayGround(0, 0); if (!pt) return;
   if (Math.hypot(pt[0] - player.x, pt[1] - player.z) > REACH + 1.4) return;   // too far
@@ -8167,13 +8198,23 @@ function quickMove(idx) {   // shift-click: bag ↔ belt
 // §P2 which items are living things you can set free, and which can be set down in the world
 function isReleasable(id) { return id === "bug" || STONE_BUGS.indexOf(id) >= 0 || !!(CREATURES[id] && CREATURES[id].bucketable); }   // §P3 each bug species is releasable
 function isPlaceable(id) { return id === "lantern" || id === "bucket"; }
-function releaseItem(idx) {   // let a held bug/creature go near the player
+function releaseItem(idx) { releaseAtAim(idx, false); }   // §P3 legacy near-player release (menu action)
+// §bugfix release a held critter / fish where the player is aiming. A sea creature that lands in water swims
+// off; on dry land the crawlers (crab/hermit/horseshoe) head for the sea and the rest flop; bugs scurry to cover.
+function releaseAtAim(idx, atAim) {
   const c = Inv.cell(idx); if (!c) return; const id = c.id;
-  const f = camForward(), x = player.x + f[0]*1.4 + (rng()-0.5), z = player.z + f[2]*1.4 + (rng()-0.5);
-  const t = id === "bug" ? STONE_BUGS[(rng()*STONE_BUGS.length)|0] : id;   // §P3 legacy "bug" releases a random species; a specific bug item releases its own
-  if (typeof spawnCreature === "function" && CREATURES[t]) spawnCreature(t, x, z, { hr: 6 });
+  const t = id === "bug" ? STONE_BUGS[(rng()*STONE_BUGS.length)|0] : id;   // legacy "bug" → a random species; a specific item → its own
+  if (!(typeof spawnCreature === "function" && CREATURES[t])) return;      // only real creatures can be set loose
+  let x, z, pt = atAim ? rayGround(0, 0) : null;
+  if (pt && Math.hypot(pt[0]-player.x, pt[1]-player.z) <= REACH + 1.6) { x = pt[0]; z = pt[1]; }
+  else { const f = camForward(); x = player.x + f[0]*1.5 + (rng()-0.5)*0.5; z = player.z + f[2]*1.5 + (rng()-0.5)*0.5; }
+  const e = spawnCreature(t, x, z, { hr: 6 });
+  const land = STONE_BUGS.indexOf(t) >= 0 || (CREATURES[t] && CREATURES[t].land);
+  if (!land && waterDepthAt(x, z) <= 0.12) {    // a sea creature set down on dry land: crawl to water, or flop
+    if (DUMP_CRAWL[t]) e.returning = true; else { e.beached = true; e.flop = !DUMP_STAY[t]; }
+  }   // bugs find their own way to cover via behaveStoneCritter
   c.qty--; if (c.qty <= 0) Inv.setCell(idx, null); Inv.emit();
-  if (onDig) onDig("pickup"); showCard("Released", "You set it back down to go on its way.");
+  if (onDig) onDig("pickup"); showCard("Released", land ? "It scurries off to cover." : (waterDepthAt(x,z) > 0.12 ? "It slips into the water." : "It makes for the water."));
 }
 function placeHeldFromMenu(idx) {   // set a lantern/bucket down in front of the player
   const c = Inv.cell(idx); if (!c) return;
@@ -8189,12 +8230,14 @@ function showContextMenu(idx, x, y) {
   const c = Inv.cell(idx); if (!c) return; const opts = [];
   opts.push(["Inspect", () => showInspect(c.id)]);
   if (isFood(c.id)) opts.push(["Eat", () => eatItem(idx)]);
+  // §bugfix "Put in bucket": a scoopable fish / critter goes into the first bucket with water + room; greyed if none fits
+  if (isBucketable(c.id)) opts.push(["Put in bucket", () => putItemInBucket(idx), !firstBucketWithRoom(c.id)]);
   if (isReleasable(c.id)) opts.push(["Release", () => releaseItem(idx)]);
   if (isPlaceable(c.id)) opts.push(["Place", () => placeHeldFromMenu(idx)]);
   if (FINDS[c.id]) { opts.push(["Drop one", () => invDrop(idx, true)]); if (c.qty > 1) opts.push(["Drop all", () => invDrop(idx, false)]); }
   const m = document.getElementById("ctxmenu");
-  m.innerHTML = opts.map((o, i) => `<div data-i="${i}">${o[0]}</div>`).join("");
-  m.querySelectorAll("div").forEach((d, i) => d.onclick = () => { opts[i][1](); hideContextMenu(); if (invOpen) renderInventory(); });
+  m.innerHTML = opts.map((o, i) => `<div data-i="${i}"${o[2] ? ' class="disabled"' : ''}>${o[0]}</div>`).join("");
+  m.querySelectorAll("div").forEach((d, i) => d.onclick = () => { if (opts[i][2]) return; opts[i][1](); hideContextMenu(); if (invOpen) renderInventory(); });
   m.style.display = "block"; m.style.left = Math.min(innerWidth - 124, x) + "px"; m.style.top = Math.min(innerHeight - 8 - opts.length*34, y) + "px";
 }
 function hideContextMenu() { document.getElementById("ctxmenu").style.display = "none"; }
@@ -8257,6 +8300,16 @@ function carryGhost(x, y) {
 }
 function placeCarryInto(idx) {
   const b = Inv.cell(idx);
+  // §bugfix drag a scoopable critter/fish onto a bucket that has water + room → it goes into that bucket
+  if (b && b.id === "bucket" && isBucketable(carry.id)) {
+    const bk = bkOfSlot(b), reg = CREATURES[carry.id];
+    if (bk && bk.water && bkUnitsUsed(bk) + creatureUnits({ t: carry.id }) <= BUCKET_UNITS) {
+      bk.creatures.push({ t: carry.id, scale: (reg && reg.base) || 0.5, tint: (reg && reg.iconTint) || [1,1,1], moist: 1, caught: {} });
+      carry.qty--; if (carry.qty <= 0) carry = null; Inv.emit(); syncBucket(); saveState(); if (onDig) onDig("splash"); hideGhost(); return;
+    }
+    bagShake();   // bucket has no water or no room: bounce, keep carrying
+    return;
+  }
   if (!b) { Inv.setCell(idx, { id: carry.id, qty: carry.qty }); carry = null; }
   else if (b.id === carry.id && ITEMS[carry.id] && ITEMS[carry.id].stackable) {
     const room = (ITEMS[carry.id].maxStack || 99) - b.qty, move = Math.min(room, carry.qty);
@@ -8432,7 +8485,7 @@ function interact() { if (heave) { heaveStrike(); return; } if (pry) { pryStrike
   if (rodEquipped()) { rodTap(); return; }   // §Fishing F / mobile Use = cast / set hook / reel pulse
   const t = curTarget || targetAlongRay(rayFromNDC(0, 0));
   if (t) { interactTarget(t); return; }
-  if (mode === "walk" && !isPanelOpen()) { if (isFood(selectedItem())) eatSelected(); else punch(null); }   // §15 nothing in reach → eat or punch
+  if (mode === "walk" && !isPanelOpen()) { punch(null); }   // §15/§bugfix nothing in reach → a punch (eating is only by holding right-click now)
 }
 let cardTimer = 0;
 function showCard(name, desc) {
@@ -8712,9 +8765,13 @@ function interactTarget(t) { if (!t) return; if (reachForTool(t) === "fail") ret
 // §P3 after an object (tree / stump / boulder / driftwood) breaks, swallow terrain hits for a
 // moment so a still-held or rapid click doesn't immediately dig a hole where it stood. Cleared
 // early on mouse/touch release.
-let breakIgnoreUntil = 0;
-function objectBroke() { breakIgnoreUntil = performance.now() / 1000 + (TUNE.BREAK_IGNORE_T || 0); }
-function breakLockActive() { return performance.now() / 1000 < breakIgnoreUntil; }
+let breakIgnoreUntil = 0, brokeSinceDown = false;   // §bugfix brokeSinceDown holds the lockout until the button is released
+// §bugfix when ANY breakable (stump / boulder / tree / driftwood / …) breaks, swallow terrain hits until the button
+// is released, so a held click can't immediately chew the ground where it stood. The time-based window is kept as a
+// fallback for taps (touch) that don't hold.
+function objectBroke() { brokeSinceDown = true; breakIgnoreUntil = performance.now() / 1000 + (TUNE.BREAK_IGNORE_T || 0); }
+function breakLockActive() { return brokeSinceDown || performance.now() / 1000 < breakIgnoreUntil; }
+function clearBreakLock() { brokeSinceDown = false; breakIgnoreUntil = 0; }   // §bugfix on button release the lockout lifts
 function clickAt(ndcx, ndcy) {
   if (mode !== "walk") return;
   if (heave) { heaveStrike(); return; }             // §21D a click is a heave strike while the boulder mini-game is up
@@ -8724,21 +8781,22 @@ function clickAt(ndcx, ndcy) {
   if (tgt && reachForTool(tgt) === "fail") return;   // §11.3 reach for the right tool (or react if we own none)
   if (useToolOnTarget(tgt)) { setWorkLock(tgt); return; }
   if (breakLockActive()) return;                     // §P3 just broke something → don't chew up the terrain under it
+  const tool = selectedTool();
+  // §bugfix the bucket's left-click always resolves (scoop handled above as a creature target): fill at water, else
+  // open its menu, even when the crosshair is on the sky / nothing. So it never falls through to the ground path.
+  if (tool === "bucket") { bucketLeftClick(); return; }
   // otherwise use the equipped tool on the ground / object under the crosshair, within reach
   const pt = rayGround(ndcx, ndcy); if (!pt) return;
   if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return;   // too far: do nothing
-  const tool = selectedTool();
   const gy = surfaceAt(pt[0], pt[1]).h + 0.3;
   if (tool === "shovel") digAt(pt[0], pt[1]);
   else if (tool === "axe") { if (!chopAt(pt[0], pt[1]) && !groundAutoDig(pt)) failStrike(false, pt[0], gy, pt[1]); }   // axe bit nothing → dig or thud
   else if (tool === "pickaxe") { if (!mineAt(pt[0], pt[1]) && !removeBuiltAt(pt[0], pt[1]) && !groundAutoDig(pt)) failStrike(true, pt[0], gy, pt[1]); }   // pick hit bare ground → dig or clink
-  else if (tool === "bucket") useBucket(pt[0], pt[1]);
   else if (MAT_ITEM[tool] !== undefined) placeMaterial(pt[0], pt[1]);
   else if (SEED_TREE[tool]) plantAt(pt[0], pt[1]);
   else if (CROP_SEED[tool]) plantCrop(pt[0], pt[1]);            // §17 plant a crop seed on soil
   else if (tool === "chestbox") placeStorageBox(pt[0], pt[1]);   // §12C place an emptied chest as storage
-  else if (isFood(selectedItem())) eatSelected();               // §15 clicking food in hand eats it (§P2 lantern/bucket set down with right-click instead)
-  else punch(pt);                                               // §15 anything else → a punch (startles creatures)
+  else punch(pt);                                               // §15 anything else → a punch (startles creatures); §bugfix left-click never eats (eat is hold-right-click)
 }
 // §15 eat the food currently in hand
 function eatSelected() { const c = Inv.hotbar[Inv.selected]; if (c && isFood(c.id)) { eatItem(INV_SLOTS + Inv.selected); return true; } return false; }
@@ -9285,6 +9343,7 @@ function failStrike(hard, x, y, z) {
   rootPlayer(); spendStamina(FAIL_COST); lastFailT = clock.t;
   if (onDig) onDig(hard ? "clink" : "thud");
   if (hard) spawnSparks(x, y, z, 9); else spawnSand(x, y, z, 6, [0.66, 0.6, 0.5]);
+  cantDig();   // §bugfix the strike did nothing (rock / bare ground) → "Can't dig here" by the crosshair
 }
 let holeNear = (x, z) => {
   const gcx = (x + HALF) / CELL, gcz = (z + HALF) / CELL, r = DIG_R / CELL;
@@ -9477,6 +9536,21 @@ const BUCKET_UNITS = 6;                           // total space (tunable)
 const CREATURE_UNITS = { lingcod: 3, rockfish: 2, flounder: 2, fish: 2, jelly: 2, horseshoe: 2, lobster: 3 };   // §lob5 a lobster takes 3 of the bucket's units; the rest default to 1
 function creatureUnits(c) { let u = CREATURE_UNITS[c && c.t] || 1; if (c && c.variant === "giant") u += 1; return Math.min(u, BUCKET_UNITS); }
 function bucketUnitsUsed() { let u = 0; for (const c of bucket.creatures) u += creatureUnits(c); return u; }
+// §bugfix per-bucket capacity + "put a satchel critter into a bucket" (menu action + drag-onto-bucket-slot).
+function bkUnitsUsed(bk) { let u = 0; for (const c of bk.creatures) u += creatureUnits(c); return u; }
+function firstBucketWithRoom(id) {   // the first bucket that HAS water and room for one of `id`; null if none
+  const need = creatureUnits({ t: id });
+  for (const bk of allBuckets()) { if (!bk.water) continue; if (bkUnitsUsed(bk) + need <= BUCKET_UNITS) return bk; }
+  return null;
+}
+function putItemInBucket(idx) {
+  const c = Inv.cell(idx); if (!c || !isBucketable(c.id)) return false;
+  const bk = firstBucketWithRoom(c.id); if (!bk) { showCard("No bucket fits", "You need a bucket with water and enough room."); return false; }
+  const reg = CREATURES[c.id];
+  bk.creatures.push({ t: c.id, scale: (reg && reg.base) || 0.5, tint: (reg && reg.iconTint) || [1,1,1], moist: 1, caught: { biome: catchBiomeLabel(player.x, player.z), tide: catchTideLabel() } });
+  c.qty--; if (c.qty <= 0) Inv.setCell(idx, null); Inv.emit(); syncBucket(); saveState();
+  if (onDig) onDig("splash"); discovered.add(c.id); return true;
+}
 // §13.3 moisture: a creature out of water dries out over DRY_OUT_TIME real-seconds (tunable, ~5 min).
 // A fresh scoop / a refill tops it back to 1; a dry bucket lets it fall to 0, where the creature dies.
 const DRY_OUT_TIME = 300;                        // seconds from soaked to dead when kept dry (tunable)
@@ -9537,17 +9611,25 @@ function waterKindAt(x, z) {
 }
 // §P2 left-click with a bucket: aiming at water → fill; else → open the bucket's own screen.
 // (Aiming at a creature is handled earlier in useToolOnTarget as a scoop.)
-function useBucket(x, z) {
+// §bugfix fill the held bucket from a real water surface (only called once the target is confirmed to be water).
+function fillBucketAt(x, z) {
+  const kind = waterKindAt(x, z); if (!kind || bucket.water) return false;
+  bucket.water = true; bucket.fresh = (kind === "fresh"); for (const c of bucket.creatures) c.moist = 1;
+  if (onDig) onDig("splash"); spawnSand(x, surfaceAt(x, z).h + 0.1, z, 10, [0.72, 0.86, 0.96]); saveState();
+  showCard(kind === "fresh" ? "Filled with fresh water" : "Filled with sea water", "");
+  return true;
+}
+// §bugfix the held bucket's left-click. Scooping a creature is handled earlier (useToolOnTarget). Here:
+//   2. crosshair on real water within reach, and the bucket is empty → fill it.
+//   3. anything else (land, the sky, nothing, or an already-full bucket) → open the bucket menu.
+// It never fills from land, and never falls through to a dig / punch.
+function bucketLeftClick() {
   syncBucket(); if (!bucket) return;
-  if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;
-  const kind = waterKindAt(x, z);
-  if (kind && !bucket.water) {   // aiming at water, not already full → fill
-    bucket.water = true; bucket.fresh = (kind === "fresh"); for (const c of bucket.creatures) c.moist = 1;
-    if (onDig) onDig("splash"); spawnSand(x, surfaceAt(x, z).h + 0.1, z, 10, [0.72, 0.86, 0.96]); saveState();
-    showCard(kind === "fresh" ? "Filled with fresh water" : "Filled with sea water", "");
-    return;
+  const pt = rayGround(0, 0);
+  if (pt && !bucket.water && Math.hypot(pt[0] - player.x, pt[1] - player.z) <= REACH + 1.4 && waterKindAt(pt[0], pt[1])) {
+    fillBucketAt(pt[0], pt[1]); return;
   }
-  openBucketMenu(bucket);   // anything else → the bucket menu (pour / release live there now)
+  openBucketMenu(bucket);   // the bucket's own screen (pour / release live there)
 }
 // Pour water into a dug hole → a little standing pond (crop-watering hook: onWaterGround).
 function pourIntoHole(x, z) {
@@ -9588,6 +9670,8 @@ function bucketReleaseAll() {
 }
 function bucketPourWater() {
   if (!bucket.water) return;
+  // §bugfix can't pour out while the bucket itself is submerged (you're standing in deep enough water)
+  if (waterDepthAt(player.x, player.z) > 0.5 || player.underwater) { showCard("It's underwater", "You can't pour it out while the bucket is submerged."); return; }
   bucket.water = false; if (onDig) onDig("splash"); saveState();
   if (bucketLook.open) updateBucketLook();
 }
@@ -10840,8 +10924,9 @@ function stumpStrike(st) {
   if (st.hp <= 0.001) {
     for (let i = 0, n = 1 + (rng()*2|0); i < n; i++) spawnFind("log", st.x + (rng()-0.5), st.z + (rng()-0.5));
     const i = stumps.indexOf(st); if (i >= 0) stumps.splice(i, 1);
-    applyDig(st.x, st.z, 1.2, Math.atan2(player.z - st.z, player.x - st.x));    // §P3 breaking a stump digs the ground beneath it (leaves a healing hole)
-    objectBroke();                                                             // §P3 then ignore terrain hits briefly
+    // §bugfix breaking a stump no longer digs the ground (the old "healing hole" was the dig the player kept
+    // seeing). It just pops out; objectBroke() then swallows terrain hits until the button is released.
+    objectBroke();
     saveWorld();
   }
 }
@@ -12872,6 +12957,9 @@ function frame(now) {
     player.eyeY = renderFeetY + EYE + camSit;                            // stable gameplay eye (rays, lantern, spear)
     const landDip = camFxOn("landDip") ? camYOff : 0;                   // landing dip / give
     cam.pos[0] = player.x; cam.pos[1] = player.eyeY + bobOff + landDip; cam.pos[2] = player.z;   // + visual bob + landing give
+    // §camfix never let the camera dip inside the terrain on a steep climb (interpolation lag + bob could push the
+    // eye below the ground, which then read as "underwater" and flickered the blue tint). Keep a safe clearance.
+    if (!player.swimming && !player.underwater) { const gH = surfaceAt(cam.pos[0], cam.pos[2]).h; if (cam.pos[1] < gH + CAM_MIN_CLEAR) cam.pos[1] = gH + CAM_MIN_CLEAR; }
     if (dbgYGraph) { recordY(renderFeetY, cam.pos[1], player.airborne); drawYGraph(); }    // §P1
     if (critDbg) drawCritDebug();                                                          // §R4 creature AI overlay
     if (fpDbg) drawFootprintDebug();                                                       // §P3 spawn-footprint / overlap overlay
@@ -12907,7 +12995,9 @@ function frame(now) {
   // §14B underwater view: deepen & blue-shift the fog so visibility shortens with depth, and swap the
   // sky/fog colour to the undersea palette. Reds fade into blue-green, darker the deeper you go.
   const camSurf = waterSurfaceAt(cam.pos[0], cam.pos[2]);
-  const camUnderwater = mode === "walk" && cam.pos[1] < camSurf - 0.05;
+  // §camfix hysteresis around the water surface so the underwater tint can't flicker at the waterline: go under
+  // only when the eye is clearly below the surface, and stay under until it's clearly above.
+  const camUnderwater = mode === "walk" && cam.pos[1] < camSurf + (camUnderwaterNow ? UW_EXIT : UW_ENTER);
   camUnderwaterNow = camUnderwater;
   let _uwFogD, _uwFogN, _uwSky;
   if (camUnderwater) {
@@ -13127,9 +13217,13 @@ function frame(now) {
     }
     if (tooTiredT > 0) tooTiredT -= dt;
     if (hintT > 0) hintT -= dt;
+    if (cantDigT > 0) cantDigT -= dt;
     if (tooTiredT > 0) {   // §13.2 "Too tired" takes the prompt line and fades out over ~1s
       promptEl.textContent = "Too tired"; promptEl.style.display = "block";
       promptEl.style.color = "#ffbda6"; promptEl.style.opacity = Math.min(0.92, tooTiredT * 1.3).toFixed(2);
+    } else if (cantDigT > 0) {   // §bugfix "Can't dig here", same style as Too tired
+      promptEl.textContent = "Can't dig here"; promptEl.style.display = "block";
+      promptEl.style.color = "#ffbda6"; promptEl.style.opacity = Math.min(0.92, cantDigT * 1.3).toFixed(2);
     } else if (hintT > 0) { promptEl.textContent = hintText; promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = ""; }
     else { promptEl.style.display = "none"; promptEl.style.color = ""; promptEl.style.opacity = ""; }
     if (!buildMode && curTarget && curTarget.kind === "weakstone") {   // §weak7 weak-stone tooltip
