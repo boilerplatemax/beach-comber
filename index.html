@@ -7495,8 +7495,12 @@ function invDrop(idx, one) {
 }
 
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
+// §strip save format version. Bumped when the strip-down broke old saves; a stored save whose v
+// does not match is discarded on load so the game starts fresh (no backward-compat / migration).
+const SAVE_VERSION = 2;
+function purgeSeedSaves() { for (const suf of ["bc_","bcw_","bcd_","bcs_","bcc_","bcg_","bcsets_"]) { try { localStorage.removeItem(suf + SEED_STR); } catch (e) {} } }
 function saveState() {
-  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup, variants: variantsSeen,
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ v: SAVE_VERSION, main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup, variants: variantsSeen,
     heaves: heaveBoulders.map((b,i)=>b.flipped?[i,+b.refillAt.toFixed(2),+b.flippedAt.toFixed(2)]:0).filter(e=>e),  // §21D heaved boulders (index, refillAt, flippedAt)
     oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)]),  // §23 oyster-bed stock
     hsFlipped: horseshoesFlipped,  // §41 horseshoe crabs turned back over
@@ -7508,8 +7512,9 @@ function saveState() {
 function loadState() {
   try {
     const s = JSON.parse(localStorage.getItem("bc_" + SEED_STR) || "null");
+    if (s && s.v !== SAVE_VERSION) { purgeSeedSaves(); return; }   // §strip old-version save → wipe this seed and start fresh
     if (s) {
-      if (Array.isArray(s.main)) { Inv.main = padArr(s.main, INV_SLOTS); Inv.hotbar = padArr((s.hotbar || []).map(normCell), HOTBAR_SLOTS); }
+      if (Array.isArray(s.main)) { Inv.main = padArr(s.main, INV_SLOTS); Inv.hotbar = padArr(s.hotbar || [], HOTBAR_SLOTS); }
       Inv.selected = Math.min(HOTBAR_SLOTS - 1, s.sel || 0); (s.disc || []).forEach((d) => discovered.add(d));
       starsRescued = s.rescued || 0;
       if (typeof s.cleanup === "number") beachCleanup = s.cleanup;   // §5 beach-cleanup tally
@@ -7522,13 +7527,11 @@ function loadState() {
       if (Array.isArray(s.events)) seenEvents = s.events;   // §B5
       if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
-      if (s.bucket) { bucket.water = !!s.bucket.water; bucket.creatures = Array.isArray(s.bucket.creatures) ? s.bucket.creatures : [];
-        for (const c of bucket.creatures) if (c.moist === undefined) c.moist = 1; }   // §13.3 older saves: start soaked
+      if (s.bucket) { bucket.water = !!s.bucket.water; bucket.creatures = Array.isArray(s.bucket.creatures) ? s.bucket.creatures : []; }
     }
   } catch (e) {}
 }
 function padArr(a, n) { const o = new Array(n).fill(null); for (let i = 0; i < n && i < a.length; i++) o[i] = a[i] || null; return o; }
-function normCell(c) { return (typeof c === "string") ? { id: c, qty: 1 } : c; }   // migrate old hotbar (bare ids)
 
 /* ---- dropped world items (persist per seed) ---- */
 /* ---- auto-pickup (§8): loose items within a small arc hop into the pack ---- */
@@ -7613,7 +7616,8 @@ function spawnDropEntity(d) {
 function saveDrops() { try { localStorage.setItem("bcd_" + SEED_STR, JSON.stringify(worldDrops.map(d => [d.id, +d.x.toFixed(1), +d.z.toFixed(1)]))); } catch (e) {} }
 function loadDrops() {
   try { const a = JSON.parse(localStorage.getItem("bcd_" + SEED_STR) || "[]");
-    for (const r of a) { const d = { id: r[0], x: r[1], z: r[2] }; worldDrops.push(d); spawnDropEntity(d); } } catch (e) {}
+    for (const r of a) { if (!ITEMS[r[0]] && !FINDS[r[0]]) continue;   // §strip skip drops of items removed in the strip-down
+      const d = { id: r[0], x: r[1], z: r[2] }; worldDrops.push(d); spawnDropEntity(d); } } catch (e) {}
 }
 
 /* ---- notifications (bottom-left toasts) ---- */
@@ -11369,6 +11373,7 @@ function checkSets() {
 /* ---- save / load planted trees & stumps (per seed) ---- */
 function saveWorld() {
   try { localStorage.setItem("bcw_" + SEED_STR, JSON.stringify({
+    v: SAVE_VERSION,
     planted: planted.map(p => [p.species, +p.x.toFixed(1), +p.z.toFixed(1), p.plantedAt]),
     stumps: stumps.map(s => [s.species, +s.x.toFixed(1), +s.z.toFixed(1), s.sproutAt]),
     chopped: treeObjs.filter(o => o.gone).map(o => o.i + ":" + o.species),
@@ -11390,6 +11395,7 @@ function saveWorld() {
 function loadWorld() {
   try {
     const w = JSON.parse(localStorage.getItem("bcw_" + SEED_STR) || "null"); if (!w) return;
+    if (w.v !== SAVE_VERSION) { try { localStorage.removeItem("bcw_" + SEED_STR); } catch (e) {} return; }   // §strip old-version world save → ignore
     const chop = new Set(w.chopped || []);
     for (const o of treeObjs) if (chop.has(o.i + ":" + o.species)) { o.gone = true; o.scale = 0; setTreeInstance(o); if (o.coll) o.coll.r = 0; }
     for (const i of (w.driftGone || [])) if (driftObjs[i]) driftObjs[i].gone = true;   // §13.1
@@ -11779,8 +11785,9 @@ function stashAdd(id, qty) {
   const it = ITEMS[id]; for (const s of stash) if (s.id === id && it.stackable && s.qty < (it.maxStack||99)) { s.qty += qty; return true; }
   if (stash.length < STASH_CAP) { stash.push({ id, qty }); return true; } return false;
 }
-function saveStorage() { try { localStorage.setItem("bcs_" + SEED_STR, JSON.stringify({ b: storageBoxes.filter(b=>!b.cottage).map(b=>[+b.x.toFixed(1),+b.z.toFixed(1),+b.yaw.toFixed(2)]), s: stash })); } catch (e) {} }
+function saveStorage() { try { localStorage.setItem("bcs_" + SEED_STR, JSON.stringify({ v: SAVE_VERSION, b: storageBoxes.filter(b=>!b.cottage).map(b=>[+b.x.toFixed(1),+b.z.toFixed(1),+b.yaw.toFixed(2)]), s: stash })); } catch (e) {} }
 function loadStorage() { try { const o = JSON.parse(localStorage.getItem("bcs_" + SEED_STR) || "null"); if (!o) return;
+  if (o.v !== SAVE_VERSION) { try { localStorage.removeItem("bcs_" + SEED_STR); } catch (e) {} return; }   // §strip old-version storage save → ignore
   storageBoxes = (o.b||[]).map(r=>({x:r[0],z:r[1],yaw:r[2]})); stash = o.s || []; } catch (e) {} }
 function drawStorage(view) {
   if (!storageBoxes.length) return; propUniforms(view); let n = 0;
