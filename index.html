@@ -695,6 +695,31 @@
   .jtab { position: relative; }
   .jtab .jtabnew { position: absolute; right: 3px; top: 3px; width: 9px; height: 9px; border-radius: 50%;
     background: var(--red); box-shadow: 0 0 0 1.5px var(--parch), 0 1px 2px rgba(0,0,0,.5); }
+  /* ---- §UI catch card: big, persistent, old-RPG parchment ---- */
+  #catchpop { top: 12%; left: 50%; transform: translateX(-50%); width: 252px; min-width: 0; padding: 14px 18px 12px;
+    text-align: center; pointer-events: auto; border-radius: 0 !important;
+    background-color: var(--parch) !important; background-image: var(--grain) !important; background-blend-mode: multiply;
+    border: 3px solid var(--wood-lo) !important; color: var(--pink) !important;
+    box-shadow: inset 0 0 0 3px var(--wood), inset 0 0 0 5px var(--parch-lo),
+      inset 4px 4px 0 5px rgba(255,248,224,.35), inset -4px -4px 0 5px rgba(120,86,40,.35),
+      0 10px 0 rgba(0,0,0,.28), 0 20px 40px rgba(0,0,0,.55) !important; }
+  #catchpop.show { animation: ccpop2 .4s cubic-bezier(.2,1.3,.3,1); }
+  @keyframes ccpop2 { from { transform: translateX(-50%) scale(.72); } to { transform: translateX(-50%) scale(1); } }
+  #catchpop .cp-big { width: 128px; height: 128px; image-rendering: pixelated; display: block; margin: 2px auto 2px;
+    filter: drop-shadow(0 5px 7px rgba(0,0,0,.45)); animation: discpop .45s cubic-bezier(.2,1.4,.35,1); }
+  #catchpop .cp-name { font-size: 19px; font-weight: 800; color: #3a2410; text-shadow: 0 1px 0 var(--parch-hi); letter-spacing: .02em; }
+  #catchpop .cp-wt { font-size: 14px; color: var(--pink-dim); font-weight: 600; margin-top: 1px; }
+  #catchpop .cp-wt b { font-size: 24px; color: #3a2410; font-weight: 800; }
+  #catchpop .cp-rec { font-size: 10px; letter-spacing: .12em; color: #2a1708; background: linear-gradient(#f4ca5e,#c7922f);
+    padding: 2px 8px; vertical-align: middle; box-shadow: inset 1px 1px 0 var(--gold-hi); }
+  #catchpop .cp-btns { display: flex; gap: 8px; justify-content: center; margin: 11px 0 5px; }
+  #catchpop .cp-keep, #catchpop .cp-rel { font-family: var(--ui); font-weight: 700; font-size: 14px; padding: 9px 16px; cursor: pointer; border: 0; flex: 1; }
+  #catchpop .cp-keep { background: linear-gradient(#e7b84e,#c7922f); color: #2a1708;
+    box-shadow: inset 2px 2px 0 var(--gold-hi), inset -2px -2px 0 #90631c, 0 2px 0 #5a3d10; }
+  #catchpop .cp-rel { background: linear-gradient(#c8a86a,#a9884f); color: #311f0c;
+    box-shadow: inset 2px 2px 0 var(--parch-hi), inset -2px -2px 0 #6e4f2b, 0 2px 0 #4a3317; }
+  #catchpop .cp-keep:active, #catchpop .cp-rel:active { transform: translateY(1px); }
+  #catchpop .cp-hint { font-size: 11px; color: var(--pink-dim); opacity: .85; margin-top: 2px; letter-spacing: .02em; }
 </style>
 </head>
 <body>
@@ -3517,15 +3542,27 @@ function showCatchPop(f, isJunk, itemId, added) {
   const el = document.getElementById("catchpop"); if (!el) return;
   const icon = (typeof buildMeshIcon === "function") ? buildMeshIcon(isJunk ? junkCatchMesh(f.junkId) : catchSpeciesMesh(f.species), [1,1,1]) : null;
   const label = isJunk ? (ITEMS[f.junkId] ? ITEMS[f.junkId].name : "Junk") : (FISH_SPECIES[f.species] ? FISH_SPECIES[f.species].label : "Fish");
-  const sub = isJunk ? `<span class="cp-wt">not a fish, but off the seabed</span>`
-    : `<span class="cp-wt">${f.weight.toFixed(2)} kg</span>${f.record ? ` <span class="cp-rec">RECORD</span>` : ""}`;
-  const relHint = added ? (IS_TOUCH ? "tap to release" : "Q, release") : "satchel full, not kept";
-  el.innerHTML = `<div class="cp-row">${icon ? `<img src="${icon}" alt="">` : ""}<div class="cp-txt"><div class="cp-name">${label}</div>${sub}</div></div><div class="cp-hint">${relHint}</div>`;
+  const sub = isJunk ? `<div class="cp-wt">off the seabed</div>`
+    : `<div class="cp-wt"><b>${f.weight.toFixed(2)}</b> kg${f.record ? ` <span class="cp-rec">RECORD</span>` : ""}</div>`;
+  // §UI the catch card is persistent: it stays until dismissed (click / Enter keeps, Q releases). The game keeps running.
+  const btns = added
+    ? `<div class="cp-btns"><button class="cp-keep">Keep</button><button class="cp-rel">Release</button></div>`
+    : `<div class="cp-btns"><button class="cp-keep">OK</button></div>`;
+  const hint = added ? (IS_TOUCH ? "tap Keep, or Release" : "click / Enter to keep · Q to release") : "satchel full, not kept";
+  el.innerHTML = `${icon ? `<img class="cp-big" src="${icon}" alt="">` : ""}<div class="cp-name">${label}</div>${sub}${btns}<div class="cp-hint">${hint}</div>`;
   el.style.display = "block"; requestAnimationFrame(() => el.classList.add("show"));
-  if (IS_TOUCH && added) el.onclick = () => releaseCatch(); else el.onclick = null;
-  catchPop = { itemId, isJunk, label, releasable: added > 0 }; catchPopT = 4.0;
+  const keepBtn = el.querySelector(".cp-keep"), relBtn = el.querySelector(".cp-rel");
+  if (keepBtn) keepBtn.onclick = (e) => { e.stopPropagation(); keepCatch(); };
+  if (relBtn) relBtn.onclick = (e) => { e.stopPropagation(); releaseCatch(); };
+  el.onclick = () => keepCatch();   // clicking anywhere on the card keeps it
+  catchPop = { itemId, isJunk, label, releasable: added > 0 }; catchPopT = 0;
   if (isJunk) { if (typeof SND !== "undefined") { SND.play("womp"); setTimeout(() => { try { SND.play("womp", { pitch: 0.6 }); } catch (e) {} }, 430); } }
   else { if (typeof SND !== "undefined") SND.play("discover", { volume: 0.45, bus: "ui" }); }
+}
+function keepCatch() {   // §UI dismiss the card, keeping the catch (it is already in the satchel)
+  if (!catchPop) return;
+  if (typeof SND !== "undefined") SND.play("menu_close");
+  hideCatchPop();
 }
 function hideCatchPop() { const el = document.getElementById("catchpop"); if (el) { el.classList.remove("show"); el.onclick = null; const was = el; setTimeout(() => { if (!catchPop) was.style.display = "none"; }, 400); } catchPop = null; }
 function releaseCatch() {
@@ -3577,9 +3614,7 @@ function updateCatchCine(dt) {
 }
 // §catch5 the catch card lives on its own short timer (independent of the flight animation)
 function updateCatchPop(dt) {
-  if (!catchPop) return;
-  catchPopT -= dt;
-  if (catchPopT <= 0) hideCatchPop();
+  // §UI the catch card is persistent now: it stays up until the player dismisses it (keep / release).
 }
 function drawCatchFish(view) {
   const cc = catchCine; if (!cc || fishReveal.open || !catchDyn) return;
@@ -3897,7 +3932,10 @@ const analog = { x: 0, y: 0 };   // x = strafe, y = forward, each -1..1
 let mobileSprint = false;        // mobile "Run" toggle writes here
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
-  if (catchPop && catchPop.releasable && e.code === "KeyQ") { e.preventDefault(); releaseCatch(); return; }   // §catch5 toss the just-caught fish/junk back while its card is up
+  if (catchPop) {   // §UI persistent catch card: Enter/F keeps, Q releases (click also keeps)
+    if (catchPop.releasable && e.code === "KeyQ") { e.preventDefault(); releaseCatch(); return; }
+    if (e.code === "Enter" || e.code === "KeyF") { e.preventDefault(); keepCatch(); return; }
+  }
   if (fishReveal.open) {                                                 // §fishpolish the catch card: Enter/Space keeps, Esc releases
     if (e.code === "Enter" || e.code === "Space" || e.code === "KeyF") { e.preventDefault(); keepFish(); return; }
     if (e.code === "Escape") { e.preventDefault(); releaseFish(); return; }
