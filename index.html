@@ -4753,10 +4753,10 @@ function cloverMesh() {
 }
 // §veg5 a harvestable tall-grass clump (strip it for Plant Fiber). "cut" = the short stubble left behind.
 function tallGrassMesh(cut) {
-  const m = Mesh(), base = [0.6, 0.58, 0.32], tip = [0.8, 0.74, 0.42], n = cut ? 4 : 10, H = cut ? 0.26 : 1.5;
-  for (let k = 0; k < n; k++) { const a = (k / n) * 6.2832 + 0.7, r = 0.06 + (k % 3) * 0.04, dx = Math.cos(a)*r, dz = Math.sin(a)*r;
+  const m = Mesh(), base = [0.6, 0.58, 0.32], tip = [0.8, 0.74, 0.42], n = cut ? 6 : 16, H = cut ? 0.26 : 1.5, w = cut ? 0.035 : 0.05;
+  for (let k = 0; k < n; k++) { const a = (k / n) * 6.2832 + 0.7, r = 0.06 + (k % 3) * 0.045, dx = Math.cos(a)*r, dz = Math.sin(a)*r;
     const hh = H * (0.68 + ((k * 7) % 5) / 5 * 0.5), lean = (((k * 13) % 7) / 7 - 0.5) * 0.5;
-    mTri(m, [-dz*0.02, 0, dx*0.02], [dz*0.02, 0, -dx*0.02], [dx*1.8 + lean, hh, dz*1.8], k % 2 ? base : tip);
+    mTri(m, [-dz*w, 0, dx*w], [dz*w, 0, -dx*w], [dx*1.8 + lean, hh, dz*1.8], k % 2 ? base : tip);
   }
   return m;
 }
@@ -5081,32 +5081,9 @@ function buildProps() {
     const scale = 1.5 + rng()*2.2;
     driftObjs.push({ x, z, scale, yaw: rng()*6.28, roll: (rng()-0.5)*0.5, tint: vary([0.6,0.55,0.48], 0.15), gone: false, big: scale > 2.2 });
   });
-  // dune grass (walkable), §veg5 much more varied: wider height range, a per-tuft lean, and colour from fresh green to dry gold
-  const grass = scatter(5.5, 1.0, 7000, (x, z, inst) => {
-    const s = surfaceAt(x, z); if (s.h < 5 || s.h > 26 || s.slope > 0.5) return;
-    if (rng() > 0.7 || nearPOI(x, z, 2) || spotUnderwater(x, z)) return;
-    const dry = rng();   // some patches cure to straw-gold
-    const base = [0.44 + dry*0.22, 0.5 - dry*0.06, 0.28 + dry*0.06];
-    pushInst(inst, x, s.h, z, 0.5 + rng()*1.3, rng()*6.28, rng()*0.22, rng()*6.28, vary(base, 0.22));
-  });
-  // §veg5 ferns tucked in the damper, shadier interior (under the trees)
-  const ferns = scatter(8, 0.9, 2600, (x, z, inst) => {
-    const s = surfaceAt(x, z); if (s.h < 11 || s.h > 40 || s.slope > 0.5) return;
-    if (rng() > 0.4 || nearPOI(x, z, 2) || spotUnderwater(x, z, 0.1)) return;
-    pushInst(inst, x, s.h, z, 0.8 + rng()*0.9, rng()*6.28, 0.04 + rng()*0.1, rng()*6.28, vary([1,1,1], 0.18));
-  });
-  // §veg5 wildflower clusters sprinkled across the dune meadows
-  const wildflowers = scatter(9, 1.0, 2200, (x, z, inst) => {
-    const s = surfaceAt(x, z); if (s.h < 6 || s.h > 24 || s.slope > 0.45) return;
-    if (rng() > 0.3 || nearPOI(x, z, 2) || spotUnderwater(x, z)) return;
-    pushInst(inst, x, s.h, z, 0.8 + rng()*0.6, rng()*6.28, 0, 0, vary([1,1,1], 0.12));
-  });
-  // §veg5 low clover carpets on the lower grassy flats
-  const clover = scatter(7, 0.9, 2600, (x, z, inst) => {
-    const s = surfaceAt(x, z); if (s.h < 6 || s.h > 20 || s.slope > 0.4) return;
-    if (rng() > 0.4 || nearPOI(x, z, 2) || spotUnderwater(x, z)) return;
-    pushInst(inst, x, s.h, z, 0.9 + rng()*0.7, rng()*6.28, 0, 0, vary([1,1,1], 0.16));
-  });
+  // §P3 land decorative vegetation is reduced to three PICKABLE kinds, seeded as world entities in
+  // seedPlants() (flowers → Flower, ferns → Fern) and seedTallGrass() (tall grass → Plant Fiber).
+  // The old instanced grass carpet, clover, and the non-pickable fern/wildflower decals are gone.
   // palms at the beach/dune edge (collide)
   const palms = scatter(15, 0.9, 1500, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 3 || s.h > 17 || s.slope > 0.4) return;
@@ -5191,10 +5168,6 @@ function buildProps() {
   });
 
   propTypes = [
-    { kind: "grass",  foliage: true, snap: true, inst: makeInstanced(grassMesh(), grass) },
-    { kind: "fern",   foliage: true, snap: true, inst: makeInstanced(fernMesh(), ferns) },           // §veg5 shady interior ferns
-    { kind: "wildflower", foliage: true, snap: true, inst: makeInstanced(wildflowerMesh(), wildflowers) }, // §veg5 meadow wildflowers
-    { kind: "clover", foliage: true, snap: true, inst: makeInstanced(cloverMesh(), clover) },        // §veg5 clover carpets
     { kind: "seaweed", foliage: true, snap: true, inst: makeInstanced(grassMesh([0.28,0.32,0.22]), seaweed) },
     { kind: "eelgrass", foliage: true, snap: true, inst: makeInstanced(eelgrassMesh(), eelgrass) },  // §14B
     { kind: "seamoss", foliage: true, snap: true, inst: makeInstanced(seaMossMesh(), seamoss) },     // §17.2 low carpet
@@ -5810,10 +5783,20 @@ function saltPanMesh() { const m = Mesh();
   mBox(m, 0, 0.07, 0, 0.1, 0.06, 0.1, [0.97,0.98,1.0]);
   return m; }
 function stickMesh() { const m = Mesh(); mBox(m,0,0.04,0,0.38,0.03,0.035,[0.45,0.34,0.22]); mBox(m,0.03,0.08,0.02,0.33,0.03,0.035,[0.4,0.3,0.2]); mBox(m,-0.02,0.06,-0.03,0.3,0.028,0.03,[0.48,0.36,0.24]); return m; }
-// §A7/§C2 Plant Fiber: a small splayed bundle of dry grass strands (stripped from tall grass → twisted into rope)
+// §A7/§C2 Plant Fiber: a thick splayed bundle of dry grass strands (stripped from tall grass → twisted into rope)
 function fiberMesh() { const m = Mesh(); const c = [0.84,0.78,0.52], c2 = [0.72,0.65,0.42];
-  for (let i = 0; i < 9; i++) { const a = i/9*6.283, r = 0.05, st = Mesh(), h = 0.2 + (i%3)*0.07;
-    mCyl(st, 0, h, 0.013, 0.004, 3, i%2 ? c : c2); mergeAt(m, st, Math.cos(a)*r, 0, Math.sin(a)*r); }
+  for (let i = 0; i < 12; i++) { const a = i/12*6.283, r = 0.06, st = Mesh(), h = 0.22 + (i%3)*0.08;
+    mCyl(st, 0, h, 0.022, 0.008, 4, i%2 ? c : c2); mergeAt(m, st, Math.cos(a)*r, 0, Math.sin(a)*r); }
+  return m; }
+// §P3 dropped-item meshes for picked vegetation (kept small, like the other finds)
+function flowerItemMesh() { const m = Mesh(), stem = [0.34,0.44,0.24], c = [0.93,0.6,0.72];
+  mBox(m, 0, 0.11, 0, 0.013, 0.11, 0.013, stem);
+  for (let p = 0; p < 6; p++) { const pa = p/6*6.283; mTri(m, [0,0.22,0], [Math.cos(pa)*0.075,0.24,Math.sin(pa)*0.075], [Math.cos(pa+0.6)*0.075,0.24,Math.sin(pa+0.6)*0.075], c); }
+  mTri(m, [0,0.235,0], [0.025,0.25,0], [0,0.25,0.025], [0.96,0.9,0.42]); return m; }
+function fernItemMesh() { const m = Mesh(), g = [0.3,0.46,0.24], g2 = [0.34,0.5,0.26];
+  for (let k = 0; k < 5; k++) { const a = k/5*6.283, dx = Math.cos(a), dz = Math.sin(a), c = k%2?g:g2;
+    mTri(m, [-dz*0.025,0.02,dx*0.025], [dz*0.025,0.02,-dx*0.025], [dx*0.22,0.3,dz*0.22], c);
+    mTri(m, [dx*0.22,0.3,dz*0.22], [dx*0.34,0.24,dz*0.34], [dx*0.25,0.23,dz*0.25], c); }
   return m; }
 // --- inland raw-material meshes (§5) ---
 function wormMesh() { const m = Mesh(); for (let i = 0; i < 6; i++) { const a = i*0.55; mBox(m, Math.sin(a)*0.11, 0.05, i*0.05-0.15, 0.055, 0.05, 0.05, [0.8-i*0.02,0.46,0.46]); } return m; }
@@ -6285,6 +6268,8 @@ const FINDS = {
   salt:     { mesh: () => saltMesh(),               base: 0.45,max: 40, label: "Sea Salt", desc: "Coarse crystals scraped from a dried pool rim. Goats love it.", rare: 1 },
   stick:    { mesh: () => stickMesh(),              base: 0.5, max: 60, label: "Sticks", desc: "Snapped twigs from a tree's crown.", rare: 0 },
   fiber:    { mesh: () => fiberMesh(),              base: 0.4, max: 80, label: "Plant Fiber", desc: "Tough strands stripped from tall grass.", rare: 0 },
+  flower:   { mesh: () => flowerItemMesh(),         base: 0.4, max: 80, label: "Flower", desc: "A bright wild bloom picked from the dune meadows.", rare: 0 },
+  fern:     { mesh: () => fernItemMesh(),           base: 0.4, max: 80, label: "Fern", desc: "A soft green frond from the island's shaded interior.", rare: 0 },
   // --- inland raw materials (dug from grass / dirt / forest) ---
   sand:     { mesh: () => sandMatMesh(),            base: 0.5, max: 60, label: "Sand", desc: "A double handful of sand. Place it to raise the ground.", rare: 0 },
   dirt:     { mesh: () => dirtMatMesh(),            base: 0.5, max: 60, label: "Dirt", desc: "Dark earth. Place it to build up the ground.", rare: 0 },
@@ -8180,6 +8165,7 @@ function targetAlongRay(r, sticky) {
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
   for (const cr of crops) sphere(cr, "crop", cr.x, cr.z, 0.5*cr.scale, 1.0*cr.scale);   // §17 harvestable crops
   if (typeof tallGrass !== "undefined") for (const g of tallGrass) if (!g.cut) sphere(g, "tallgrass", g.x, g.z, 0.4*g.scale, 0.7*g.scale);   // §veg5 strip tall grass for fibre
+  if (typeof plants !== "undefined") for (const pl of plants) if (!pl.cut) sphere(pl, "plant", pl.x, pl.z, 0.35*pl.scale, 0.55*pl.scale);   // §P3 pick flowers / ferns
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
   for (const s of weakStones) if (!s.picked) sphere(s, "weakstone", s.x, s.z, 0.4*s.sc, 0.55 + s.sc*0.4);   // §stonepick pick up a dome stone with any item (picked ones aren't targetable)
   // §heave-removed: heave boulders are no longer targetable
@@ -8228,6 +8214,7 @@ function useToolOnTarget(t) {
     case "bush": harvestBush(t.obj); return true;
     case "crop": harvestCrop(t.obj); return true;
     case "tallgrass": harvestTallGrass(t.obj); return true;   // §veg5 strip for Plant Fiber
+    case "plant": harvestPlant(t.obj); return true;           // §P3 pick a flower or fern
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "flotsam": collectFlotsam(t.obj); return true;   // §5 scoop floating debris straight from the water
     case "barnacle": scrapeBarnacle(t.obj); return true;   // §5 scrape with the Tool Kit (or a shovel) for bait
@@ -9487,6 +9474,54 @@ function drawBerryBushes(view) {
 }
 /* §veg5 TALL GRASS, harvestable clumps you strip for Plant Fiber (the rope material).
    Tall clumps give a good handful; smaller tufts give the odd strand. Cut clumps regrow over a couple of days. */
+// §P3 pickable decorative plants: flowers (→ Flower) and ferns (→ Fern). Each clump is a world
+// entity you click to pick; it regrows in a day or two. (Tall grass → Plant Fiber is its own
+// system just below.) Flowers are a bit bigger than the old decals; ferns keep their shape.
+function flowerClumpMesh(cut) {
+  if (cut) { const m = Mesh(), stem = [0.34,0.44,0.24]; for (let k=0;k<3;k++){ const a=k*2.12, bx=Math.cos(a)*0.08, bz=Math.sin(a)*0.08; mBox(m, bx, 0.055, bz, 0.016, 0.055, 0.016, stem); } return m; }
+  const m = wildflowerMesh(); for (let i=0;i<m.pos.length;i++) m.pos[i] *= 1.7; return m;   // §P3 a little bigger than before
+}
+function fernClumpMesh(cut) {
+  if (cut) { const m = Mesh(), g=[0.3,0.42,0.22]; for (let k=0;k<4;k++){ const a=k*1.6, dx=Math.cos(a), dz=Math.sin(a); mTri(m, [-dz*0.02,0,dx*0.02], [dz*0.02,0,-dx*0.02], [dx*0.14,0.16,dz*0.14], g); } return m; }
+  const m = fernMesh(); for (let i=0;i<m.pos.length;i++) m.pos[i] *= 1.25; return m;
+}
+let plants = [];
+const PLANT = { flower: { item:"flower", regrowD:2 }, fern: { item:"fern", regrowD:3 } };
+const plantDyn = {};   // { type: { full, cut } }
+function seedPlants() {
+  plants = [];
+  for (let i=0;i<120;i++){ const a=rng()*6.283, r=HALF*(0.08+rng()*0.6), x=Math.sin(a)*r, z=-Math.cos(a)*r, s=surfaceAt(x,z);   // flowers on the dune meadows
+    if (s.h<6||s.h>24||s.slope>0.45) continue;
+    if (waterDepthAt(x,z)>0.03 || (typeof bigPropBlocking==="function"&&bigPropBlocking(x,z,0.8)) || nearPOI(x,z,1.5) || (typeof insideCottage==="function"&&insideCottage(x,z))) continue;
+    plants.push({ x, z, type:"flower", cut:false, regrowAt:0, scale:0.9+rng()*0.5, yaw:rng()*6.283 }); }
+  for (let i=0;i<100;i++){ const a=rng()*6.283, r=HALF*(0.12+rng()*0.55), x=Math.sin(a)*r, z=-Math.cos(a)*r, s=surfaceAt(x,z);   // ferns in the shadier interior
+    if (s.h<11||s.h>40||s.slope>0.5) continue;
+    if (waterDepthAt(x,z)>0.03 || (typeof bigPropBlocking==="function"&&bigPropBlocking(x,z,0.8)) || nearPOI(x,z,1.5) || (typeof insideCottage==="function"&&insideCottage(x,z))) continue;
+    plants.push({ x, z, type:"fern", cut:false, regrowAt:0, scale:0.9+rng()*0.6, yaw:rng()*6.283 }); }
+}
+function updatePlants() { for (const p of plants) if (p.cut && clock.t >= p.regrowAt) p.cut = false; }
+function harvestPlant(p) {
+  if (p.cut) { showCard("Already picked", "It will grow back in a day or two."); return; }
+  const def = PLANT[p.type], id = def.item, first = !discovered.has("f_" + id);
+  Inv.add(id, 1); discovered.add("f_" + id); if (typeof notify === "function") notify(id, 1, first);
+  p.cut = true; p.regrowAt = clock.t + def.regrowD * DAY_PERIOD;
+  const gy = surfaceAt(p.x, p.z).h; if (typeof spawnSand === "function") spawnSand(p.x, gy+0.2, p.z, 4, p.type==="flower" ? [0.9,0.8,0.5] : [0.4,0.5,0.3]);
+  if (onDig) onDig("pluck"); saveWorld();
+}
+function plantPrompt(p) { const v = IS_TOUCH ? "tap" : "click"; return p.cut ? "" : (v + " to pick the " + p.type); }
+function drawPlants(view) {
+  if (!plants.length) return;
+  propUniforms(view); const a = rockScratch;
+  for (const type of ["flower","fern"]) {
+    if (!plantDyn[type]) plantDyn[type] = { full: makeDynamic(type==="flower" ? flowerClumpMesh(false) : fernClumpMesh(false), 120),
+                                            cut:  makeDynamic(type==="flower" ? flowerClumpMesh(true)  : fernClumpMesh(true),  120) };
+    for (const cut of [false, true]) { let n = 0;
+      for (const p of plants) { if (p.type!==type || p.cut!==cut) continue; const dx=p.x-cam.pos[0], dz=p.z-cam.pos[2]; if (dx*dx+dz*dz>DRAW_R*DRAW_R || n>=120) continue;
+        const o=n*10, y=surfaceAt(p.x,p.z).h; a[o]=p.x;a[o+1]=y;a[o+2]=p.z;a[o+3]=p.scale;a[o+4]=p.yaw;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
+      if (n) (cut ? plantDyn[type].cut : plantDyn[type].full).draw(a, n);
+    }
+  }
+}
 let tallGrass = [], tallGrassFullDyn = null, tallGrassCutDyn = null;
 const TALLGRASS_REGROW = 2;    // §veg5 in-game days to grow back after cutting (tunable)
 function seedTallGrass() {
@@ -10360,6 +10395,7 @@ function updateTools(dt, gdt) {
   updateErosion(gdt);
   updateBerries();
   if (typeof updateTallGrass === "function") updateTallGrass();
+  if (typeof updatePlants === "function") updatePlants();   // §P3 pickable flowers/ferns regrow
   updateCrops();
   updateGoblins(dt);
   // scattered seeds near mature trees slowly replenish (low density)
@@ -11805,6 +11841,7 @@ buildProps();
 seedSetPieces();
 seedBerryBushes();
 seedTallGrass();   // §veg5 harvestable tall-grass clumps (Plant Fiber)
+seedPlants();      // §P3 pickable flowers & ferns
 seedWildCrops();
 populateLife();
 recordCensus();      // §R4 remember starting populations for replenishment
@@ -11961,6 +11998,7 @@ function generateWorld() {
   seedSetPieces();
   seedBerryBushes();
   seedTallGrass();
+  seedPlants();
   seedWildCrops();
   populateLife();
   recordCensus();
@@ -12338,6 +12376,7 @@ function frame(now) {
   drawSetPieces(view);
   drawBerryBushes(view);
   drawTallGrass(view);   // §veg5
+  drawPlants(view);      // §P3 pickable flowers & ferns
   drawBarnacles(view);   // §5 barnacle crusts on intertidal rocks (before the transparent water)
   drawCrops(view);
   drawGoblins(view);
@@ -12493,8 +12532,8 @@ function frame(now) {
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
-    if (!buildMode && curTarget && curTarget.kind === "tallgrass") {   // §veg5 tall-grass tooltip
-      promptEl.textContent = tallGrassPrompt(curTarget.obj);
+    if (!buildMode && curTarget && (curTarget.kind === "tallgrass" || curTarget.kind === "plant")) {   // §veg5/§P3 tall-grass + flower/fern tooltip
+      promptEl.textContent = curTarget.kind === "plant" ? plantPrompt(curTarget.obj) : tallGrassPrompt(curTarget.obj);
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
