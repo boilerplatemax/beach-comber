@@ -658,6 +658,45 @@
  *  Raw WebGL2, no libraries, no asset files.
  * ===================================================================== */
 
+/* ===================================================================== *
+ *  TABLE OF CONTENTS  (one deployable file; jump with your editor's
+ *  "find" on the "§ NAME" banner of the section you want. Order follows
+ *  the file top-to-bottom. CSS lives in <style> above <script>.)
+ *
+ *   GENERATION / WORLD DATA
+ *     § PRNG · § NOISE · § WORLD CONFIG · § TERRAIN CHARACTER ·
+ *     § COASTAL BIOMES · § BASINS · § ATMOSPHERE · § TIDES
+ *   SYSTEMS
+ *     § SOUND · § 20 WEATHER (+ RAIN / AFTER A STORM / LIGHT EFFECTS)
+ *   RENDERER
+ *     § MATH · § GL helpers · § TERRAIN · § HEIGHT TEXTURE · § WATER ·
+ *     § SKY · § POST · § CAMERA
+ *   PLAYER
+ *     § PLAYER · § 14A SWIMMING/BREATH/DROWNING · § 14C THE SPEAR ·
+ *     § FISHING · § SAFETY · § COLLISION · § INPUT · § GRAPHICS SETTINGS
+ *   UI
+ *     § UI · § 12A TITLE SCREEN · § MOBILE CONTROLS (temporary)
+ *   WORLD CONTENT
+ *     § PROP & POI MESH BUILDER · § INSTANCED PROP RENDERER ·
+ *     § POINTS OF INTEREST · § PLACEMENT · § LIFE · § 5 FLOATING DEBRIS ·
+ *     § 5 BARNACLES
+ *   INTERACTION
+ *     § INVENTORY / JOURNAL / INTERACTION · § CLICK-TO-WALK · § TARGETING ·
+ *     § DIGGING · § TERRAIN API · § BUCKET · § 11.6 MINI 3D VIEWS ·
+ *     § 17 FARMING · § 17.5 GOBLIN TRADERS (inert) · § TOOLS ·
+ *     § 21 FLIPPING STONES · § 21D HEAVY BOULDERS · § 23 OYSTERS ·
+ *     § 40 RARE FINDS & GEODES · § 41 HORSESHOE CRABS · §B5 FINDABLE EVENTS ·
+ *     § 19 COTTAGE (removed, inert stubs) · § GOATS & SALT (inert) ·
+ *     § 12C BURIED TREASURE
+ *   DRIVER
+ *     § BUILD + LOOP · § island9 NEW ISLAND IN PLACE · frame() main loop
+ *
+ *  Central gameplay tunables: `const TUNE` in § DIGGING (debug sliders:
+ *  TUNABLES + DBG_GET/DBG_SET). Determinism: one seeded rng stream (§ PRNG);
+ *  same seed → identical island (see /tmp/wtest/det.js). CLAUDE.md has the
+ *  architecture notes and the test commands.
+ * ===================================================================== */
+
 /* --------------------------------------------------------------------- *
  * § PRNG  (one seeded stream for ALL procedural generation)
  * --------------------------------------------------------------------- */
@@ -11852,6 +11891,11 @@ let fpsSmooth = 60, washedThisLow = false;
 const dbgEl = document.getElementById("dbg");
 const fpsEl = document.getElementById("fpscounter");   // §fps standalone readout, toggled in Settings
 let _fpsGate = 0;
+// The main loop. Phase order (markers below): FPS-gate + dt → MUSIC → world
+// sim in capped fixed substeps (tide/hunger/life/weather/tools/…) → movement
+// + camera → matrices → PASS 1 scene into the low-res FBO (sky, terrain,
+// water, props, life, weather) → PASS 2 upscale+dither to the screen → HUD.
+// Order and the fixed substep are load-bearing for determinism; keep them.
 function frame(now) {
   // §13.6 FPS cap: skip drawing until the frame budget has elapsed (0 = uncapped)
   if (GFX.fpsCap > 0) { const budget = 1000 / GFX.fpsCap - 1.5; if (now - _fpsGate < budget) { requestAnimationFrame(frame); return; } _fpsGate = now; }
