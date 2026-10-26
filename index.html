@@ -7072,9 +7072,6 @@ function drawLife(view) {
   gl.uniform1f(propU.uDissolve, 0);   // §urgent5 default solid; the fade pass sets it per dying creature
   const px = cam.pos[0], pz = cam.pos[2];
   const animT = performance.now() * 0.001;   // §A2 real-time clock for the dropped-item hover/spin/glint
-  const buckets = {};
-  for (const k in CREATURES) buckets[k] = 0;
-  for (const k in FINDS) buckets["f_" + k] = 0;
   // fill per-type scratch and draw (one pass per type to reuse the buffer)
   const drawType = (key, reg, filter) => {
     let n = 0;
