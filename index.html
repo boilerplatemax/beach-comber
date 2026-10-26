@@ -10834,6 +10834,43 @@ function oysterClusterMesh() {
   }
   return m;
 }
+// §P3 one rough oyster clump, its shell count / sizes / angles varied by the passed rng R.
+function oysterClumpMesh(R) {
+  const m = Mesh();
+  const grey=[0.5+R()*0.12, 0.49+R()*0.12, 0.45+R()*0.1], grey2=[0.64+R()*0.09,0.62+R()*0.09,0.56+R()*0.08], greyD=[0.42,0.42,0.4];
+  const shell = (col, top) => { const d = Mesh();
+    mergeMesh(d, discMesh(0, 0.15, 6, 0.07, col));
+    mergeMesh(d, discMesh(0.05, 0.11, 6, 0.05, top));
+    mergeMesh(d, discMesh(0.09, 0.06, 5, 0.04, greyD));
+    for (let i=0;i<d.pos.length;i+=3) d.pos[i+2] *= 2.2;   // elongated oyster shell
+    return d; };
+  const nsh = 3 + (R()*4|0);
+  for (let s=0;s<nsh;s++){ const r=0.7+R()*0.55, rot=R()*6.283, ox=(R()-0.5)*0.5, oz=(R()-0.5)*0.5;
+    const d = shell(r>1.0?grey2:grey, grey2), c=Math.cos(rot), si=Math.sin(rot);
+    for (let i=0;i<d.pos.length;i+=3){ const px=d.pos[i]*r, py=d.pos[i+1]*r, pz=d.pos[i+2]*r; d.pos[i]=px*c+pz*si; d.pos[i+1]=py; d.pos[i+2]=-px*si+pz*c; }
+    mergeAt(m, d, ox, 0.02+R()*0.05, oz);
+  }
+  return m;
+}
+// §P3 a whole oyster rock: a varied base rock (shape/size/colour) with a varied number of oyster
+// clumps perched on it at varied spots/sizes. Seeded off the bed's position so every one differs
+// (and the global rng stream is untouched, keeping generation deterministic).
+function oysterRockMesh(seed, nClusters) {
+  const R = mulberry32(seed >>> 0), m = Mesh();
+  const style = ["rounded","jagged","slab",""][R()*4|0];
+  const rockCol = [0.36+R()*0.22, 0.35+R()*0.2, 0.33+R()*0.18];
+  const rock = rockMesh((seed^0x9e3779b1)>>>0, style, rockCol);
+  const sx=0.8+R()*0.7, syk=0.5+R()*0.55, sz=0.8+R()*0.7;
+  for (let i=0;i<rock.pos.length;i+=3){ rock.pos[i]*=sx; rock.pos[i+1]*=syk; rock.pos[i+2]*=sz; }
+  mergeMesh(m, rock);
+  for (let c=0;c<nClusters;c++){
+    const cl = oysterClumpMesh(R), cs=0.5+R()*0.6, ang=R()*6.283, rr=R()*0.5;
+    for (let i=0;i<cl.pos.length;i+=3){ cl.pos[i]*=cs; cl.pos[i+1]*=cs; cl.pos[i+2]*=cs; }
+    mergeAt(m, cl, Math.cos(ang)*rr, 0.22*syk + R()*0.18, Math.sin(ang)*rr);
+  }
+  return m;
+}
+function oysterRockSeed(x, z) { return ((SEED_INT ^ ((Math.floor(x*131.1)&0xffff)) ^ ((Math.floor(z*97.3)&0xffff)<<8)) >>> 0); }
 function seedOysterBeds() {
   oysterBeds = []; const loW = TIDE_MID - TIDE_RANGE*0.45, hiBand = TIDE_MID + TIDE_RANGE*0.18;
   for (let k=0; k<4000 && oysterBeds.length<OYSTER_BED_N; k++) {
@@ -10843,7 +10880,8 @@ function seedOysterBeds() {
     if (typeof insideCottage === "function" && insideCottage(x, z)) continue;
     if (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, 0.8)) continue;
     let near = false; for (const b of oysterBeds) if (Math.hypot(b.x-x, b.z-z) < 10) { near = true; break; } if (near) continue;
-    oysterBeds.push({ x, z, yaw: rng()*6.283, sc: 0.9+rng()*0.4, n: OYSTER_PER_BED_MIN + (rng()*(OYSTER_PER_BED_MAX-OYSTER_PER_BED_MIN+1)|0), refillAt: 0, pickedAt: -99 });
+    const rseed = oysterRockSeed(x, z), nClusters = 2 + (mulberry32((rseed^0x55)>>>0)()*4|0);   // §P3 per-bed variety (no global rng → deterministic)
+    oysterBeds.push({ x, z, yaw: rng()*6.283, sc: 0.9+rng()*0.4, n: OYSTER_PER_BED_MIN + (rng()*(OYSTER_PER_BED_MAX-OYSTER_PER_BED_MIN+1)|0), refillAt: 0, pickedAt: -99, rseed, nClusters });
   }
   if (_savedOysters) for (let i=0; i<oysterBeds.length && i<_savedOysters.length; i++) { const e = _savedOysters[i]; if (e) { oysterBeds[i].n = e[0]; oysterBeds[i].refillAt = e[1]; } }
 }
@@ -10852,15 +10890,15 @@ function updateOysterBeds() {
 }
 function drawOysterBeds(view) {
   if (!oysterBeds.length) return;
-  if (!oysterBedDyn) oysterBedDyn = makeDynamic(oysterClusterMesh(), OYSTER_BED_N);
-  propUniforms(view); let n = 0;
+  propUniforms(view);   // §P3 each bed is its own rock+clusters mesh (varied), so draw them one at a time
   for (const b of oysterBeds) {
     const dx = b.x-cam.pos[0], dz = b.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const gy = surfaceAt(b.x, b.z).h, o = n*10, dim = b.n <= 0 ? 0.62 : 1;
-    oysterScratch[o]=b.x;oysterScratch[o+1]=gy;oysterScratch[o+2]=b.z;oysterScratch[o+3]=b.sc;oysterScratch[o+4]=b.yaw;oysterScratch[o+5]=0;oysterScratch[o+6]=0;
-    oysterScratch[o+7]=0.95*dim;oysterScratch[o+8]=0.95*dim;oysterScratch[o+9]=0.92*dim; n++;
+    if (!b.dyn) b.dyn = makeDynamic(oysterRockMesh(b.rseed, b.nClusters), 1);   // built once per bed, lazily
+    const gy = surfaceAt(b.x, b.z).h, dim = b.n <= 0 ? 0.62 : 1;
+    oysterScratch[0]=b.x;oysterScratch[1]=gy;oysterScratch[2]=b.z;oysterScratch[3]=b.sc;oysterScratch[4]=b.yaw;oysterScratch[5]=0;oysterScratch[6]=0;
+    oysterScratch[7]=dim;oysterScratch[8]=dim;oysterScratch[9]=dim;
+    b.dyn.draw(oysterScratch, 1);
   }
-  if (n) oysterBedDyn.draw(oysterScratch, n);
 }
 function oysterBedPrompt(b) { return b.n <= 0 ? "picked clean, give it a day or two" : (IS_TOUCH ? "tap to pick an oyster" : "pick an oyster"); }   // §water workable underwater too
 function oysterBedAction(b) {   // §strip oysters now pick straight off the cluster into the satchel, like barnacles (no shucking, no pearls)
@@ -11876,6 +11914,7 @@ function disposeWorldGL() {
   if (rubbleDyn) { disposeGLObj(rubbleDyn); rubbleDyn = null; }             // loose-Stone mesh is seeded (stoneMesh → mRock(SEED_INT^0x51a3))
   if (barnacleRockDyn) { disposeGLObj(barnacleRockDyn); barnacleRockDyn = null; }  // intertidal rock mesh is seeded (SEED_INT^0x5b)
   _barnRockMesh = null;                                                     // seeded base mesh for standalone intertidal rocks; lazily rebuilt
+  if (Array.isArray(oysterBeds)) for (const b of oysterBeds) if (b.dyn) { disposeGLObj(b.dyn); b.dyn = null; }   // §P3 each oyster rock has its own seeded mesh
 }
 // Reset the arrays / maps the generation functions do NOT clear themselves
 // (the save-loaders push into these, or early-return and leave them stale).
