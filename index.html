@@ -5634,7 +5634,6 @@ function cuttleMesh() { return discMesh(0.05,0.4,6,0.05,[0.92,0.9,0.85]); }
 // §13.3 a small curled, drab dried husk, the sun-dried remains of a soft shore creature
 function huskMesh() { const m = discMesh(0.0,0.26,6,0.17,[0.56,0.5,0.42]); mergeMesh(m, discMesh(0.0,0.24,6,-0.08,[0.47,0.42,0.35])); return m; }
 // §14B a round green glass fishing float
-function glassFloatMesh() { const m = Mesh(); const c=[0.42,0.66,0.56]; mergeMesh(m, discMesh(0.0,0.42,8,0.34,c)); mergeMesh(m, discMesh(0.0,0.42,8,-0.34,[c[0]*0.9,c[1]*0.9,c[2]*0.9])); mCyl(m,0.3,0.46,0.08,0.06,6,[0.3,0.4,0.34]); return m; }
 function eggMesh() { const m = Mesh(); mBox(m,0,0.1,0,0.35,0.1,0.22,[0.12,0.1,0.09]); for(const s of [-1,1]) mTri(m,[s*0.35,0.1,0.22],[s*0.6,0.3,0.3],[s*0.35,0.1,-0.22],[0.1,0.09,0.08]); return m; }
 function bottleMesh() { const m = Mesh(); mCyl(m,0,0.7,0.2,0.2,7,[0.35,0.5,0.4]); mCyl(m,0.7,1.0,0.2,0.09,7,[0.35,0.5,0.4]); mCyl(m,1.0,1.15,0.09,0.09,6,[0.3,0.25,0.2]); return m; }
 // tools & dug finds
@@ -6362,7 +6361,7 @@ const FINDS = {
   nut:      { mesh: () => nutMesh(),                 base: 0.4, max: 30, label: "Nut", desc: "A broadleaf seed, plant it on soil or grass.", rare: 1 },
   salt:     { mesh: () => saltMesh(),               base: 0.45,max: 40, label: "Sea Salt", desc: "Coarse crystals scraped from a dried pool rim. Goats love it.", rare: 1 },
   stick:    { mesh: () => stickMesh(),              base: 0.5, max: 60, label: "Sticks", desc: "Snapped twigs from a tree's crown.", rare: 0 },
-  fiber:    { mesh: () => fiberMesh(),              base: 0.4, max: 80, label: "Plant Fiber", desc: "Tough strands stripped from tall grass. Twist a few together into rope.", rare: 0 },
+  fiber:    { mesh: () => fiberMesh(),              base: 0.4, max: 80, label: "Plant Fiber", desc: "Tough strands stripped from tall grass.", rare: 0 },
   // --- inland raw materials (dug from grass / dirt / forest) ---
   sand:     { mesh: () => sandMatMesh(),            base: 0.5, max: 60, label: "Sand", desc: "A double handful of sand. Place it to raise the ground.", rare: 0 },
   dirt:     { mesh: () => dirtMatMesh(),            base: 0.5, max: 60, label: "Dirt", desc: "Dark earth. Place it to build up the ground.", rare: 0 },
