@@ -547,11 +547,7 @@
     border: none; background: var(--facet); color: var(--ink); text-shadow: 0 1px 1px var(--ink-shadow); filter: brightness(1.15);
     clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px); }
   #bucketlookbox button:hover { filter: brightness(1.35); }
-  #help {
-    position: fixed; right: 12px; bottom: 12px; z-index: 5; pointer-events: none;
-    font-size: 12px; opacity: .55; text-align: right; line-height: 1.5;
-    text-shadow: 0 1px 2px rgba(0,0,0,.6);
-  }
+  /* §P2 #help (bottom-of-screen controls/seed text) removed */
   /* §music a small, quiet speaker toggle in the title's corner (drawn glyph, no emoji) */
   #musicToggle { position: absolute; top: calc(16px + env(safe-area-inset-top)); right: calc(18px + env(safe-area-inset-right)); width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;
     background: rgba(18,26,28,.32); border: 1px solid rgba(255,220,150,.22); border-radius: 9px; cursor: pointer; color: #e9dcc0;
@@ -840,10 +836,7 @@
 <div id="dragGhost"></div>
 <div id="itip"></div>
 <div id="debugpanel"></div>
-<div id="help">
-  WASD move · Shift run · click or F to use / pick up / interact<br>
-  1-8 hotbar · E opens the menu (Satchel · Bucket · Journal) · Tab tabs · Esc pause
-</div>
+<!-- §P2 the bottom-of-screen controls/seed text is removed; the controls live in the pause menu -->
 
 <script>
 "use strict";
@@ -2125,6 +2118,7 @@ const WEATHER_LABEL = { clear: "Clear", overcast: "Overcast", fog: "Fog", rain: 
 const WEATHER_TRANSITION = 55;        // seconds (time-constant) to ease between days' weather, smooth, not instant
 const WEATHER_FOG_MAX = 0.019;        // fog density added at fog=1 (thick sea fog)
 const WIND_SWAY_MUL = 2.6;            // extra foliage sway per unit wind (uWind = 1 + wind*this)
+const TREE_SWAY_MUL = 0.6;            // §P2 trees sway ~40% less than grass/kelp (they read as heavier, stiffer)
 const STORM_BOLT_MIN = 6, STORM_BOLT_MAX = 16;   // seconds between lightning bolts in a storm
 const WEATHER_BITE_MUL = { clear: 1, overcast: 0.75, fog: 0.95, rain: 0.6, storm: 0.5 };   // lower = bites sooner
 weather = {
@@ -4692,7 +4686,7 @@ if (IS_TOUCH) (function mobileControls() {
     .mBtn:active { filter: brightness(1.3); }
     /* §mob9 mobile HUD cleanup: drop the control-instructions line, the seed/tide text and the tide curve.
        The hunger shells and the stamina ring stay. */
-    #help, #hud, #tidecurve { display: none !important; }
+    #hud, #tidecurve { display: none !important; }
     #mRotate { position: fixed; inset: 0; z-index: 20; display: none;
       align-items: center; justify-content: center; text-align: center;
       background: #0e1418; color: var(--ink); font: 500 18px var(--ui); letter-spacing: .03em;
@@ -5611,7 +5605,8 @@ function drawProps(view) {
     const cnt = t.foliage ? Math.max(0, Math.round(t.inst.count * GFX.foliage)) : t.inst.count;
     if (cnt === 0) continue;
     const rigid = (t.kind === "rock" || t.kind === "rockSlab" || t.kind === "rockJag" || t.kind === "fence" || t.kind === "poi");
-    gl.uniform1f(propU.uSway, rigid ? 0 : 1);                         // §14B plants & trees sway, rocks/fences stay put
+    const isTree = (t.kind === "palm" || t.kind === "pine" || t.kind === "broadleaf");   // §P2 trees sway ~40% less than the grass/kelp
+    gl.uniform1f(propU.uSway, rigid ? 0 : (isTree ? TREE_SWAY_MUL : 1));   // §14B plants & trees sway, rocks/fences stay put
     gl.uniform1i(propU.uClampTop, (t.kind === "eelgrass" || t.kind === "kelp" || t.kind === "seamoss" || t.kind === "redalgae") ? 1 : 0);   // §14B/§17.2 ocean plants can't breach the surface
     gl.bindVertexArray(t.inst.vao);
     gl.drawArraysInstanced(gl.TRIANGLES, 0, t.inst.vertCount, cnt);
@@ -10679,8 +10674,11 @@ function chopStanding(o) {                                     // one axe strike
   if (!o || o.gone || o.falling || o.fallen) return;
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.CHOP_COST, true); rootPlayer();
-  if (onDig) onDig("chop");
-  o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species)); o.hp -= jobEffortMul() * toolMul("tree") * TUNE.HARVEST_SPEED;   // §P2/§P3 the axe fells fast; anything else ~3x; §P3 ~25% fewer hits overall
+  const right = toolMul("tree") === 1;                        // §P2 axe = right tool; anything else lands a dull thunk
+  if (onDig) onDig(right ? "chop" : "thud");
+  o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species));
+  spawnSand(o.x, surfaceAt(o.x, o.z).h + 1.0, o.z, right ? 6 : 3, barkCol(o.species));   // §P2 bark/wood chips at the trunk (fewer with the wrong tool)
+  o.hp -= jobEffortMul() * toolMul("tree") * TUNE.HARVEST_SPEED;   // §P2/§P3 the axe fells fast; anything else ~3x; §P3 ~25% fewer hits overall
   if (o.hp <= 0.001) startFall(o);
 }
 function chopAt(x, z) {
@@ -10694,6 +10692,8 @@ function chopAt(x, z) {
   return false;                                              // nothing choppable here
 }
 function leafCol(sp) { return sp === "broadleaf" ? [0.34,0.5,0.27] : sp === "palm" ? [0.3,0.42,0.25] : [0.2,0.33,0.2]; }
+// §P2 bark / wood chip colour by species, for the chips that fly off the trunk on a chop
+function barkCol(sp) { return sp === "palm" ? [0.56,0.44,0.3] : sp === "broadleaf" ? [0.45,0.34,0.23] : [0.4,0.29,0.19]; }
 // Leaves appear only when a tree is chopped: a short-lived burst (shared particle system).
 function spawnLeaves(x, z, top, col) {
   for (let i = 0; i < 8 && particles.length < 200; i++) { const a = rng()*6.283, s = 0.4 + rng()*1.4;
@@ -10820,8 +10820,10 @@ function drawFallenNotches(view) {
 function nearestStump(x, z, maxd) { let best = null, bd = maxd; for (const s of stumps) { const d = Math.hypot(s.x - x, s.z - z); if (d < bd) { bd = d; best = s; } } return best; }
 function stumpStrike(st) {
   if (st.hp === undefined) st.hp = 4;
-  shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
-  spawnSand(st.x, surfaceAt(st.x, st.z).h + 0.3, st.z, 5, [0.5, 0.4, 0.28]);
+  shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.CHOP_COST, true); rootPlayer();
+  const right = toolMul("stump") === 1;                        // §P2 shovel/axe = right tool; anything else lands a dull thunk
+  if (onDig) onDig(right ? "chop" : "thud");
+  spawnSand(st.x, surfaceAt(st.x, st.z).h + 0.3, st.z, right ? 5 : 3, [0.5, 0.4, 0.28]);   // §P2 woody chips (fewer with the wrong tool)
   st.hp -= jobEffortMul() * toolMul("stump") * TUNE.HARVEST_SPEED;   // §P2/§P3 shovel/axe fast; anything else ~3x; §P3 ~25% fewer hits
   if (st.hp <= 0.001) {
     for (let i = 0, n = 1 + (rng()*2|0); i < n; i++) spawnFind("log", st.x + (rng()-0.5), st.z + (rng()-0.5));
@@ -10881,10 +10883,11 @@ function mineObj(o) {                                           // one pickaxe s
   if (player.airborne) return;                            // §playtest2 no mining mid-air (sprinting is fine now)
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §13.2 too tired: gentle refusal, no swing
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.MINE_COST, true); rootPlayer();
-  if (onDig) onDig("mine");
+  const right = toolMul("rock") === 1;                        // §P2 pickaxe = right tool; anything else lands a dull thunk
+  if (onDig) onDig(right ? "mine" : "thud");
   o.hp -= jobEffortMul() * toolMul("rock") * TUNE.HARVEST_SPEED;   // §P2/§P3 pickaxe fast; anything else ~3x; §P3 ~25% fewer hits
   const sy = surfaceAt(o.x, o.z).h + o.sc*0.3;
-  spawnSand(o.x, sy, o.z, 7, [0.5, 0.48, 0.46]);               // rock chips
+  spawnSand(o.x, sy, o.z, right ? 7 : 3, [0.5, 0.48, 0.46]);   // §P2 grey rock chips (fewer with the wrong tool)
   if (!o.split && o.hp <= Math.ceil(o.maxhp/2)) {              // cracks apart, shedding pickable rubble
     o.split = true; o.scale *= 0.62;
     for (let i = 0; i < 2 + (rng()*2|0); i++) dropRubble(o.x+(rng()-0.5)*2.5, o.z+(rng()-0.5)*2.5, 0.5+rng()*0.5);
@@ -10910,7 +10913,7 @@ function pickRubble(lr) {
   if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
   const first = !discovered.has("f_stone"); discovered.add("f_stone"); notify("stone", 1, first);
   const i = looseRocks.indexOf(lr); if (i >= 0) looseRocks.splice(i, 1);
-  sparkle(lr.x, surfaceAt(lr.x, lr.z).h + 0.2, lr.z, [0.7, 0.68, 0.64], 5);
+  spawnSand(lr.x, surfaceAt(lr.x, lr.z).h + 0.06, lr.z, 3, [0.62, 0.58, 0.52]);   // §P2 just a small dust puff (no shatter burst)
   // flipping a cobble on a cobble beach can reveal a crab or hopper beneath
   if (COAST_BIOMES[coastBiomeAt(lr.x, lr.z)].flip && rng() < 0.3)
     spawnCreature(rng() < 0.5 ? "crab" : "hopper", lr.x + (rng()-0.5), lr.z + (rng()-0.5), { hr: 8, timer: rng() });
@@ -11136,7 +11139,7 @@ function pickStone(s) {
   s.picked = true;                                          // gone from the world (reveals what was under it)
   s.regrowAt = tideDay + WEAK_REGROW_MIN + rng()*(WEAK_REGROW_MAX-WEAK_REGROW_MIN);
   camNudge = 0.03;   // §P2 a light lift, no tool swing: picking things up never swings the held item
-  const gy = surfaceAt(s.x, s.z).h; spawnSand(s.x, gy + 0.08, s.z, 6, [0.5,0.48,0.46]);
+  const gy = surfaceAt(s.x, s.z).h; spawnSand(s.x, gy + 0.06, s.z, 3, [0.62,0.58,0.52]);   // §P2 a small dust puff, not a breaking burst
   if (rng() < STONE_BUG_P) revealBug(s);                    // sometimes a bug is hiding under it (as before)
   if (typeof checkSets === "function") checkSets();
 }
