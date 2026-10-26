@@ -728,6 +728,10 @@
     box-shadow: inset 2px 2px 0 var(--parch-hi), inset -2px -2px 0 #6e4f2b, 0 2px 0 #4a3317; }
   #catchpop .cp-keep:active, #catchpop .cp-rel:active { transform: translateY(1px); }
   #catchpop .cp-hint { font-size: 11px; color: var(--pink-dim); opacity: .85; margin-top: 2px; letter-spacing: .02em; }
+  /* §catchcard the pulsing "Click to continue" line, in the game's pixel font (inherits var(--ui)) */
+  #catchpop .cp-pulse { margin-top: 9px; font-size: 11px; letter-spacing: .06em; color: #4a2f16; text-transform: uppercase;
+    animation: cppulse 1.1s ease-in-out infinite; }
+  @keyframes cppulse { 0%,100% { opacity: .45; transform: scale(.97); } 50% { opacity: 1; transform: scale(1.04); } }
   /* ---- §UI creature inspect: a contained modal the SAME size as the item inspect (no full-screen blue).
          The blue water sits on the canvas itself at a constant size, so rotating the creature never shrinks it. ---- */
   #inspectview.waterbg { background: rgba(6,10,13,.72) !important; backdrop-filter: blur(2px) !important; }
@@ -3607,21 +3611,21 @@ function giveCatch(f, isJunk) {
   if (added > 0 && typeof notify === "function") notify(itemId, 1, false);
 }
 let catchPop = null, catchPopT = 0;
+const CATCH_DISMISS_DELAY = 0.5;   // §catchcard ignore input for this long so the mini-game's last click doesn't dismiss the card instantly
 function showCatchPop(f, isJunk, itemId, added) {
   const el = document.getElementById("catchpop"); if (!el) return;
   const icon = (typeof buildMeshIcon === "function") ? buildMeshIcon(isJunk ? junkCatchMesh(f.junkId) : catchSpeciesMesh(f.species), [1,1,1]) : null;
   const label = isJunk ? (ITEMS[f.junkId] ? ITEMS[f.junkId].name : "Junk") : (FISH_SPECIES[f.species] ? FISH_SPECIES[f.species].label : "Fish");
   const sub = isJunk ? `<div class="cp-wt">off the seabed</div>`
     : `<div class="cp-wt"><b>${f.weight.toFixed(2)}</b> kg${f.record ? ` <span class="cp-rec">RECORD</span>` : ""}</div>`;
-  // §catchcard a single modal card: everything caught is kept (junk included). One OK button dismisses it.
-  const hint = added ? (IS_TOUCH ? "tap OK" : "OK · Enter · Space · E") : "satchel full, not kept";
-  el.innerHTML = `${icon ? `<img class="cp-big" src="${icon}" alt="">` : ""}<div class="cp-name">${label}</div>${sub}<div class="cp-btns"><button class="cp-keep">OK</button></div><div class="cp-hint">${hint}</div>`;
+  // §catchcard a single modal card: everything caught is kept (junk included). No button; a click or a key dismisses it.
+  const sfull = added ? "" : `<div class="cp-hint">satchel full, not kept</div>`;
+  const cont = `<div class="cp-hint cp-pulse">${IS_TOUCH ? "Tap to continue" : "Click to continue"}</div>`;
+  el.innerHTML = `${icon ? `<img class="cp-big" src="${icon}" alt="">` : ""}<div class="cp-name">${label}</div>${sub}${sfull}${cont}`;
   el.style.display = "block"; requestAnimationFrame(() => el.classList.add("show"));
-  const keepBtn = el.querySelector(".cp-keep");
-  if (keepBtn) keepBtn.onclick = (e) => { e.stopPropagation(); keepCatch(); };
-  el.onclick = () => keepCatch();   // clicking the card dismisses it too
+  el.onclick = null;   // §catchcard the pointer stays locked; dismissal is handled by the canvas mousedown / keydown with the input-ignore window
   catchPop = { itemId, isJunk, label, releasable: added > 0 }; catchPopT = 0;
-  if (typeof uiUnlock === "function") uiUnlock();   // §catchcard free the cursor so OK is clickable; this never opens the pause menu
+  // §catchcard keep pointer lock the whole time (cursor stays hidden); movement + camera are already blocked while catchPop is set.
   if (isJunk) { if (typeof SND !== "undefined") { SND.play("womp"); setTimeout(() => { try { SND.play("womp", { pitch: 0.6 }); } catch (e) {} }, 430); } }
   else { if (typeof SND !== "undefined") SND.play("discover", { volume: 0.45, bus: "ui" }); }
 }
@@ -4011,8 +4015,8 @@ const analog = { x: 0, y: 0 };   // x = strafe, y = forward, each -1..1
 let mobileSprint = false;        // mobile "Run" toggle writes here
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
-  if (catchPop) {   // §catchcard modal: OK button, or Enter / Space / E / Esc dismiss and return control
-    if (e.code === "Enter" || e.code === "Space" || e.code === "KeyE" || e.code === "Escape" || e.code === "KeyF") { e.preventDefault(); keepCatch(); return; }
+  if (catchPop) {   // §catchcard modal: Enter / Space / E / Esc / F dismiss (after the input-ignore window); pointer stays locked
+    if (e.code === "Enter" || e.code === "Space" || e.code === "KeyE" || e.code === "Escape" || e.code === "KeyF") { e.preventDefault(); if (catchPopT >= CATCH_DISMISS_DELAY) keepCatch(); return; }   // §catchcard dismiss only after the input-ignore window
     return;   // swallow every other key while the card is up (no pause, no hotbar, no movement toggles)
   }
   if (fishReveal.open) {                                                 // §fishpolish the catch card: Enter/Space keeps, Esc releases
@@ -4064,6 +4068,7 @@ addEventListener("keyup", (e) => { keys[e.code] = false;
 
 canvas.addEventListener("mousedown", (e) => {
   if (IS_TOUCH) return;
+  if (catchPop) { e.preventDefault(); if (catchPopT >= CATCH_DISMISS_DELAY) keepCatch(); return; }   // §catchcard any click (after the input-ignore window) dismisses the catch card; pointer stays locked
   if (menuModalOpen()) return;   // §A6 a menu is open: no world clicks, and don't re-grab pointer lock (which would let the camera turn)
   if (e.button === 2) {   // §P2 right-click is the HELD-ITEM action: release a live critter/fish, eat food (hold), or set down / pick up a lantern or bucket
     if (mode === "walk" && !isPanelOpen() && document.pointerLockElement === canvas) {
@@ -4813,6 +4818,7 @@ if (IS_TOUCH) (function mobileControls() {
 
   layer.addEventListener("touchstart", (e) => {
     unlockAudio();
+    if (catchPop) { e.preventDefault(); if (catchPopT >= CATCH_DISMISS_DELAY) keepCatch(); return; }   // §catchcard a tap (after the input-ignore window) dismisses the catch card
     for (const t of e.changedTouches) {
       if (t.clientX < innerWidth * 0.5 && moveId === null) {
         moveId = t.identifier;
@@ -12984,6 +12990,7 @@ function frame(now) {
   frameDraws = 0; frameTris = 0;
 
   if (typeof MUSIC !== "undefined") MUSIC.update(dt);   // §music8 background playlist runs on real time, in every mode (title, walk, paused)
+  if (catchPop) catchPopT += dt;   // §catchcard real-time age of the catch card (gates the input-ignore window)
   // ---- shared clock: advance world in capped fixed substeps (stable at 60x) ----
   clock.t += clock.paused ? 0 : dt;
   let gdt = clock.paused ? 0 : dt * clock.speed * (catchCine ? catchCine.warp : 1), gdtTotal = gdt;   // §fishpolish slow-mo on the catch
