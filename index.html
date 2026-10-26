@@ -659,7 +659,7 @@
 <div id="debugpanel"></div>
 <div id="help">
   WASD move · Shift run · C crouch · Space jump · click or F to use / pick up / interact<br>
-  1-8 hotbar · E opens the menu (Satchel · Bucket · Journal) · Tab tabs · L lantern · Esc pause
+  1-8 hotbar · E opens the menu (Satchel · Bucket · Journal) · Tab tabs · Esc pause
 </div>
 
 <script>
@@ -1641,7 +1641,6 @@ function soundCategory(id, bus) {
   // swimming
   D("swim",       { shape:"noise", lpf:0.22, atk:0.01, sus:0.04, rel:0.1, gain:0.4 }, { vol:0.28, cd:0.2 });
   D("splash",     { shape:"noise", lpf:0.3, atk:0.001, sus:0.03, rel:0.14, gain:0.6 }, { vol:0.45 });
-  D("bubbles",    { freq:600, freq2:900, shape:"sine", atk:0.005, sus:0.02, rel:0.05, gain:0.25, vib:200, vibf:30 }, { vol:0.2, cd:0.4 });
   // tools: shovel by material
   D("dig_sand",   { shape:"noise", lpf:0.18, atk:0.001, sus:0.03, rel:0.08, gain:0.5 }, { vol:0.4 });
   D("dig_dirt",   { freq:150, shape:"tri", atk:0.001, sus:0.02, rel:0.09, noise:0.5, gain:0.5 }, { vol:0.4 });
@@ -2800,7 +2799,7 @@ const SWIM_SPEED = 6.5, SWIM_SPRINT = 1.7;    // slower than walking; sprint-swi
 const BREATH_MAX = 40;                         // seconds of air underwater (tunable)
 const SWIM_DRAIN = 0.03, SWIM_SPRINT_DRAIN = 0.14;   // stamina / s while swimming
 const DROWN_LOSS = 0.3;                         // §14A fraction of non-tool items dropped in the sack on drowning
-const NEVER_LOST = { toolkit: 1, bucket: 1, spear: 1 };   // these (and bucket creatures) are never lost
+const NEVER_LOST = { toolkit: 1, bucket: 1 };   // these (and bucket creatures) are never lost
 let infiniteBreath = false, showAlert = false;  // debug toggles (§14A/C)
 let mobileSwimUp = false, mobileSwimDown = false;
 // Depth of OPEN sea water under (x,z), excludes dug ponds and raised inland basins/pools, so only the
@@ -3134,32 +3133,12 @@ function climbStep(dt) {
  * § 14C  THE SPEAR, thrust (quick click) or throw (hold to charge).
  *   Only fish can be killed; everything else startles and flees unharmed.
  * ===================================================================== */
-const spear = { charging: false, start: 0, charge: 0, thrustT: 0, cd: 0 };
-let thrownSpears = [];
-let spearHardened = false;    // §16 fire-hardened at a campfire: harder, truer throws
-let fishRecord = {};   // §14C species → largest scale caught (journal record)
+// §strip the spear and spearfishing are removed. fishRecord is kept load-only so old saves still show their
+// "record cm" in the journal; nothing writes it any more. onSpear stays: it's the generic hit/jab/thud sound
+// hook used by hitting creatures with any held item.
+let fishRecord = {};   // §14C species → largest scale speared (historical journal record, old saves only)
 try { fishRecord = JSON.parse(localStorage.getItem("bc_fishrec") || "{}"); } catch (e) {}
-let onSpear = null;    // sound hook (Phase 18)
-function spearPressStart() { if (spear.cd > 0) return; spear.charging = true; spear.start = clock.t; spear.charge = 0; }
-function spearRelease() { const held = clock.t - spear.start; spear.charging = false;
-  if (held < 0.22) thrustSpear(); else throwSpear(Math.min(1, spear.charge)); }
-// nearest huntable fish within radius r of a world point
-function fishAt(x, y, z, r) { let best = null, bd = r*r;
-  for (const e of life) { if (e.kind !== "creature" || !FISH[e.t]) continue;
-    const ey = e.y !== undefined ? e.y : heightAt(e.x, e.z) + 0.4;
-    const dd = (e.x-x)*(e.x-x) + (ey-y)*(ey-y) + (e.z-z)*(e.z-z); if (dd < bd) { bd = dd; best = e; } }
-  return best; }
-function catchFish(e, x, y, z) {
-  const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
-  const n = Math.max(1, Math.round(e.scale * 2));
-  const added = Inv.add("rawfish", n); const first = !discovered.has("f_rawfish");
-  discovered.add("f_rawfish"); discovered.add(e.t);
-  if (!fishRecord[e.t] || e.scale > fishRecord[e.t]) { fishRecord[e.t] = e.scale; try { localStorage.setItem("bc_fishrec", JSON.stringify(fishRecord)); } catch (er) {} }
-  const reg = CREATURES[e.t]; sparkle(x, y, z, [0.85,0.9,0.95], 10); spawnSand(x, y, z, 8, [0.8,0.84,0.9]);
-  if (typeof notify === "function" && added > 0) notify("rawfish", n, first);
-  showCard("Speared a " + (reg ? reg.label : e.t) + "!", `Raw Fish ×${n}${nearCampfire(player.x,player.z)?", cook it here for double food.":""}`);
-  if (onSpear) onSpear("catch"); saveState();
-}
+let onSpear = null;    // sound hook (Phase 18) — now the generic melee-hit sound
 // a near-miss or a hit on a non-fish: it startles and flees, unharmed (tamed goats can't be hit)
 function startleNear(x, z) {
   for (const e of life) { if (e.kind !== "creature" || FISH[e.t]) continue;
@@ -3195,7 +3174,7 @@ function hurtCreature(e, hx, hz) {
   if (e.hp <= 0) { e.dying = 0; e.deathYaw = e.yaw; }   // §B1 red flash → dissolve in place (no topple, no linger)
 }
 // §playtest1 a generic hit on a creature with whatever's in hand (Minecraft-style), logs it to the journal, swings, deals small damage
-const WEAPON_DMG = { spear: 3, axe: 2, pickaxe: 2, shovel: 1 };   // a real weapon/tool hits harder than a bare hand
+const WEAPON_DMG = { axe: 2, pickaxe: 2, shovel: 1 };   // a real tool hits harder than a bare hand
 function genericHitCreature(e) {
   if (!e || e.dying !== undefined) return;
   discovered.add(e.t);                                            // first contact still lights up its journal page
@@ -3204,76 +3183,7 @@ function genericHitCreature(e) {
   for (let k = 0; k < dmg; k++) hurtCreature(e, player.x, player.z);
   if (onSpear) onSpear("jab");
 }
-// a spear strike: catch a fish, else wound a creature; returns true if it hit something living
-function spearStrike(x, y, z, r) {
-  const fish = fishAt(x, y, z, r); if (fish) { catchFish(fish, x, y, z); return true; }
-  const e = creatureAt(x, y, z, r); if (e) { hurtCreature(e, x, z); return true; }
-  return false;
-}
-function thrustSpear() {
-  if (spear.cd > 0 || mode !== "walk") return;
-  spear.thrustT = 0.3; spear.cd = 0.35; shovelSwing = Math.max(shovelSwing, 0.4);
-  const f = camForward(), reach = 2.6;
-  const tx = cam.pos[0] + f[0]*reach, ty = cam.pos[1] + f[1]*reach, tz = cam.pos[2] + f[2]*reach;
-  if (spearStrike(tx, ty, tz, 1.3)) return;
-  // nothing living → a thud + wobble on an object, else a harmless jab
-  const t = curTarget || targetAlongRay(rayFromNDC(0,0));
-  if (t && (t.kind === "tree" || t.kind === "fallentree")) { t.obj.shake = Math.max(t.obj.shake||0, 0.6); setTreeInstance(t.obj); if (onSpear) onSpear("thud"); }
-  else { startleNear(tx, tz); if (onSpear) onSpear("jab"); }
-}
-function throwSpear(charge) {
-  if (mode !== "walk" || !Inv.hotbarHasId("spear")) return;
-  spear.cd = 0.4;
-  for (let k = 0; k < HOTBAR_SLOTS; k++) if (Inv.hotbar[k] && Inv.hotbar[k].id === "spear") { Inv.hotbar[k] = null; break; }   // it leaves your hand
-  renderHotbar();
-  const f = camForward(), spd = (12 + charge*20) * (spearHardened ? 1.35 : 1);
-  thrownSpears.push({ x: cam.pos[0]+f[0]*0.6, y: cam.pos[1]-0.2, z: cam.pos[2]+f[2]*0.6,
-    vx: f[0]*spd, vy: f[1]*spd + (spearHardened ? 0.4 : 1), vz: f[2]*spd, yaw: cam.yaw, pitch: 0, stuck: false, washAt: 0, hard: spearHardened });
-  if (onSpear) onSpear("throw");
-}
-function updateSpear(dt) {
-  if (spear.cd > 0) spear.cd = Math.max(0, spear.cd - dt);
-  if (spear.charging) spear.charge = Math.min(1, (clock.t - spear.start) / 1.1);
-  for (let i = thrownSpears.length - 1; i >= 0; i--) { const s = thrownSpears[i];
-    if (!s.stuck) {
-      const surf = waterSurfaceAt(s.x, s.z), uw = s.y < surf;
-      if (uw) { const drag = Math.pow(0.015, dt); s.vx *= drag; s.vz *= drag; s.vy = s.vy*drag - 2.2*dt; }   // underwater: slows fast, sinks
-      else s.vy -= 26*dt;
-      s.x += s.vx*dt; s.y += s.vy*dt; s.z += s.vz*dt;
-      const sp = Math.hypot(s.vx, s.vy, s.vz);
-      if (sp > 0.3) { s.yaw = Math.atan2(s.vx, s.vz); s.pitch = Math.atan2(-s.vy, Math.hypot(s.vx, s.vz)); }
-      const fish = fishAt(s.x, s.y, s.z, s.hard ? 1.4 : 1.0);
-      if (fish) { catchFish(fish, s.x, s.y, s.z); thrownSpears.splice(i, 1); continue; }
-      const cre = creatureAt(s.x, s.y, s.z, s.hard ? 1.4 : 1.0);   // §R4 a thrown spear wounds a creature and sticks nearby
-      if (cre) { hurtCreature(cre, s.x, s.z); const fl = surfaceAt(s.x, s.z).h; s.y = Math.max(fl+0.08, s.y); s.stuck = true; s.washAt = clock.t + 4*DAY_PERIOD; continue; }
-      const floor = surfaceAt(s.x, s.z).h;
-      if (s.y <= floor + 0.1 || (uw && sp < 0.6) || Math.hypot(s.x, s.z) > HALF) {   // stick / settle
-        s.y = Math.max(floor + 0.08, s.y); s.stuck = true; s.washAt = clock.t + 4*DAY_PERIOD;
-      }
-    } else if (clock.t >= s.washAt) {                                 // left too long → wash onto the nearest beach
-      const a = Math.atan2(s.x, -s.z);
-      for (let rr = HALF*0.95; rr > 4; rr -= 2) { const bx = Math.sin(a)*rr, bz = -Math.cos(a)*rr; if (heightAt(bx,bz) > 1.5 && heightAt(bx,bz) < 4) { s.x = bx; s.z = bz; s.y = surfaceAt(bx,bz).h + 0.1; break; } }
-      s.washAt = clock.t + 4*DAY_PERIOD;
-    }
-    if (Math.hypot(s.x-player.x, s.z-player.z) < 2.2 && Math.abs(s.y - player.eyeY) < 3.5 && !Inv.hotbarHasId("spear")) {
-      for (let k = 0; k < HOTBAR_SLOTS; k++) if (!Inv.hotbar[k]) { Inv.hotbar[k] = { id:"spear", qty:1 }; break; }
-      if (!Inv.hotbarHasId("spear")) Inv.add("spear", 1);           // belt full → into the satchel
-      thrownSpears.splice(i, 1); renderHotbar(); if (onSplash) onSplash(); showCard("Spear recovered", "");
-    }
-  }
-}
-let spearDyn = null;
-function drawThrownSpears(view) {
-  if (!thrownSpears.length) return;
-  if (!spearDyn) spearDyn = makeDynamic(spearMesh(), 12);
-  propUniforms(view); const a = rockScratch; let n = 0;
-  for (const s of thrownSpears) { if (n >= 12) break; const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    // lean the spear along its travel/stuck angle via the instance lean (tip points where it's going)
-    const o = n*10; a[o]=s.x; a[o+1]=s.y+1.1; a[o+2]=s.z; a[o+3]=1.1; a[o+4]=s.yaw||0; a[o+5]=(s.pitch||0)+ (s.stuck?0.5:0); a[o+6]=(s.yaw||0)+1.57; a[o+7]=1; a[o+8]=1; a[o+9]=1; n++;
-    if (s.stuck && Math.random() < 0.04) sparkle(s.x, s.y+0.3, s.z, [0.95,0.95,0.8], 1);   // a glint so it's findable
-  }
-  if (n) spearDyn.draw(a, n);
-}
+// §strip spearStrike / thrust / throw / updateSpear / drawThrownSpears removed with the spear.
 
 /* ===================================================================== *
  * § FISHING, rod + reel. Bait the hook, charge & aim a cast at open
@@ -3297,7 +3207,6 @@ function saveRodRec() { try { localStorage.setItem("bc_rodrec", JSON.stringify(r
 const ROD_BAIT = [ ["worm", 0, "Earthworm"], ["bug", 0, "Bug"] ];   // §stonebug bugs work as bait like worms
 // §fishpolish tunables, bite timing, how a hotspot speeds it up, and how far you can wander before the cast cancels
 const BITE_MIN = 4, BITE_MAX = 40;     // seconds to a bite in plain water (wide variance)
-const HOTSPOT_BITE_MUL = 0.28;         // a hotspot cuts the wait to ~this fraction
 const CANCEL_DIST = 30;                // walk this far from the bobber and the cast reels itself in
 // rod species, weights in kg, strength drives the fight, rare steers the odds, dmin = min water depth it favours
 // §fish5 each species carries a `mini` descriptor so the reel-in mini-game plays differently:
@@ -3326,7 +3235,6 @@ const rod = {
   biteAt: 0, nibbleUntil: 0, hookUntil: 0,
   fish: null, fight: null, spotQ: 0, signT: 2,
 };
-let fishSigns = [];
 let fishReveal = { open: false };
 
 function rodEquipped() { return mode === "walk" && selectedTool() === "rod" && !isPanelOpen(); }
@@ -3339,11 +3247,9 @@ function castTarget(charge) {
   const x = player.x + dx * dist, z = player.z + dz * dist;
   return { x, z, dist };
 }
-function spotQuality(x, z) {                                    // 0..1, deeper water & a hotspot fish better
+function spotQuality(x, z) {                                    // 0..1, deeper water fishes better (§strip hotspot bonus removed)
   const d = waterDepthAt(x, z); if (d < 0.35) return -1;        // not water enough
-  let q = Math.min(1, (d - 0.35) / 4);
-  if (hotspotNear(x, z)) q = Math.min(1, q + 0.35);             // §fishpolish a hotspot also slightly favours a bigger fish
-  return q;
+  return Math.min(1, (d - 0.35) / 4);
 }
 
 function rodPressStart() {
@@ -3390,16 +3296,16 @@ function onBobberLanded() {
   rod.state = "waiting"; rod.bob.splash = 1;
   if (!rod.baitTaken && !infiniteWorms) { Inv.remove(rod.baitId, 1); rod.baitTaken = true; }   // §fishpolish 1 worm, taken on landing (§climb free in infinite-worms mode)
   rod.spotQ = Math.max(0, spotQuality(rod.bob.tx, rod.bob.tz));
-  const q = rod.spotQ, hot = hotspotNear(rod.bob.tx, rod.bob.tz) ? 1 : 0;
-  // wide bite variance; a hotspot cuts the wait sharply
-  let delay = fishForceBite ? 0.4 : (BITE_MIN + Math.random() * (BITE_MAX - BITE_MIN)) * (hot ? HOTSPOT_BITE_MUL : 1) * (1 - 0.25 * q) * (typeof weatherBiteMul === "function" ? weatherBiteMul() : 1);   // §20 fish bite sooner in rain/overcast
+  const q = rod.spotQ;
+  // wide bite variance (§strip hotspot bite bonus removed)
+  let delay = fishForceBite ? 0.4 : (BITE_MIN + Math.random() * (BITE_MAX - BITE_MIN)) * (1 - 0.25 * q) * (typeof weatherBiteMul === "function" ? weatherBiteMul() : 1);   // §20 fish bite sooner in rain/overcast
   rod.biteAt = clock.t + Math.max(0.4, delay);
   if (typeof SND !== "undefined") SND.play("plop", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz] });
   if (typeof spawnSand === "function") spawnSand(rod.bob.tx, rod.bob.surf, rod.bob.tz, 6, [0.8,0.86,0.92]);
 }
 function rollSpecies() {                                       // weighted by spot quality (depth+signs) & bait quality
   const q = rod.spotQ, bq = rod.baitQ;
-  const hot = hotspotNear(rod.bob.tx, rod.bob.tz) ? 1 : 0;   // §fish5 a hotspot sharply lifts the odds of the rare, prize species
+  const hot = 0;   // §strip hotspots removed; keep the term so the species weights below are unchanged in shape
   const w = {
     junk:      20 * (1 - q * 0.6) * (bq === 0 ? 1.4 : bq === 1 ? 1.0 : 0.65) * (hot ? 0.5 : 1),
     surfperch: 42 * (1 - q * 0.25) * (bq === 0 ? 1.15 : 1.0),
@@ -3511,54 +3417,11 @@ function reelInEmpty() { if (rod.baitTaken && rod.baitId) { Inv.add(rod.baitId, 
   endCast(0.3); if (typeof SND !== "undefined") SND.play("plop"); }
 function loseBaitMaybe() { /* the bait is already off the hook, spent on the attempt */ }
 function endCast(cd) { rod.state = "idle"; rod.fish = null; rod.fight = null; rod.press = false; rod.pulse = 0; rod.bend = 0; rod.baitTaken = false; rod.cd = cd || 0.4; }
-// §fishpolish is this point inside an active fishing hotspot?
-function hotspotNear(x, z) { for (const s of fishSigns) if (s.hot && Math.hypot(s.x - x, s.z - z) < (s.r || 4)) return s; return null; }
-
-// gulls will dive on a floating bait if one ventures near while you wait
-// §fishpolish FISHING HOTSPOTS, semi-rare spots in the water marked by a cluster of small rising bubbles
-// and the odd fish flash. They last a while, then move. Casting into one bites much faster. This is the ONLY
-// bubble effect in the water, so it's unmistakable. Visible whether or not the rod is out.
-const HOTSPOT_MAX = 3, HOTSPOT_LIFE_MIN = 22, HOTSPOT_LIFE_MAX = 46, HOTSPOT_SPAWN_MIN = 7, HOTSPOT_SPAWN_MAX = 18;
-let hotspotSpawnT = 5;
-function spawnHotspotBubble(s) {
-  const surf = waterSurfaceAt(s.x, s.z), a = Math.random() * 6.283, rr = Math.random() * s.r * 0.55;
-  bubbleParticle(s.x + Math.cos(a) * rr, surf - 0.25 - Math.random() * 0.5, s.z + Math.sin(a) * rr);
-}
-function hotspotJump(s) {   // a brief fish flash/jump at the surface: a splash + droplets
-  const surf = waterSurfaceAt(s.x, s.z), a = Math.random() * 6.283, rr = Math.random() * s.r * 0.5;
-  const jx = s.x + Math.cos(a) * rr, jz = s.z + Math.sin(a) * rr;
-  if (typeof spawnSand === "function") spawnSand(jx, surf + 0.05, jz, 10, [0.82, 0.88, 0.95]);
-  if (typeof sparkle === "function") sparkle(jx, surf + 0.3, jz, [0.85, 0.9, 0.96], 5);
-  if (typeof SND !== "undefined" && Math.hypot(jx - cam.pos[0], jz - cam.pos[2]) < 40) SND.play("fish_splash", { position: [jx, surf, jz], volume: 0.5 });
-}
-const HOTSPOT_MIN_DEPTH = 1.0;         // §playtest1 a hotspot is only valid while the water here is at least this deep
-function updateFishSigns(dt) {
-  for (let i = fishSigns.length - 1; i >= 0; i--) { const s = fishSigns[i];
-    s.age += dt; if (s.age > s.life) { fishSigns.splice(i, 1); continue; }
-    // §playtest1 if the tide drops the water here below the threshold, the hotspot fades out (a new one spawns in proper water)
-    if (waterDepthAt(s.x, s.z) < HOTSPOT_MIN_DEPTH) { fishSigns.splice(i, 1); continue; }
-    const near = Math.hypot(s.x - cam.pos[0], s.z - cam.pos[2]) < 70;
-    if (near) {
-      s.bubT -= dt; if (s.bubT <= 0) { s.bubT = 0.1 + Math.random() * 0.16; spawnHotspotBubble(s); if (Math.random() < 0.5) spawnHotspotBubble(s); }
-      s.jumpT -= dt; if (s.jumpT <= 0) { s.jumpT = 4 + Math.random() * 6; hotspotJump(s); }
-    }
-  }
-  if (mode !== "walk") return;
-  hotspotSpawnT -= dt;
-  if (hotspotSpawnT <= 0 && fishSigns.length < HOTSPOT_MAX) {
-    hotspotSpawnT = HOTSPOT_SPAWN_MIN + Math.random() * (HOTSPOT_SPAWN_MAX - HOTSPOT_SPAWN_MIN);
-    for (let k = 0; k < 18; k++) { const a = Math.random() * 6.283, r = 10 + Math.random() * 34;
-      const x = player.x + Math.sin(a) * r, z = player.z - Math.cos(a) * r;
-      if (waterDepthAt(x, z) > 1.2 && !hotspotNear(x, z)) {
-        fishSigns.push({ x, z, age: 0, life: HOTSPOT_LIFE_MIN + Math.random() * (HOTSPOT_LIFE_MAX - HOTSPOT_LIFE_MIN),
-          r: 3 + Math.random() * 1.6, hot: true, bubT: 0, jumpT: 1.5 + Math.random() * 3 }); break; }
-    }
-  }
-}
+// §strip fishing hotspots removed (bubbles + bite bonus). No hotspots ever, so this is always null.
+function hotspotNear(x, z) { return null; }
 
 function updateFishing(dt) {
   if (rod.cd > 0) rod.cd = Math.max(0, rod.cd - dt);
-  updateFishSigns(dt);
   // put the rod away mid-cast → quietly reel in
   if (rod.state !== "idle" && rod.state !== "reveal" && selectedTool() !== "rod") { if (rod.state === "fighting" || rod.state === "bite") { /* lose it */ } endCast(0.3); return; }
   // §fish5 wade-only: if you end up swimming (stepped into deep water) while a line is out, it's reeled in
@@ -4121,7 +3984,6 @@ addEventListener("keydown", (e) => {
   if (e.code === "Space" && mode === "walk") { e.preventDefault(); queueJump(); }
   if (e.code === crouchKey && mode === "walk" && !isPanelOpen() && !e.repeat) { e.preventDefault(); if (!player.swimming) setCrouch(!crouching); }   // §13.4 toggle crouch (held key = swim down)
   if (e.code === "Tab") { e.preventDefault(); if (!pauseStage && (mode === "walk" || menuIsOpen())) cycleMenuTab(1); }   // §2 switch tabs within the menu (opens it on the last tab if closed)
-  if (e.code === "KeyL" && mode === "walk" && !isPanelOpen()) toggleLantern();   // §18 raise / lower the lantern
   if (e.code === "KeyP" && !e.repeat) { if (pauseStage) closePause(); else if (mode === "walk" && !isPanelOpen()) openPause(); }   // §R4 P pauses/resumes (auto-pickup now lives in Settings)
   if (/^Digit[1-8]$/.test(e.code)) selectHotbar(+e.code.slice(5) - 1);
   if (debugMode) {                                    // debug-only shortcuts
@@ -4156,11 +4018,10 @@ canvas.addEventListener("mousedown", (e) => {
   }
   // §A3 the rod and spear have their own primary use, but you can still harvest a plant / hit a creature / pick a find
   // with them in hand: if the crosshair is on such a target, do that instead of casting or thrusting.
-  if (mode === "walk" && selectedTool() === "spear" && !isPanelOpen()) { if (softTargetUnderCrosshair()) { useHeld = true; clickAt(0,0); return; } spearPressStart(); return; }   // §14C charge → thrust/throw
   if (mode === "walk" && selectedTool() === "rod" && !isPanelOpen()) { if (softTargetUnderCrosshair()) { useHeld = true; clickAt(0,0); return; } rodPressStart(); return; }        // §Fishing charge/hook/reel
   useHeld = true; clickAt(0, 0);                 // §13.2 hold to keep swinging at a work target
 });
-addEventListener("mouseup", (e) => { if (e.button === 0) { useHeld = false; if (spear.charging) spearRelease(); rodPressEnd(); }
+addEventListener("mouseup", (e) => { if (e.button === 0) { useHeld = false; rodPressEnd(); }
   else if (e.button === 2 && player.climbing) dropClimb(); });   // §climb release right mouse to let go
 // §13.2 scroll wheel cycles belt slots (skips empties)
 addEventListener("wheel", (e) => {
@@ -4409,7 +4270,6 @@ function showPause() {
     <button data-pm="journal">Field Journal</button>
     <button data-pm="settings">Settings</button>
     <button data-pm="controls">Controls</button>
-    <button data-pm="unstuck">Unstuck</button>
     <button class="danger" data-pm="quit">Save &amp; quit</button></div>`;
   el.classList.add("show"); wirePause(el);
 }
@@ -4442,7 +4302,6 @@ function wirePause(el) {
   el.querySelectorAll("button[data-pm]").forEach(b => b.onclick = () => {
     const a = b.dataset.pm;
     if (a === "resume") closePause();
-    else if (a === "unstuck") { if (typeof unstickPlayer === "function") unstickPlayer(true); closePause(); }   // §unstuck free the player to open ground
     else if (a === "journal") openJournalFromPause();   // §menu the Field Journal now lives in the pause menu
     else if (a === "controls") showControls();
     else if (a === "back") showPause();
@@ -4845,7 +4704,6 @@ if (IS_TOUCH) (function mobileControls() {
       else if (btn.dataset.act === "climb") { mobileClimb = true; tryGrabClimb(); btn.style.background = "rgba(60,120,130,.8)"; }   // §15 hold to climb
       else if (btn.dataset.act === "rod") { rodPressStart(); btn.style.background = "rgba(60,120,130,.8)"; }   // §Fishing hold to charge cast / reel in a fight
       else if (btn.dataset.act === "jump") tryJump();
-      else if (btn.dataset.act === "lantern") { toggleLantern(); btn.style.background = lanternLit() ? "rgba(200,150,60,.8)" : ""; }   // §18
       else if (btn.dataset.act === "brotate") rotateBuild();           // §16B mobile placement
       else if (btn.dataset.act === "bplace") placeBuildAtGhost();
       else if (btn.dataset.act === "bcancel") exitBuildMode();
@@ -6092,29 +5950,7 @@ function climbHandsMesh() { const m = Mesh(); const skin=[0.74,0.57,0.45], sleev
   }
   return m; }
 // §R4 the stake/spear: a wooden shaft with a sharpened, fire-darkened point at the top
-function spearMesh() { const m = Mesh(); const char=[0.18,0.15,0.14], char2=[0.3,0.24,0.2];
-  toolShaft(m, 0.0, 0.92, 0.03, true);
-  for (const s of [-1,1]) mBox(m, s*0.035, 0.1, 0, 0.012, 0.05, 0.016, TW_DK);   // lashing near the grip
-  // whittled, charred point
-  mCyl(m, 0.92, 1.02, 0.03, 0.02, 6, char2);
-  mTri(m, [-0.035,1.02,0.02],[0.035,1.02,0.02],[0,1.26,0], char);
-  mTri(m, [-0.035,1.02,-0.02],[0.035,1.02,-0.02],[0,1.26,0], char2);
-  mTri(m, [0.035,1.02,0.02],[0.035,1.02,-0.02],[0,1.26,0], char2);
-  mTri(m, [-0.035,1.02,0.02],[-0.035,1.02,-0.02],[0,1.26,0], char);
-  return m; }
-// §tools a compact diagonal spear emblem for the belt/satchel icon (the real spear is too long & thin to read at 64px)
-// §playtest1 a chunkier, larger spear emblem, thick shaft + big leaf blade, kept compact so it fills the 64px slot
-function spearIconMesh() { const m = Mesh();
-  const wood=[0.58,0.44,0.29], woodD=[0.45,0.33,0.21], lash=[0.3,0.24,0.18], steel=[0.78,0.81,0.87], steelD=[0.54,0.57,0.63];
-  const x0=-0.5, y0=-0.54, x1=0.16, y1=0.28, N=9;                        // shorter, thicker shaft so it reads big
-  for (let i=0;i<N;i++){ const t=i/(N-1); mBox(m, x0+(x1-x0)*t, y0+(y1-y0)*t, 0, 0.075, 0.085, 0.075, i%2?wood:woodD); }
-  mBox(m, x0+(x1-x0)*0.82, y0+(y1-y0)*0.82, 0, 0.1, 0.06, 0.095, lash);   // lashing band below the head
-  const tip=[0.58,0.84], base=[0.08,0.2], px=-0.78, py=0.63, w=0.22;      // big leaf blade along the shaft diagonal
-  const mid=[0.33,0.52], lm=[mid[0]+px*w, mid[1]+py*w], rm=[mid[0]-px*w, mid[1]-py*w];
-  for (const z of [0.045,-0.045]) { const c = z>0?steel:steelD;
-    mTri(m,[base[0],base[1],0],[lm[0],lm[1],z],[tip[0],tip[1],0],c);
-    mTri(m,[base[0],base[1],0],[rm[0],rm[1],z],[tip[0],tip[1],0],c); }
-  return m; }
+// §strip spearMesh / spearIconMesh removed with the spear.
 function clamMesh() { const m = discMesh(0.1,0.4,7,0.18,[0.85,0.8,0.72]); const m2=discMesh(-0.1,0.4,7,-0.18,[0.8,0.75,0.68]); for(let i=0;i<m2.pos.length;i++){m.pos.push(m2.pos[i]);m.col.push(m2.col[i]);} return m; }
 function crabMeatMesh() { const m = Mesh(); const pink=[0.92,0.8,0.74], pink2=[0.86,0.7,0.64];   // §R4 pale lumps of crab meat
   const lumps=[[0,0,0.17],[0.13,0.06,0.12],[-0.1,0.09,0.11],[0.05,-0.12,0.1]];
@@ -7864,9 +7700,6 @@ ITEMS.pickaxe = { id: "pickaxe", name: "Pickaxe", category: "tool", rarity: "too
                   desc: "A miner's pick. Break boulders into stone.", model: () => pickaxeMesh(), tint: [1,1,1] };
 ITEMS.bucket = { id: "bucket", name: "Bucket", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
                  desc: "A tin pail. Fill it at the water, scoop up small creatures, and pour it into a pond.", model: () => bucketItemMesh(), tint: [1,1,1] };
-// §14C the fishing spear, a weapon, not part of the Tool Kit. Click to jab, hold to throw.
-ITEMS.spear = { id: "spear", name: "Fishing Spear", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
-                desc: "A sharpened wooden stake. Click to jab, hold and release to throw. Spears fish, and will wound any creature.", model: () => spearIconMesh(), tint: [1,1,1] };
 ITEMS.rawfish = { id: "rawfish", name: "Raw Fish", category: "find", rarity: "common", stackable: true, maxStack: 99,
                   desc: "A fresh-speared fish. Good food, and better cooked at a campfire.", model: () => fishMesh([0.7,0.72,0.66]), tint: [1,1,1] };
 ITEMS.lantern = { id: "lantern", name: "Lantern", category: "tool", rarity: "tool", stackable: false, maxStack: 1,  // §18
@@ -8050,13 +7883,6 @@ function lanternPos() { return [player.x, player.eyeY - 0.55, player.z]; }
 function lanternFlicker() { const t = clock.t; return 0.84 + 0.12*Math.sin(t*18.0) + 0.06*Math.sin(t*7.3 + 1.0) + 0.04*Math.sin(t*33.0); }
 const LANTERN_I = 0.62;   // §18/§tools lantern brightness, lower, warm, soft (tunable)
 const LANTERN_INDOOR = 0.45;   // §3 indoor multiplier so the lantern doesn't wash the close walls to white (tunable)
-let _preLanternSlot = 0;
-function toggleLantern() {   // §18 L key / mobile button: hold up the lantern, or put it away
-  const li = Inv.hotbar.findIndex(s => s && s.id === "lantern");
-  if (li < 0) { showCard("No lantern", "You don't have a lantern on your belt."); return; }
-  if (Inv.selected === li) selectHotbar(_preLanternSlot);
-  else { _preLanternSlot = Inv.selected; selectHotbar(li); }
-}
 let placedLanterns = [];   // §tools lit lanterns set down in the world, saved per seed: { x, y, z }
 // the one lantern that lights the scene this frame: the held one if raised, else the nearest placed lantern to the camera
 function activeLanternPos() {
@@ -8138,7 +7964,7 @@ function saveState() {
     events: seenEvents.slice(0, 40),  // §B5 the journal's seen-events log
     geodes: geodes.map((g,i)=>g.cracked?i:-1).filter(i=>i>=0),  // §40 which geodes are already cracked
     geodesTaken: geodes.map((g,i)=>g.taken?i:-1).filter(i=>i>=0),  // §A3 which cracked geodes have had their halves taken
-    recipes: [...knownRecipes], spearHard: spearHardened,  // §16 crafting
+    recipes: [...knownRecipes],  // §16 crafting
     bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, moist: c.moist, caught: c.caught })) } })); } catch (e) {}
 }
 function loadState() {
@@ -8160,7 +7986,6 @@ function loadState() {
       if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
       if (Array.isArray(s.recipes)) knownRecipes = new Set(s.recipes);   // §16 crafting
-      if (s.spearHard) spearHardened = true;
       if (s.bucket) { bucket.water = !!s.bucket.water; bucket.creatures = Array.isArray(s.bucket.creatures) ? s.bucket.creatures : [];
         for (const c of bucket.creatures) if (c.moist === undefined) c.moist = 1; }   // §13.3 older saves: start soaked
     }
@@ -8496,7 +8321,6 @@ function renderMakeHTML() {
 function recipeIcon(r) {
   if (r.build) return BUILD_ICON[r.build];
   if (r.out) return ITEMS[r.out] && ITEMS[r.out].icon;
-  if (r.special === "harden") return ITEMS.spear && ITEMS.spear.icon;
   if (r.special === "cook") return ITEMS.cooked_rawfish && ITEMS.cooked_rawfish.icon;
   if (r.special === "campfire") return ITEMS.stone && ITEMS.stone.icon;
   return null;
@@ -8752,7 +8576,6 @@ function interact() { if (shuck) { shuckStrike(); return; } if (heave) { heaveSt
   if (mode === "walk" && !isPanelOpen()) { const b = buildInFront(); if (b) {   // §16B use a piece, or crouch+E to pick it up
     const def = BUILD_DEFS[b.type], hasUse = def.storage || def.dry || def.shelter;
     if (hasUse && !crouching) interactBuild(b); else pickUpBuild(b); return; } }
-  if (mode === "walk" && selectedTool() === "spear" && !isPanelOpen()) { thrustSpear(); return; }   // §14C E / mobile Use = jab
   if (rodEquipped()) { rodTap(); return; }   // §Fishing F / mobile Use = cast / set hook / reel pulse
   const t = curTarget || targetAlongRay(rayFromNDC(0, 0));
   if (t) { interactTarget(t); return; }
@@ -9573,7 +9396,6 @@ let shovelSwing = 0, camNudge = 0, toolRecoilT = 0, camShake = 0, lastFailT = -9
 const dbgTool = { yaw: 0, pitch: 0, roll: 0, swingDir: 1, spin: 0 };   // §tools7 `spin` = a NEW rotation axis: about the tool's own long (handle) axis, in local space before the pose tilt
 const TOOL_X_SHIFT = 0.12;        // §tool-right how far further right every held tool/item sits (tunable)
 const PICK_X_SHIFT = 0.12;        // §tool-pick extra rightward offset for the pickaxe on top of TOOL_X_SHIFT (tunable)
-const SPEAR_REST_PITCH = 0.6;     // §tool-spear resting tilt that points the spear tip up-and-forward toward the crosshair (tunable)
 // §axe8 the AXE gets its OWN chop-swing settings so the pickaxe is unaffected. `axis` picks which rotation the chop
 // animates: "x" = pitch (overhead, the old behaviour), "y" = yaw (sideways twist), "z" = roll (sweeps across the
 // screen plane, a true chopping arc, the new default). `dir` flips the swing direction. Toggle both live in debug.
@@ -10829,8 +10651,6 @@ const RECIPES = [
     desc: "A brand you can plant on a stake for a standing light." },
   { id: "campfire", label: "Campfire", special: "campfire", cost: [["stick", 3], ["stone", 3]], station: "hand",
     desc: "Cook food and harden spears nearby. Lays down in front of you." },
-  { id: "firespear", label: "Fire-Hardened Spear", special: "harden", cost: [["stake", 1]], station: "campfire",
-    desc: "Temper a stake in the coals: harder, flatter, truer throws." },
   { id: "cook",    label: "Cook Food", special: "cook", cost: [], station: "campfire",
     desc: "Roast a raw fish, shellfish or egg for double the nourishment." },
   { id: "b_leanto", label: "Lean-to Shelter", build: "leanto", cost: [["stick", 4], ["log", 2], ["leaves", 3]], station: "hand",
@@ -10894,13 +10714,6 @@ function craftRecipe(id) {
     const raw = firstCookableRaw(); if (!raw) { showCard("Nothing to cook", "You have no raw food on you."); return; }
     Inv.remove(raw, 1); const cooked = COOKED_OF[raw] || raw; Inv.add(cooked, 1);
     if (onDig) onDig("eat"); showCard("Cooked " + ITEMS[raw].name, `A ${ITEMS[cooked].name}, double the food.`); return;
-  }
-  if (r.special === "harden") {
-    if (!canAfford(r.cost)) { showCard("Need a stake", "Fire-hardening a spear takes a Wooden Stake."); return; }
-    for (const [cid, n] of r.cost) Inv.remove(cid, n);
-    spearHardened = true;
-    if (!Inv.hotbarHasId("spear") && !Inv.has("spear")) Inv.equipTool("spear");
-    if (onDig) onDig("plant"); showCard("Fire-hardened spear", "Tempered in the coals, it throws harder and truer now."); saveState(); return;
   }
   const cost = affordableCost(r); if (!cost) { showCard("Need materials", craftCostText(r)); return; }
   for (const [cid, n] of cost) Inv.remove(cid, n);
@@ -11252,7 +11065,7 @@ function makeToolFP(id, mesh) {
   gl.bindVertexArray(null);
   TOOL_FP[id] = { mesh, vao, posBuf, vc: mesh.pos.length / 3, world: new Float32Array(mesh.pos.length) };
 }
-function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("spear", spearMesh()); makeToolFP("stake", stakeMesh()); makeToolFP("climbhands", climbHandsMesh()); makeToolFP("bucket", bucketItemMesh()); makeToolFP("bucketwater", bucketWaterFPMesh()); makeToolFP("lantern", lanternMesh()); makeToolFP("rod", rodMesh()); }   // §A1 stake now shows in hand   // §R4 bucket & lantern; §Fishing rod held too
+function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("stake", stakeMesh()); makeToolFP("climbhands", climbHandsMesh()); makeToolFP("bucket", bucketItemMesh()); makeToolFP("bucketwater", bucketWaterFPMesh()); makeToolFP("lantern", lanternMesh()); makeToolFP("rod", rodMesh()); }   // §A1 stake now shows in hand   // §R4 bucket & lantern; §Fishing rod held too
 // §15 render the two gripping hands while climbing, with a hand-over-hand sway
 function drawClimbHands(view) {
   const fp = TOOL_FP["climbhands"]; if (!fp) return;
@@ -11288,9 +11101,8 @@ function drawShovel(view) {
   const sw = Math.sin(ss * Math.PI);                                                     // 0→1→0 swing arc (peaks mid-swing)
   const wind = Math.max(0, ss - 0.5) * 2;                                                // 1 at strike start → 0 by mid-swing (the overhead wind-up)
   const rec = toolRecoilT * toolRecoilT;                                                 // recoil kick on a bounced hit
-  const isSpear = id === "spear", isRod = id === "rod", held = (id === "bucket" || id === "lantern");
-  const jab = isSpear ? Math.sin(Math.min(1, (spear.thrustT/0.3)) * Math.PI) : 0;        // §14C spear thrust
-  const chg = isSpear && spear.charging ? spear.charge : 0;
+  const isRod = id === "rod", held = (id === "bucket" || id === "lantern");
+  const jab = 0, chg = 0;   // §strip spear thrust/charge removed (the rod redefines its own chg locally)
   const t = clock.t;
   const bobA = Math.min(1, (player.walkLen || 0));                                        // 0 still … 1 moving
   const bob = Math.sin(player.bob || 0) * 0.02 * bobA + Math.cos((player.bob||0)*0.5)*0.01*bobA;   // §foot synced to the stride phase
@@ -11314,10 +11126,9 @@ function drawShovel(view) {
     oz = 0.76 + sw*0.45 + jab*0.45 - chg*0.28;                                            // stab forward on a swing/thrust
     roll = 0.1 + swayR;
     pitch = 0.72 + sw*0.4 + jab*0.3 - chg*0.12;                                           // raised point near screen-centre; a strike tips it forward into a stab
-  } else {                                                                                // shovel / axe / pickaxe / spear: angled, head up & in
-    const isPoke = isSpear;                                                               // §tools spear points forward and thrusts away
+  } else {                                                                                // shovel / axe / pickaxe: angled, head up & in
     const bladed = id === "axe" || id === "pickaxe";
-    scale = isSpear ? 0.5 : 0.46;
+    scale = 0.46;
     ox = 0.16 + sway;
     if (bladed) {
       // §A1/§tools5 overhead chop: pivot about the bottom of the handle (mesh origin), the blade arcs in the
@@ -11335,15 +11146,6 @@ function drawShovel(view) {
       if (dbgAxe.axis === "x") pitch += d;                                                // local X → pitch (overhead chop, the old axis)
       else if (dbgAxe.axis === "y") toolYaw += d;                                         // local Y → yaw (sideways twist)
       else roll += d;                                                                    // local Z → roll (sweeps across the screen)
-    } else if (isSpear) {
-      // §tool-spear held point-FORWARD (flipped from the old backward hold) and angled UP toward the crosshair;
-      // a thrust drives the point ahead and levels it. SPEAR_REST_PITCH tilts the tip up at rest (tunable).
-      scale = 0.5;
-      ox = 0.16 + sway;
-      oy = -0.42 - swap*0.5 + bob + chg*0.08;
-      oz = 0.8 - rec*0.35 + jab*0.6 - chg*0.28;                                           // thrust drives it forward
-      roll = -0.18 + swayR;
-      pitch = SPEAR_REST_PITCH + chg*0.1 - jab*0.6 + rec*0.4;                             // tip up-forward at rest; a stab levels it
     } else {
       oy = -0.42 - sw*0.08 + rec*0.2 - swap*0.5 + bob + chg*0.1;
       oz = 0.82 + sw*0.6 - rec*0.35 - chg*0.3;
@@ -14222,7 +14024,6 @@ for (let i = 0; i < Inv.hotbar.length; i++) { const s = Inv.hotbar[i]; if (s && 
 for (let i = 0; i < Inv.main.length; i++) { const s = Inv.main[i]; if (s && (s.id === "shovel" || s.id === "axe" || s.id === "pickaxe")) Inv.main[i] = null; }
 if (!Inv.hotbarHasId("toolkit")) Inv.hotbar[0] = { id: "toolkit", qty: 1 };   // slots: tool kit, bucket, spear
 if (!Inv.hotbarHasId("bucket")) Inv.hotbar[1] = { id: "bucket", qty: 1 };
-if (!Inv.hotbarHasId("spear")) Inv.hotbar[2] = { id: "spear", qty: 1 };        // §14C the fishing spear (its own slot)
 if (!Inv.hotbarHasId("rod") && !Inv.has("rod")) { const ri = Inv.hotbar.indexOf(null); if (ri >= 0) Inv.hotbar[ri] = { id: "rod", qty: 1 }; else Inv.add("rod", 1);   // §Fishing start with a rod
   try { if (localStorage.getItem("bc_rodintro") !== "1") { Inv.add("worm", 3); localStorage.setItem("bc_rodintro", "1"); } } catch (e) {} }   // and a few starter worms, once
 if (!Inv.hotbarHasId("lantern")) { const li = Inv.hotbar.indexOf(null); if (li >= 0) Inv.hotbar[li] = { id: "lantern", qty: 1 }; }   // §18 start with a lantern on the belt
@@ -14642,7 +14443,7 @@ function frame(now) {
    }
   }
 
-  if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateSpear(dt); updateFishing(dt); updateCatchCine(dt); }   // §14A/B/C + §Fishing
+  if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateFishing(dt); updateCatchCine(dt); }   // §14A/B/C + §Fishing
   updateCatchPop(dt);   // §catch5 the non-blocking catch card's own timer (runs even in menus, so it fades on its own)
   updateFade(dt);
   safetyCheck(dt);
@@ -14779,7 +14580,6 @@ function frame(now) {
   drawGlints(view);     // §18 shiny finds wink in lantern light at night
   drawPlankton(view);   // §14B drifting marine snow / bioluminescence, underwater only
   drawDeepVisitor(view);   // §14B a large silhouette far off in the deep
-  drawThrownSpears(view);  // §14C spears stuck in the ground / sinking
   drawBobber(view);        // §Fishing the cast bobber floating on the water
   drawCatchFish(view);     // §fishpolish the airborne / in-hand fish during the epic catch
   drawBounds(view);
