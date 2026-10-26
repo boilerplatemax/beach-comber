@@ -3065,7 +3065,8 @@ try { rodRecord = JSON.parse(localStorage.getItem("bc_rodrec") || "{}"); } catch
 function saveRodRec() { try { localStorage.setItem("bc_rodrec", JSON.stringify(rodRecord)); } catch (e) {} }
 
 // §fishpolish bait is worms only for now (other baits removed). q = quality (0 = basic).
-const ROD_BAIT = [ ["worm", 0, "Earthworm"], ["bug", 0, "Bug"] ];   // §stonebug bugs work as bait like worms
+const ROD_BAIT = [ ["worm", 0, "Earthworm"], ["bug", 0, "Bug"],   // §stonebug/§P3 bugs work as bait like worms; each species is its own item now
+  ["pillbug", 0, "Pill Bug"], ["beetle", 0, "Ground Beetle"], ["centipede", 0, "Centipede"], ["slug", 0, "Slug"] ];
 // §fishpolish tunables, bite timing, how a hotspot speeds it up, and how far you can wander before the cast cancels
 const BITE_MIN = 4, BITE_MAX = 40;     // seconds to a bite in plain water (wide variance)
 const CANCEL_DIST = 30;                // walk this far from the bobber and the cast reels itself in
@@ -6319,7 +6320,12 @@ const FINDS = {
   gravel:   { mesh: () => gravelMatMesh(),          base: 0.5, max: 60, label: "Gravel", desc: "Loose pebbles. Place it to build up the ground.", rare: 0 },
   mud:      { mesh: () => mudMatMesh(),             base: 0.5, max: 60, label: "Mud", desc: "Heavy, wet mud from the flats. Place it to build.", rare: 0 },
   worm:     { mesh: () => wormMesh(),               base: 0.4, max: 80, label: "Earthworm", desc: "A fat worm from the dark soil. Good bait.", rare: 0 },
-  bug:      { mesh: () => beetleMesh(),             base: 0.4, max: 80, label: "Bug", desc: "A little bug from under a stone. Good on a hook, or drop it to let it go.", rare: 0 },   // §stonebug pickable from under a lifted stone; works as fishing bait like a worm
+  bug:      { mesh: () => beetleMesh(),             base: 0.4, max: 80, label: "Bug", desc: "A little bug from under a stone. Good on a hook, or drop it to let it go.", rare: 0, bait: 1 },   // §stonebug legacy generic bug item (kept so old saves still render); new picks give the specific species below
+  // §P3 each land bug picked from under a stone is now its OWN item, with its own icon + journal entry (keys match the CREATURES entries); all work as fishing bait and can be dropped to release the live bug
+  pillbug:  { mesh: () => pillbugMesh(),            base: 0.4, max: 80, label: "Pill Bug", desc: "A woodlouse curled into a ball. Good on a hook, or drop it to let it go.", rare: 0, bait: 1 },
+  beetle:   { mesh: () => beetleMesh(),             base: 0.4, max: 80, label: "Ground Beetle", desc: "A shiny ground beetle. Good on a hook, or drop it to let it go.", rare: 0, bait: 1 },
+  centipede:{ mesh: () => centipedeMesh(),          base: 0.4, max: 80, label: "Centipede", desc: "A fast ripple of legs. Good on a hook, or drop it to let it go.", rare: 0, bait: 1 },
+  slug:     { mesh: () => slugMesh(),               base: 0.4, max: 80, label: "Slug", desc: "A glistening slug. Good on a hook, or drop it to let it go.", rare: 0, bait: 1 },
   root:     { mesh: () => rootMesh(),               base: 0.45,max: 70, label: "Root", desc: "A knotty taproot, prised from the dirt.", rare: 0 },
   flint:    { mesh: () => flintMesh(),              base: 0.4, max: 70, label: "Flint", desc: "A dark, sharp-edged nodule.", rare: 0 },
   driftwood:{ mesh: () => driftwoodMesh(),          base: 0.6, max: 50, label: "Driftwood", desc: "Grey, sea-worn and sun-bleached.", rare: 0 },
@@ -6932,8 +6938,24 @@ function updateLife(dt, tSec) {
     if (e.kind === "find") continue;
     if (e.hurtT > 0) e.hurtT = Math.max(0, e.hurtT - dt);
     behave(e, dt, d, dx, dz);
+    smoothYaw(e, dt);                                    // §P3 slew the rendered heading toward the AI's desired yaw (max turn rate + hysteresis) so nothing snaps back and forth
     if (e.dead) life.splice(i, 1);                       // §13.3 dried out, removed, remains already dropped
   }
+}
+// §P3 Creatures (esp. the horseshoe crab) used to flip their facing back and forth every frame whenever
+// the AI's target direction wobbled a hair. e.yaw stays the AI's instantaneous DESIRED heading; e.yawR is
+// the smoothed heading actually drawn. Hysteresis ignores tiny target flips, and a max turn rate keeps the
+// turn gradual, so a near-zero velocity or a jittery target can't spin the model.
+const CRIT_TURN_RATE = 7.0;    // rad/s, the fastest a creature re-aims (fast enough to not feel laggy)
+const CRIT_TURN_HYST = 0.40;   // rad (~23°): a new desired heading must beat this before we re-commit to it
+function smoothYaw(e, dt) {
+  if (e.yaw == null || dt <= 0) return;
+  if (e.yawR == null) { e.yawR = e.yaw; e.yawCommit = e.yaw; return; }   // first frame: adopt as-is (no spin-up)
+  let dd = e.yaw - e.yawCommit; while (dd > Math.PI) dd -= 2*Math.PI; while (dd < -Math.PI) dd += 2*Math.PI;
+  if (Math.abs(dd) > CRIT_TURN_HYST) e.yawCommit = e.yaw;               // only re-commit once the target moves enough (hysteresis kills the wobble)
+  let d = e.yawCommit - e.yawR; while (d > Math.PI) d -= 2*Math.PI; while (d < -Math.PI) d += 2*Math.PI;
+  const step = CRIT_TURN_RATE * dt;
+  e.yawR += Math.abs(d) <= step ? d : (d > 0 ? step : -step);           // slew at the capped rate
 }
 // §13.3 a stranded creature (poured/dropped on dry land, not in a natural pool/burrow) dries out and dies,
 // leaving its natural remains where it lay. Returns true if it died this frame.
@@ -7163,15 +7185,16 @@ function drawLife(view) {
       if (forceSpawn ? false : !lifeVisible(e)) continue;
       if (n >= reg.max) break;
       const g = heightAt(e.x, e.z);
-      let y = g, sc = e.scale, lean = 0, ld = 0, yawOut = e.yaw, glint = 0;
+      const ry = (e.yawR != null ? e.yawR : (e.yaw || 0));   // §P3 smoothed heading (max turn rate + hysteresis), used for all facing/lean so nothing snaps
+      let y = g, sc = e.scale, lean = 0, ld = 0, yawOut = ry, glint = 0;
       if (e.kind === "creature") {
         if (FISH[e.t]) { y = (e.y !== undefined) ? e.y : g + 1.0;   // §14C huntable fish hover in the water column
           // §1e flounder lies FLAT on the sand (its mesh is a flat oval, so no tilt) with a gentle edge-to-edge ripple; others sway upright
-          lean = e.t === "flounder" ? Math.sin(e.phase*2.2) * (0.05 + 0.1*(e.fleeT>0?1:0)) : Math.sin(e.phase*3)*0.06; ld = e.yaw; }
+          lean = e.t === "flounder" ? Math.sin(e.phase*2.2) * (0.05 + 0.1*(e.fleeT>0?1:0)) : Math.sin(e.phase*3)*0.06; ld = ry; }
         else if (e.t === "fish") y = (e.poolRim !== undefined ? Math.max(waterLevel, e.poolRim) : waterLevel) - 0.3 + Math.sin(e.phase*4)*0.05;
         else if (e.t === "jelly") sc = e.scale * (0.9 + Math.sin(e.phase*2)*0.1);
         if (e.t === "crab") y = g - (e.burrow || 0) * 0.6;                      // §13.1 sink into the sand (no pop)
-        else if (e.t === "lobster") { y = g + 0.1; if (e.flick > 0) { lean = Math.sin((e.flick/0.5)*Math.PI) * 0.6; ld = e.yaw; } }   // §lob5 sits on the seabed; a quick backward lurch on the tail-flick
+        else if (e.t === "lobster") { y = g + 0.1; if (e.flick > 0) { lean = Math.sin((e.flick/0.5)*Math.PI) * 0.6; ld = ry; } }   // §lob5 sits on the seabed; a quick backward lurch on the tail-flick
         else if (e.t === "anemone") sc = e.scale * (1 - 0.6*e.closed);
         else if (e.t === "seaduck") y = waterSurfaceAt(e.x, e.z) + 0.03 + Math.sin(e.phase*2)*0.03;   // §16.1 bobs on the water
         if (e.t === "star" || e.t === "anemone" || e.t === "urchin" || e.t === "snail") y += 0.02;
@@ -7183,10 +7206,10 @@ function drawLife(view) {
       }
       // §B1 death: NO topple/rotation (flat creatures like sea stars stay flat), it stays put; the red flash + dissolve do the work
       if (e.dying !== undefined) { lean = 0; y = g + 0.02; }
-      if (e.flop && e.beached) { lean = Math.sin(e.phase * 16) * 0.55; ld = (e.yaw || 0) + 1.5708; }   // §playtest1 a stranded fish/shrimp flops in place
-      if (e.t === "horseshoe" && e.stranded) { lean = Math.PI - 0.1 + Math.sin(e.phase*7)*0.12; ld = e.yaw || 0; y = g + 0.1; }   // §B2 flipped onto its back, belly-up so the legs show, waving a little
-      if (e.t === "beetle" && e.onBack) { lean = Math.PI - 0.1 + Math.sin(e.legPhase||0)*0.22; ld = e.yaw || 0; y = g + 0.05; }   // §weak7 flipped on its back, legs kicking
-      if (e.t === "crab" && e.fromStone && (e.claws||0) > 0.05) { lean = -0.28*e.claws; ld = e.yaw || 0; }                         // §weak7 reared back with claws up
+      if (e.flop && e.beached) { lean = Math.sin(e.phase * 16) * 0.55; ld = ry + 1.5708; }   // §playtest1 a stranded fish/shrimp flops in place
+      if (e.t === "horseshoe" && e.stranded) { lean = Math.PI - 0.1 + Math.sin(e.phase*7)*0.12; ld = ry; y = g + 0.4*sc; }   // §B2/§P3 flipped belly-up; lift by the (scaled) carapace-dome height so the back rests on the sand instead of sinking in
+      if (e.t === "beetle" && e.onBack) { lean = Math.PI - 0.1 + Math.sin(e.legPhase||0)*0.22; ld = ry; y = g + 0.16*sc; }   // §weak7/§P3 flipped on its back, legs kicking; lift by the (scaled) shell-dome height so the shell rests on the ground
+      if (e.t === "crab" && e.fromStone && (e.claws||0) > 0.05) { lean = -0.28*e.claws; ld = ry; }                         // §weak7 reared back with claws up
       if (e.digging) y = g - Math.min(1, (e.burrow||0)) * 0.55;                                                                     // §weak7 sinks into the ground as it digs in
       e._sc = sc;                                          // §urgent5 remember the drawn scale so the fade pass matches it (no pop)
       const o = n*10;
@@ -7565,7 +7588,7 @@ function updateAutoPickup() {
 
 let worldDrops = [];
 function dropItemWorld(id, qty) {
-  if (id === "bug") { releaseBugs(qty); return; }   // §stonebug a dropped bug is let go as a live bug, not a static drop
+  if (id === "bug" || STONE_BUGS.indexOf(id) >= 0) { releaseBugs(qty, id); return; }   // §stonebug/§P3 a dropped bug is let go as a live bug of its species, not a static drop
   if (!FINDS[id]) return;                       // only items with an in-world mesh can be dropped
   const fx = Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);
   for (let k = 0; k < qty && k < 30; k++) {
@@ -7815,12 +7838,12 @@ function quickMove(idx) {   // shift-click: bag ↔ belt
   else { const h = Inv.hotbar.indexOf(null); if (h >= 0) invMove(idx, INV_SLOTS + h); }
 }
 // §P2 which items are living things you can set free, and which can be set down in the world
-function isReleasable(id) { return id === "bug" || !!(CREATURES[id] && CREATURES[id].bucketable); }
+function isReleasable(id) { return id === "bug" || STONE_BUGS.indexOf(id) >= 0 || !!(CREATURES[id] && CREATURES[id].bucketable); }   // §P3 each bug species is releasable
 function isPlaceable(id) { return id === "lantern" || id === "bucket"; }
 function releaseItem(idx) {   // let a held bug/creature go near the player
   const c = Inv.cell(idx); if (!c) return; const id = c.id;
   const f = camForward(), x = player.x + f[0]*1.4 + (rng()-0.5), z = player.z + f[2]*1.4 + (rng()-0.5);
-  const t = id === "bug" ? "pillbug" : id;
+  const t = id === "bug" ? STONE_BUGS[(rng()*STONE_BUGS.length)|0] : id;   // §P3 legacy "bug" releases a random species; a specific bug item releases its own
   if (typeof spawnCreature === "function" && CREATURES[t]) spawnCreature(t, x, z, { hr: 6 });
   c.qty--; if (c.qty <= 0) Inv.setCell(idx, null); Inv.emit();
   if (onDig) onDig("pickup"); showCard("Released", "You set it back down to go on its way.");
@@ -10705,20 +10728,22 @@ function drawWeakStones(view) {
 function weakStonePrompt(s) { return (IS_TOUCH ? "tap" : "click") + " to pick up the stone"; }
 // §stonebug pick a live bug up into the pack (as a "bug" bait item), removing the creature
 function pickBug(e) {
-  const added = Inv.add("bug", 1);
-  if (added <= 0) { showCard("Pack full", "No room for the bug."); if (typeof bagShake === "function") bagShake(); return; }
-  const first = !discovered.has("f_bug"); discovered.add("f_bug"); discovered.add(e.t);
-  if (typeof notify === "function") notify("bug", 1, first);
+  const id = FINDS[e.t] ? e.t : "bug";                  // §P3 each species is its own item (centipede → Centipede …); fall back to the legacy bug item
+  const added = Inv.add(id, 1);
+  if (added <= 0) { showCard("Pack full", "No room for the " + (FINDS[id] ? FINDS[id].label.toLowerCase() : "bug") + "."); if (typeof bagShake === "function") bagShake(); return; }
+  const first = !discovered.has("f_" + id); discovered.add("f_" + id); discovered.add(e.t);
+  if (typeof notify === "function") notify(id, 1, first);
   if (typeof SND !== "undefined") SND.play("pickup");
   const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
   if (typeof checkSets === "function") checkSets();
 }
 // §stonebug dropping a "bug" item releases live bugs back into the world instead of a static drop
-function releaseBugs(qty) {
+function releaseBugs(qty, species) {
   const fx = Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);
+  const fixed = (species && species !== "bug" && STONE_BUGS.indexOf(species) >= 0) ? species : null;   // §P3 a specific species, or legacy random for the old "bug" item
   for (let k = 0; k < qty && k < 12; k++) {
     const a = rng()*6.283, r = 0.6 + rng()*1.0, x = player.x + fx*1.6 + Math.cos(a)*r, z = player.z + fz*1.6 + Math.sin(a)*r;
-    const t = STONE_BUGS[(rng()*STONE_BUGS.length)|0]; if (!CREATURES[t]) continue;
+    const t = fixed || STONE_BUGS[(rng()*STONE_BUGS.length)|0]; if (!CREATURES[t]) continue;
     const e = spawnCreature(t, x, z, { hx: x, hz: z, hr: 5, scatterUntil: clock.t + 0.8 });
     e.scale = CREATURES[t].base * WEAK_CRITTER_SCALE * (0.9 + rng()*0.2);
   }
