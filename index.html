@@ -7974,6 +7974,8 @@ const TUNABLES = [
   { k: "SPRINT_DRAIN", min: 0.0, max: 0.3, step: 0.01 }, { k: "SCRAMBLE_DRAIN", min: 0.0, max: 0.4, step: 0.01 },
   { k: "BLIND_FIND_CHANCE", min: 0.0, max: 0.3, step: 0.005 },
   { k: "WRONG_TOOL_MUL", min: 0.1, max: 1.0, step: 0.02 },
+  { k: "HARVEST_SPEED", min: 0.5, max: 2.5, step: 0.05 },
+  { k: "BREAK_IGNORE_T", min: 0.0, max: 1.0, step: 0.05 },
 ];
 function DBG_GET(k) { return (k in TUNE) ? TUNE[k] : 0; }     // §CH-D data-driven off the central TUNE object
 function DBG_SET(k, v) { if (k in TUNE) TUNE[k] = v; }
@@ -8354,11 +8356,14 @@ let stamina = STAMINA_MAX, resting = false, exhausted = false, digCommit = 0;
 // §11.5 stamina costs, relative to the old 0.1 reference dig:
 //   sand 2×, dirt/grass 4×, chop = dirt, mine ≈ 1.5× chop, gravel/mud between sand and dirt.
 const TUNE = {
-  DIG_COST: 0.2, DIRT_COST: 0.4, GRAVEL_COST: 0.3, CHOP_COST: 0.4, MINE_COST: 0.6, SIFT_COST: 0.06,
+  // §P3 chop/mine/dig stamina costs, ~40% lighter than before (were 0.2/0.4/0.3/0.4/0.6/0.06).
+  DIG_COST: 0.12, DIRT_COST: 0.24, GRAVEL_COST: 0.18, CHOP_COST: 0.24, MINE_COST: 0.36, SIFT_COST: 0.036,
   SPRINT_DRAIN: 0.08, SCRAMBLE_DRAIN: 0.13, REGEN_ACTIVE: 0.05, REGEN_IDLE: 0.11, REGEN_REST: 0.26,
   EXHAUST_RECOVER: 0.33, COMMIT_TIME: 0.5,
   BLIND_FIND_CHANCE: 0.05,          // blind digging (no tell) rarely turns up a find; mostly raw material
   WRONG_TOOL_MUL: 0.34,             // §P2 effort per strike with the wrong tool (≈ 1/3 → ~3x the hits). 1 = right tool.
+  HARVEST_SPEED: 1.33,              // §P3 damage per strike on trees/stumps/boulders (1.33 ≈ 25% fewer hits). 1 = old pace.
+  BREAK_IGNORE_T: 0.4,              // §P3 after an object breaks, ignore terrain hits until mouse-up or this long
 };
 // Per-material dig cost from the resolved surface material (NATURAL already resolves to grass/sand/… by height).
 function digCostFor(x, z) {
@@ -10089,7 +10094,7 @@ function chopStanding(o) {                                     // one axe strike
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.CHOP_COST, true); rootPlayer();
   if (onDig) onDig("chop");
-  o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species)); o.hp -= jobEffortMul() * toolMul("tree");   // §P2 the axe fells fast; anything else ~3x the hits
+  o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species)); o.hp -= jobEffortMul() * toolMul("tree") * TUNE.HARVEST_SPEED;   // §P2/§P3 the axe fells fast; anything else ~3x; §P3 ~25% fewer hits overall
   if (o.hp <= 0.001) startFall(o);
 }
 function chopAt(x, z) {
@@ -10231,7 +10236,7 @@ function stumpStrike(st) {
   if (st.hp === undefined) st.hp = 4;
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
   spawnSand(st.x, surfaceAt(st.x, st.z).h + 0.3, st.z, 5, [0.5, 0.4, 0.28]);
-  st.hp -= jobEffortMul() * toolMul("stump");   // §P2 shovel/axe are the right tools; anything else ~3x the hits
+  st.hp -= jobEffortMul() * toolMul("stump") * TUNE.HARVEST_SPEED;   // §P2/§P3 shovel/axe fast; anything else ~3x; §P3 ~25% fewer hits
   if (st.hp <= 0.001) {
     for (let i = 0, n = 1 + (rng()*2|0); i < n; i++) spawnFind("log", st.x + (rng()-0.5), st.z + (rng()-0.5));
     const i = stumps.indexOf(st); if (i >= 0) stumps.splice(i, 1);
@@ -10290,7 +10295,7 @@ function mineObj(o) {                                           // one pickaxe s
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §13.2 too tired: gentle refusal, no swing
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.MINE_COST, true); rootPlayer();
   if (onDig) onDig("mine");
-  o.hp -= jobEffortMul() * toolMul("rock");   // §P2 the pickaxe breaks rock fast; anything else ~3x the hits
+  o.hp -= jobEffortMul() * toolMul("rock") * TUNE.HARVEST_SPEED;   // §P2/§P3 pickaxe fast; anything else ~3x; §P3 ~25% fewer hits
   const sy = surfaceAt(o.x, o.z).h + o.sc*0.3;
   spawnSand(o.x, sy, o.z, 7, [0.5, 0.48, 0.46]);               // rock chips
   if (!o.split && o.hp <= Math.ceil(o.maxhp/2)) {              // cracks apart, shedding pickable rubble
