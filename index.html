@@ -559,6 +559,114 @@
   #musicToggle:hover { opacity: 1; background: rgba(18,26,28,.6); }
   #musicToggle.off { color: #9a9684; opacity: .5; }
   #musicToggle svg { width: 19px; height: 19px; display: block; }
+
+  /* ============================================================= *
+   *  § TIDEWORN  — old-RPG UI skin (oak frame · parchment · brass · gold)
+   *  Appended last so it overrides the base rules by cascade order.
+   *  HUD text over the world stays light (--ink); panels get dark ink.
+   * ============================================================= */
+  :root{
+    --wood:#5a3f22; --wood-lo:#2b1a0b; --wood-hi:#845d31;
+    --parch:#cdb184; --parch-hi:#e7d2a3; --parch-lo:#9a7a49;
+    --pink:#33240f; --pink-dim:#6a4f2b;           /* panel ink (dark on parchment) */
+    --gold:#f1c24a; --gold-hi:#ffe08a; --gold-lo:#9c6f20;
+    --slot:#8a6b3e; --slot-lo:#3a2913; --slot-hi:#b7925a;
+    --red:#c0392b;
+    --grain:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='90' height='90'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='90' height='90' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  }
+  /* ---- framed parchment panels ---- */
+  #pausebox, #controlsbox, #settingspanel, #invpanel, #stashpanel, #tradepanel,
+  #journalbox, #bucketlookbox, #inspectbox, #debugpanel, #itip, #ctxmenu, #card,
+  #combined #invpanel, #combined #bucketlookbox {
+    background-color: var(--parch); background-image: var(--grain); background-blend-mode: multiply;
+    color: var(--pink); text-shadow: 0 1px 0 var(--parch-hi);
+    border: 3px solid var(--wood-lo); clip-path: none !important;
+    box-shadow: inset 0 0 0 3px var(--wood), inset 0 0 0 5px var(--parch-lo),
+      inset 4px 4px 0 5px rgba(255,248,224,.35), inset -4px -4px 0 5px rgba(120,86,40,.35),
+      0 6px 0 rgba(0,0,0,.28), 0 16px 34px rgba(0,0,0,.55);
+  }
+  /* panel titles → gold-on-oak plates */
+  #pausebox h2, #controlsbox h2, #journalbox h2, #invpanel h2, #stashpanel h2, #tradepanel h2,
+  #bucketlookbox h2, #settingspanel h3, #debugpanel h3 {
+    background: linear-gradient(#5a4027,#3c2a18); color: var(--gold);
+    text-shadow: 1px 1px 0 #2a1708; letter-spacing: .14em; text-transform: uppercase;
+    box-shadow: inset 1px 1px 0 #7d5c34, inset -1px -1px 0 #241708;
+    padding: 8px 12px; margin: -4px -6px 14px; display: block; font-weight: 700;
+  }
+  #settingspanel h3, #debugpanel h3 { font-size: 16px; }
+  #pausebox .psub, #invpanel h2 ~ *, .jstat { color: var(--pink-dim); }
+  #pausebox .psub { color: var(--pink-dim); opacity: .9; }
+  /* ---- beveled stone buttons (gold reserved for primary + hover) ---- */
+  button, #invpanel button, #debugpanel button, #inspectview button, #bucketlookbox button,
+  #settingspanel button, .recipe .mk, .trow .tbtn {
+    background: linear-gradient(#c8a86a,#a9884f) !important; color: #311f0c !important;
+    text-shadow: 0 1px 0 var(--parch-hi); border: 0; clip-path: none !important; border-radius: 0 !important;
+    box-shadow: inset 2px 2px 0 var(--parch-hi), inset -2px -2px 0 #6e4f2b, 0 2px 0 #4a3317;
+  }
+  button:hover, #invpanel button:hover, #debugpanel button:hover, #inspectview button:hover:not(:disabled),
+  #bucketlookbox button:hover, #settingspanel button:hover, .recipe .mk:hover:not(:disabled), .trow .tbtn:hover:not(:disabled) {
+    background: linear-gradient(#d9bd80,#b89a5c) !important; color: #241502 !important; filter: none;
+  }
+  button:active { transform: translateY(1px); box-shadow: inset -2px -2px 0 var(--parch-hi), inset 2px 2px 0 #6e4f2b; }
+  button.primary, .cc-keep, #inspRelease, #fishrevealbox .frkeep, #startBtn.primary, .closebtn.primary {
+    background: linear-gradient(#e7b84e,#c7922f) !important; color: #2a1708 !important;
+    box-shadow: inset 2px 2px 0 var(--gold-hi), inset -2px -2px 0 #90631c, 0 2px 0 #5a3d10 !important;
+  }
+  button.primary:hover, .cc-keep:hover { background: linear-gradient(#f4ca5e,#d8a238) !important; filter: none; }
+  button.danger, #pausebox button.danger { color: #7a2a18 !important; }
+  /* ---- tabs → beveled, active = gold ---- */
+  .jtab, .stab, .mtb, .mtab, .spreset, #menutabs .mtb {
+    background: linear-gradient(#bfa066,#9c7c4c) !important; color: #3a2410 !important; opacity: 1;
+    clip-path: none !important; border: 0; border-radius: 0 !important;
+    box-shadow: inset 1px 1px 0 var(--parch-hi), inset -1px -1px 0 #6e4f2b; text-shadow: 0 1px 0 var(--parch-hi); }
+  .jtab.on, .stab.on, .mtb.on, .mtab.on, .spreset.on, #menutabs .mtb.on {
+    background: linear-gradient(#e7b84e,#c7922f) !important; color: #2a1708 !important;
+    box-shadow: inset 1px 1px 0 var(--gold-hi), inset -1px -1px 0 #90631c !important; }
+  .jtab .jtc { color: #5a3f1e; }
+  /* ---- recessed inventory / journal / hotbar cells ---- */
+  .islot, .hslot, .recipe .mkleft, .trow .ti, .recipe .ming, #inspectcanvas, #bucketlookcanvas {
+    background: var(--slot) !important; border: 0 !important; border-radius: 0 !important;
+    box-shadow: inset 2px 2px 0 var(--slot-lo), inset -2px -2px 0 var(--slot-hi) !important; }
+  .islot.full { background: #7c5e34 !important; }
+  .islot.sel, .hslot.sel { box-shadow: inset 0 0 0 2px var(--gold), inset 2px 2px 0 var(--slot-lo), inset -2px -2px 0 var(--slot-hi) !important; }
+  .islot.dragover { box-shadow: inset 0 0 0 2px #9fe3ef, inset 2px 2px 0 var(--slot-lo), inset -2px -2px 0 var(--slot-hi) !important; }
+  .jcard { background: var(--parch) !important; background-image: var(--grain) !important; background-blend-mode: multiply;
+    color: var(--pink) !important; clip-path: none !important;
+    box-shadow: inset 1px 1px 0 var(--parch-hi), inset -1px -1px 0 var(--parch-lo), 0 2px 0 #00000022 !important; }
+  .jcard.unk { color: #8a714a !important; }
+  #inspectcanvas, #bucketlookcanvas { clip-path: none !important; }
+  #hotbar { background: linear-gradient(#5a3c23,#3a2413) !important; border: 2px solid var(--wood-lo) !important;
+    border-radius: 0 !important; box-shadow: inset 1px 1px 0 var(--wood-hi), inset -1px -1px 0 var(--wood-lo), 0 4px 10px rgba(0,0,0,.5) !important; }
+  .hslot { border-radius: 0 !important; }
+  /* ---- sliders (settings / debug) ---- */
+  #settingspanel input[type=range], #debugpanel input[type=range] {
+    -webkit-appearance: none; appearance: none; height: 12px; background: var(--slot);
+    box-shadow: inset 2px 2px 0 var(--slot-lo), inset -2px -2px 0 var(--slot-hi); }
+  #settingspanel input[type=range]::-webkit-slider-thumb, #debugpanel input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 18px; background: linear-gradient(#e7b84e,#b9842a); cursor: pointer;
+    box-shadow: inset 1px 1px 0 var(--gold-hi), inset -1px -1px 0 #7a5416, 0 1px 1px #0006; }
+  #settingspanel label, #settingspanel .srow, #debugpanel label { color: var(--pink); }
+  #settingspanel h4 { color: var(--pink-dim); opacity: 1; }
+  /* ---- tooltips / context / toasts / event line as little parchment labels ---- */
+  #itip b { color: #3a2410; } #itip p { color: var(--pink-dim); }
+  #ctxmenu { padding: 4px; }
+  #ctxmenu div { color: var(--pink); } #ctxmenu div:hover { background: rgba(90,64,39,.22); color: #241502; }
+  .toast { background-color: var(--parch) !important; background-image: var(--grain); background-blend-mode: multiply;
+    color: var(--pink) !important; clip-path: none !important; border: 2px solid var(--wood-lo);
+    box-shadow: inset 1px 1px 0 var(--parch-hi), inset -1px -1px 0 var(--parch-lo), 0 3px 10px rgba(0,0,0,.4) !important; }
+  .toast i { color: var(--pink-dim); } .toast.new span { color: #9c6f16 !important; }
+  #card b { color: #3a2410; } #card span { color: var(--pink-dim); }
+  /* keep HUD-over-world text light and legible (these sit on the dark game, not on parchment) */
+  #hud, #prompt, #dbg, #fpscounter, #eventline, #soundsubs, #pryhint { color: var(--ink); }
+  #prompt b { color: var(--gold-hi); }
+  /* ---- global styled scrollbars (no default browser bars) ---- */
+  * { scrollbar-width: thin; scrollbar-color: #a9884f var(--slot-lo); }
+  ::-webkit-scrollbar { width: 14px; height: 14px; }
+  ::-webkit-scrollbar-track { background: var(--slot-lo); box-shadow: inset 2px 2px 0 #241708; }
+  ::-webkit-scrollbar-thumb { background: linear-gradient(#c8a86a,#a9884f);
+    box-shadow: inset 1px 1px 0 var(--parch-hi), inset -1px -1px 0 #6e4f2b; border: 2px solid var(--slot-lo); }
+  ::-webkit-scrollbar-thumb:hover { background: linear-gradient(#d9bd80,#b89a5c); }
+  ::-webkit-scrollbar-corner { background: var(--slot-lo); }
 </style>
 </head>
 <body>
