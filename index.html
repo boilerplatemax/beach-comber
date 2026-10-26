@@ -7799,7 +7799,7 @@ function buildIcons() {
   gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, iconTex, 0);
   gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, iconRB);
   _iconPx = new Uint8Array(64 * 64 * 4);
-  _iconProj = M4.perspective(0.6, 1, 0.1, 50); _iconView = M4.lookAt([2.2, 1.9, 2.4], [0, 0.05, 0], [0, 1, 0]);
+  _iconProj = M4.perspective(0.6, 1, 0.1, 50); _iconView = M4.lookAt([2.2, 1.9, 2.4], [0, 0, 0], [0, 1, 0]);   // §UI look at the origin (meshes are bbox-centred there)
   for (const k in ITEMS) buildOneIcon(ITEMS[k]);
   for (const k in CREATURES) CREATURES[k].icon = buildMeshIcon(CREATURES[k].mesh(), CREATURES[k].iconTint || [1,1,1]);   // §13.5 journal creature cards (§lob5 pale-baked meshes carry an iconTint)
   for (const k in BUILD_DEFS) BUILD_ICON[k] = buildMeshIcon(BUILD_DEFS[k].mesh(), [1,1,1]);      // §16B Make-tab build icons
@@ -7809,7 +7809,18 @@ let _iconPx, _iconProj, _iconView;
 // §13.5 render any mesh → a 64×64 icon data URL (shared by item cards, creature cards, the satchel)
 function buildMeshIcon(mesh, tint) {
   if (!iconFBO) return null;
-  let maxr = 0.001; for (let i = 0; i < mesh.pos.length; i += 3) { const r = Math.hypot(mesh.pos[i], mesh.pos[i+1], mesh.pos[i+2]); if (r > maxr) maxr = r; }
+  // §UI center the model on its BOUNDING BOX before baking, so off-origin meshes (nautilus, plant
+  // fiber, tools…) sit centred and fill the frame instead of drifting to a corner. The icon mesh is a
+  // throwaway copy (it.model()/CREATURES[k].mesh() return fresh meshes), so mutating it is safe.
+  const P = mesh.pos;
+  if (P.length) {
+    let lx=1e9,ly=1e9,lz=1e9,hx=-1e9,hy=-1e9,hz=-1e9;
+    for (let i = 0; i < P.length; i += 3) { const x=P[i],y=P[i+1],z=P[i+2];
+      if(x<lx)lx=x; if(y<ly)ly=y; if(z<lz)lz=z; if(x>hx)hx=x; if(y>hy)hy=y; if(z>hz)hz=z; }
+    const cx=(lx+hx)/2, cy=(ly+hy)/2, cz=(lz+hz)/2;
+    for (let i = 0; i < P.length; i += 3) { P[i]-=cx; P[i+1]-=cy; P[i+2]-=cz; }
+  }
+  let maxr = 0.001; for (let i = 0; i < P.length; i += 3) { const r = Math.hypot(P[i], P[i+1], P[i+2]); if (r > maxr) maxr = r; }
   const dyn = makeDynamic(mesh, 1), sc = 1.4 / maxr;
   gl.bindFramebuffer(gl.FRAMEBUFFER, iconFBO);
   gl.viewport(0, 0, 64, 64); gl.clearColor(0, 0, 0, 0); gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
@@ -7820,7 +7831,7 @@ function buildMeshIcon(mesh, tint) {
   gl.uniform3fv(propU.uZenith, [1,1,1]); gl.uniform3fv(propU.uHorizon, [1,1,1]); gl.uniform3fv(propU.uWarm, [1,1,0.95]);
   gl.uniform1f(propU.uFogDensity, 0); gl.uniform1f(propU.uFogNear, 1e6);
   if (propU.uLanternI !== undefined) gl.uniform1f(propU.uLanternI, 0);   // §18 icons aren't lantern-lit
-  dyn.draw(new Float32Array([0, -0.1, 0, sc, 0.7, 0, 0, tint[0], tint[1], tint[2]]), 1);
+  dyn.draw(new Float32Array([0, 0, 0, sc, 0.7, 0, 0, tint[0], tint[1], tint[2]]), 1);   // §UI centred: mesh already bbox-centred, draw at origin
   gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, _iconPx);
   const img = iconCtx.createImageData(64, 64);
   for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) { const s = ((63 - y) * 64 + x) * 4, d = (y * 64 + x) * 4; img.data[d]=_iconPx[s]; img.data[d+1]=_iconPx[s+1]; img.data[d+2]=_iconPx[s+2]; img.data[d+3]=_iconPx[s+3]; }
@@ -9558,8 +9569,15 @@ const inspectPool = makeDynamic((function () { const m = Mesh(); const sand = [0
   return m; })(), 1);
 const _itemDyn = {};
 function itemDyn(id) { if (_itemDyn[id]) return _itemDyn[id]; const it = ITEMS[id]; if (!it) return null;
-  const mesh = it.model(); let maxr = 0.001;
-  for (let i = 0; i < mesh.pos.length; i += 3) { const r = Math.hypot(mesh.pos[i], mesh.pos[i+1], mesh.pos[i+2]); if (r > maxr) maxr = r; }
+  const mesh = it.model(), P = mesh.pos;   // §UI centre the inspect model on its bounding box (throwaway copy, safe to mutate)
+  if (P.length) {
+    let lx=1e9,ly=1e9,lz=1e9,hx=-1e9,hy=-1e9,hz=-1e9;
+    for (let i=0;i<P.length;i+=3){ const x=P[i],y=P[i+1],z=P[i+2]; if(x<lx)lx=x;if(y<ly)ly=y;if(z<lz)lz=z;if(x>hx)hx=x;if(y>hy)hy=y;if(z>hz)hz=z; }
+    const cx=(lx+hx)/2, cy=(ly+hy)/2, cz=(lz+hz)/2;
+    for (let i=0;i<P.length;i+=3){ P[i]-=cx; P[i+1]-=cy; P[i+2]-=cz; }
+  }
+  let maxr = 0.001;
+  for (let i = 0; i < P.length; i += 3) { const r = Math.hypot(P[i], P[i+1], P[i+2]); if (r > maxr) maxr = r; }
   return (_itemDyn[id] = { dyn: makeDynamic(mesh, 1), fit: 1 / maxr, tint: it.tint || [1,1,1] });
 }
 function creatureRarity(t) { const m = (CREATURES[t] && CREATURES[t].max) || 100; return m >= 140 ? "common" : m >= 70 ? "uncommon" : "rare"; }
@@ -9671,7 +9689,7 @@ function drawInspectRipples() {
 function drawInspectItem() {
   const d = itemDyn(inspect.subject); if (!d) return;
   // §menu no platform/pedestal, the item just floats and spins on its own (inspect.spin advances each frame)
-  d.dyn.draw(miniInst(0, 0.02, 0, d.fit * 0.7, inspect.spin, 0, 0, d.tint), 1);
+  d.dyn.draw(miniInst(0, 0, 0, d.fit * 0.7, inspect.spin, 0, 0, d.tint), 1);   // §UI bbox-centred, draw at origin
 }
 function updateInspectView() {
   if (!inspect.open) return;
