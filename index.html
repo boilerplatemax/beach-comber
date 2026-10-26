@@ -3302,6 +3302,7 @@ function junkCatchMesh(id) { const it = ITEMS[id]; if (it && it.model) { try { r
 function startCatchCine() {
   const f = rod.fish, isJunk = f.species === "junk";
   rod.state = "reveal";                                      // §catch5 rod stays 'busy' so you can't re-cast mid-flight, but the VIEW is NOT locked and you can move at once
+  if (catchDyn) disposeGLObj(catchDyn);                      // §CH-B the per-catch mesh is rebuilt each catch; free the previous one so a long session doesn't leak VAOs/buffers
   catchDyn = makeDynamic(isJunk ? junkCatchMesh(f.junkId) : catchSpeciesMesh(f.species), 1);
   const bx = rod.bob.x, bz = rod.bob.z, surf = rod.bob.surf, fwd = camForward();
   catchCine = {
@@ -11709,7 +11710,6 @@ function deriveSeedState(seedStr) {
   TIDE_RANGE = AP.tideRange;
   MAX_HIGH_TIDE = TIDE_MID + TIDE_RANGE * 0.5 * SPRING_AMP;
   SHORE_WATER_MAX = MAX_HIGH_TIDE + 3;
-  COTTAGE_MIN_Y = MAX_HIGH_TIDE + 1.6;
   HIGH = { x: 0, z: 0, h: -1e9 };                  // reset the high-point accumulator (findHighPoint only maxes)
 }
 function disposeGLObj(o) {
