@@ -4032,6 +4032,9 @@ addEventListener("wheel", (e) => {
   for (let k = 0; k < HOTBAR_SLOTS; k++) { i = (i + dir + HOTBAR_SLOTS) % HOTBAR_SLOTS; if (Inv.hotbar[i]) { selectHotbar(i); break; } }
 }, { passive: true });
 canvas.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
+// §P2 right-click is a game action everywhere (held-item use, satchel actions menu); never let the
+// browser's own context menu pop up over the game. Text inputs (the seed box) keep their native menu.
+addEventListener("contextmenu", (e) => { if (!(e.target.closest && e.target.closest("input, textarea"))) e.preventDefault(); }, false);
 document.addEventListener("mousemove", (e) => {
   if (document.pointerLockElement !== canvas || menuModalOpen()) return;   // §A6 no camera look while a menu is open
   const s = 0.0022;
@@ -5990,7 +5993,11 @@ function bucketItemMesh() { const m = Mesh(); const tin = [0.6,0.64,0.7], dk = [
   mergeMesh(m, discMesh(-0.32, 0.24, 12, -0.04, dk));               // bottom
   mCyl(m, -0.03, 0.01, 0.305, 0.312, 12, dk);                       // a seam band for the tin look
   mCyl(m, 0.3, 0.37, 0.355, 0.35, 12, hi);                          // rolled rim (a smooth wider lip, not crenellations)
-  mergeMesh(m, discMesh(0.37, 0.355, 12, 0.0, dk));                 // thin rim top face
+  // §bucket OPEN TOP: no top face, so you see inside. The interior walls + floor read solid because
+  // nothing is back-face culled (the body/rim are tubes, the bottom disc stays). A darker inner-wall
+  // skin keeps the inside from looking identical to the lit outside.
+  mCyl(m, -0.3, 0.34, 0.225, 0.325, 12, dk);                        // inner wall skin (just inside the body), darker
+  mergeMesh(m, discMesh(-0.3, 0.23, 12, 0.0, [0.34,0.37,0.42]));    // inner floor, sits on top of the real bottom
   // swing handle: one smooth curved tube arcing over the top (not broken cubes)
   mArcTube(m, 0, 0.33, 0.35, 0.028, 0, Math.PI, 18, 8, dk);
   for (const s of [-1,1]) mBox(m, s*0.35, 0.33, 0, 0.03, 0.03, 0.055, dk);   // pivot lugs where the handle meets the rim
@@ -7847,7 +7854,11 @@ function updateToasts(dt) {
   let changed = false;
   for (const x of toasts) { x.t -= dt; }
   for (let i = toasts.length - 1; i >= 0; i--) if (toasts[i].t <= 0) { toasts.splice(i, 1); changed = true; }
-  renderToasts();
+  if (changed) renderToasts();   // §UI only rebuild the DOM when the set changes
+  // §UI fade in place (rebuilding every frame restarted the icon pop-in animation, so the new-item icon never appeared)
+  const el = document.getElementById("toasts"); if (!el) return;
+  const kids = el.children;
+  for (let i = 0; i < toasts.length && i < kids.length; i++) kids[i].style.opacity = Math.min(1, toasts[i].t / 0.6);
 }
 function renderToasts() {
   const el = document.getElementById("toasts");
