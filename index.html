@@ -3795,6 +3795,7 @@ addEventListener("keydown", (e) => {
     if (e.code === "KeyH") { digCellDebug = !digCellDebug; showCard("Debug: dig cells", digCellDebug ? "Green = find, grey = raw-only, red = depleted." : "Off."); }   // §urgent3 dig-cell overlay
     if (e.code === "KeyO") { fishForceBite = !fishForceBite; showCard("Debug: force bite", fishForceBite ? "Casts bite almost instantly (never junk)." : "Off."); }   // §Fishing force a quick bite
     if (e.code === "KeyU") { fishOddsLog = !fishOddsLog; console.log("fish odds log " + (fishOddsLog ? "ON" : "OFF")); }   // §Fishing log catch odds per cast
+    if (e.code === "KeyG") { fpDbg = !fpDbg; const n = (typeof validateFootprints === "function") ? validateFootprints() : 0; showCard("Debug: spawn footprints", fpDbg ? `Faint = footprints, red = overlaps (${n}).` : "Off."); }   // §P3 footprint / overlap overlay
   }
 });
 addEventListener("keyup", (e) => { keys[e.code] = false; });
@@ -5035,6 +5036,29 @@ function reserveBig(x, z) {
   const k = Math.floor(x / 3) + "," + Math.floor(z / 3);
   if (bigCells.has(k)) return false; bigCells.add(k); return true;
 }
+// §P3 unified spawn-footprint registry. Every placed world object claims a ground circle, and a
+// claim is refused when it would overlap one already taken, so nothing spawns inside anything else,
+// across all types. It consumes no rng and each claim sits AFTER a candidate's rng draws, so the
+// generation stream (and thus every seed's world) stays deterministic. Reset at the top of buildProps.
+let footprints = [];           // { x, z, r, kind }
+let footprintOverlaps = [];    // pairs validateFootprints() found overlapping (for the debug overlay; should stay empty)
+function footprintClear(x, z, r) {
+  for (let i = 0; i < footprints.length; i++) { const f = footprints[i], dx = f.x - x, dz = f.z - z, rr = f.r + r; if (dx*dx + dz*dz < rr*rr) return false; }
+  return true;
+}
+function claimFootprint(x, z, r, kind) { if (!footprintClear(x, z, r)) return false; footprints.push({ x, z, r, kind }); return true; }
+// Self-check: with rejection working, no two footprints should overlap. Logs the count (want 0) and
+// records the offenders for the debug overlay (Shift+Ctrl+D debug mode, then G).
+function validateFootprints() {
+  footprintOverlaps = [];
+  for (let i = 0; i < footprints.length; i++) for (let j = i + 1; j < footprints.length; j++) {
+    const a = footprints[i], b = footprints[j], dx = a.x - b.x, dz = a.z - b.z, rr = a.r + b.r;
+    if (dx*dx + dz*dz < rr*rr - 1e-4) footprintOverlaps.push({ x: (a.x+b.x)/2, z: (a.z+b.z)/2, r: Math.min(a.r, b.r), a: a.kind, b: b.kind });
+  }
+  console.log(`[spawns] placed footprints: ${footprints.length}, overlaps: ${footprintOverlaps.length} (should be 0)`);
+  if (footprintOverlaps.length) for (const o of footprintOverlaps.slice(0, 6)) console.warn(`  overlap: ${o.a} × ${o.b} near ${o.x.toFixed(1)},${o.z.toFixed(1)}`);
+  return footprintOverlaps.length;
+}
 // §12A is this spot covered by ANY water surface, ocean at spring high, a trapped
 // basin/pond, or a filled hole? Dry-land props and planting must reject such spots.
 function spotUnderwater(x, z, margin) {
@@ -5063,6 +5087,8 @@ function pushInst(inst, x, y, z, s, yaw, lean, ld, t) {
 
 function buildProps() {
   POIS = placePOIs();
+  footprints = [];                                                 // §P3 fresh registry each island
+  for (const p of POIS) footprints.push({ x: p.x, z: p.z, r: p.radius, kind: "poi" });   // POIs claim their footprint first (everything else already avoids them via nearPOI)
   const poiMesh = Mesh();
   for (const p of POIS) emitPOI(poiMesh, p);
 
@@ -5080,8 +5106,9 @@ function buildProps() {
   scatter(26, 0.9, 1200, (x, z) => {
     const s = surfaceAt(x, z); if (s.h < 0.4 || s.h > 7 || s.slope > 0.35) return;
     if (rng() > 0.5 || nearPOI(x, z, 2)) return;
-    const scale = 1.5 + rng()*2.2;
-    driftObjs.push({ x, z, scale, yaw: rng()*6.28, roll: (rng()-0.5)*0.5, tint: vary([0.6,0.55,0.48], 0.15), gone: false, big: scale > 2.2 });
+    const scale = 1.5 + rng()*2.2, yaw = rng()*6.28, roll = (rng()-0.5)*0.5, tint = vary([0.6,0.55,0.48], 0.15);
+    if (!claimFootprint(x, z, 0.4 + scale*0.18, "driftwood")) return;   // §P3 after the draws, so the stream is unchanged
+    driftObjs.push({ x, z, scale, yaw, roll, tint, gone: false, big: scale > 2.2 });
   });
   // §P3 land decorative vegetation is reduced to three PICKABLE kinds, seeded as world entities in
   // seedPlants() (flowers → Flower, ferns → Fern) and seedTallGrass() (tall grass → Plant Fiber).
@@ -5090,8 +5117,9 @@ function buildProps() {
   const palms = scatter(15, 0.9, 1500, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 3 || s.h > 17 || s.slope > 0.4) return;
     if (rng() > 0.5 || nearPOI(x, z, 3) || spotUnderwater(x, z, 0.3) || !reserveBig(x, z)) return;
-    const sc = 7 + rng()*6;
-    pushInst(inst, x, s.h, z, sc, rng()*6.28, 0.05 + rng()*0.18, rng()*6.28, vary([0.9,0.95,0.8], 0.15));
+    const sc = 7 + rng()*6, yaw = rng()*6.28, lean = 0.05 + rng()*0.18, ld = rng()*6.28, tint = vary([0.9,0.95,0.8], 0.15);
+    if (!claimFootprint(x, z, 0.9, "tree")) return;
+    pushInst(inst, x, s.h, z, sc, yaw, lean, ld, tint);
     colliders.push({ x, z, r: 0.5, kind: "tree", species: "palm", ii: inst.length/10 - 1 });
   });
   // interior pines, thinning on slopes & toward the summit (keep sightlines)
@@ -5099,16 +5127,18 @@ function buildProps() {
     const s = surfaceAt(x, z); if (s.h < 20 || s.slope > 0.6) return;
     const thin = 1 - smoothstep(HIGH.h * 0.55, HIGH.h * 0.95, s.h);   // fewer up high
     if (rng() > 0.55 * thin || nearPOI(x, z, 3) || spotUnderwater(x, z, 0.3) || !reserveBig(x, z)) return;
-    const sc = 6 + rng()*10;
-    pushInst(inst, x, s.h, z, sc, rng()*6.28, rng()*0.1, rng()*6.28, vary([1,1,1], 0.2));
+    const sc = 6 + rng()*10, yaw = rng()*6.28, lean = rng()*0.1, ld = rng()*6.28, tint = vary([1,1,1], 0.2);
+    if (!claimFootprint(x, z, 0.9, "tree")) return;
+    pushInst(inst, x, s.h, z, sc, yaw, lean, ld, tint);
     colliders.push({ x, z, r: 0.6, kind: "tree", species: "pine", ii: inst.length/10 - 1 });
   });
   // interior broadleaf trees (the ones that shed leaves), dunes up to mid-slope
   const broadleaf = scatter(13, 0.9, 1800, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 13 || s.h > 42 || s.slope > 0.5) return;
     if (rng() > 0.4 || nearPOI(x, z, 3) || spotUnderwater(x, z, 0.3) || !reserveBig(x, z)) return;
-    const sc = 6 + rng()*7;
-    pushInst(inst, x, s.h, z, sc, rng()*6.28, rng()*0.08, rng()*6.28, vary([1,1,1], 0.15));
+    const sc = 6 + rng()*7, yaw = rng()*6.28, lean = rng()*0.08, ld = rng()*6.28, tint = vary([1,1,1], 0.15);
+    if (!claimFootprint(x, z, 0.9, "tree")) return;
+    pushInst(inst, x, s.h, z, sc, yaw, lean, ld, tint);
     colliders.push({ x, z, r: 0.6, kind: "tree", species: "broadleaf", ii: inst.length/10 - 1 });
   });
   // §13.7 boulders in three biome styles: rounded cobble near the shore, mossy slabs inland,
@@ -5125,8 +5155,9 @@ function buildProps() {
     else if (s.h < 7) { arr = rocksR; styleIdx = 0; }   // smooth rounded cobble near the shore
     else { arr = rocksS; styleIdx = 1; }                // mossy slab inland
     const y = s.h - sc*0.22;                            // sink the base into the ground
-    const t = vary([1,1,1], 0.1);
-    arr.push(x, y, z, sc, rng()*6.28, 0, 0, t[0], t[1], t[2]);
+    const t = vary([1,1,1], 0.1), ryaw = rng()*6.28;
+    if (!claimFootprint(x, z, sc*0.5, "rock")) return;
+    arr.push(x, y, z, sc, ryaw, 0, 0, t[0], t[1], t[2]);
     colliders.push({ x, z, r: sc*0.5, kind: "rock", ii: arr.length/10 - 1, sc, styleIdx });
   });
   // §14B underwater meadows, eelgrass meadows in the shallows, bull-kelp forests in deeper water.
@@ -5167,7 +5198,9 @@ function buildProps() {
   const fences = scatter(28, 1.0, 600, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 6 || s.h > 26 || s.slope > 0.4) return;
     if (rng() > 0.1 || nearPOI(x, z, 2) || spotUnderwater(x, z) || !reserveBig(x, z)) return;
-    pushInst(inst, x, s.h, z, 1 + rng()*0.8, rng()*6.28, 0.08 + rng()*0.2, rng()*6.28, vary([1,1,1], 0.15));
+    const fsc = 1 + rng()*0.8, fyaw = rng()*6.28, flean = 0.08 + rng()*0.2, fld = rng()*6.28, ftint = vary([1,1,1], 0.15);
+    if (!claimFootprint(x, z, 0.35, "fence")) return;
+    pushInst(inst, x, s.h, z, fsc, fyaw, flean, fld, ftint);
     colliders.push({ x, z, r: 0.3, kind: "fence", ii: inst.length/10 - 1 });
   });
 
@@ -8761,6 +8794,25 @@ function drawCritDebug() {
     ctx.fillStyle = "#bfe6c8"; ctx.fillText(lbl, sp[0], sp[1]-9);
   }
 }
+// §P3 spawn-footprint overlay (debug key G): every placed object's ground circle drawn faint, and any
+// overlap the validation found drawn bright red. With rejection working the red set should be empty.
+let fpDbg = false;
+function drawFootprintDebug() {
+  const cc = document.getElementById("critcanvas"); if (!cc || !fpDbg) return;
+  if (cc.width !== innerWidth || cc.height !== innerHeight) { cc.width = innerWidth; cc.height = innerHeight; }
+  const ctx = cc.getContext("2d"); ctx.clearRect(0, 0, cc.width, cc.height); ctx.lineWidth = 1.5;
+  const ring = (x, z, r, stroke) => {
+    const gy = surfaceAt(x, z).h + 0.05, c = projectToScreen(x, gy, z); if (!c) return;
+    const e = projectToScreen(x + r, gy, z); if (!e) return;
+    const rad = Math.max(2, Math.hypot(e[0]-c[0], e[1]-c[1]));
+    ctx.strokeStyle = stroke; ctx.beginPath(); ctx.arc(c[0], c[1], rad, 0, 6.283); ctx.stroke();
+  };
+  for (const f of footprints) { const dx = f.x - cam.pos[0], dz = f.z - cam.pos[2]; if (dx*dx + dz*dz > 70*70) continue;
+    ring(f.x, f.z, f.r, "rgba(120,200,255,.35)"); }
+  ctx.lineWidth = 2.5;
+  for (const o of footprintOverlaps) { const dx = o.x - cam.pos[0], dz = o.z - cam.pos[2]; if (dx*dx + dz*dz > 90*90) continue;
+    ring(o.x, o.z, o.r + 0.3, "rgba(255,70,70,.95)"); }
+}
 // §Sound debug: a panel listing every registered sound with a play button
 let soundTestOpen = false;
 function toggleSoundTest() {
@@ -9461,7 +9513,9 @@ function seedBerryBushes() {
   berryBushes = [];
   for (let i = 0; i < 48; i++) { const a = rng()*6.283, r = HALF*(0.15 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r;
     const h = heightAt(x, z); if (h < 9 || h > 34 || surfaceAt(x, z).slope > 0.4 || bigPropBlocking(x, z, 1.5)) continue;
-    berryBushes.push({ x, z, ripe: true, regrowAt: 0, scale: 1.15 + rng()*0.6 });   // §gulls bigger, bushier
+    const scale = 1.15 + rng()*0.6;
+    if (!claimFootprint(x, z, 0.55 + scale*0.35, "bush")) continue;   // §P3 no bush inside another object
+    berryBushes.push({ x, z, ripe: true, regrowAt: 0, scale });   // §gulls bigger, bushier
   }
 }
 // §13.7 bushes ripen through a green stage: bare just after picking, then small green berries that redden.
@@ -9510,11 +9564,13 @@ function seedPlants() {
   for (let i=0;i<120;i++){ const a=rng()*6.283, r=HALF*(0.08+rng()*0.6), x=Math.sin(a)*r, z=-Math.cos(a)*r, s=surfaceAt(x,z);   // flowers on the dune meadows
     if (s.h<6||s.h>24||s.slope>0.45) continue;
     if (waterDepthAt(x,z)>0.03 || (typeof bigPropBlocking==="function"&&bigPropBlocking(x,z,0.8)) || nearPOI(x,z,1.5) || (typeof insideCottage==="function"&&insideCottage(x,z))) continue;
-    plants.push({ x, z, type:"flower", cut:false, regrowAt:0, scale:0.9+rng()*0.5, yaw:rng()*6.283 }); }
+    const scale=0.9+rng()*0.5, yaw=rng()*6.283; if (!claimFootprint(x, z, 0.22+scale*0.12, "plant")) continue;   // §P3 no plant inside another object
+    plants.push({ x, z, type:"flower", cut:false, regrowAt:0, scale, yaw }); }
   for (let i=0;i<100;i++){ const a=rng()*6.283, r=HALF*(0.12+rng()*0.55), x=Math.sin(a)*r, z=-Math.cos(a)*r, s=surfaceAt(x,z);   // ferns in the shadier interior
     if (s.h<11||s.h>40||s.slope>0.5) continue;
     if (waterDepthAt(x,z)>0.03 || (typeof bigPropBlocking==="function"&&bigPropBlocking(x,z,0.8)) || nearPOI(x,z,1.5) || (typeof insideCottage==="function"&&insideCottage(x,z))) continue;
-    plants.push({ x, z, type:"fern", cut:false, regrowAt:0, scale:0.9+rng()*0.6, yaw:rng()*6.283 }); }
+    const scale=0.9+rng()*0.6, yaw=rng()*6.283; if (!claimFootprint(x, z, 0.24+scale*0.12, "plant")) continue;   // §P3 no plant inside another object
+    plants.push({ x, z, type:"fern", cut:false, regrowAt:0, scale, yaw }); }
 }
 function updatePlants() { for (const p of plants) if (p.cut && clock.t >= p.regrowAt) p.cut = false; }
 function harvestPlant(p) {
@@ -9562,8 +9618,9 @@ function seedTallGrass() {
     const s = surfaceAt(x, z); if (s.h < 5 || s.h > 26 || s.slope > 0.45) continue;
     if (waterDepthAt(x, z) > 0.03 || (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, 1.0)) || nearPOI(x, z, 1.5)) continue;
     if (typeof insideCottage === "function" && insideCottage(x, z)) continue;
-    const small = rng() < 0.4;   // a mix of full clumps and lesser tufts
-    tallGrass.push({ x, z, cut: false, regrowAt: 0, small, scale: (small ? 0.6 : 0.95) + rng()*0.4 });
+    const small = rng() < 0.4, scale = (small ? 0.6 : 0.95) + rng()*0.4;   // a mix of full clumps and lesser tufts
+    if (!claimFootprint(x, z, 0.28 + scale*0.16, "tallgrass")) continue;   // §P3 no clump inside another object
+    tallGrass.push({ x, z, cut: false, regrowAt: 0, small, scale });
   }
 }
 function updateTallGrass() { for (const g of tallGrass) if (g.cut && clock.t >= g.regrowAt) g.cut = false; }
@@ -9614,7 +9671,8 @@ function seedWildCrops() {
       const s = surfaceAt(x, z); if (s.h < hab.lo || s.h > hab.hi || s.slope > hab.slope) continue;
       if (waterDepthAt(x, z) > 0.05 || bigPropBlocking(x, z, 1.2) || nearPOI(x, z, 1)) continue;
       if (crops.some(c => Math.hypot(c.x-x, c.z-z) < 3.5)) continue;
-      if (rng() < 0.55) crops.push({ type, x, z, ripe: true, ripeAt: 0, scale: 1.15 + rng()*0.4, yaw: rng()*6.28, wild: true, grown: true });
+      if (rng() < 0.55) { const scale = 1.15 + rng()*0.4, yaw = rng()*6.28;   // §P3 claim after the draws (stream unchanged)
+        if (claimFootprint(x, z, 0.5 + scale*0.2, "crop")) crops.push({ type, x, z, ripe: true, ripeAt: 0, scale, yaw, wild: true, grown: true }); }
     }
   }
 }
@@ -10597,7 +10655,9 @@ function seedWeakStones() {
     else if (depth < 0.03 && h > waterLevel+0.4) biome = "forest";       // inland dry ground / stream banks / forest floor
     if (!biome) continue;
     if (biome === "beach") { if (beach >= WEAK_STONE_N*0.6) continue; beach++; } else { if (forest >= WEAK_STONE_N*0.5) continue; forest++; }
-    weakStones.push({ x, z, yaw: rng()*6.283, sc: 0.7+rng()*0.5, biome, picked: false, regrowAt: 0 });
+    const yaw = rng()*6.283, sc = 0.7+rng()*0.5;
+    if (!claimFootprint(x, z, 0.4 + sc*0.35, "weakstone")) continue;   // §P3 no stone inside another object
+    weakStones.push({ x, z, yaw, sc, biome, picked: false, regrowAt: 0 });
   }
 }
 // a critter scurries out from under a broken stone — one of the three weak-stone critters, scaled up so it's easy to see
@@ -11504,6 +11564,7 @@ function seedChests() {
   for (let i = 0; i < N; i++) {
     const intertidal = rng() < 0.45;
     const spot = chestLandSpot(intertidal); if (!spot) continue;
+    if (!claimFootprint(spot.x, spot.z, 0.7, "chest")) continue;   // §P3 no chest buried inside another object
     const id = i;
     registerChestItems(id);
     // loot: 3–5 rolls
@@ -11933,6 +11994,7 @@ initWeather();   // §20 roll today's weather from the seed (no transition on lo
 if (typeof recomputeClusterAttach === "function") recomputeClusterAttach();   // §clust8 fix every barnacle/oyster cluster onto its rock's real surface (rocks are final by now)
 if (debugMode) auditRegistries();
 if (debugMode && typeof validateClusters === "function") validateClusters();   // §clust8 report any floating cluster (should be 0)
+validateFootprints();   // §P3 overlap self-check on the initial world (want 0)
 
 /* ===================================================================== *
  * § island9  NEW ISLAND IN PLACE  (regenerate the whole world without a
@@ -12059,6 +12121,7 @@ function generateWorld() {
   initWeather();
   if (typeof recomputeClusterAttach === "function") recomputeClusterAttach();
   if (debugMode && typeof validateClusters === "function") validateClusters();
+  validateFootprints();   // §P3 overlap self-check: logs the count (want 0) and records offenders for the debug overlay
 }
 // Regenerate onto a new seed, in place. No reload: audio context, music,
 // icons, panels and inventory all survive.
@@ -12302,6 +12365,7 @@ function frame(now) {
     cam.pos[0] = player.x; cam.pos[1] = player.eyeY + bobOff + landDip; cam.pos[2] = player.z;   // + visual bob + landing give
     if (dbgYGraph) { recordY(renderFeetY, cam.pos[1], player.airborne); drawYGraph(); }    // §P1
     if (critDbg) drawCritDebug();                                                          // §R4 creature AI overlay
+    if (fpDbg) drawFootprintDebug();                                                       // §P3 spawn-footprint / overlap overlay
    }
   }
 
