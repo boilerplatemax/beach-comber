@@ -844,15 +844,15 @@ let CAUSEWAY = causewayOf(subStream());
 // mat ids are the fixed MAT.* values (grass1 dirt2 sand3 gravel4 stone5 mud6), hardcoded
 // here because MAT is declared further down; keep in sync with the MAT block.
 const COAST_BIOMES = {
-  sandy:   { mat: 3, feet: "sand",  speed: 1.0, tell: 1.0, crit: ["crab","gull","piper"],
-             finds: ["shell","seaglass","sanddollar","moonsnail","cockle","feather","nautilus"], label: "Sandy beach" },
-  cobble:  { mat: 4, feet: "gravel", speed: 0.92, tell: 0.5, crit: ["crab","hopper","gull"],
-             finds: ["seaglass","stone","shell","driftwood","barnacle","feather"], label: "Cobble beach", flip: true },
+  sandy:   { mat: 3, feet: "sand",  speed: 1.0, tell: 1.0, crit: ["crab"],
+             finds: ["shell","seaglass","sanddollar","moonsnail","cockle","nautilus"], label: "Sandy beach" },
+  cobble:  { mat: 4, feet: "gravel", speed: 0.92, tell: 0.5, crit: ["crab","hopper"],
+             finds: ["seaglass","stone","shell","driftwood","barnacle"], label: "Cobble beach", flip: true },
   reef:    { mat: 5, feet: "rock",  speed: 0.85, tell: 0.4, crit: ["star","anemone","urchin"],
              finds: ["mussel","limpet","seaglass","shell","cuttle","oyster","barnacle","nautilus"], label: "Rocky reef shelf" },
-  mudflat: { mat: 6, feet: "mud",   speed: 0.6, tell: 1.3, crit: ["heron","piper","gull"],
+  mudflat: { mat: 6, feet: "mud",   speed: 0.6, tell: 1.3, crit: ["crab"],
              finds: ["clam","cockle","wormcast","mud","worm","oyster"], label: "Mudflat" },
-  marsh:   { mat: 1, feet: "grass", speed: 0.8, tell: 0.7, crit: ["heron","piper","gull"],
+  marsh:   { mat: 1, feet: "grass", speed: 0.8, tell: 0.7, crit: ["crab","hopper"],
              finds: ["pickleweed","salt","cockle","shell","worm"], label: "Salt marsh" },
 };
 function biomeSegOf(r, ch) {
@@ -1583,7 +1583,7 @@ const SND = {
   },
   activeVoices() { return this.voices.filter(v => v.playing).length; },
   // §B4 per-category mutes (debug) + a rolling log of which sound ids are playing
-  catMute: { gulls:false, creatures:false, footsteps:false, tools:false, ui:false, ambience:false },
+  catMute: { creatures:false, footsteps:false, tools:false, ui:false, ambience:false },
   playLog: {}, logUntil: 0,
   startSoundLog(sec) {   // log every sound id played over the next `sec` seconds, then print a summary
     this.playLog = {}; this.logUntil = performance.now() + sec*1000;
@@ -1598,7 +1598,6 @@ const SND = {
 };
 // §B4 classify a sound id into the debug mute categories
 function soundCategory(id, bus) {
-  if (/^gull/.test(id)) return "gulls";
   if (/^step|^land_/.test(id)) return "footsteps";
   if (bus === "ui") return "ui";
   if (bus === "ambience") return "ambience";
@@ -1672,14 +1671,6 @@ function soundCategory(id, bus) {
   D("key",        { freq:1600, freq2:1200, shape:"square", atk:0.0005, sus:0.008, rel:0.05, gain:0.3 }, { vol:0.32 });
   D("smash",      { shape:"noise", lpf:0.4, atk:0.001, sus:0.06, rel:0.2, gain:0.6, crush:20 }, { vol:0.5 });
   // creatures (day)
-  // §playtest1 softer, rounder gull calls (triangle not saw, far less of that squeaky edge) and quieter overall
-  D("gull_call",  [{ freq:760, freq2:1020, shape:"tri", atk:0.012, sus:0.05, rel:0.1, gain:0.24, vib:40, vibf:14 },
-                    { freq:840, freq2:700, shape:"tri", atk:0.012, sus:0.06, rel:0.12, gain:0.24, vib:55, vibf:12 },
-                    { freq:700, freq2:940, shape:"tri", atk:0.02, sus:0.08, rel:0.1, gain:0.22, vib:38, vibf:16 }], { vol:0.17, cd:0.2, pv:0.1 });
-  D("gull_alarm", { freq:900, freq2:1150, shape:"tri", atk:0.01, sus:0.04, rel:0.09, gain:0.26, vib:30, vibf:16 }, { vol:0.22, cd:0.25 });   // §B4 much less vibrato → no squeaky warble
-  D("gull_whoosh", { shape:"noise", lpf:0.18, atk:0.02, sus:0.08, rel:0.12, gain:0.4, freq:1 }, { vol:0.34 });
-  D("gull_squab", { freq:620, freq2:900, shape:"tri", atk:0.006, sus:0.03, rel:0.06, gain:0.22, vib:40, vibf:16 }, { vol:0.18, cd:0.25 });   // §B4 gentler, far less vibrato
-  D("peep",       { freq:900, freq2:1150, shape:"tri", atk:0.006, sus:0.02, rel:0.05, gain:0.2, vib:30, vibf:12 }, { vol:0.15, cd:0.4 });   // §B4 was a 2200-2600Hz sine "blip", now a soft, low rounded chirp
   D("skitter",    { shape:"noise", lpf:0.55, atk:0.001, sus:0.015, rel:0.03, gain:0.3, crush:12 }, { vol:0.22, cd:0.08 });
   D("squirt",     { freq:1400, freq2:600, shape:"sine", atk:0.001, sus:0.01, rel:0.05, noise:0.3, gain:0.3 }, { vol:0.28 });
   D("seal_bark",  { freq:300, freq2:220, shape:"saw", atk:0.01, sus:0.08, rel:0.1, gain:0.4, vib:30, vibf:10 }, { vol:0.4, cd:0.2 });
@@ -1850,10 +1841,7 @@ function updateCreatureSound(dt) {
   if (!near.length) return;
   const e = near[(Math.random()*near.length)|0]; const pos = [e.x, 0, e.z];
   const say = (id, chance) => { if (Math.random() < chance) SND.play(id, { position: pos }); };
-  // §playtest1 gulls are quieter and only call from nearby (not from 48 m away), no constant distant squeaking
-  if (e.t === "gull" && (e.gstate === "forage" || e.gstate === "perch" || e.gstate === "soar")) { if (Math.hypot(e.x-player.x, e.z-player.z) < 26) say("gull_call", 0.3); }
-  else if (e.t === "piper") say("peep", 0.28);
-  else if (e.t === "crab") say("skitter", 0.25);
+  if (e.t === "crab") say("skitter", 0.25);
   else if (e.t === "seal") say("seal_bark", 0.3);
   else if (e.t === "clam" || e.t === "cockle") say("squirt", 0.1);
   // night critters (these types arrive in the Night phase; harmless if absent)
@@ -1867,7 +1855,6 @@ function wireSound() {
   onSpear = (k) => { const pos = [player.x, 0, player.z]; const id = k === "catch" ? "fish_splash" : k === "throw" ? "whoosh" : k === "jab" ? "whoosh" : k === "hitflesh" ? "hitflesh" : k === "thud" ? "thud" : "whoosh"; SND.play(id, { position: pos }); };
   onBreath = () => SND.play("breath");
   onSplash = () => SND.play("splash", { position: [player.x, 0, player.z] });
-  onGull = (k) => SND.play(k === "screech" ? "gull_alarm" : k === "whoosh" ? "gull_whoosh" : k === "squabble" ? "gull_squab" : "gull_call");
   onGoat = () => SND.play("goat_bleat");
   onDrown = () => SND.play("gasp");
   onHeartbeat = () => {};
@@ -2123,11 +2110,6 @@ function updateWeatherGameplay(dt) {
         const a = rng()*6.283, r = 4 + rng()*12, x = player.x + Math.cos(a)*r, z = player.z + Math.sin(a)*r, h = heightAt(x, z);
         if (h > waterLevel + 0.4 && waterDepthAt(x, z) < 0.02) { spawnFind("worm", x, z); if (typeof discovered !== "undefined") discovered.add("f_worm"); }
       }
-    }
-  }
-  if (weather.state === "storm") {                              // gulls sit on the water, facing into the wind
-    for (const e of life) { if (e.t !== "gull") continue; if (Math.hypot(e.x-player.x, e.z-player.z) > UPDATE_R) continue;
-      if (waterDepthAt(e.x, e.z) > 0.6 && e.gstate !== "flee") { if (e.gstate !== "float") { e.gstate = "float"; e.timer = Math.max(e.timer||0, 3); } e.yaw = weather.windDir + Math.PI; }
     }
   }
 }
@@ -3018,7 +3000,6 @@ function startleNear(x, z) {
   for (const e of life) { if (e.kind !== "creature" || FISH[e.t]) continue;
     const d = Math.hypot(e.x-x, e.z-z); if (d > 3.5) continue;
     if (e.t === "crab") { e.state = "sinking"; e.burrow = 0; }
-    else if (e.t === "gull") { e.gstate = "flee"; e.timer = 1.4 + rng(); if (onGull) onGull("call"); }
     else { e.alert = 1; e.fleeT = 2.5; e.state = "flee"; e.timer = 1; const a = Math.atan2(e.z-z, e.x-x); e.x += Math.cos(a)*0.3; e.z += Math.sin(a)*0.3; }
   }
   for (const g of (typeof goats !== "undefined" ? goats : [])) {   // goats live in their own array; tamed ones ignore it
@@ -3027,8 +3008,8 @@ function startleNear(x, z) {
   }
 }
 // §R4 weapons can strike any creature. Small per-species HP; a hit hurts and scatters it, enough hits kill it.
-const CREATURE_HP = { crab:2, hermit:2, piper:2, hopper:1, gull:3, seal:6, heron:3, seaduck:2, snail:1, shrimp:1, star:1, urchin:1, anemone:1, jelly:1 };
-const CREATURE_DROP = { crab:"crabmeat", hermit:"crabmeat", lobster:"crabmeat", gull:"feather", piper:"feather", heron:"feather", seaduck:"feather" };
+const CREATURE_HP = { crab:2, hermit:2, hopper:1, seal:6, seaduck:2, snail:1, shrimp:1, star:1, urchin:1, anemone:1, jelly:1 };
+const CREATURE_DROP = { crab:"crabmeat", hermit:"crabmeat", lobster:"crabmeat" };
 function creatureHP(t) { return CREATURE_HP[t] || 2; }
 function creatureAt(x, y, z, r) { let best = null, bd = r*r;
   for (const e of life) { if (e.kind !== "creature" || FISH[e.t] || e.dying !== undefined) continue;
@@ -3042,7 +3023,7 @@ function hurtCreature(e, hx, hz) {
   if (e.hp === undefined) e.hp = creatureHP(e.t);
   e.hp -= 1; e.hurtT = 0.32;                                 // damage flash
   const a = Math.atan2(e.z - hz, e.x - hx); e.x += Math.cos(a)*0.45; e.z += Math.sin(a)*0.45;   // knockback
-  if (e.t === "gull") { e.gstate = "flee"; e.timer = 1.6 + rng(); } else { e.alert = 1; e.fleeT = 3; e.jet = 0.7; e.state = "flee"; e.timer = 1; }
+  { e.alert = 1; e.fleeT = 3; e.jet = 0.7; e.state = "flee"; e.timer = 1; }
   if (onSpear) onSpear("hitflesh");
   sparkle(e.x, (e.y !== undefined ? e.y : heightAt(e.x,e.z)+0.3), e.z, [0.8,0.3,0.3], 5);
   if (e.hp <= 0) { e.dying = 0; e.deathYaw = e.yaw; }   // §B1 red flash → dissolve in place (no topple, no linger)
@@ -4341,11 +4322,11 @@ function resetHints() { for (const k in hintCount) delete hintCount[k]; hintsOn 
 let hintT = 0, hintText = "", lastAimShown = false;
 
 // Edible items → how much hunger they restore (§10.5). Tuned so a beach walk keeps you fed.
-const EDIBLE = { clam: 0.12, cockle: 0.1, mussel: 0.1, oyster: 0.13, kelp: 0.08, seaweed: 0.08, coconut: 0.26, berry: 0.14, gullegg: 0.16, rawfish: 0.2, crabmeat: 0.16 };
+const EDIBLE = { clam: 0.12, cockle: 0.1, mussel: 0.1, oyster: 0.13, kelp: 0.08, seaweed: 0.08, coconut: 0.26, berry: 0.14, rawfish: 0.2, crabmeat: 0.16 };
 // §R4 eating gives a temporary stamina-regen boost: {m: regen multiplier, d: seconds}. Berries small & short,
 // shellfish medium, coconut & fish strong & long. Cooking makes it stronger and longer. Boosts never stack.
 const FOOD_BOOST = {
-  berry:{m:1.3,d:16}, kelp:{m:1.25,d:14}, seaweed:{m:1.25,d:14}, gullegg:{m:1.55,d:30},
+  berry:{m:1.3,d:16}, kelp:{m:1.25,d:14}, seaweed:{m:1.25,d:14},
   clam:{m:1.6,d:32}, cockle:{m:1.55,d:28}, mussel:{m:1.55,d:28}, oyster:{m:1.7,d:34},
   crabmeat:{m:1.7,d:38}, rawfish:{m:1.8,d:46}, coconut:{m:2.0,d:58},
 };
@@ -5464,72 +5445,6 @@ function drawContactShadows(view) {
   gl.bindVertexArray(null); gl.depthMask(true); gl.disable(gl.BLEND);
 }
 
-/* §3 GULL SHADOWS, soft, elongated, oriented along flight; shrink & fade with height,
-   vanish above a set altitude and at night. A blended decal (darker-than-ground, never a flat black blob). */
-const GULL_SHADOW = { maxAlt: 16, baseR: 0.72, stretch: 1.85, strength: 0.33, offsetK: 0.16 };
-const gshProg = program(`#version 300 es
-precision highp float;
-uniform mat4 uProj, uView;
-in vec2 aPos;               // unit disc, |aPos| <= 1
-in vec4 iA;                 // cx, cy, cz, rx (long radius)
-in vec4 iB;                 // rz (short radius), cos, sin, strength
-out float vR; out float vStr;
-void main(){ vR = length(aPos); vStr = iB.w;
-  vec2 p = aPos * vec2(iA.w, iB.x);                                   // stretch to the ellipse
-  vec2 r = vec2(p.x*iB.y - p.y*iB.z, p.x*iB.z + p.y*iB.y);            // rotate into the flight direction
-  gl_Position = uProj * uView * vec4(iA.x + r.x, iA.y, iA.z + r.y, 1.0); }`,
-`#version 300 es
-precision highp float;
-in float vR; in float vStr; out vec4 frag;
-void main(){ float a = clamp(1.0 - vR, 0.0, 1.0); frag = vec4(0.0, 0.0, 0.0, a*a*vStr); }`);
-const gshU = uniforms(gshProg);
-const GSH_MAX = 24;
-let gshIB = null, gshVAO = null, gshVerts = 0;
-const _gshArr = new Float32Array(GSH_MAX * 8);
-(function initGullShadow(){
-  const aPos = gl.getAttribLocation(gshProg, "aPos"), iA = gl.getAttribLocation(gshProg, "iA"), iB = gl.getAttribLocation(gshProg, "iB");
-  const seg = 16, arr = [];
-  for (let i = 0; i < seg; i++) { const a0 = i/seg*6.283, a1 = (i+1)/seg*6.283;
-    arr.push(0,0, Math.cos(a0),Math.sin(a0), Math.cos(a1),Math.sin(a1)); }
-  gshVerts = arr.length / 2;
-  gshVAO = gl.createVertexArray(); gl.bindVertexArray(gshVAO);
-  const pb = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, pb); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(aPos); gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
-  gshIB = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, gshIB); gl.bufferData(gl.ARRAY_BUFFER, GSH_MAX*32, gl.DYNAMIC_DRAW);
-  gl.enableVertexAttribArray(iA); gl.vertexAttribPointer(iA, 4, gl.FLOAT, false, 32, 0);  gl.vertexAttribDivisor(iA, 1);
-  gl.enableVertexAttribArray(iB); gl.vertexAttribPointer(iB, 4, gl.FLOAT, false, 32, 16); gl.vertexAttribDivisor(iB, 1);
-  gl.bindVertexArray(null);
-})();
-function drawGullShadows(view) {
-  const df = dayFactor(); if (df < 0.18) return;                       // no shadows at night, nothing bright enough to cast them
-  const px = cam.pos[0], pz = cam.pos[2], A = _gshArr, R2 = 110*110;
-  const sunUp = SKY.sun[1] > 0.02, sl = Math.hypot(SKY.sun[0], SKY.sun[2]) || 1, ox = -SKY.sun[0]/sl, oz = -SKY.sun[2]/sl;
-  let n = 0;
-  for (const e of life) {
-    if (e.t !== "gull" || e.gstate === undefined) continue;
-    const alt = Math.max(0, e.alt || 0); if (alt >= GULL_SHADOW.maxAlt) continue;   // too high → no shadow on the ground
-    if ((e.x-px)*(e.x-px) + (e.z-pz)*(e.z-pz) > R2 || n >= GSH_MAX) continue;
-    const t = alt / GULL_SHADOW.maxAlt;                                 // 0 on the ground … 1 at the cutoff height
-    const rad = GULL_SHADOW.baseR * (0.9 + 0.5*t) * (e.gtrait ? e.gtrait.size : 1);  // spreads a little as it rises
-    const head = (e.yaw || 0) - 1.57;                                   // flight heading (yaw is heading + 90°)
-    const off = alt * GULL_SHADOW.offsetK;                              // the shadow lags toward the anti-sun point as it climbs
-    const cx = e.x + (sunUp ? ox*off : 0), cz = e.z + (sunUp ? oz*off : 0);
-    const o = n*8;
-    A[o]   = cx; A[o+1] = heightAt(cx, cz) + 0.05; A[o+2] = cz; A[o+3] = rad * GULL_SHADOW.stretch;   // long axis along flight
-    A[o+4] = rad; A[o+5] = Math.cos(head); A[o+6] = Math.sin(head);
-    A[o+7] = GULL_SHADOW.strength * df * (1 - 0.72*t);                  // fainter with height
-    n++;
-  }
-  if (n === 0) return;
-  gl.useProgram(gshProg);
-  gl.uniformMatrix4fv(gshU.uProj, false, proj); gl.uniformMatrix4fv(gshU.uView, false, view);
-  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
-  gl.enable(gl.DEPTH_TEST); gl.depthMask(false);
-  gl.bindBuffer(gl.ARRAY_BUFFER, gshIB); gl.bufferSubData(gl.ARRAY_BUFFER, 0, A, 0, n*8);
-  gl.bindVertexArray(gshVAO); gl.drawArraysInstanced(gl.TRIANGLES, 0, gshVerts, n); countDraw((gshVerts/3)*n);
-  gl.bindVertexArray(null); gl.depthMask(true); gl.disable(gl.BLEND);
-}
-
 /* ===================================================================== *
  * § LIFE  (creatures & finds, instanced, animated, tide/time aware)
  * ===================================================================== */
@@ -5715,24 +5630,6 @@ function ghostfishMesh(col) { col = col || [0.74,0.84,0.92];
     prof: [[1,0.16,0.16],[0.82,0.66,0.7],[0.56,1,0.95],[0.3,0.78,0.72],[0.08,0.34,0.26],[0,0.14,0.1]],
     tailH: 0.24, tlen: 0.24, fork: 0.08, dorFront: 0.66, dorBack: 0.2, finH: 0.12, eyeCol: [0.3,0.9,0.95] }); }
 // §12B bigger, high-contrast gull: white body, grey wings, dark wingtips, yellow beak.
-function gullMesh() {
-  const m = Mesh(), white=[0.95,0.95,0.96], grey=[0.55,0.57,0.62], dark=[0.18,0.19,0.22], yellow=[0.96,0.78,0.24];
-  mBox(m, 0,0,0, 0.17,0.14,0.42, white);                        // body (forward = +z)
-  mBox(m, 0,0.17,0.32, 0.12,0.12,0.14, white);                  // head
-  mBox(m, 0,0.16,0.5, 0.045,0.045,0.11, yellow);                // beak
-  mTri(m, [0.16,0.02,-0.38],[0,0.02,-0.58],[-0.16,0.02,-0.38], dark);   // dark tail
-  for (const s of [1,-1]) {                                     // wings: grey with dark tip
-    mTri(m, [s*0.05,0.08,0.1],[s*0.78,0.14,-0.08],[s*0.05,0.06,-0.26], grey);
-    mTri(m, [s*0.78,0.14,-0.08],[s*1.02,0.11,-0.22],[s*0.5,0.09,-0.32], dark);
-  }
-  return m;
-}
-// small shorebird (sandpiper): speckled body, long thin legs, needle beak
-function piperMesh() { const m = Mesh(), bod=[0.68,0.6,0.5], pale=[0.9,0.87,0.8];
-  mBox(m, 0, 0.28, 0, 0.14, 0.1, 0.1, bod); mBox(m, 0.12, 0.34, 0, 0.07, 0.07, 0.07, pale);   // body + head
-  mBox(m, 0.22, 0.34, 0, 0.1, 0.02, 0.02, [0.15,0.12,0.1]);                                    // beak
-  mBox(m, -0.04, 0.12, 0.05, 0.015, 0.14, 0.015, [0.5,0.4,0.3]); mBox(m, -0.04, 0.12, -0.05, 0.015, 0.14, 0.015, [0.5,0.4,0.3]);  // legs
-  return m; }
 function sealMesh() { const m = Mesh(); const c=[0.4,0.4,0.42]; for(let i=0;i<7;i++){const a0=i/7*6.283,a1=(i+1)/7*6.283,r1=0.35; mTri(m,[1.3,0.3,0],[0.2,0.3+Math.sin(a0)*r1,Math.cos(a0)*r1*0.8],[0.2,0.3+Math.sin(a1)*r1,Math.cos(a1)*r1*0.8],c); mTri(m,[-0.9,0.25,0],[0.2,0.3+Math.sin(a0)*r1,Math.cos(a0)*r1*0.8],[0.2,0.3+Math.sin(a1)*r1,Math.cos(a1)*r1*0.8],[c[0]*0.9,c[1]*0.9,c[2]*0.9]);} return m; }
 function jellyMesh() { const m = discMesh(0.3,0.4,8,0.25,[0.75,0.7,0.85]); for(let i=0;i<6;i++){const a=i/6*6.283; mTri(m,[Math.cos(a)*0.3,0.3,Math.sin(a)*0.3],[Math.cos(a)*0.3,-0.3,Math.sin(a)*0.3],[Math.cos(a+0.25)*0.3,0.1,Math.sin(a+0.25)*0.3],[0.7,0.65,0.8]);} return m; }
 // finds
@@ -6096,10 +5993,6 @@ function barnacleMesh() { const m = Mesh(); const sh=[0.94,0.92,0.87], sh2=[0.86
   const spots = [[0,0,0.12,0.14,1],[0.13,0.05,0.095,0.12,1],[-0.11,0.06,0.09,0.11,0],[0.06,-0.13,0.08,0.1,1],[-0.08,-0.1,0.075,0.095,0],[0.12,0.12,0.062,0.08,1],[-0.14,-0.03,0.058,0.075,0],[0.0,0.15,0.052,0.07,0],[0.17,-0.04,0.05,0.065,1],[-0.04,0.1,0.046,0.06,0]];
   for (const [x,z,r,h,t] of spots) mergeAt(m, cone(r,h,t), x, 0, z);
   return m; }
-function featherMesh() { const m = Mesh(); const q=[0.92,0.92,0.9], v=[0.8,0.82,0.86];
-  mCyl(m,0,0.52,0.016,0.008,4,q);
-  for (let i=1;i<8;i++){ const y=i/8*0.46; mBox(m, 0, y, 0, 0.018, 0.004, 0.13-i*0.013, v); }
-  return m; }
 // §16.1 new creatures
 function seaSnailMesh() { const m = Mesh(); const s=[0.74,0.6,0.4], b=[0.52,0.46,0.42];
   mCyl(m,0.05,0.18,0.16,0.11,7,s); mCyl(m,0.18,0.28,0.11,0.06,7,s); mergeMesh(m, discMesh(0.28,0.06,6,0.03,s));
@@ -6383,11 +6276,6 @@ function salamanderMesh() { const m = Mesh(), body = [0.14,0.14,0.16], spot = [0
   mBox(m, 0, 0.045, 0, 0.14, 0.04, 0.05, body); mBox(m, -0.24, 0.035, 0, 0.11, 0.028, 0.03, body); mBox(m, 0.17, 0.05, 0, 0.05, 0.04, 0.045, body);
   for (const s of [-1,1]) { mBox(m, 0.08, 0.0, s*0.07, 0.013, 0.02, 0.035, body); mBox(m, -0.07, 0.0, s*0.07, 0.013, 0.02, 0.035, body); }
   for (let i=0;i<3;i++){ mBox(m, (i-1)*0.09, 0.085, 0.03, 0.02, 0.008, 0.02, spot); mBox(m, (i-1)*0.09, 0.085, -0.03, 0.02, 0.008, 0.02, spot); } return m; }
-function heronMesh() { const m = Mesh(), g=[0.56,0.6,0.64], pale=[0.8,0.82,0.85];
-  mBox(m, 0, 0.9, 0, 0.16, 0.16, 0.32, g); mCyl(m, 0, 1.5, 0.05, 0.05, 6, pale);          // body + neck (vertical cyl up)
-  mBox(m, 0.1, 1.55, 0, 0.1, 0.1, 0.1, pale); mBox(m, 0.26, 1.55, 0, 0.14, 0.02, 0.02, [0.85,0.7,0.2]);  // head + beak
-  mBox(m, 0, 0.45, 0.06, 0.02, 0.5, 0.02, [0.5,0.45,0.35]); mBox(m, 0, 0.45, -0.06, 0.02, 0.5, 0.02, [0.5,0.45,0.35]);  // legs
-  return m; }
 function berryMesh() { const m = Mesh(); const c = [0.62,0.16,0.3]; for (let i = 0; i < 3; i++) { const a = i/3*6.283; mBox(m, Math.cos(a)*0.06, 0.08+(i%2)*0.04, Math.sin(a)*0.06, 0.07, 0.07, 0.07, [c[0]*(0.9+0.1*(i%2)),c[1],c[2]]); } mBox(m,0.0,0.16,0,0.02,0.05,0.02,[0.4,0.5,0.3]); return m; }
 // a low inland shrub; ripe=true studs it with berries
 // §13.7 three states: "ripe" (red clusters), "green" (small unripe berries), "bare" (just harvested, none)
@@ -6427,12 +6315,9 @@ const CREATURES = {
   star:     { mesh: () => starMesh([0.85,0.5,0.3]),  base: 0.8, max: 140, label: "Sea Star", desc: "Rests on the pool floor, arms slowly working." },
   urchin:   { mesh: () => urchinMesh([0.3,0.2,0.38]), base: 0.7, max: 140, label: "Sea Urchin", desc: "A pincushion wedged in a rocky crevice." },
   hermit:   { mesh: () => hermitMesh([0.75,0.7,0.6]), base: 0.5, max: 140, label: "Hermit Crab", desc: "Carries a borrowed shell across the pool." },
-  gull:     { mesh: () => gullMesh(),                base: 1.1, max: 60, label: "Grey Gull", desc: "Wheels over the beach and settles on the sand." },
   seal:     { mesh: () => sealMesh(),                base: 2.2, max: 24, label: "Harbour Seal", desc: "Hauls out on the rocks at low water." },
   jelly:    { mesh: () => jellyMesh(),               base: 0.9, max: 90, label: "Stranded Jelly", desc: "Left glistening on the flats by the ebbing tide." },
-  piper:    { mesh: () => piperMesh(),               base: 1.05, max: 80, label: "Sandpiper", desc: "Scurries along the wave edge, chasing the water in and out." },
   hopper:   { mesh: () => hopperMesh(),              base: 0.5, max: 120, label: "Beach Hopper", desc: "Springs out from under a flipped cobble." },
-  heron:    { mesh: () => heronMesh(),               base: 1.0, max: 30, label: "Grey Heron", desc: "Stalks the shallows of the flats, dead still, then stabs." },
   // §14C huntable fish (spearable) + schooling minnows (atmosphere / bucket)
   flounder: { mesh: () => flounderMesh(),            base: 0.9, max: 70, label: "Flounder", desc: "Lies flat and camouflaged on the sandy shallows, spot it before it bursts away.", fish: 1 },
   rockfish: { mesh: () => rockfishMesh(),            base: 1.05,max: 90, label: "Rockfish", desc: "Bright orange-red, hovering among the kelp. Curious, but skittish if you rush it.", fish: 1 },
@@ -6509,7 +6394,6 @@ const FINDS = {
   kelp:     { mesh: () => kelpMesh(),               base: 1.0, max: 80, label: "Bull Kelp", desc: "A long rubbery stipe with a float at its head.", rare: 1 },
   seabean:  { mesh: () => seabeanMesh(),            base: 0.4, max: 70, label: "Sea Bean", desc: "A drift seed carried here from a far-off shore.", rare: 2 },
   berry:    { mesh: () => berryMesh(),              base: 0.45,max: 80, label: "Berries", desc: "Tart wild berries from an inland bush. A good snack.", rare: 0 },
-  gullegg:  { mesh: () => eggFoodMesh(),            base: 0.45,max: 60, label: "Gull Egg", desc: "Speckled and still warm. Good food, and better cooked.", rare: 0 },
   crate:    { mesh: () => crateMesh(),              base: 0.7, max: 40, label: "Broken Crate", desc: "A salt-stained wooden crate, its boards sprung.", rare: 1 },
   // §14B a glass fishing float lost from some far-off net, rolled onto the seabed
   // §13.3 dried remains, what a scooped or stranded creature leaves behind when it dries out completely
@@ -6533,7 +6417,6 @@ const FINDS = {
   nautilus: { mesh: () => nautilusMesh(),           base: 0.5, max: 60, label: "Nautilus Shell", desc: "A pearly chambered spiral, drifted from deep water.", rare: 2 },
   oyster:   { mesh: () => oysterMesh(),             base: 0.5, max: 80, label: "Oyster", desc: "A craggy grey oyster, clamped shut. Good food, better cooked.", rare: 0 },
   barnacle: { mesh: () => barnacleMesh(),           base: 0.5, max: 80, label: "Barnacles", desc: "Acorn barnacles scraped off a tidal rock, prized fishing bait.", rare: 0, bait: 1 },
-  feather:  { mesh: () => featherMesh(),            base: 0.5, max: 90, label: "Seabird Feather", desc: "A soft grey gull feather, caught on the wrack line.", rare: 0 },
   crabmeat: { mesh: () => crabMeatMesh(),           base: 0.45,max: 80, label: "Crab Meat", desc: "Pale, sweet meat picked from a crab. Good food, better cooked.", rare: 0 },
   // §40 rare natural finds, the heart-quickening ones, salted in at long odds
   whelk:    { mesh: () => whelkMesh(),              base: 0.5, max: 30, label: "Left-handed Whelk", desc: "A sinistral whelk, its spiral coils the wrong way. One shell in thousands.", rare: 2 },
@@ -6580,7 +6463,7 @@ const VARIANT_TINT = { blue:[0.32,0.5,0.98], albino:[0.97,0.95,0.97], twotone:[0
 const VARIANT_LABEL = { giant:"Giant", blue:"Blue", albino:"Albino", twotone:"Two-tone" };
 const VARIANT_BADGE = { giant:"G", blue:"B", albino:"A", twotone:"T" };   // §A6 plain-text badges (no emoji)
 let variantsSeen = {};   // species → { giant:n, blue:n, albino:n, twotone:n } (persisted)
-function variantEligible(t) { const r = CREATURES[t]; return !!(r && (FISH[t] || r.stoneCritter || t==="crab" || t==="star" || t==="horseshoe" || t==="gull" || t==="hermit" || t==="urchin" || t==="lobster")); }
+function variantEligible(t) { const r = CREATURES[t]; return !!(r && (FISH[t] || r.stoneCritter || t==="crab" || t==="star" || t==="horseshoe" || t==="hermit" || t==="urchin" || t==="lobster")); }
 // §lob5 species whose mesh is baked pale, so their everyday colour comes from the entity tint (the blue morph then just swaps it)
 const DEFAULT_TINT = { lobster: [0.82,0.32,0.24] };
 function applyVariant(e) {
@@ -6627,23 +6510,12 @@ function populateLife() {
     const a = rng()*6.283, r = HALF*(0.28 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z), band = waterLevel - h;
     if (band > -0.3 && band < 3.2 && coastBiomeAt(x, z) !== "reef") { spawnCreature("horseshoe", x, z, { hr: 9, timer: rng()*2 }); i++; }   // shallow sandy/muddy water, not the rocky reef
   }
-  // gulls over the beaches
-  for (let i = 0; i < 10; i++) {
-    const a = rng()*6.283, r = HALF*(0.35+rng()*0.4), x = Math.sin(a)*r, z = -Math.cos(a)*r;
-    spawnCreature("gull", x, z, { state: "circle", cxx: x, czz: z, orbit: 20+rng()*25, alt: 22+rng()*18 });
-  }
-  // sandpipers along the wave edge
-  for (let i = 0; i < 24; i++) {
-    const a = rng()*6.283, r = HALF*(0.3 + rng()*0.55), x = Math.sin(a)*r, z = -Math.cos(a)*r;
-    const h = heightAt(x, z); if (h > -1 && h < 5) spawnCreature("piper", x, z, { timer: rng(), side: rng()<0.5?1:-1 });
-  }
-  // biome-specific critters along the coast (herons on flats/marsh, hoppers on cobble)
+  // biome-specific critters along the coast (hoppers on cobble, crabs on the flats)
   for (let i = 0; i < 70; i++) {
     const a = rng()*6.283, r = HALF*(0.3 + rng()*0.52), x = Math.sin(a)*r, z = -Math.cos(a)*r;
     const h = heightAt(x, z); if (h < -2 || h > 6) continue;
     const t = COAST_BIOMES[coastBiomeAt(x, z)].crit[(rng()*COAST_BIOMES[coastBiomeAt(x, z)].crit.length)|0];
-    if (t === "heron" && rng() < 0.3) spawnCreature("heron", x, z, { timer: rng()*3, tx: x, tz: z });
-    else if (t === "hopper" && rng() < 0.5) spawnCreature("hopper", x, z, { timer: rng() });
+    if (t === "hopper" && rng() < 0.5) spawnCreature("hopper", x, z, { timer: rng() });
     else if (t === "crab" && rng() < 0.4) spawnCreature("crab", x, z, { hr: 10 });
   }
   // §14B underwater finds scattered on the seabed, reward for diving (shells, sand dollars)
@@ -7058,8 +6930,6 @@ function lifeVisible(e) {
   if (e.t === "flounder") return waterDepthAt(e.x, e.z) > 0.12;        // §1e only while submerged, never beached
   if (e.t === "jelly") return waterLevel < g + 0.2;                    // stranded low tide
   if (e.t === "seal") return waterLevel < g + 0.6 && e.state !== "gone";
-  if (e.t === "gull") return true;
-  if (e.t === "piper") return Math.abs(waterLevel - g) < 6;           // stays near the wave edge
   if (e.poolRim !== undefined) return true;                           // pool life always (pool holds water)
   return true;
 }
@@ -7080,8 +6950,8 @@ function respawnOne(t) {
     { const sdx = x - cam.pos[0], sdz = z - cam.pos[2], sd = Math.hypot(sdx, sdz) || 1;
       if (sd < DRAW_R) { const f = camForward(); if ((sdx*f[0] + sdz*f[2]) / sd > 0.1) continue; } }   // in front of the camera & within draw range → skip
     const g = heightAt(x, z), band = waterLevel - g;
-    const ok = (t === "crab" || t === "piper" || t === "hopper") ? (band < 0.2 && band > -3.2) :
-               (t === "gull" || t === "heron" || t === "seaduck" || t === "seal") ? (band < 1.5 && band > -8) :
+    const ok = (t === "crab" || t === "hopper") ? (band < 0.2 && band > -3.2) :
+               (t === "seaduck" || t === "seal") ? (band < 1.5 && band > -8) :
                (band > -0.5 && band < 4);                    // pool / shallow life wants water
     if (!ok) continue;
     spawnCreature(t, x, z, { hx: x, hz: z, hr: 6, timer: rng()*2 }); return true;
@@ -7190,8 +7060,8 @@ function clampFishWater(e, dt) {
 // §R4 per-species top speeds (m/s). `dx,dz` passed to behave() are (entity − player), so they already
 // point AWAY from the player, fleeFrom moves along them. Nothing here moves toward the player.
 const CRIT_SPD = {
-  crab:    { cruise: 2.4, flee: 5.0 }, piper:   { cruise: 3.0, flee: 5.5 },
-  seaduck: { cruise: 1.3, flee: 3.4 }, heron:   { cruise: 0.8, flee: 3.2 }, seal:    { cruise: 0.0, flee: 5.0 },
+  crab:    { cruise: 2.4, flee: 5.0 },
+  seaduck: { cruise: 1.3, flee: 3.4 }, seal:    { cruise: 0.0, flee: 5.0 },
   snail:   { cruise: 0.25, flee: 0.25 }, hermit: { cruise: 0.5, flee: 0.5 }, shrimp:  { cruise: 1.8, flee: 5.0 },
   hopper:  { cruise: 0.5, flee: 2.0 },
 };
@@ -7276,8 +7146,6 @@ function behave(e, dt, d, dx, dz) {
     const fast = d < 12 ? 7 : 2.5;
     e.timer -= dt; if (e.timer < 0 || d < 12) { e.timer = 0.4+rng()*1.2; e.tx = e.hx+(rng()-0.5)*e.hr; e.tz = e.hz+(rng()-0.5)*e.hr; }
     const a = Math.atan2(e.tz-e.z, e.tx-e.x); e.x += Math.cos(a)*dt*fast; e.z += Math.sin(a)*dt*fast; e.yaw = a;
-  } else if (e.t === "gull") {
-    // handled by the dedicated flock controller (§12B updateGulls)
   } else if (e.t === "seal") {
     if (e.state === "gone") return;
     if (d < 20) { e.cdState = "flee"; fleeFrom(e, dx, dz, dt, CRIT_SPD.seal.flee); if (heightAt(e.x,e.z) < waterLevel) e.state = "gone"; }
@@ -7285,26 +7153,6 @@ function behave(e, dt, d, dx, dz) {
     const exposed = waterLevel < g - 0.05;
     e.closed += ((d < 2.5 || exposed) ? 1 : 0 - e.closed) * 0; // simple target
     e.closed += (((d < 2.5 || exposed) ? 1 : 0) - e.closed) * Math.min(1, dt*4);
-  } else if (e.t === "piper") {
-    // §R4 sandpiper: runs the swash edge, probes the sand, and keeps its distance (flees AWAY, never toward)
-    if (d < 7) { e.cdState = "flee"; e.probe = 0; fleeFrom(e, dx, dz, dt, CRIT_SPD.piper.flee); return; }
-    if (e.probe > 0) { e.probe -= dt; e.cdState = "probe"; return; }        // paused, beak down in the sand
-    e.timer -= dt; if (e.timer < 0) { e.timer = 0.5 + rng()*1.3; e.side = rng() < 0.5 ? 1 : -1; if (rng() < 0.35) { e.probe = 0.4 + rng()*0.6; return; } }
-    e.cdState = "run";
-    // §playtest1 chase the swash: the edge the piper follows oscillates with the wave cycle, waves wash up, it retreats; they pull back, it follows out
-    const swash = Math.sin((typeof _surfPhase === "number" ? _surfPhase : 0) * 6.283) * 0.5;
-    const target = waterLevel + 0.35 + swash, grad = groundGradient(e.x, e.z);
-    let mx = 0, mz = 0;
-    if (g > target + 0.25) { mx = grad.dx; mz = grad.dz; }          // too dry → follow the water down
-    else if (g < target - 0.1) { mx = -grad.dx; mz = -grad.dz; }    // in the wash → scurry up
-    if (waterDepthAt(e.x, e.z) > 0.1) { mx = grad.dx * 2.2; mz = grad.dz * 2.2; }   // never into water deeper than a thin film, bolt up-slope
-    mx += -grad.dz * e.side * 0.8; mz += grad.dx * e.side * 0.8;     // lateral run along the shore
-    const m = Math.hypot(mx, mz) || 1; e.x += mx/m*dt*CRIT_SPD.piper.cruise; e.z += mz/m*dt*CRIT_SPD.piper.cruise; e.yaw = Math.atan2(mz, mx) + 1.57;
-  } else if (e.t === "heron") {
-    if (d < 15) { e.cdState = "flee"; fleeFrom(e, dx, dz, dt, CRIT_SPD.heron.flee); return; }   // stalk off, unhurried
-    e.cdState = "stalk";
-    e.timer -= dt; if (e.timer < 0) { e.timer = 2.5 + rng()*5; e.tx = e.x + (rng()-0.5)*8; e.tz = e.z + (rng()-0.5)*8; }
-    const a = Math.atan2(e.tz - e.z, e.tx - e.x); e.x += Math.cos(a)*dt*CRIT_SPD.heron.cruise; e.z += Math.sin(a)*dt*CRIT_SPD.heron.cruise; e.yaw = a + 1.57;
   } else if (e.t === "hopper") {
     if (d < 5) { const a = rng()*6.283; e.x += Math.cos(a)*0.45; e.z += Math.sin(a)*0.45; return; }   // startle hop
     e.timer -= dt; if (e.timer < 0) { e.timer = 0.8 + rng()*1.6; const a = rng()*6.283; e.x += Math.cos(a)*0.3; e.z += Math.sin(a)*0.3; }
@@ -7362,7 +7210,6 @@ function drawLife(view) {
   for (const k in FINDS) buckets["f_" + k] = 0;
   // fill per-type scratch and draw (one pass per type to reuse the buffer)
   const drawType = (key, reg, filter) => {
-    if (key === "gull") return;   // §gulls drawn separately with articulated, flapping wings
     let n = 0;
     for (const e of life) {
       if (!filter(e)) continue;
@@ -7377,21 +7224,6 @@ function drawLife(view) {
           // §1e flounder lies FLAT on the sand (its mesh is a flat oval, so no tilt) with a gentle edge-to-edge ripple; others sway upright
           lean = e.t === "flounder" ? Math.sin(e.phase*2.2) * (0.05 + 0.1*(e.fleeT>0?1:0)) : Math.sin(e.phase*3)*0.06; ld = e.yaw; }
         else if (e.t === "fish") y = (e.poolRim !== undefined ? Math.max(waterLevel, e.poolRim) : waterLevel) - 0.3 + Math.sin(e.phase*4)*0.05;
-        else if (e.t === "gull") {                      // §12B flap-and-glide
-          const overW = waterDepthAt(e.x, e.z) > 0.4, lowAlt = (e.alt || 0) < 1.5, floating = overW && lowAlt;
-          // §gulls height references the SURFACE over water (never the seabed), so a gull never flies through the water and never pops vertically as it descends
-          const baseY = overW ? waterSurfaceAt(e.x, e.z) : g;
-          y = baseY + (e.alt || 0) + (floating ? 0.1 + Math.sin(e.phase*2)*0.05 : 0.3);
-          // §R4 wings folded (no flutter) while settled on the ground/water/perch; a half-open flap during a ground hop; full beats aloft
-          const settled = (e.gstate === "forage" || e.gstate === "float" || e.gstate === "perch");
-          const amp = settled ? 0 : (e.gstate === "hopflee") ? 0.5 : (e.gstate === "soar" || e.gstate === "approach") ? 0.16 : 0.42;
-          // §3 combine the wing-beat flutter + bank (roll about heading) with pitch (nose up/down about the wing line) into one small tilt
-          const head = (e.yaw || 0) - 1.57;
-          const roll = Math.sin(e.flap || 0) * amp + (e.bank || 0);
-          const pit = e.pitch || 0;
-          const tx = roll*Math.cos(head) + pit*Math.cos(head + 1.5708), tz = roll*Math.sin(head) + pit*Math.sin(head + 1.5708);
-          lean = Math.hypot(tx, tz); ld = Math.atan2(tz, tx);
-          sc = e.scale * 1.5 * (e.gtrait ? e.gtrait.size : 1); }    // §13.7 read bigger against sky & sand, with a little per-bird size variety
         else if (e.t === "jelly") sc = e.scale * (0.9 + Math.sin(e.phase*2)*0.1);
         if (e.t === "crab") y = g - (e.burrow || 0) * 0.6;                      // §13.1 sink into the sand (no pop)
         else if (e.t === "lobster") { y = g + 0.1; if (e.flick > 0) { lean = Math.sin((e.flick/0.5)*Math.PI) * 0.6; ld = e.yaw; } }   // §lob5 sits on the seabed; a quick backward lurch on the tail-flick
@@ -8100,7 +7932,7 @@ function syncDebugPanel() {
     <div class="dbgrow"><button data-wx="clear">Clear</button><button data-wx="overcast">Overcast</button><button data-wx="fog">Fog</button><button data-wx="rain">Rain</button><button data-wx="storm">Storm</button><button data-wx="">Auto</button></div>
     <div class="dbgrow"><button id="dbgStormMorn">Skip to post-storm morning</button></div>
     <h3>Sound (squeak hunt)</h3>
-    <div class="dbgrow">${["gulls","creatures","footsteps","tools","ui","ambience"].map(c=>`<button class="dbgsnd${SND.catMute[c]?' on':''}" data-sc="${c}" style="${SND.catMute[c]?'background:#b5503a':''}">${c}${SND.catMute[c]?' ✕':''}</button>`).join("")}</div>
+    <div class="dbgrow">${["creatures","footsteps","tools","ui","ambience"].map(c=>`<button class="dbgsnd${SND.catMute[c]?' on':''}" data-sc="${c}" style="${SND.catMute[c]?'background:#b5503a':''}">${c}${SND.catMute[c]?' ✕':''}</button>`).join("")}</div>
     <div class="dbgrow"><button id="dbgSndLog">Log sounds 30s</button><button id="dbgSubs" style="${soundSubs?'background:#b5503a':''}">Captions: ${soundSubs?"ON":"off"}</button></div>
     <h3>Held tool (fine-tune)</h3>
     <div class="jhint" id="dbgToolRead" style="margin-bottom:4px"></div>
@@ -8265,7 +8097,7 @@ function journalGrid(tab) {
       <div class="jgrid" style="margin:0">${cells}</div></div>`;
   }).join("");
   if (tab === "events") {   // §B5 a log of the natural events you've witnessed
-    if (!seenEvents.length) return `<div class="makehint">No events yet. Watch the shore, gulls circling and a line at the top of the screen will point you to the next one.</div>`;
+    if (!seenEvents.length) return `<div class="makehint">No events yet. Watch the shore, a line at the top of the screen will point you to the next one.</div>`;
     return seenEvents.map(e => `<div class="jcard" style="width:auto;min-width:200px"><div class="jname" style="white-space:normal">${e.label}</div><div class="jqty">day ${e.day}</div></div>`).join("");
   }
   return treasureCards();
@@ -8967,7 +8799,7 @@ function seedDigSpots() {
     if (ci >= 0 && filled[ci] - heightmap[ci] > KNEE) continue;                 // never at the bottom of a permanently-deep pool
     const roll = rng();
     let item, band, tell, needed;
-    if (roll < 0.55) { item = pick(["clam", "cockle", "shell", "molt", "seaglass", "sanddollar", "limpet", "worm"]); band = 1; needed = 2; tell = rng() < 0.2 ? "gull" : "show"; }
+    if (roll < 0.55) { item = pick(["clam", "cockle", "shell", "molt", "seaglass", "sanddollar", "limpet", "worm"]); band = 1; needed = 2; tell = "show"; }
     else if (roll < 0.85) { item = pick(["bottle", "ceramic", "coin"]); band = 2; needed = 3; tell = "show"; }   // §urgent2 removed the "bubble" (swash-bubbles) tell
     else { item = pick(["fossil", "bell", "tin"]); band = 3; needed = 5; tell = "dry"; }
     digSpots.push({ x, z, item, band, needed, tell, strikes: 0, revealed: false,
@@ -9015,8 +8847,7 @@ let soundSubs = false;                 // §tools5 Minecraft-style sound caption
 const soundSubList = [];               // §capt5 live caption entries {id,name,dir,bornT,vol,n}
 const SOUND_CAP_TTL = 2.6, SOUND_CAP_FADE = 0.8;   // seconds a caption lingers / fades
 const SOUND_LABEL = {   // §capt5 friendly names for the captions; anything missing prettifies its id
-  gull_call:"Gull calls", gull_alarm:"Gull screeches", gull_squab:"Gulls squabble", gull_whoosh:"Gull wingbeat",
-  peep:"Sandpiper peeps", crab_skitter:"Crab skitters", jet:"Octopus jets", splash:"Splash", fish_splash:"Fish splashes",
+  crab_skitter:"Crab skitters", splash:"Splash", fish_splash:"Fish splashes",
   step_sand:"Footsteps, sand", step_wet:"Footsteps, wet sand", step_rock:"Footsteps, rock", step_grass:"Footsteps, grass", step_wood:"Footsteps, wood",
   dig:"Digging", thud:"Thud", mine:"Pick strikes rock", chop:"Axe chops", scrape:"Scrape", clink:"Clink", pat:"Pat",
   whoosh:"Whoosh", hitflesh:"Hit", crack:"Crack", waves:"Waves", surf:"Surf", wind:"Wind", rain:"Rain", thunder:"Thunder",
@@ -9302,7 +9133,7 @@ function bucketUnitsUsed() { let u = 0; for (const c of bucket.creatures) u += c
 const DRY_OUT_TIME = 300;                        // seconds from soaked to dead when kept dry (tunable)
 // what each creature leaves behind once it dries out completely → a Find
 const DRIED_REMAINS = { crab: "molt", hermit: "shell", lobster: "molt", star: "driedstar", urchin: "sanddollar",
-                        fish: "husk", anemone: "husk", jelly: "husk", hopper: "husk", piper: "husk",
+                        fish: "husk", anemone: "husk", jelly: "husk", hopper: "husk",
                         snail: "shell", shrimp: "husk" };   // §16.1
 // where/when a creature was scooped, for the close-up inspect card (§11.7)
 function catchBiomeLabel(x, z) {
@@ -9489,7 +9320,7 @@ const bucketRingMesh = makeDynamic((function () { const m = Mesh(); const c = [0
 const CRAWLER = { crab:1, hermit:1, star:1, anemone:1, urchin:1, hopper:1, snail:1 };    // live on the floor, not mid-water
 const BOTTOM = { star:1, anemone:1, urchin:1 };                                 // §13.3 mostly stay put on the bottom
 // §13.3 calmer motion: gentle, capped speeds, nothing darts or spins in a pail
-const BUCKET_SPEED = { fish:0.14, jelly:0.06, crab:0.10, hermit:0.07, star:0.015, hopper:0.11, piper:0.10, anemone:0, urchin:0, minnow:0.16, shrimp:0.13, snail:0.03 };
+const BUCKET_SPEED = { fish:0.14, jelly:0.06, crab:0.10, hermit:0.07, star:0.015, hopper:0.11, anemone:0, urchin:0, minnow:0.16, shrimp:0.13, snail:0.03 };
 const BUCKET_WATER_COL = [0.16, 0.42, 0.52];
 const BUCKET_TURN = 1.1;                                                        // max heading change (rad/s), no spinning
 // §13.3 moisture → a drab, dried-out look as a creature dries. 1 = soaked (true colour), 0 = bone dry.
@@ -10137,7 +9968,6 @@ function drawTells(view, dt) {
     if (d > 26) continue;
     let show = 0, col = [0.3, 0.33, 0.3];
     if (s.tell === "dry") { show = 1; col = [0.92, 0.86, 0.68]; }                 // eerie dry patch
-    else if (s.tell === "gull") { show = s.pecked > 0 ? 0.8 : 0; col = [0.4, 0.4, 0.42]; }
     else { // "show": a faint dimple that reacts to footsteps / stomp when on wet sand nearby
       s.react = Math.max(0, (s.react || 0) - dt * 1.5);
       if (d < 6 && surfaceKind(s.x, s.z) === "wet") s.react = Math.max(s.react, 0.5 + 0.3 * Math.sin(clock.t * 6));
@@ -11430,14 +11260,6 @@ function endFindableEvent() {
 function updateFindableEvent(dt) {
   if (!activeEvent) return;
   if (performance.now() > activeEvent.endAt) { endFindableEvent(); return; }
-  // §event once you've laid eyes on the site (it came into view), stop the distant sound cue for it
-  if (!activeEvent.seen) {
-    activeEvent.soundT -= dt;
-    if (activeEvent.soundT <= 0) { activeEvent.soundT = 4 + Math.random()*4;
-      if (typeof SND !== "undefined") SND.play("gull_call", { position: [activeEvent.x, 0, activeEvent.z], volume: 0.5 }); }   // a distant cue from the site
-  }
-  let circ = 0; for (const e of life) { if (e.t !== "gull" || e.dying !== undefined || circ >= 3) continue;   // a few gulls drift over to circle the site
-    const d = Math.hypot(e.x-activeEvent.x, e.z-activeEvent.z); if (d < 70 && d > 4) { e.hx = activeEvent.x; e.hz = activeEvent.z; if (e.hr !== undefined) e.hr = 12; circ++; } }
 }
 function updateEventChevron(vp) {
   const chev = document.getElementById("eventchev"); if (!chev) return;
@@ -12135,7 +11957,7 @@ const COLLECTION_SETS = [
   { id:"night",   name:"Night Shift",        reward:"chimes",    members:_mc("jelly","hermit","shrimp") },
   { id:"angler",  name:"Angler",             reward:"anglerboard",members:_mfish() },
   { id:"treasure", name:"Treasure Hunter",    reward:"shipbottle", members:_mf("jewelry","porcelain","compass","coin","bell","tin","fossil") },
-  { id:"oddities", name:"Oddities",           reward:"curtains",  members:_mf("seabean","egg","cuttle","feather") },
+  { id:"oddities", name:"Oddities",           reward:"curtains",  members:_mf("seabean","egg","cuttle") },
 ];
 const REWARD_LABEL = { floats:"hanging glass floats", net:"a decorative net", rug:"a woven rug", chimes:"wind chimes", anglerboard:"a mounted oar & floats", shipbottle:"a ship in a bottle", curtains:"window curtains" };
 function memberGot(m) { return m.kind === "find" ? discovered.has("f_"+m.id) : m.kind === "creature" ? discovered.has(m.id) : !!rodRecord[m.id]; }
@@ -12314,232 +12136,6 @@ function sparkle(x, y, z, col, count) { for (let i = 0; i < (count||5) && partic
   particles.push({ x: x+(rng()-0.5), y: y+rng()*0.5, z: z+(rng()-0.5), vx: Math.cos(a)*s, vy: 1.2+rng(), vz: Math.sin(a)*s, t: 0, life: 0.6+rng()*0.4, col }); } }
 
 /* ---- wild goats ---- */
-/* ===================================================================== *
- * § 12B  GULLS, a soaring flock with attractors, stealing and shooing,
- *   plus seeded nesting colonies with eggs and dive-bomb defense.
- *   Only gulls near the player are simulated in detail; the flock is capped.
- * ===================================================================== */
-let onGull = null;                         // sound hook: onGull("call" | "squabble" | "screech")
-// §gull-rewrite Gulls do four simple things: fly in wide loops, land on the
-// beach / rocks, waddle about, then take off again. Everything else (nests,
-// eggs, stealing, dive-bombing, foraging, floating on water, perching in trees,
-// gathering at events, finding hints) was removed. Values are tunable.
-const GULL = {
-  flyAlt: 26, flyAltVar: 10,        // cruising height band above the ground (m)
-  flySpd: 5.5, walkSpd: 0.9,        // flight cruise / ground waddle speed
-  turnRate: 1.7, maxBank: 0.6, maxPitch: 0.42,   // how fast it swings onto a heading, and banks / pitches doing it
-  loopR: 70, wander: [5, 11],       // waypoint-loop radius; seconds between new flight waypoints
-  flapBurst: [0.9, 1.6], glide: [1.2, 2.2],      // powered-stroke vs glide spells (alternate in flight)
-  landChance: 0.05,                 // per second, chance a flying gull looks for a place to land
-  groundTime: [5, 12],              // seconds on the ground before taking off on its own
-  fleeR: 6, fleeRfast: 11,          // player distance that flushes a landed gull (sprint / tool swing uses the larger)
-};
-
-const gullShadowDyn = makeDynamic(discMesh(0, 1, 14, 0, [0.05,0.06,0.07]), 24);
-// §gull-rewrite the egg mesh stays, it's the Gull Egg food item's model (no nests any more).
-function eggShape(col) { const m = Mesh(); for (let i=0;i<6;i++){ const a0=i/6*6.283,a1=(i+1)/6*6.283;
-  mTri(m,[0,0.26,0],[Math.cos(a0)*0.12,0.1,Math.sin(a0)*0.12],[Math.cos(a1)*0.12,0.1,Math.sin(a1)*0.12],col);
-  mTri(m,[0,-0.02,0],[Math.cos(a1)*0.12,0.1,Math.sin(a1)*0.12],[Math.cos(a0)*0.12,0.1,Math.sin(a0)*0.12],col); } return m; }
-function eggFoodMesh() { return eggShape([0.9,0.86,0.72]); }
-
-// §3 steer with a real turn rate (no instant snaps) and bank into the turn
-function steerGull(e, tx, tz, spd, dt) {
-  spd *= (e.gtrait ? e.gtrait.spd : 1);
-  const want = Math.atan2(tz - e.z, tx - e.x);
-  const cur = (e.yaw !== undefined ? e.yaw : want + 1.57) - 1.57;
-  let dyaw = want - cur; while (dyaw > Math.PI) dyaw -= 6.283; while (dyaw < -Math.PI) dyaw += 6.283;
-  const maxTurn = dt * GULL.turnRate * (e.gtrait ? e.gtrait.agility : 1);
-  const step = Math.max(-maxTurn, Math.min(maxTurn, dyaw));
-  const nh = cur + step;
-  // bank into the turn: more roll the harder it's cranking over, eased so it looks like weight shifting
-  const bankTarget = -Math.max(-1, Math.min(1, dyaw / 0.9)) * GULL.maxBank;
-  e.bank = (e.bank || 0) + (bankTarget - (e.bank || 0)) * Math.min(1, dt * 5);
-  e.x += Math.cos(nh)*dt*spd; e.z += Math.sin(nh)*dt*spd; e.yaw = nh + 1.57;
-}
-function initGull(e) {
-  if (e.gstate) return;
-  e.gstate = "fly";
-  e.home = { x: e.cxx !== undefined ? e.cxx : e.x, z: e.czz !== undefined ? e.czz : e.z };
-  e.cruise = GULL.flyAlt + (rng() - 0.5) * GULL.flyAltVar;   // this bird's own cruising height
-  e.alt = e.alt !== undefined ? e.alt : e.cruise;
-  e.flap = rng()*6.283; e.wpAng = rng()*6.283;
-  // a little individuality: size, flight speed, turn agility
-  e.gtrait = { size: 0.82 + rng()*0.42, spd: 0.85 + rng()*0.3, agility: 0.8 + rng()*0.5 };
-  e.bank = 0; e.pitch = 0; e.palt = e.alt; e.idle = 0; e.hop = 0;
-  e.flapping = true; e.fgT = 0; e.wp = null; e.wpT = 0;
-}
-// A dry spot (beach or rocky flat) near the gull to land on: not in water, not
-// up the mountain, roughly flat, clear of props/cottage, not right on the player.
-function pickLandingSpot(e) {
-  for (let k = 0; k < 14; k++) {
-    const a = rng()*6.283, r = 6 + rng()*34, x = e.x + Math.cos(a)*r, z = e.z + Math.sin(a)*r;
-    if (Math.abs(x) > HALF - 4 || Math.abs(z) > HALF - 4) continue;
-    if (waterDepthAt(x, z) > 0.12) continue;                 // dry land, not water
-    const s = surfaceAt(x, z);
-    if (s.h < 0.4 || s.h > 32 || s.slope > 0.6) continue;    // shore to low rocks, reasonably flat
-    if (bigPropBlocking(x, z, 0.8)) continue;
-    if (cottage && insideCottage(x, z)) continue;
-    if (Math.hypot(x - player.x, z - player.z) < 10) continue;
-    return { x, z, y: s.h };
-  }
-  return null;
-}
-function updateGulls(dt) {
-  const sprinting = mode === "walk" && player.sprinting;
-  const swung = shovelSwing > 0.5;
-  const flushR = (sprinting || swung) ? GULL.fleeRfast : GULL.fleeR;
-  for (const e of life) {
-    if (e.t !== "gull") continue;
-    initGull(e);
-    const dp = Math.hypot(e.x - player.x, e.z - player.z);
-    // wing clock: fast in a powered stroke, near-still gliding, frozen on the ground
-    e.flap = (e.flap || 0) + dt * (e.gstate === "ground" ? 0 : e.flapping ? 9 : 2);
-    switch (e.gstate) {
-      case "fly": {
-        // wander: aim for a far waypoint, swap to a new one with a gentle heading change → wide sweeping loops
-        e.wpT = (e.wpT || 0) - dt;
-        if (e.wpT <= 0 || !e.wp) {
-          e.wpT = GULL.wander[0] + rng() * (GULL.wander[1] - GULL.wander[0]);
-          e.wpAng = (e.wpAng || rng()*6.283) + (rng() - 0.5) * 1.5;      // small turns → arcs, not sharp cuts
-          e.wp = { x: e.home.x + Math.cos(e.wpAng) * GULL.loopR, z: e.home.z + Math.sin(e.wpAng) * GULL.loopR };
-          if (rng() < 0.3) { e.home.x += (rng()-0.5)*30; e.home.z += (rng()-0.5)*30; }   // let the loop centre roam
-        }
-        steerGull(e, e.wp.x, e.wp.z, GULL.flySpd, dt);
-        e.alt += (e.cruise - e.alt) * Math.min(1, dt * 0.5);            // hold cruising height, well above the ground
-        // alternate powered strokes with glides
-        e.fgT = (e.fgT || 0) - dt;
-        if (e.fgT <= 0) { e.flapping = !e.flapping;
-          e.fgT = e.flapping ? GULL.flapBurst[0] + rng()*(GULL.flapBurst[1]-GULL.flapBurst[0]) : GULL.glide[0] + rng()*(GULL.glide[1]-GULL.glide[0]);
-          if (e.flapping && rng() < 0.12 && onGull) onGull("call"); }
-        if (rng() < dt * GULL.landChance) { const sp = pickLandingSpot(e); if (sp) { e.land = sp; e.gstate = "land"; e.flapping = true; } }
-        break;
-      }
-      case "land": {
-        if (!e.land) { e.gstate = "fly"; break; }
-        steerGull(e, e.land.x, e.land.z, GULL.flySpd * 0.75, dt);
-        e.flapping = true;                                              // flaring down, wings working
-        e.alt += (0.0 - e.alt) * Math.min(1, dt * 1.1);                 // glide down toward the spot
-        if (dp < flushR) { e.gstate = "takeoff"; e.timer = 1.2 + rng(); if (onGull) onGull("call"); break; }   // spooked before touchdown
-        if (Math.hypot(e.x - e.land.x, e.z - e.land.z) < 1.2 && e.alt < 0.5) {
-          e.x = e.land.x; e.z = e.land.z; e.alt = 0; e.land = null;      // touch down
-          e.gstate = "ground"; e.timer = GULL.groundTime[0] + rng()*(GULL.groundTime[1]-GULL.groundTime[0]);
-          e.flapping = false; e.idle = 0; e.walking = false;
-          if (rng() < 0.3 && onGull) onGull("call");
-        }
-        break;
-      }
-      case "ground": {
-        e.alt = 0;
-        // waddle a few steps, pause, look around, on its own little clock
-        e.idle = (e.idle || 0) - dt;
-        if (e.idle <= 0) {
-          e.idle = 0.6 + rng() * 1.8;
-          e.walking = rng() < 0.55;
-          if (e.walking) { const a = rng()*6.283; e.wvx = Math.cos(a); e.wvz = Math.sin(a); }
-          if (rng() < 0.22 && onGull) onGull("call");
-        }
-        if (e.walking) {
-          const nx = e.x + e.wvx*dt*GULL.walkSpd, nz = e.z + e.wvz*dt*GULL.walkSpd;
-          if (waterDepthAt(nx, nz) < 0.2 && !bigPropBlocking(nx, nz, 0.5) && !(cottage && insideCottage(nx, nz))) {
-            e.x = nx; e.z = nz; e.yaw = Math.atan2(e.wvz, e.wvx) + 1.57;
-            e.hop = (e.hop || 0) + dt * 9; e.alt = Math.abs(Math.sin(e.hop)) * 0.035;   // a little waddle bob
-          } else e.walking = false;                                     // edge of the water / a prop → stop and turn
-        } else {
-          if (rng() < dt * 0.6) e.yaw += (rng() - 0.5) * 0.6;           // glance about
-          e.alt = 0;
-        }
-        e.timer -= dt;
-        if (dp < flushR) { e.gstate = "takeoff"; e.timer = 1.4 + rng(); if (onGull) onGull("call"); }   // player close → up it goes
-        else if (e.timer < 0) { e.gstate = "takeoff"; e.timer = 1.2; }                                   // or, after a while, on its own
-        break;
-      }
-      case "takeoff": {
-        e.flapping = true;                                              // strong flaps, climbing
-        const a = dp < 14 ? Math.atan2(e.z - player.z, e.x - player.x) : ((e.yaw || 1.57) - 1.57);   // climb away from the player
-        e.x += Math.cos(a)*dt*GULL.flySpd*0.85; e.z += Math.sin(a)*dt*GULL.flySpd*0.85; e.yaw = a + 1.57;
-        e.alt += (e.cruise - e.alt) * Math.min(1, dt * 0.9);
-        e.timer -= dt;
-        if (e.alt > e.cruise * 0.6 || e.timer < 0) { e.gstate = "fly"; e.home = { x: e.x, z: e.z }; e.wp = null; e.wpT = 0; e.fgT = 0; }
-        break;
-      }
-    }
-    // pitch tracks climb/descent: nose up gaining height, tucked in a descent, eased so it isn't jittery
-    const vAlt = (e.alt - (e.palt !== undefined ? e.palt : e.alt)) / Math.max(1e-3, dt);
-    e.palt = e.alt;
-    const pitchTarget = Math.max(-GULL.maxPitch, Math.min(GULL.maxPitch, vAlt * 0.05));
-    e.pitch = (e.pitch || 0) + (pitchTarget - (e.pitch || 0)) * Math.min(1, dt * 4);
-    // a low-flying gull never passes through the cottage, deflect it out to the nearest wall
-    if (cottage && (e.alt || 0) < C_H + C_ROOF_RISE + 0.4 && insideCottage(e.x, e.z)) {
-      const l = cotWorldToLocal(e.x, e.z);
-      if (C_OX - Math.abs(l[0]) < C_OZ - Math.abs(l[1])) l[0] = (l[0] >= 0 ? 1 : -1) * (C_OX + 0.6);
-      else l[1] = (l[1] >= 0 ? 1 : -1) * (C_OZ + 0.6);
-      const w = cotLocalToWorld(l[0], l[1]); e.x = w[0]; e.z = w[1];
-    }
-    // world Y references the water SURFACE over water (never the seabed); the bird stays above it
-    { const overW = waterDepthAt(e.x, e.z) > 0.4;
-      const baseY = overW ? waterSurfaceAt(e.x, e.z) : heightAt(e.x, e.z);
-      e.y = baseY + (e.alt || 0) + 0.3; }
-  }
-}
-// Take an egg from a nest; the last one abandons it for a while.
-// §gulls an articulated gull: a rigid body (beak-first, never rolling) + two wings that flap up/down.
-// Drawn as three instanced batches (body / right wing / left wing). The wing flap is a Rodrigues "lean"
-// about the body's forward axis (leanDir = +z); the body's "lean" is its pitch about the body-right axis.
-const GULL_DRAW_MAX = 28;
-function gullBodyMesh() { const m = Mesh(), white=[0.95,0.95,0.96], dark=[0.2,0.21,0.24], yellow=[0.96,0.78,0.24];
-  mBox(m, 0,0,0, 0.17,0.14,0.42, white);            // body (forward = +z)
-  mBox(m, 0,0.17,0.30, 0.12,0.12,0.14, white);      // head
-  mBox(m, 0,0.17,0.48, 0.05,0.05,0.12, yellow);     // beak
-  mTri(m, [0.16,0.03,-0.36],[0,0.04,-0.56],[-0.16,0.03,-0.36], dark);        // tail
-  for (const s of [1,-1]) mBox(m, s*0.1,0.21,0.35, 0.02,0.02,0.02, dark);    // eyes
-  return m; }
-function gullWingMesh(side) { const m = Mesh(), grey=[0.6,0.62,0.67], dark=[0.2,0.21,0.24];
-  mTri(m, [side*0.06,0.08,0.12],[side*0.8,0.12,-0.02],[side*0.1,0.06,-0.28], grey);
-  mTri(m, [side*0.8,0.12,-0.02],[side*1.05,0.1,-0.16],[side*0.5,0.09,-0.34], dark);
-  return m; }
-// §B3 two yellow-orange webbed feet on legs that hang down from the hip; the draw tucks them up in flight
-function gullFeetMesh() { const m = Mesh(), yo=[0.96,0.62,0.2], yo2=[0.9,0.52,0.16];
-  for (const s of [-1,1]) {
-    mBox(m, s*0.07, -0.22, 0.0, 0.018, 0.12, 0.018, yo);                               // leg
-    const fy=-0.34, fx=s*0.07;                                                          // a little webbed foot (toes + webbing)
-    mTri(m, [fx,fy,0.11],[fx-0.06,fy,-0.03],[fx+0.06,fy,-0.03], yo2);
-    mTri(m, [fx,fy,0.11],[fx+0.06,fy,-0.03],[fx-0.06,fy,-0.03], yo2);
-  }
-  return m; }
-const GULL_FOOT_TUCK = 1.45;   // §gull5 ~83°: the legs fold BACKWARD (staying below body-centre), not up onto the rump; tunable
-const GULL_FOOT_DROP = 0.1;    // §gull5 in flight the tucked feet also drop a little so they sit UNDER the belly (×scale; tunable)
-let gullBodyDyn = null, gullWingRDyn = null, gullWingLDyn = null, gullFeetDyn = null;
-const _gullBody = new Float32Array(GULL_DRAW_MAX*10), _gullWR = new Float32Array(GULL_DRAW_MAX*10), _gullWL = new Float32Array(GULL_DRAW_MAX*10), _gullFeet = new Float32Array(GULL_DRAW_MAX*10);
-function drawGulls(view) {
-  drawGullShadows(view);   // §3 soft, elongated, height-aware contact shadows (no night shadows)
-  propUniforms(view);
-  if (!gullBodyDyn) { gullBodyDyn = makeDynamic(gullBodyMesh(), GULL_DRAW_MAX); gullWingRDyn = makeDynamic(gullWingMesh(1), GULL_DRAW_MAX); gullWingLDyn = makeDynamic(gullWingMesh(-1), GULL_DRAW_MAX); gullFeetDyn = makeDynamic(gullFeetMesh(), GULL_DRAW_MAX); }
-  let n = 0; const px = cam.pos[0], pz = cam.pos[2];
-  for (const e of life) {
-    if (e.t !== "gull" || e.gstate === undefined || e.dying !== undefined || e.fade !== undefined) continue;
-    const dx = e.x - px, dz = e.z - pz; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
-    if (!lifeVisible(e)) continue;
-    if (n >= GULL_DRAW_MAX) break;
-    const settled = (e.gstate === "ground");
-    let base, amp;                                           // wing-beat: folded flat on the ground, held in a slight dihedral gliding, full strokes when flapping
-    if (settled) { base = -0.32; amp = 0; }
-    else if (e.flapping) { base = 0.02; amp = 0.58; }        // powered strokes from the shoulder
-    else { base = 0.12; amp = 0.05; }                        // glide: wings held out, barely moving
-    const flapAng = base + Math.sin(e.flap || 0) * amp;
-    const sc = e.scale * 1.5 * (e.gtrait ? e.gtrait.size : 1);
-    const o = n*10, yaw = e.yaw || 0, pit = e.pitch || 0, ey = e.y || 0;
-    const set = (arr, lean, ld) => { arr[o]=e.x; arr[o+1]=ey; arr[o+2]=e.z; arr[o+3]=sc; arr[o+4]=yaw; arr[o+5]=lean; arr[o+6]=ld; arr[o+7]=1; arr[o+8]=1; arr[o+9]=1; };
-    set(_gullBody, pit, 0);               // body pitch about the body-right axis (+x), no roll, so it never tumbles
-    set(_gullWR, flapAng, 1.5708);        // right wing flaps about the forward axis (+z)
-    set(_gullWL, -flapAng, 1.5708);       // left wing mirrors it
-    // §gull5 feet: hang straight down when settled; in flight they fold backward and tuck UNDER the belly (slightly behind centre)
-    const footLean = pit + (settled ? 0 : GULL_FOOT_TUCK), footY = settled ? ey : ey - GULL_FOOT_DROP * sc;
-    _gullFeet[o]=e.x; _gullFeet[o+1]=footY; _gullFeet[o+2]=e.z; _gullFeet[o+3]=sc; _gullFeet[o+4]=yaw; _gullFeet[o+5]=footLean; _gullFeet[o+6]=0; _gullFeet[o+7]=1; _gullFeet[o+8]=1; _gullFeet[o+9]=1;
-    n++;
-  }
-  if (n) { gullBodyDyn.draw(_gullBody, n); gullWingRDyn.draw(_gullWR, n); gullWingLDyn.draw(_gullWL, n); gullFeetDyn.draw(_gullFeet, n); }
-}
-
 /* ===================================================================== *
  * § 12C  BURIED TREASURE, seeded chests with physical tells, three ways
  *   to open (key / pry mini-game / smash), procedural maps, and tide
@@ -13247,7 +12843,6 @@ function frame(now) {
   }
   updateTools(dt, gdtTotal);
   updateGoats(dt);
-  updateGulls(dt);
   updateReplenish(dt); // §R4 populations recover over time
   updateFlotsam(dt);   // §5 floating debris drifts & beaches itself
   updateBarnacles();   // §5 barnacles regrow over time
@@ -13524,7 +13119,6 @@ function frame(now) {
   drawCottageDecor(view);      // §19F/§19G reward decorations + cobwebs that clear as it gets cosy
   drawSalt(view);
   drawLife(view);
-  drawGulls(view);
   drawFlotsam(view);   // §5 floating debris on the water surface (drawn before the transparent water)
   drawTells(view, dt);
   drawWeakStones(view);   // §weak7 weak breakable stones
