@@ -735,6 +735,15 @@
   /* ---- §UI bucket modal: the bucket sits directly on the parchment (no inner dark/recessed square) ---- */
   #bucketlookcanvas { background: transparent !important; box-shadow: none !important; }
   #bucketlookbox { padding: 20px 24px 18px; }
+  /* ---- §UI pixelated UI text (toggle in Settings → Access, follows graphics quality) ----
+     Browsers can't downscale live DOM text to a lower raster and upscale it crisply, so the honest
+     lever is font anti-aliasing: .pixtext renders every bit of UI text aliased for a hard, retro,
+     old-RPG look. It is applied only at Medium/Low quality (High/Ultra stay smooth = readability
+     floor) and only when the toggle is on. */
+  html.pixtext, html.pixtext body, html.pixtext button, html.pixtext input,
+  html.pixtext h2, html.pixtext h3, html.pixtext h4 {
+    -webkit-font-smoothing: none; -moz-osx-font-smoothing: unset; font-smooth: never; text-rendering: optimizeSpeed;
+  }
 </style>
 </head>
 <body>
@@ -3921,6 +3930,17 @@ try { const s = JSON.parse(localStorage.getItem("bc_gfx") || "null");
   if (s && s.preset) { GFX.preset = s.preset; if (s.preset === "custom") for (const k of GFX_CUSTOM_KEYS) { if (s[k] !== undefined) GFX[k] = s[k]; }
     else Object.assign(GFX, GFX_PRESETS[s.preset] || {}); } } catch (e) {}
 function saveGFX() { try { const o = { preset: GFX.preset }; for (const k of GFX_CUSTOM_KEYS) o[k] = GFX[k]; localStorage.setItem("bc_gfx", JSON.stringify(o)); } catch (e) {} }
+// §UI "Pixelated UI text": renders UI text aliased (crisp, retro pixels) instead of anti-aliased, and
+// follows the graphics quality — High/Ultra keep smooth text (the readability floor), Medium/Low go
+// pixelated. A toggle turns it off entirely. True sub-pixel downscaling isn't possible for live DOM
+// text in a browser, so this uses font-smoothing (the one lever that genuinely aliases text).
+let pixUI = true;
+try { const v = localStorage.getItem("bc_pixui"); if (v !== null) pixUI = v === "1"; } catch (e) {}
+function applyPixText() {
+  // the floor: only pixelate once the render resolution drops below "high" (resScale ~0.78)
+  const on = pixUI && (typeof GFX !== "undefined") && GFX.resScale < 0.7;
+  document.documentElement.classList.toggle("pixtext", !!on);
+}
 function setGFXPreset(name) { GFX.preset = name; if (GFX_PRESETS[name]) Object.assign(GFX, GFX_PRESETS[name]); applyGFX(); saveGFX(); }
 function setGFXCustom(k, v) { GFX[k] = v; GFX.preset = "custom"; applyGFX(); saveGFX(); }
 // §fps optional on-screen FPS readout (a performance-tracking convenience), toggled in Settings. Standalone
@@ -4349,6 +4369,7 @@ function openSettings() {
     access: `
       <div class="srow"><label>Brightness</label><input id="setBright" type="range" min="0.6" max="1.8" step="0.05" value="${nightBrightness}"></div>
       <div class="srow"><label>Screen shake</label><input id="setShake" type="range" min="0" max="1" step="0.05" value="${screenShake}"></div>
+      <div class="srow"><label>Pixelated UI text</label><button data-k="pixui">${onoff(pixUI)}</button></div>
       <div class="srow"><label>First-run hints</label><button data-k="hints">${onoff(hintsOn)}</button></div>
       <div class="srow"><label>Relaxed fishing</label><button data-k="relaxfish">${onoff(relaxedFishing)}</button></div>`,
   };
@@ -4367,6 +4388,7 @@ function openSettings() {
     else if (k === "infworms") { infiniteWorms = !infiniteWorms; try { localStorage.setItem("bc_infworms", infiniteWorms ? "1" : "0"); } catch (e) {} }   // §climb never run out of bait
     else if (k === "nostarve") { noStarvation = !noStarvation; try { localStorage.setItem("bc_nostarve", noStarvation ? "1" : "0"); } catch (e) {} }   // §climb hunger never reaches starving
     else if (k === "showfps") { setShowFps(!showFps); }   // §fps toggle the on-screen FPS readout
+    else if (k === "pixui") { pixUI = !pixUI; try { localStorage.setItem("bc_pixui", pixUI ? "1" : "0"); } catch (e) {} applyPixText(); }   // §UI pixelated (aliased) UI text
     openSettings();
   });
   p.querySelectorAll("button[data-gp]").forEach(b => b.onclick = () => { setGFXPreset(b.dataset.gp); openSettings(); });
@@ -12428,10 +12450,12 @@ function applyGFX() {
   DRAW_R = BASE_DRAW_R * GFX.propDist;
   UPDATE_R = BASE_UPDATE_R * GFX.simRadius;
   resize();                                                  // picks up dprCap; forces the FBO to the new resolution/filter
+  if (typeof applyPixText === "function") applyPixText();     // §UI pixelated UI text follows the quality preset
 }
 addEventListener("resize", resize);
 resize();
 applyGFX();
+applyPixText();
 
 let last = performance.now();
 let fpsSmooth = 60, washedThisLow = false;
