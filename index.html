@@ -3098,7 +3098,7 @@ const FISH_SPECIES = {
   ghostfish: { label: "Ghostfish",  item: "ghostfish", w: [0.6,2.2], strength: 1.3, fight: 13, dmin: 5.0, mini: { half: 0.13, reel: 0.9, drain: 0.7, runCd: 1.6, runStr: 1.0, quirk: "fade" } },
 };
 // §fish5 fun snags from the seabed, the junk card, with the sad trombone
-const JUNK_POOL = ["drinkcan","plasticbottle","bottle","netscrap","kelp","rope","seabean","boot","tire","maptube","watch","rubberduck"];   // snagged odds-and-ends
+const JUNK_POOL = ["drinkcan","plasticbottle","bottle","netscrap","kelp","seabean","boot","tire","maptube","watch","rubberduck"];   // snagged odds-and-ends
 const JUNK_META = { label: "Junk", strength: 0.35, fight: 3 };
 
 const rod = {
@@ -3847,10 +3847,6 @@ addEventListener("keydown", (e) => {
     if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); if (heave) heaveStrike(); else pryStrike(); return; }
     if (e.code === "Escape") { if (heave) cancelHeave(); else cancelPry(); return; }
   }
-  if (buildMode) {                                              // §16B placement controls
-    if (e.code === "Escape") { exitBuildMode(); return; }
-    if (e.code === "KeyR") { rotateBuild(); return; }
-  }
   if (e.code === "KeyG") setGFXCustom("dither", !GFX.dither);   // §13.6 quick dither toggle (syncs graphics settings)
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE" && !e.repeat && !pauseStage) { if (mode === "walk" || menuIsOpen()) toggleMenu(); }   // §2 one menu key: Satchel / Bucket / Journal
@@ -3879,13 +3875,6 @@ canvas.addEventListener("mousedown", (e) => {
   if (e.button === 1 && mode === "walk" && selectedItem() === "toolkit") { e.preventDefault(); cycleToolkit(); return; }   // §13.2 middle-click cycles the Tool Kit
   if (e.button !== 0) return;
   if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
-  if (mode === "walk" && buildMode) { placeBuildAtGhost(); return; }      // §16B click to place the ghost
-  if (mode === "walk" && !isPanelOpen()) {                                 // §2 left-click also uses a placed piece (crouch to pick it up), part of E's old action
-    const b = buildInFront();
-    if (b) { const def = BUILD_DEFS[b.type], hasUse = def.storage || def.dry || def.shelter;
-      if (hasUse && !crouching) { interactBuild(b); return; }
-      if (crouching) { pickUpBuild(b); return; } }
-  }
   // §A3 the rod and spear have their own primary use, but you can still harvest a plant / hit a creature / pick a find
   // with them in hand: if the crosshair is on such a target, do that instead of casting or thrusting.
   if (mode === "walk" && selectedTool() === "rod" && !isPanelOpen()) { if (softTargetUnderCrosshair()) { useHeld = true; clickAt(0,0); return; } rodPressStart(); return; }        // §Fishing charge/hook/reel
@@ -4515,9 +4504,6 @@ if (IS_TOUCH) (function mobileControls() {
        <div class="mBtn" data-act="swimup" data-hold="1" style="display:none">▲ Up</div>
        <div class="mBtn" data-act="swimdown" data-hold="1" style="display:none">▼ Down</div>
        <div class="mBtn mrod" data-act="rod" data-hold="1" style="display:none">Cast / Reel</div>
-       <div class="mBtn mbuild" data-act="brotate" style="display:none">Rotate</div>
-       <div class="mBtn mbuild" data-act="bplace" style="display:none">Place</div>
-       <div class="mBtn mbuild" data-act="bcancel" style="display:none">Cancel</div>
        <div class="mBtn" data-act="run">Run</div>
      </div>`;
   document.body.appendChild(ui);
@@ -4560,9 +4546,6 @@ if (IS_TOUCH) (function mobileControls() {
       else if (btn.dataset.act === "swimup") { mobileSwimUp = true; btn.style.background = "rgba(60,120,130,.8)"; }   // §14A hold to swim up
       else if (btn.dataset.act === "swimdown") { mobileSwimDown = true; btn.style.background = "rgba(60,120,130,.8)"; }
       else if (btn.dataset.act === "rod") { rodPressStart(); btn.style.background = "rgba(60,120,130,.8)"; }   // §Fishing hold to charge cast / reel in a fight
-      else if (btn.dataset.act === "brotate") rotateBuild();           // §16B mobile placement
-      else if (btn.dataset.act === "bplace") placeBuildAtGhost();
-      else if (btn.dataset.act === "bcancel") exitBuildMode();
       else tapKey(btn.dataset.key);
     }, { passive: false });
     if (btn.dataset.hold) {   // §14A release hold-buttons (swim up/down)
@@ -6061,8 +6044,6 @@ function looseKelpMesh() { const m = Mesh(); const bulb=[0.5,0.44,0.24], bulb2=[
 let looseKelpDyn = null;
 function seabeanMesh() { const m = Mesh(); mBox(m,0,0.06,0,0.14,0.08,0.1,[0.4,0.26,0.16]); mBox(m,0,0.08,0,0.1,0.04,0.12,[0.3,0.2,0.12]); return m; }
 // §16 crafted goods
-function stakeMesh() { const m = Mesh(); mCyl(m,0,0.62,0.05,0.045,6,[0.52,0.4,0.26]); mCyl(m,0.6,0.86,0.045,0.0,6,[0.58,0.46,0.3]); return m; }
-function torchMesh() { const m = Mesh(); mCyl(m,0,0.56,0.035,0.03,6,[0.42,0.3,0.18]); mCyl(m,0.5,0.68,0.075,0.04,6,[0.28,0.24,0.2]); mergeMesh(m, discMesh(0.68,0.08,6,0.12,[0.98,0.62,0.22])); return m; }
 // §18 a little belt lantern, metal frame, warm glass
 function lanternMesh(){ const m=Mesh(); const mtl=[0.4,0.4,0.44], mtl2=[0.5,0.5,0.54], glass=[0.98,0.78,0.4];
   mergeMesh(m, discMesh(0.0,0.14,6,-0.03,mtl)); mergeMesh(m, discMesh(0.42,0.14,6,0.03,mtl2));   // base + top caps
@@ -6084,7 +6065,6 @@ function fenceSegMesh() { const m = Mesh(); const w=[0.5,0.38,0.24]; for (const 
 function gateMesh() { const m = Mesh(); const w=[0.52,0.4,0.26], r=[0.62,0.5,0.32]; for (const sx of [-0.55,0.55]) mBox(m,sx,0.42,0,0.055,0.42,0.055,w); mBox(m,0,0.56,0,0.5,0.04,0.045,r); mBox(m,0,0.3,0,0.5,0.04,0.045,r); mBox(m,-0.22,0.43,0,0.03,0.18,0.04,r); mBox(m,0.22,0.43,0,0.03,0.18,0.04,r); return m; }
 function dryRackMesh() { const m = Mesh(); const w=[0.5,0.38,0.24], f=[0.72,0.68,0.6]; for (const sx of [-0.6,0.6]) { mBox(m,sx,0.48,-0.3,0.05,0.48,0.05,w); mBox(m,sx,0.48,0.3,0.05,0.48,0.05,w); } for (const z of [-0.3,0.3]) { mBox(m,0,0.9,z,0.64,0.035,0.04,w); mBox(m,0,0.64,z,0.64,0.035,0.04,w); } for (const x of [-0.3,0,0.3]) mBox(m,x,0.78,0,0.09,0.06,0.02,f); return m; }
 function signMesh() { const m = Mesh(); const w=[0.5,0.38,0.24], b=[0.76,0.66,0.47]; mBox(m,0,0.45,0,0.05,0.45,0.05,w); mBox(m,0,0.82,0.03,0.3,0.17,0.03,b); mBox(m,0,0.82,0.01,0.3,0.03,0.04,[0.56,0.46,0.3]); return m; }
-function torchPostMesh() { const m = Mesh(); mCyl(m,0,1.0,0.06,0.05,6,[0.5,0.38,0.24]); mCyl(m,0.98,1.12,0.09,0.05,6,[0.3,0.26,0.22]); mergeMesh(m, discMesh(1.12,0.1,6,0.16,[0.98,0.62,0.22])); return m; }
 // §16.1 merge a sub-mesh translated by (x,y,z), lets a mesh be built from clustered parts
 function mergeAt(m, n, x, y, z) { for (let i = 0; i < n.pos.length; i += 3) { m.pos.push(n.pos[i]+x, n.pos[i+1]+y, n.pos[i+2]+z); m.col.push(n.col[i], n.col[i+1], n.col[i+2]); } }
 // §16.1 new finds
@@ -6363,7 +6343,6 @@ function goblinArmMesh(skin){ const m=Mesh(); const skin2=[skin[0]*0.86,skin[1]*
   for(let i=-1;i<=1;i++) mBox(m, i*0.035,-0.42,0.0, 0.018,0.05,0.018, skin2);   // three stubby fingers
   return m; }
 // generic storm flotsam (§11.1)
-function ropeMesh() { const m = Mesh(); const c = [0.66,0.56,0.36]; for (let i = 0; i < 6; i++) { const a = i*1.1; mCyl(m, Math.cos(a)*0.14, Math.cos(a)*0.14+0.06, 0.05, 0.05, 5, [c[0]-0.03*(i%2),c[1],c[2]]); } mergeMesh(m, discMesh(0.0,0.2,8,0.03,[0.6,0.5,0.32])); return m; }
 function crateMesh() { const m = Mesh(); const w = [0.5,0.37,0.24], e = [0.4,0.29,0.18]; mBox(m,0,0.2,0,0.22,0.2,0.22,w);
   for (const s of [-0.21,0.21]) { mBox(m,s,0.2,0,0.02,0.22,0.22,e); mBox(m,0,0.2,s,0.22,0.22,0.02,e); } mBox(m,0,0.2,0,0.23,0.04,0.23,e); mBox(m,0,0.38,0,0.23,0.04,0.23,e); return m; }
 function hopperMesh() { const m = Mesh(); mBox(m,0,0.05,0,0.08,0.05,0.06,[0.72,0.68,0.55]); mBox(m,-0.05,0.04,0.03,0.015,0.06,0.015,[0.6,0.55,0.4]); mBox(m,-0.05,0.04,-0.03,0.015,0.06,0.015,[0.6,0.55,0.4]); return m; }
@@ -6531,7 +6510,6 @@ const FINDS = {
   seabean:  { mesh: () => seabeanMesh(),            base: 0.4, max: 70, label: "Sea Bean", desc: "A drift seed carried here from a far-off shore.", rare: 2 },
   berry:    { mesh: () => berryMesh(),              base: 0.45,max: 80, label: "Berries", desc: "Tart wild berries from an inland bush. A good snack.", rare: 0 },
   gullegg:  { mesh: () => eggFoodMesh(),            base: 0.45,max: 60, label: "Gull Egg", desc: "Speckled and still warm. Good food, and better cooked.", rare: 0 },
-  rope:     { mesh: () => ropeMesh(),               base: 0.5, max: 60, label: "Coiled Rope", desc: "A tangle of weathered rope, washed in on the surge.", rare: 0 },
   crate:    { mesh: () => crateMesh(),              base: 0.7, max: 40, label: "Broken Crate", desc: "A salt-stained wooden crate, its boards sprung.", rare: 1 },
   // §14B a glass fishing float lost from some far-off net, rolled onto the seabed
   // §13.3 dried remains, what a scooped or stranded creature leaves behind when it dries out completely
@@ -6754,7 +6732,7 @@ function washUp(initial) {
     // event flavour (rare finds weighted down; see §C variety)
     if (ev === "kelp" && roll < 0.55) { spawnFind("kelp", x, z); if (rng() < 0.5) { const p = cb.finds[(rng()*cb.finds.length)|0]; if (FINDS[p]) spawnFind(p, x+(rng()-0.5), z+(rng()-0.5)); } continue; }
     if (ev === "driftseed" && roll < 0.5) { spawnFind(rng() < 0.65 ? "seabean" : "coconut", x, z); continue; }
-    if (ev === "storm" && roll < 0.28) { spawnFind(["driftwood","bottle","rope","crate"][(rng()*4)|0], x, z); continue; }   // generic flotsam, not wreck debris
+    if (ev === "storm" && roll < 0.28) { spawnFind(["driftwood","bottle","crate"][(rng()*3)|0], x, z); continue; }   // generic flotsam, not wreck debris
     // otherwise biome-weighted: mostly commons, rarer finds sit lower / farther out
     const low = h < waterLevel + 1.6;
     let pick;
@@ -7558,9 +7536,6 @@ digItem("ceramic", "Ceramic Shard", "find", "uncommon", "A piece of painted pott
 digItem("fossil", "Fossil", "find", "rare", "An ammonite turned to stone.", () => coinMesh(), [0.55,0.52,0.48]);
 digItem("bell", "Ship's Bell", "relic", "rare", "A green bronze bell from a lost vessel.", () => bellMesh(), [0.5,0.6,0.45]);
 digItem("tin", "Sealed Tin", "relic", "rare", "A rusted tin, something rattles inside.", () => tinMesh(), [0.6,0.55,0.5]);
-// §16 crafted goods & cooked food
-digItem("stake", "Wooden Stake", "material", "common", "A sharpened stake. Fence posts and torches start here.", () => stakeMesh(), [0.54,0.42,0.28]);
-digItem("torch", "Torch", "material", "uncommon", "A burning brand. Place it on a stake for a standing light.", () => torchMesh(), [0.8,0.55,0.3]);
 // §17 wild & farmed crops, foods and their plantable seeds
 digItem("cassava", "Cassava", "consumable", "common", "A starchy root. Filling.", () => cassavaFoodMesh(), [0.82,0.72,0.56]);
 digItem("banana", "Banana", "consumable", "common", "A sweet ripe banana.", () => bananaIconMesh(), [0.95,0.85,0.3]);   // §banana classic single crescent icon
@@ -7701,7 +7676,6 @@ function saveState() {
     events: seenEvents.slice(0, 40),  // §B5 the journal's seen-events log
     geodes: geodes.map((g,i)=>g.cracked?i:-1).filter(i=>i>=0),  // §40 which geodes are already cracked
     geodesTaken: geodes.map((g,i)=>g.taken?i:-1).filter(i=>i>=0),  // §A3 which cracked geodes have had their halves taken
-    recipes: [...knownRecipes],  // §16 crafting
     bucket: { water: bucket.water, creatures: bucket.creatures.map(c => ({ t: c.t, scale: c.scale, tint: c.tint, special: c.special, name: c.name, poolRim: c.poolRim, moist: c.moist, caught: c.caught })) } })); } catch (e) {}
 }
 function loadState() {
@@ -7721,7 +7695,6 @@ function loadState() {
       if (Array.isArray(s.events)) seenEvents = s.events;   // §B5
       if (typeof s.hunger === "number") hunger = s.hunger;
       if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
-      if (Array.isArray(s.recipes)) knownRecipes = new Set(s.recipes);   // §16 crafting
       if (s.bucket) { bucket.water = !!s.bucket.water; bucket.creatures = Array.isArray(s.bucket.creatures) ? s.bucket.creatures : [];
         for (const c of bucket.creatures) if (c.moist === undefined) c.moist = 1; }   // §13.3 older saves: start soaked
     }
@@ -8008,72 +7981,21 @@ function toggleInventory() {
 }
 function renderInventory() {
   if (!invOpen) return;
-  // §menu the Items / Make tabs and the Tidy button are hidden for now (the code stays; set SHOW_MENU_TABS to bring them back)
-  const SHOW_MENU_TABS = false;
-  const tabs = SHOW_MENU_TABS ? `<div class="mtabs"><button class="mtab ${invTab==="items"?"on":""}" data-tab="items">Items</button><button class="mtab ${invTab==="make"?"on":""}" data-tab="make">Make</button></div>` : "";
-  let html;
-  if (SHOW_MENU_TABS && invTab === "make") {
-    html = `<div class="ihead"><h2>Satchel</h2>${tabs}</div>` + renderMakeHTML();
-    html += `<div class="ihint">craft anywhere · E or Esc to close</div>`;
-  } else {
-    const groups = { Finds: [], Food: [], Materials: [], Misc: [] };
-    for (let i = 0; i < INV_SLOTS; i++) { const c = Inv.main[i]; if (c) groups[itemCompartment(c.id)].push(i); }
-    html = `<div class="ihead"><h2>Satchel</h2>${tabs}${SHOW_MENU_TABS ? `<button id="sortBtn">Tidy ▾</button>` : ""}</div>`;
-    for (const cat of COMPARTMENTS) {
-      const idxs = groups[cat], cells = Math.max(8, Math.ceil((idxs.length + 1) / 8) * 8);   // §inv5 exactly 8 slots per category (grows by 8 only if a category overflows, so nothing is ever hidden)
-      let grid = "";
-      for (let j = 0; j < cells; j++) grid += idxs[j] !== undefined ? slotHTML(Inv.main[idxs[j]], idxs[j]) : `<div class="islot"></div>`;
-      html += `<div class="compartment"><div class="clabel">${cat}</div><div class="igrid">${grid}</div></div>`;
-    }
-    const hot = Inv.hotbar.map((c, i) => slotHTML(c, INV_SLOTS + i, i + 1)).join("");
-    html += `<div class="compartment"><div class="clabel">Tool belt</div><div class="igrid hot">${hot}</div></div>`;
-    // §inv5 the controls help line shows only the first few times the menu is opened, then retires
-    if ((menuHintShown || 0) < INV_HINT_MAX) html += `<div class="ihint">${IS_TOUCH ? "tap use, long-press for menu, drag to the belt" : "click use, shift-click to belt, right-click menu, drag to move"}</div>`;
+  // §strip the Make tab is gone (crafting removed); the satchel shows items only.
+  const groups = { Finds: [], Food: [], Materials: [], Misc: [] };
+  for (let i = 0; i < INV_SLOTS; i++) { const c = Inv.main[i]; if (c) groups[itemCompartment(c.id)].push(i); }
+  let html = `<div class="ihead"><h2>Satchel</h2></div>`;
+  for (const cat of COMPARTMENTS) {
+    const idxs = groups[cat], cells = Math.max(8, Math.ceil((idxs.length + 1) / 8) * 8);   // §inv5 exactly 8 slots per category (grows by 8 only if a category overflows, so nothing is ever hidden)
+    let grid = "";
+    for (let j = 0; j < cells; j++) grid += idxs[j] !== undefined ? slotHTML(Inv.main[idxs[j]], idxs[j]) : `<div class="islot"></div>`;
+    html += `<div class="compartment"><div class="clabel">${cat}</div><div class="igrid">${grid}</div></div>`;
   }
+  const hot = Inv.hotbar.map((c, i) => slotHTML(c, INV_SLOTS + i, i + 1)).join("");
+  html += `<div class="compartment"><div class="clabel">Tool belt</div><div class="igrid hot">${hot}</div></div>`;
+  // §inv5 the controls help line shows only the first few times the menu is opened, then retires
+  if ((menuHintShown || 0) < INV_HINT_MAX) html += `<div class="ihint">${IS_TOUCH ? "tap use, long-press for menu, drag to the belt" : "click use, shift-click to belt, right-click menu, drag to move"}</div>`;
   const p = document.getElementById("invpanel"); p.innerHTML = html;
-  const sb = p.querySelector("#sortBtn"); if (sb) sb.onclick = () => Inv.sort();
-  p.querySelectorAll(".mtab").forEach(b => b.onclick = () => { invTab = b.dataset.tab; renderInventory(); });
-  p.querySelectorAll(".recipe .mk").forEach(b => b.onclick = () => { craftRecipe(b.dataset.rid); renderInventory(); });
-}
-// §16 Make tab: list every revealed recipe, grouped by how you make it.
-function renderMakeHTML() {
-  revealRecipes();
-  const cols = { Craft: [], Build: [], Rebuild: [] };
-  for (const r of RECIPES) { if (!knownRecipes.has(r.id)) continue;
-    const g = r.build ? "Build" : (r.once ? "Rebuild" : "Craft"); cols[g].push(r); }
-  let html = "";
-  const anyKnown = RECIPES.some(r => knownRecipes.has(r.id));
-  if (!anyKnown) return `<div class="makehint">Gather sticks, stone, kelp and logs, and recipes will appear here.</div>`;
-  for (const group of ["Craft", "Build", "Rebuild"]) {
-    if (!cols[group].length) continue;
-    html += `<div class="compartment"><div class="clabel">${group}</div><div class="mlist">`;
-    for (const r of cols[group]) html += recipeRow(r);
-    html += `</div></div>`;
-  }
-  return html;
-}
-function recipeIcon(r) {
-  if (r.build) return BUILD_ICON[r.build];
-  if (r.out) return ITEMS[r.out] && ITEMS[r.out].icon;
-  return null;
-}
-// §A7 one ingredient as a small icon chip with its count (greyed when you're short)
-function ingChip(id, n) {
-  const have = Inv.count(id) >= n, icon = ITEMS[id] && ITEMS[id].icon;
-  const ig = icon ? `<img src="${icon}" width="26" height="26">` : "";
-  return `<span class="ming ${have ? "" : "short"}" title="${ITEMS[id] ? ITEMS[id].name : id}">${ig}<b>${n}</b></span>`;
-}
-function recipeRow(r) {
-  const ok = canCraft(r), icon = recipeIcon(r);
-  const name = r.label + (r.qty > 1 ? ` ×${r.qty}` : "");
-  let ingHtml = r.cost.map(([id, n]) => ingChip(id, n)).join("");
-  if (r.altCost) ingHtml += `<span class="marrow">or</span>` + r.altCost.map(([id, n]) => ingChip(id, n)).join("");
-  const ig = icon ? `<img src="${icon}" width="44" height="44" style="image-rendering:pixelated">` : `<div class="mkic"></div>`;
-  const need = "";
-  const title = (r.desc || "").replace(/"/g, "&quot;");
-  return `<div class="recipe ${ok ? "" : "locked"}" title="${title}"><div class="mkleft">${ig}</div>`
-    + `<div class="mkbody"><div class="mkname">${name}${need}</div><div class="mkings">${ingHtml}</div></div>`
-    + `<button class="mk" data-rid="${r.id}" ${ok ? "" : "disabled"}>${r.build ? "Build" : "Craft"}</button></div>`;
 }
 /* ---- item actions (§10.3) ---- */
 function equipToBelt(idx) {
@@ -8283,10 +8205,6 @@ function DBG_SET(k, v) { switch (k) {
 
 // E interacts with whatever the crosshair is on (same target as a click).
 function interact() { if (heave) { heaveStrike(); return; } if (pry) { pryStrike(); return; }
-  if (mode === "walk" && buildMode) { placeBuildAtGhost(); return; }      // §16B E also places the ghost
-  if (mode === "walk" && !isPanelOpen()) { const b = buildInFront(); if (b) {   // §16B use a piece, or crouch+E to pick it up
-    const def = BUILD_DEFS[b.type], hasUse = def.storage || def.dry || def.shelter;
-    if (hasUse && !crouching) interactBuild(b); else pickUpBuild(b); return; } }
   if (rodEquipped()) { rodTap(); return; }   // §Fishing F / mobile Use = cast / set hook / reel pulse
   const t = curTarget || targetAlongRay(rayFromNDC(0, 0));
   if (t) { interactTarget(t); return; }
@@ -9991,7 +9909,6 @@ function goblinTrades() {   // Minecraft-villager-style: a few simple give → g
     { give:[["plasticbottle",2]], get:["coin",1], uses:0, max:6 },
     { give:[["bottlecap",3]], get:["seaglass",1], uses:0, max:6 },
     { give:[["nautilus",1]], get:["coin",2], uses:0, max:3 },
-    { give:[["coin",2]], get:["rope",1], uses:0, max:4 },
     { give:[["coin",3]], get:["coconut",2], uses:0, max:4 },
   ];
   // each goblin offers a small, slightly different hand, one litter buy is always there, plus 3 others
@@ -10087,227 +10004,15 @@ function drawGlints(view) {
 
 function drawSacks(view) {}   // §nodeath drown-sacks removed (the player can't drown)
 
-/* ===================================================================== *
- * § 16  CRAFTING, recipes in the satchel's Make tab
- * ===================================================================== */
-// cost is [[id, qty], ...]; altCost is an alternative set (rope from kelp OR leaves).
-const RECIPES = [
-  { id: "stake",   label: "Wooden Stake", out: "stake", qty: 2, cost: [["stick", 2]], station: "hand",
-    desc: "Two stakes from a bundle of sticks. The start of fences, spears and torches." },
-  { id: "rope",    label: "Rope", out: "rope", qty: 1, cost: [["fiber", 3]], station: "hand",
-    desc: "Twisted together from three handfuls of plant fiber stripped from tall grass." },
-  { id: "torch",   label: "Torch", out: "torch", qty: 1, cost: [["stick", 1], ["rope", 1]], station: "hand",
-    desc: "A brand you can plant on a stake for a standing light." },
-  { id: "b_leanto", label: "Lean-to Shelter", build: "leanto", cost: [["stick", 4], ["log", 2]], station: "hand",
-    desc: "Sleep here at night to skip to morning and set it as your respawn." },
-  { id: "b_chest", label: "Storage Chest", build: "chest", cost: [["log", 4]], station: "hand",
-    desc: "Stash finds and materials. All your chests share one store." },
-  { id: "b_fence", label: "Fence Segment", build: "fence", cost: [["stake", 1], ["stick", 2]], station: "hand",
-    desc: "Pen goats and keep them off your ground. Place a run of them." },
-  { id: "b_gate",  label: "Gate", build: "gate", cost: [["log", 1], ["rope", 1]], station: "hand",
-    desc: "A gap in the fence you can walk through." },
-  { id: "b_rack",  label: "Drying Rack", build: "rack", cost: [["stick", 4], ["rope", 2]], station: "hand",
-    desc: "Hang raw fish or kelp to dry over a day into lasting food." },
-  { id: "b_sign",  label: "Signpost", build: "sign", cost: [["log", 1], ["stick", 1]], station: "hand",
-    desc: "Mark a spot worth remembering." },
-  { id: "b_torch", label: "Torch on a Stake", build: "torchpost", cost: [["stake", 1], ["torch", 1]], station: "hand",
-    desc: "A standing light for the camp." },
-  { id: "toolkit", label: "Tool Kit", out: "toolkit", qty: 1, cost: [["stick", 3], ["stone", 2], ["log", 1]], station: "hand", once: "toolkit",
-    desc: "Rebuild your shovel, axe and pickaxe if you ever lose the kit." },
-  { id: "bucket",  label: "Bucket", out: "bucket", qty: 1, cost: [["log", 2], ["rope", 1]], station: "hand", once: "bucket",
-    desc: "A wooden pail, in case yours was lost to the sea." },
-];
-const RECIPE_BY_ID = {}; for (const r of RECIPES) RECIPE_BY_ID[r.id] = r;
-let knownRecipes = new Set();
-// a recipe's ingredient ids (both the main and the alternative cost)
-function recipeIngredients(r) { const s = new Set(); for (const [id] of r.cost) s.add(id); if (r.altCost) for (const [id] of r.altCost) s.add(id); return [...s]; }
-// "appears once you've collected at least one of its ingredients", latch it on, permanently per seed
-function revealRecipes() {
-  let changed = false;
-  for (const r of RECIPES) {
-    if (knownRecipes.has(r.id)) continue;
-    let seen = false;
-    for (const id of recipeIngredients(r)) if (Inv.count(id) > 0) { seen = true; break; }
-    if (seen) { knownRecipes.add(r.id); changed = true; }
-  }
-  if (changed) saveState();
-}
-function canAfford(cost) { for (const [id, n] of cost) if (Inv.count(id) < n) return false; return true; }
-// which cost set to use (main preferred, else the alternative), null if neither is affordable
-function affordableCost(r) { if (canAfford(r.cost)) return r.cost; if (r.altCost && canAfford(r.altCost)) return r.altCost; return null; }
-// true if the recipe can be crafted right now (afford + not an already-owned one-off)
-function canCraft(r) {
-  if (r.once && (Inv.hotbarHasId(r.once) || Inv.has(r.once))) return false;
-  return affordableCost(r) !== null;
-}
-function craftRecipe(id) {
-  const r = RECIPE_BY_ID[id]; if (!r) return;
-  if (r.build) {                                        // §16B building: pick it up as a ghost, pay on placement
-    if (!affordableCost(r)) { showCard("Need materials", craftCostText(r)); return; }
-    if (menuIsOpen()) closeMenu();
-    enterBuildMode(r.build, r.id); return;
-  }
-  if (r.once && (Inv.hotbarHasId(r.once) || Inv.has(r.once))) { showCard("Already have one", `You already carry a ${ITEMS[r.once].name}.`); return; }
-  const cost = affordableCost(r); if (!cost) { showCard("Need materials", craftCostText(r)); return; }
-  for (const [cid, n] of cost) Inv.remove(cid, n);
-  Inv.add(r.out, r.qty || 1);
-  if (onDig) onDig("plant"); showCard("Crafted " + (r.qty > 1 ? r.qty + "× " : "") + ITEMS[r.out].name, "");
-}
-function craftCostText(r) { const parts = r.cost.map(([id, n]) => `${n} ${ITEMS[id].name}`); let t = parts.join(" + ");
-  if (r.altCost) t += " (or " + r.altCost.map(([id, n]) => `${n} ${ITEMS[id].name}`).join(" + ") + ")"; return t; }
-
-/* ===================================================================== *
- * § 16B  BUILDING, placeable pieces with a ghost preview
- * ===================================================================== */
-// Each def: the recipe id that pays for it, its mesh, footprint radius, and behaviour flags.
-const BUILD_DEFS = {
-  leanto:    { recipe: "b_leanto", label: "Lean-to", mesh: leantoMesh,   r: 1.3, collide: 0.7, shelter: true },
-  chest:     { recipe: "b_chest", label: "Storage Chest", mesh: () => chestMesh(false, false), r: 0.7, collide: 0.5, storage: true },
-  fence:     { recipe: "b_fence", label: "Fence", mesh: fenceSegMesh,    r: 0.7, collide: 0.55, keep: true },
-  gate:      { recipe: "b_gate",  label: "Gate", mesh: gateMesh,         r: 0.7, keep: true },
-  rack:      { recipe: "b_rack",  label: "Drying Rack", mesh: dryRackMesh, r: 0.9, collide: 0.6, dry: true },
-  sign:      { recipe: "b_sign",  label: "Signpost", mesh: signMesh,     r: 0.4 },
-  torchpost: { recipe: "b_torch", label: "Torch", mesh: torchPostMesh,   r: 0.3, light: true },
-};
-let builds = [];                 // { type, x, z, yaw, coll?, ... }
-let buildMode = null;            // the type currently being placed, or null
-let buildRecipeId = null, buildYaw = 0;
-const buildGhost = { x: 0, z: 0, y: 0, valid: false, show: false };
-const buildDyn = {};             // lazy makeDynamic per type
-const buildScratch = new Float32Array(160 * 10);
-const BUILD_ICON = {};           // recipe-tab icons, built with the item icons at startup
-
-function enterBuildMode(type, recipeId) {
-  buildMode = type; buildRecipeId = recipeId; buildYaw = cam.yaw; buildGhost.show = false;
-  showCard("Placing: " + BUILD_DEFS[type].label, IS_TOUCH ? "Aim, tap Rotate to turn, tap Place. Cancel to stop." : "Aim and click to place · R rotates · Esc cancels.");
-  if (IS_TOUCH) showBuildBar(true);
-}
-function exitBuildMode() { buildMode = null; buildRecipeId = null; buildGhost.show = false; if (IS_TOUCH) showBuildBar(false); }
-function showBuildBar(on) { document.querySelectorAll(".mbuild").forEach(b => b.style.display = on ? "flex" : "none"); }
-function rotateBuild() { if (buildMode) buildYaw += Math.PI / 8; }
-// where the piece would land: the ground point under the reticle, within reach
-function updateBuildGhost() {
-  if (!buildMode) { buildGhost.show = false; return; }
-  const pt = rayGround(0, 0);
-  if (!pt || Math.hypot(pt[0] - player.x, pt[1] - player.z) > REACH + 2.0) { buildGhost.show = false; return; }
-  buildGhost.x = pt[0]; buildGhost.z = pt[1]; buildGhost.y = surfaceAt(pt[0], pt[1]).h;
-  buildGhost.valid = buildValidAt(buildMode, pt[0], pt[1]); buildGhost.show = true;
-}
-function buildValidAt(type, x, z) {
-  const d = BUILD_DEFS[type], s = surfaceAt(x, z);
-  if (waterDepthAt(x, z) > 0.25) return false;             // not in the water
-  if (s.slope > 0.6) return false;                          // not on a cliff
-  if (bigPropBlocking(x, z, d.r * 0.6)) return false;       // not inside a boulder / POI
-  for (const p of POIS) if (Math.hypot(p.x - x, p.z - z) < p.radius + 0.5) return false;
-  for (const b of builds) if (b !== buildGhostSkip && Math.hypot(b.x - x, b.z - z) < (BUILD_DEFS[b.type].r + d.r) * 0.55) return false;
-  for (const sb of storageBoxes) if (Math.hypot(sb.x - x, sb.z - z) < 1.0) return false;
-  return true;
-}
-let buildGhostSkip = null;
-function placeBuildAtGhost() {
-  if (!buildMode) return false;
-  updateBuildGhost();
-  if (!buildGhost.show) { showCard("Aim lower", "Point at the ground within reach."); return true; }
-  if (!buildGhost.valid) { showCard("Can't build here", "Needs flat, dry, clear ground."); bagShake && bagShake(); return true; }
-  const r = RECIPE_BY_ID[buildRecipeId], cost = r && affordableCost(r);
-  if (!cost) { showCard("Need materials", craftCostText(r)); exitBuildMode(); return true; }
-  for (const [cid, n] of cost) Inv.remove(cid, n);
-  const type = buildMode, def = BUILD_DEFS[type];
-  const b = { type, x: buildGhost.x, z: buildGhost.z, yaw: buildYaw, cost };
-  if (def.dry) { b.load = null; b.dryAt = 0; }
-  builds.push(b);
-  if (def.collide) { const coll = { x: b.x, z: b.z, r: def.collide, kind: "build", build: b }; b.coll = coll; colliders.push(coll); rebuildCollHash(); }
-  if (onDig) onDig("plant");
-  saveWorld();
-  // keep placing fences/gates in a run; one-offs drop out of build mode
-  if (!def.keep || !affordableCost(r)) exitBuildMode();
-  return true;
-}
-// the placed piece you're looking at (to pick back up)
-function buildInFront() {
-  const f = camForward(); let best = null, bestd = 3.2;
-  for (const b of builds) { const dx = b.x - player.x, dz = b.z - player.z; const d = Math.hypot(dx, dz);
-    if (d > 3.2) continue; const dot = (dx * f[0] + dz * f[2]) / (d || 1); if (dot < 0.4) continue;
-    if (d < bestd) { bestd = d; best = b; } }
-  return best;
-}
-function pickUpBuild(b) {
-  const def = BUILD_DEFS[b.type];
-  // refund the exact materials paid (fall back to the recipe cost for older saves)
-  const refund = (b.cost && b.cost.length) ? b.cost : (RECIPE_BY_ID[def.recipe] ? RECIPE_BY_ID[def.recipe].cost : []);
-  for (const [cid, n] of refund) Inv.add(cid, n);
-  if (b.coll) { b.coll.r = 0; const k = colliders.indexOf(b.coll); if (k >= 0) colliders.splice(k, 1); rebuildCollHash(); }
-  if (def.shelter && shelterSpawn && Math.hypot(shelterSpawn.x - b.x, shelterSpawn.z - b.z) < 0.6) shelterSpawn = null;   // §16C respawn point gone
-  const i = builds.indexOf(b); if (i >= 0) builds.splice(i, 1);
-  if (onDig) onDig("clang"); showCard("Picked up " + def.label, "Materials are back in your satchel."); saveWorld();
-}
-function interactBuild(b) {
-  const def = BUILD_DEFS[b.type];
-  if (def.storage) { openStash(0); return; }
-  if (def.dry) { tendRack(b); return; }
-  if (def.shelter) { trySleepShelter(b); return; }
-  showCard(def.label, def.sign && b.text ? b.text : "");
-}
-// drying rack: load a raw fish/kelp, it dries over a day into lasting food
-function tendRack(b) {
-  if (b.load) {
-    if (clock.t >= b.dryAt) { const out = b.load === "kelp" ? "kelp" : "rawfish"; Inv.add(out === "kelp" ? "kelp" : "cooked_rawfish", b.n || 1); showCard("Dried " + ITEMS[b.load].name, "Taken down, dried and lasting."); b.load = null; b.n = 0; saveWorld(); }
-    else { const left = Math.ceil((b.dryAt - clock.t) / 60); showCard("Still drying", `${ITEMS[b.load].name} needs about ${left} more minute${left===1?"":"s"}.`); }
-    return;
-  }
-  const raw = Inv.count("rawfish") > 0 ? "rawfish" : (Inv.count("kelp") > 0 ? "kelp" : null);
-  if (!raw) { showCard("Nothing to hang", "Carry a raw fish or kelp to dry."); return; }
-  Inv.remove(raw, 1); b.load = raw; b.n = 1; b.dryAt = clock.t + RACK_DRY_TIME; if (onDig) onDig("plant");
-  showCard("Hung to dry", `${ITEMS[raw].name} on the rack. Come back later.`);
-  saveWorld();
-}
-const RACK_DRY_TIME = 90;    // §16 seconds of real time to dry (tunable)
-// §16C sleeping in a lean-to: set it as your respawn point, and at night skip to morning.
-function trySleepShelter(b) {
-  const wasMine = shelterSpawn && Math.hypot(shelterSpawn.x - b.x, shelterSpawn.z - b.z) < 0.6;
-  shelterSpawn = { x: b.x, z: b.z };                       // only one shelter is your respawn at a time
-  for (const o of builds) if (o.type === "leanto") o.respawn = false;
-  b.respawn = true; saveWorld();
-  const night = dayNightEnabled && dayFactor() < 0.35;
-  if (night) {
-    startFade(() => {
-      timeOfDay = MORNING_TIME; updateSun();
-      player.x = b.x; player.z = b.z; const h = surfaceAt(b.x, b.z).h;
-      player.feetY = h; player.eyeY = h + EYE; player.vy = 0; player.airborne = false;
-      stamina = 1; exhausted = false; player.breath = BREATH_MAX;
-    });
-    if (onDig) onDig("eat");
-    showCard("You sleep until morning", "Rested. This lean-to is your respawn point.");
-  } else {
-    stamina = 1; exhausted = false;
-    showCard(wasMine ? "Your shelter" : "Respawn point set", dayNightEnabled
-      ? "You'll wake here. Rest at night to skip to morning."
-      : "You'll wake here if you drown or take a bad fall. A quick rest restores your stamina.");
-  }
-}
-function drawBuilds(view) {
-  if (buildMode) updateBuildGhost();
-  // placed pieces, grouped by type
-  const byType = {};
-  for (const b of builds) (byType[b.type] = byType[b.type] || []).push(b);
-  for (const type in byType) {
-    const list = byType[type]; if (!buildDyn[type]) buildDyn[type] = makeDynamic(BUILD_DEFS[type].mesh(), 160);
-    propUniforms(view); let n = 0; const a = buildScratch;
-    for (const b of list) { if (n >= 160) break; const dx = b.x - cam.pos[0], dz = b.z - cam.pos[2]; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
-      const o = n*10, y = surfaceAt(b.x, b.z).h; a[o]=b.x;a[o+1]=y;a[o+2]=b.z;a[o+3]=1;a[o+4]=b.yaw;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
-    if (n) buildDyn[type].draw(a, n);
-  }
-  // the ghost preview
-  if (buildGhost.show && buildMode) {
-    const type = buildMode; if (!buildDyn[type]) buildDyn[type] = makeDynamic(BUILD_DEFS[type].mesh(), 160);
-    propUniforms(view);
-    gl.uniform1f(propU.uGhost, 1); gl.uniform3fv(propU.uGhostCol, buildGhost.valid ? [0.4, 1.0, 0.5] : [1.0, 0.4, 0.4]);
-    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
-    const a = buildScratch; a[0]=buildGhost.x;a[1]=buildGhost.y;a[2]=buildGhost.z;a[3]=1;a[4]=buildYaw;a[5]=0;a[6]=0;a[7]=1;a[8]=1;a[9]=1;
-    buildDyn[type].draw(a, 1);
-    gl.disable(gl.BLEND); gl.depthMask(true); gl.uniform1f(propU.uGhost, 0);
-  }
-}
+// §strip CRAFTING & BUILDING removed (the Make tab, every recipe, and all placeable pieces).
+// Inert stubs keep the remaining world-loop guards valid; nothing ever populates them.
+let builds = [];                                    // never populated
+let buildMode = null;                               // no build placement
+const buildGhost = { show: false, valid: false, x: 0, z: 0, y: 0 };
+const BUILD_DEFS = {};
+const BUILD_ICON = {};
+function buildInFront() { return null; }
+function drawBuilds() {}
 
 // Placed material in the wash zone slowly erodes; everywhere else it's permanent.
 let erosionT = 0;
@@ -10497,7 +10202,7 @@ function makeToolFP(id, mesh) {
   gl.bindVertexArray(null);
   TOOL_FP[id] = { mesh, vao, posBuf, vc: mesh.pos.length / 3, world: new Float32Array(mesh.pos.length) };
 }
-function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("stake", stakeMesh()); makeToolFP("bucket", bucketItemMesh()); makeToolFP("bucketwater", bucketWaterFPMesh()); makeToolFP("lantern", lanternMesh()); makeToolFP("rod", rodMesh()); }   // §A1 stake now shows in hand   // §R4 bucket & lantern; §Fishing rod held too
+function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("bucket", bucketItemMesh()); makeToolFP("bucketwater", bucketWaterFPMesh()); makeToolFP("lantern", lanternMesh()); makeToolFP("rod", rodMesh()); }   // §R4 bucket & lantern; §Fishing rod held too
 // §15 render the two gripping hands while climbing, with a hand-over-hand sway
 // §strip drawClimbHands removed (climbing).
 let toolSwapT = 0, lastFpTool = null;
@@ -10532,13 +10237,6 @@ function drawShovel(view) {
     scale = id === "bucket" ? 0.46 : 0.6;
     ox = 0.26 + sway; oy = -0.52 - swap*0.5 + bob; oz = 0.92;
     roll = 0.08 + swayR; pitch = -0.08;
-  } else if (id === "stake") {                                                            // §A1 stake: gripped low-right, raised diagonally so the SHARP point (the +y end) rises toward the centre of the screen (crosshair); a hit is a forward stab
-    scale = 0.5;
-    ox = 0.16 + sway;
-    oy = -0.16 - swap*0.5 + bob + chg*0.06;
-    oz = 0.76 + sw*0.45 + jab*0.45 - chg*0.28;                                            // stab forward on a swing/thrust
-    roll = 0.1 + swayR;
-    pitch = 0.72 + sw*0.4 + jab*0.3 - chg*0.12;                                           // raised point near screen-centre; a strike tips it forward into a stab
   } else {                                                                                // shovel / axe / pickaxe: angled, head up & in
     const bladed = id === "axe" || id === "pickaxe";
     scale = 0.46;
@@ -12130,7 +11828,6 @@ function auditCottageInterior() {
 function trySleepCottage() {
   const wake = cotLocalToWorld(0, C_IZ - 0.7);
   shelterSpawn = { x: wake[0], z: wake[1] };
-  for (const o of builds) if (o.type === "leanto") o.respawn = false;
   cottage.isRespawn = true;
   const night = dayNightEnabled && dayFactor() < 0.35;
   if (night) {
@@ -12521,8 +12218,6 @@ function saveWorld() {
     berries: berryBushes.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),  // 0 = ripe, else seconds left
     tallgrass: tallGrass.map(g => g.cut ? Math.max(1, +(g.regrowAt - clock.t).toFixed(0)) : 0),  // §veg5 0 = standing, else seconds until it grows back
     digcells: (() => { const out = []; for (const c of digCells.values()) if (c.depleted) out.push([c.cx, c.cz, Math.max(0, +(c.refillAt - clock.t).toFixed(0))]); return out; })(),  // §urgent3 spent dig-cells + seconds left to refill
-    builds: builds.map(b => ({ t: b.type, x: +b.x.toFixed(1), z: +b.z.toFixed(1), y: +b.yaw.toFixed(2), c: b.cost || [],
-      l: b.load || null, n: b.n || 0, d: b.load ? Math.max(0, +(b.dryAt - clock.t).toFixed(0)) : 0 })),  // §16B
     shelter: shelterSpawn ? [+shelterSpawn.x.toFixed(1), +shelterSpawn.z.toFixed(1)] : null,  // §16C respawn point
     crops: crops.map(c => [c.type, +c.x.toFixed(1), +c.z.toFixed(1), +(c.yaw||0).toFixed(2), c.ripe?1:0,  // §17
       c.ripe ? 0 : Math.max(0, +(c.ripeAt - clock.t).toFixed(0)), +c.scale.toFixed(2), c.wild?1:0, c.grown?1:0]),
@@ -12558,13 +12253,7 @@ function loadWorld() {
     if (Array.isArray(w.berries)) w.berries.forEach((v, i) => { if (berryBushes[i]) { if (v > 0) { berryBushes[i].ripe = false; berryBushes[i].regrowAt = clock.t + v; } else berryBushes[i].ripe = true; } });
     if (Array.isArray(w.tallgrass)) w.tallgrass.forEach((v, i) => { if (tallGrass[i]) { if (v > 0) { tallGrass[i].cut = true; tallGrass[i].regrowAt = clock.t + v; } else tallGrass[i].cut = false; } });   // §veg5
     if (Array.isArray(w.digcells)) for (const [cx, cz, left] of w.digcells) digCells.set(digCellKey(cx, cz), { cx, cz, loot: rollCellFind(cx, cz), depleted: true, refillAt: clock.t + (left || 0) });   // §urgent3 restore spent cells
-    if (Array.isArray(w.builds)) { builds = []; for (const s of w.builds) { const def = BUILD_DEFS[s.t]; if (!def) continue;   // §16B
-      const b = { type: s.t, x: s.x, z: s.z, yaw: s.y, cost: s.c || [] };
-      if (def.dry && s.l) { b.load = s.l; b.n = s.n || 1; b.dryAt = clock.t + (s.d || 0); }
-      if (def.collide) { const coll = { x: b.x, z: b.z, r: def.collide, kind: "build", build: b }; b.coll = coll; colliders.push(coll); }
-      builds.push(b); } }
-    if (Array.isArray(w.shelter)) { shelterSpawn = { x: w.shelter[0], z: w.shelter[1] };   // §16C restore respawn point
-      for (const b of builds) if (b.type === "leanto" && Math.hypot(b.x - shelterSpawn.x, b.z - shelterSpawn.z) < 0.6) b.respawn = true; }
+    if (Array.isArray(w.shelter)) shelterSpawn = { x: w.shelter[0], z: w.shelter[1] };   // §16C restore respawn point
     if (Array.isArray(w.crops)) { crops = w.crops.map(c => ({ type: c[0], x: c[1], z: c[2], yaw: c[3],  // §17 restore crops
       ripe: !!c[4], ripeAt: c[4] ? 0 : clock.t + (c[5] || 0), scale: c[6], wild: !!c[7], grown: !!c[8] })); }
     if (Array.isArray(w.lanterns)) placedLanterns = w.lanterns.map(([x, z]) => ({ x, y: surfaceAt(x, z).h, z }));   // §tools restore set-down lanterns
@@ -13974,19 +13663,6 @@ function frame(now) {
       promptEl.style.color = "#ffbda6"; promptEl.style.opacity = Math.min(0.92, tooTiredT * 1.3).toFixed(2);
     } else if (hintT > 0) { promptEl.textContent = hintText; promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = ""; }
     else { promptEl.style.display = "none"; promptEl.style.color = ""; promptEl.style.opacity = ""; }
-    // §16B placement / pick-up prompt overrides the normal aim prompt
-    if (buildMode) {
-      promptEl.textContent = (!buildGhost.show ? "Aim at open ground" : buildGhost.valid ? "Place " + BUILD_DEFS[buildMode].label : "Can't build here")
-        + (IS_TOUCH ? "" : " · R turn · Esc cancel");
-      promptEl.style.display = "block"; promptEl.style.color = (buildGhost.show && !buildGhost.valid) ? "#ffbda6" : "#bfe6a6"; promptEl.style.opacity = "";
-      crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block"; crossEl.className = "";
-    } else if (tooTiredT <= 0 && hintT <= 0 && !info) {
-      const b = buildInFront();
-      if (b) { const def = BUILD_DEFS[b.type], hasUse = def.storage || def.dry || def.shelter;
-        promptEl.textContent = hasUse ? (IS_TOUCH ? "tap: use · crouch+tap: pick up" : "click/F use · crouch+click pick up") : (IS_TOUCH ? "tap to pick up" : "click or F to pick up");
-        promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
-        crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block"; }
-    }
     if (!buildMode && curTarget && curTarget.kind === "weakstone") {   // §weak7 weak-stone tooltip
       promptEl.textContent = weakStonePrompt(curTarget.obj);
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
