@@ -694,7 +694,8 @@
   .jtab .jtabnew { position: absolute; right: 3px; top: 3px; width: 9px; height: 9px; border-radius: 50%;
     background: var(--red); box-shadow: 0 0 0 1.5px var(--parch), 0 1px 2px rgba(0,0,0,.5); }
   /* ---- §UI catch card: big, persistent, old-RPG parchment ---- */
-  #catchpop { top: 12%; left: 50%; transform: translateX(-50%); width: 252px; min-width: 0; padding: 14px 18px 12px;
+  /* §catchcard bigger, and vertically centred on screen */
+  #catchpop { top: 50% !important; left: 50%; transform: translate(-50%,-50%); width: 300px; min-width: 0; padding: 18px 22px 14px;
     text-align: center; pointer-events: auto; border-radius: 0 !important;
     background-color: var(--parch) !important; background-image: var(--grain) !important; background-blend-mode: multiply;
     border: 3px solid var(--wood-lo) !important; color: var(--pink) !important;
@@ -702,8 +703,8 @@
       inset 4px 4px 0 5px rgba(255,248,224,.35), inset -4px -4px 0 5px rgba(120,86,40,.35),
       0 10px 0 rgba(0,0,0,.28), 0 20px 40px rgba(0,0,0,.55) !important; }
   #catchpop.show { animation: ccpop2 .4s cubic-bezier(.2,1.3,.3,1); }
-  @keyframes ccpop2 { from { transform: translateX(-50%) scale(.72); } to { transform: translateX(-50%) scale(1); } }
-  #catchpop .cp-big { width: 128px; height: 128px; image-rendering: pixelated; display: block; margin: 2px auto 2px;
+  @keyframes ccpop2 { from { transform: translate(-50%,-50%) scale(.72); } to { transform: translate(-50%,-50%) scale(1); } }
+  #catchpop .cp-big { width: 150px; height: 150px; image-rendering: pixelated; display: block; margin: 2px auto 2px;
     filter: drop-shadow(0 5px 7px rgba(0,0,0,.45)); animation: discpop .45s cubic-bezier(.2,1.4,.35,1); }
   #catchpop .cp-name { font-size: 19px; font-weight: 800; color: #3a2410; text-shadow: 0 1px 0 var(--parch-hi); letter-spacing: .02em; }
   #catchpop .cp-wt { font-size: 14px; color: var(--pink-dim); font-weight: 600; margin-top: 1px; }
@@ -3334,7 +3335,7 @@ function rodTap() {                                            // single-press p
     case "waiting": reelInEmpty(); break;
     case "nibble": missBite(); break;
     case "bite": setHook(); break;
-    case "fighting": rod.pulse = Math.max(rod.pulse, 0.24); break;   // a reel pulse
+    case "fighting": rod.pulse = Math.max(rod.pulse, 0.16); break;   // §fishfix a gentler reel pulse (less twitchy)
   }
 }
 
@@ -3363,28 +3364,46 @@ function onBobberLanded() {
   if (typeof SND !== "undefined") SND.play("plop", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz] });
   if (typeof spawnSand === "function") spawnSand(rod.bob.tx, rod.bob.surf, rod.bob.tz, 6, [0.8,0.86,0.92]);
 }
-function rollSpecies() {                                       // weighted by spot quality (depth+signs) & bait quality
-  const q = rod.spotQ, bq = rod.baitQ;
-  const hot = 0;   // §strip hotspots removed; keep the term so the species weights below are unchanged in shape
-  const w = {
-    junk:      20 * (1 - q * 0.6) * (bq === 0 ? 1.4 : bq === 1 ? 1.0 : 0.65) * (hot ? 0.5 : 1),
-    surfperch: 42 * (1 - q * 0.25) * (bq === 0 ? 1.15 : 1.0),
-    rockfish:  22 * (0.7 + q * 0.9) * (1 + bq * 0.14),
-    lingcod:    9 * (0.25 + q * 1.9) * (1 + bq * 0.4) * (1 + hot * 0.6),
-    ratfish:    3 * (0.1 + q * 2.6) * (1 + bq * 0.5) * (1 + hot * 0.8),
-    // §fish5 new species
-    eel:       10 * (0.5 + q * 0.6) * (1 + bq * 0.2),
-    puffer:     7 * (0.4 + q * 0.9) * (1 + bq * 0.2),
-    flyingfish: 8 * (1.1 - q * 0.4),                                  // likes the shallow surface
-    sunfish:   1.2 * (0.02 + q * 2.4) * (1 + hot * 2.5),              // deep & rare, a hotspot is your best shot at the mola
-    ghostfish:  2 * (0.05 + q * 2.2) * (1 + hot * 1.8),
-  };
-  // species that want deeper water than this spot get damped
-  const d = waterDepthAt(rod.bob.tx, rod.bob.tz);
-  for (const k in FISH_SPECIES) if (d < FISH_SPECIES[k].dmin) w[k] *= 0.25;
+// §fishwater WHERE you fish decides WHAT bites. The bobber's landing spot is classified into one of five
+// water types, each with its own catch table (species → relative weight; "junk" is the odds-and-ends snag).
+// Bigger / deeper water holds the bigger, rarer fish. Night boosts the nocturnal species in the deeper tables.
+const FISH_DEEP_DEPTH = 4.0;   // open-sea depth (m) at/above which a spot counts as "deep water" (tunable)
+const FISH_TABLES = {
+  // puddles & dug water holes: only tiddlers and junk
+  puddle:   { junk: 62, surfperch: 38 },
+  // tide pools & small ponds: small fish, the odd oddity
+  tidepool: { junk: 26, surfperch: 44, puffer: 18, eel: 12 },
+  // shallow ocean & surf: the common shore fish
+  surf:     { junk: 14, surfperch: 46, flyingfish: 22, puffer: 10, eel: 8 },
+  // kelp beds & rocky edges: rockfish country
+  kelp:     { junk: 10, rockfish: 44, eel: 18, surfperch: 14, puffer: 8, lingcod: 6 },
+  // deep water off the rocks: the big, rare fish
+  deep:     { junk: 6, lingcod: 30, rockfish: 16, ratfish: 18, sunfish: 7, ghostfish: 11, eel: 6, puffer: 6 },
+};
+// night-only / nocturnal boost, applied where the species already appears (so night keeps them in the right water)
+const NIGHT_FISH_BOOST = { ghostfish: 2.8, ratfish: 2.2, eel: 1.6, lingcod: 1.5 };
+// §fishwater which band of water the bobber is sitting in
+function fishingWaterType(x, z) {
+  const i = cellIndex(x, z), depth = waterDepthAt(x, z);
+  if (i >= 0 && typeof ponded !== "undefined" && ponded.has(i)) return "puddle";              // a dug water hole
+  // an ENCLOSED basin (tide pool / pond) holds water dammed above the open-sea level; the open sea does not
+  if (i >= 0 && filled[i] > waterLevel + 0.35) return depth < 0.55 ? "puddle" : "tidepool";
+  if (depth >= FISH_DEEP_DEPTH) return "deep";                                                 // open sea, deep
+  const b = (typeof coastBiomeAt === "function") ? coastBiomeAt(x, z) : "";
+  if (b === "reef" || b === "cobble" || nearKelp(x, z, 5)) return "kelp";                       // rocky / kelpy edges
+  return "surf";                                                                               // shallow open ocean / surf
+}
+function nearKelp(x, z, r) { const r2 = r*r; for (const k of kelpStalks) { const dx = k.x-x, dz = k.z-z; if (dx*dx+dz*dz < r2) return true; } return false; }
+function rollSpecies() {                                       // §fishwater weighted by the water type at the bobber
+  const wt = fishingWaterType(rod.bob.tx, rod.bob.tz);
+  const night = (typeof isNightNow === "function") && isNightNow();
+  const base = FISH_TABLES[wt] || FISH_TABLES.surf;
+  const w = {};
+  for (const k in base) { let v = base[k]; if (night && NIGHT_FISH_BOOST[k]) v *= NIGHT_FISH_BOOST[k]; w[k] = v; }
+  rod.lastWaterType = wt;   // for the debug odds log / HUD
   let total = 0; for (const k in w) total += w[k];
-  if (fishOddsLog) { const pct = {}; for (const k in w) pct[k] = +(w[k] / total * 100).toFixed(1); console.log("[fish] depth", d.toFixed(2), "spotQ", q.toFixed(2), "baitQ", bq, "odds%", pct); }
-  if (fishForceBite) { delete w.junk; total = 0; for (const k in w) total += w[k]; }   // debug: never junk on a forced bite
+  if (fishOddsLog) { const pct = {}; for (const k in w) pct[k] = +(w[k] / total * 100).toFixed(1); console.log("[fish] water", wt, night ? "(night)" : "", "depth", waterDepthAt(rod.bob.tx, rod.bob.tz).toFixed(2), "odds%", pct); }
+  if (fishForceBite && w.junk !== undefined) { delete w.junk; total = 0; for (const k in w) total += w[k]; }   // debug: never junk on a forced bite
   let r = Math.random() * total;
   for (const k in w) { r -= w[k]; if (r <= 0) return k; }
   return "surfperch";
@@ -3436,7 +3455,11 @@ function updateFight(dt) {
   const reeling = rod.press || rod.pulse > 0; if (rod.pulse > 0) rod.pulse = Math.max(0, rod.pulse - dt);
   // §fish5 pufferfish randomly "puffs", a sudden tension spike you have to ride out
   if (fg.quirk === "puff") { fg.puffT -= dt; if (fg.puffT <= 0) { fg.puffT = 1.6 + Math.random() * 2; fg.tension = Math.min(1, fg.tension + 0.32); if (typeof SND !== "undefined") SND.play("plop", { volume: 0.4 }); } }
-  fg.tension += (reeling ? (mini.reel || 0.85) : -(mini.drain || 0.72)) * dt + fg.run * 0.75 * dt;
+  // §fishfix the needle: reeling raises tension (gentler + rate-capped so one eager click can't throw it way off),
+  // letting go drops it faster than before. A run surge still pushes it up.
+  let dTens = (reeling ? (mini.reel || 0.85) * TUNE.FISH_REEL_MUL : -(mini.drain || 0.72) * TUNE.FISH_DRAIN_MUL) + fg.run * 0.75;
+  dTens = Math.min(dTens, TUNE.FISH_MAX_RISE);   // cap the climb rate only (falling stays fast)
+  fg.tension += dTens * dt;
   fg.tension = Math.max(0, Math.min(1, fg.tension));
   if (fg.snapFlash > 0) fg.snapFlash = Math.max(0, fg.snapFlash - dt);
   const inZone = fg.tension >= lo && fg.tension <= hi;
@@ -3581,25 +3604,23 @@ function showCatchPop(f, isJunk, itemId, added) {
   const label = isJunk ? (ITEMS[f.junkId] ? ITEMS[f.junkId].name : "Junk") : (FISH_SPECIES[f.species] ? FISH_SPECIES[f.species].label : "Fish");
   const sub = isJunk ? `<div class="cp-wt">off the seabed</div>`
     : `<div class="cp-wt"><b>${f.weight.toFixed(2)}</b> kg${f.record ? ` <span class="cp-rec">RECORD</span>` : ""}</div>`;
-  // §UI the catch card is persistent: it stays until dismissed (click / Enter keeps, Q releases). The game keeps running.
-  const btns = added
-    ? `<div class="cp-btns"><button class="cp-keep">Keep</button><button class="cp-rel">Release</button></div>`
-    : `<div class="cp-btns"><button class="cp-keep">OK</button></div>`;
-  const hint = added ? (IS_TOUCH ? "tap Keep, or Release" : "click / Enter to keep · Q to release") : "satchel full, not kept";
-  el.innerHTML = `${icon ? `<img class="cp-big" src="${icon}" alt="">` : ""}<div class="cp-name">${label}</div>${sub}${btns}<div class="cp-hint">${hint}</div>`;
+  // §catchcard a single modal card: everything caught is kept (junk included). One OK button dismisses it.
+  const hint = added ? (IS_TOUCH ? "tap OK" : "OK · Enter · Space · E") : "satchel full, not kept";
+  el.innerHTML = `${icon ? `<img class="cp-big" src="${icon}" alt="">` : ""}<div class="cp-name">${label}</div>${sub}<div class="cp-btns"><button class="cp-keep">OK</button></div><div class="cp-hint">${hint}</div>`;
   el.style.display = "block"; requestAnimationFrame(() => el.classList.add("show"));
-  const keepBtn = el.querySelector(".cp-keep"), relBtn = el.querySelector(".cp-rel");
+  const keepBtn = el.querySelector(".cp-keep");
   if (keepBtn) keepBtn.onclick = (e) => { e.stopPropagation(); keepCatch(); };
-  if (relBtn) relBtn.onclick = (e) => { e.stopPropagation(); releaseCatch(); };
-  el.onclick = () => keepCatch();   // clicking anywhere on the card keeps it
+  el.onclick = () => keepCatch();   // clicking the card dismisses it too
   catchPop = { itemId, isJunk, label, releasable: added > 0 }; catchPopT = 0;
+  if (typeof uiUnlock === "function") uiUnlock();   // §catchcard free the cursor so OK is clickable; this never opens the pause menu
   if (isJunk) { if (typeof SND !== "undefined") { SND.play("womp"); setTimeout(() => { try { SND.play("womp", { pitch: 0.6 }); } catch (e) {} }, 430); } }
   else { if (typeof SND !== "undefined") SND.play("discover", { volume: 0.45, bus: "ui" }); }
 }
-function keepCatch() {   // §UI dismiss the card, keeping the catch (it is already in the satchel)
+function keepCatch() {   // §catchcard dismiss the card (the catch is already in the satchel), hide the cursor, return control
   if (!catchPop) return;
   if (typeof SND !== "undefined") SND.play("menu_close");
   hideCatchPop();
+  if (typeof requestLock === "function") requestLock();   // re-grab pointer lock → cursor hidden, camera/movement restored
 }
 function hideCatchPop() { const el = document.getElementById("catchpop"); if (el) { el.classList.remove("show"); el.onclick = null; const was = el; setTimeout(() => { if (!catchPop) was.style.display = "none"; }, 400); } catchPop = null; }
 function releaseCatch() {
@@ -3725,10 +3746,10 @@ function hudHook(g, x, y) {
   g.restore();
 }
 function drawReelGauge(g) {
-  const fg = rod.fight; const w = 300, cx = innerWidth / 2, x = cx - w / 2;
-  const yT = innerHeight - 176, yL = innerHeight - 132, h = 18;
+  const fg = rod.fight; const w = 400, cx = innerWidth / 2, x = cx - w / 2;   // §fishbig a bigger mini-game on screen
+  const yT = innerHeight - 220, yL = innerHeight - 164, h = 24;
   g.save();
-  g.fillStyle = "rgba(12,16,20,0.62)"; hudChamfer(g, x - 18, yT - 14, w + 36, 80, 9); g.fill();
+  g.fillStyle = "rgba(12,16,20,0.62)"; hudChamfer(g, x - 22, yT - 18, w + 44, 104, 11); g.fill();
   g.strokeStyle = "rgba(180,200,210,0.18)"; g.lineWidth = 1; g.stroke();
   // --- tension track with a zone that GLOWS inside and flashes red on a strain ---
   const strainF = fg.snapFlash > 0 ? 1 : (fg.tension > fg.hi ? Math.min(1, (fg.tension - fg.hi) * 4) : 0), glow = fg.zoneGlow;
@@ -3739,16 +3760,16 @@ function drawReelGauge(g) {
     if (glow > 0.25) { g.save(); g.shadowColor = "rgba(130,235,160,0.95)"; g.shadowBlur = 12 * glow; g.fillStyle = `rgba(150,245,180,${0.35*glow*zv})`; g.fillRect(zx, yT, zw, h); g.restore(); } }
   const nx = x + Math.max(0, Math.min(1, fg.tension)) * w;      // needle
   g.fillStyle = strainF > 0 ? "#ff6a52" : (fg.tension > fg.hi || fg.tension < fg.lo ? "#ffd06a" : "#f0f5f8");
-  g.fillRect(nx - 2, yT - 5, 4, h + 10);
+  g.fillRect(nx - 3, yT - 7, 6, h + 14);
   // --- progress line: the fish slides toward the hook with each good hit, slips back when it pulls ---
   g.strokeStyle = "rgba(225,235,242,0.5)"; g.lineWidth = 2; g.beginPath(); g.moveTo(x, yL); g.lineTo(x + w, yL); g.stroke();
   hudHook(g, x + w, yL);
   for (let i = 0; i < 3; i++) {                                 // three knots; snapped ones broken & dark, the next one flashes red while straining
     const kx = x + w * (0.34 + i * 0.2), snapped = i < fg.snaps, straining = (i === fg.snaps) && strainF > 0;
-    if (snapped) { g.fillStyle = "rgba(150,40,32,0.85)"; g.fillRect(kx - 6, yL - 3, 4, 6); g.fillRect(kx + 2, yL - 3, 4, 6); }
-    else { g.fillStyle = straining ? "#ff5a44" : "rgba(214,194,152,0.95)"; g.beginPath(); g.arc(kx, yL, 4.4, 0, 6.283); g.fill(); g.strokeStyle = "rgba(90,70,40,0.7)"; g.lineWidth = 1; g.stroke(); }
+    if (snapped) { g.fillStyle = "rgba(150,40,32,0.85)"; g.fillRect(kx - 7, yL - 4, 5, 8); g.fillRect(kx + 2, yL - 4, 5, 8); }
+    else { g.fillStyle = straining ? "#ff5a44" : "rgba(214,194,152,0.95)"; g.beginPath(); g.arc(kx, yL, 5.6, 0, 6.283); g.fill(); g.strokeStyle = "rgba(90,70,40,0.7)"; g.lineWidth = 1; g.stroke(); }
   }
-  hudFishToken(g, x + Math.max(0.02, Math.min(1, fg.progress)) * w, yL, SPECIES_HUD_COL[rod.fish.species] || [0.7,0.75,0.8]);
+  hudFishToken(g, x + Math.max(0.02, Math.min(1, fg.progress)) * w, yL, SPECIES_HUD_COL[rod.fish.species] || [0.7,0.75,0.8], 1.35);
   g.restore(); g.textAlign = "left";
 }
 
@@ -3980,9 +4001,9 @@ const analog = { x: 0, y: 0 };   // x = strafe, y = forward, each -1..1
 let mobileSprint = false;        // mobile "Run" toggle writes here
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
-  if (catchPop) {   // §UI persistent catch card: Enter/F keeps, Q releases (click also keeps)
-    if (catchPop.releasable && e.code === "KeyQ") { e.preventDefault(); releaseCatch(); return; }
-    if (e.code === "Enter" || e.code === "KeyF") { e.preventDefault(); keepCatch(); return; }
+  if (catchPop) {   // §catchcard modal: OK button, or Enter / Space / E / Esc dismiss and return control
+    if (e.code === "Enter" || e.code === "Space" || e.code === "KeyE" || e.code === "Escape" || e.code === "KeyF") { e.preventDefault(); keepCatch(); return; }
+    return;   // swallow every other key while the card is up (no pause, no hotbar, no movement toggles)
   }
   if (fishReveal.open) {                                                 // §fishpolish the catch card: Enter/Space keeps, Esc releases
     if (e.code === "Enter" || e.code === "Space" || e.code === "KeyF") { e.preventDefault(); keepFish(); return; }
@@ -4457,6 +4478,7 @@ function isPanelOpen() {
       || ['flex','block'].indexOf(document.getElementById("journal").style.display)>=0
       || document.getElementById("settingspanel").style.display === "block"
       || (typeof fishReveal !== "undefined" && fishReveal.open)
+      || (typeof catchPop !== "undefined" && !!catchPop)
       || (typeof pauseStage !== "undefined" && !!pauseStage);
 }
 // §A6 a modal UI panel is open (satchel, journal, bucket view, inspect, stash, trade, settings, pause, fish reveal),
@@ -4470,6 +4492,7 @@ function menuModalOpen() {
       || ['flex','block'].indexOf(document.getElementById("journal").style.display)>=0
       || document.getElementById("settingspanel").style.display === "block"
       || (typeof fishReveal !== "undefined" && fishReveal.open)
+      || (typeof catchPop !== "undefined" && !!catchPop)
       || (typeof pauseStage !== "undefined" && !!pauseStage);
 }
 function requestLock() {   // re-acquire pointer lock after a gesture (closing a panel); harmless if it fails
@@ -8474,6 +8497,9 @@ const TUNABLES = [
   { k: "APEX_SPEED", min: 0.0, max: 6.0, step: 0.1 },
   { k: "APEX_GRAV_MUL", min: 0.2, max: 1.0, step: 0.02 },
   { k: "EAT_TIME", min: 0.6, max: 3.0, step: 0.1 },
+  { k: "FISH_DRAIN_MUL", min: 0.5, max: 5.0, step: 0.1 },
+  { k: "FISH_REEL_MUL", min: 0.3, max: 1.5, step: 0.05 },
+  { k: "FISH_MAX_RISE", min: 0.4, max: 3.0, step: 0.1 },
 ];
 function DBG_GET(k) { return (k in TUNE) ? TUNE[k] : 0; }     // §CH-D data-driven off the central TUNE object
 function DBG_SET(k, v) { if (k in TUNE) TUNE[k] = v; }
@@ -8895,7 +8921,10 @@ const TUNE = {
   APEX_SPEED: 3.2,                  // §P2 near the top of the arc (|vy| below this) gravity eases → a brief, lighter float.
   APEX_GRAV_MUL: 0.55,             // §P2 gravity multiplier inside the apex-float window (floatier hang time).
   JUMP_BUFFER: 0.11,                // §P2 pressing Space this long before landing still fires the jump on touchdown.
-  EAT_TIME: 1.6,                    // §P2 hold-to-eat duration (s): hold right-click on food this long to finish the meal.
+  EAT_TIME: 1.2,                    // §P2 hold-to-eat duration (s): hold right-click on food this long to finish the meal.
+  FISH_DRAIN_MUL: 2.2,              // §fishfix how fast the reel-gauge needle falls when you stop reeling (bigger = faster).
+  FISH_REEL_MUL: 0.8,               // §fishfix how strongly reeling raises the needle (smaller = gentler / less twitchy).
+  FISH_MAX_RISE: 1.1,               // §fishfix cap on the needle's climb rate (tension/s) so one eager click can't fling it way off.
 };
 // Per-material dig cost from the resolved surface material (NATURAL already resolves to grass/sand/… by height).
 function digCostFor(x, z) {
