@@ -7679,7 +7679,7 @@ let placedBuckets = [];    // §P2 buckets set down in the world, saved per seed
 function activeLanternPos() {
   if (lanternLit()) return lanternPos();
   let best = null, bd = 1e9;
-  for (const L of placedLanterns) { const d = (L.x-cam.pos[0])**2 + (L.z-cam.pos[2])**2; if (d < bd) { bd = d; best = L; } }
+  for (const L of placedLanterns) { if (L.out) continue; const d = (L.x-cam.pos[0])**2 + (L.z-cam.pos[2])**2; if (d < bd) { bd = d; best = L; } }   // §P2 a tide-snuffed lantern casts no light
   return best ? [best.x, best.y + 0.35, best.z] : null;
 }
 function setLanternUniform(U) {   // call after the program + its uniforms are bound
@@ -7690,7 +7690,10 @@ function setLanternUniform(U) {   // call after the program + its uniforms are b
   gl.uniform1f(U.uLanternI, p ? LANTERN_I * lanternFlicker() * indoor : 0);
   if (p) gl.uniform3f(U.uLanternPos, p[0], p[1], p[2]);
 }
+// §P2 you can only set a bucket / lantern down on dry ground (not in water, not on a tide-pool floor)
+function isDryGround(x, z) { return waterDepthAt(x, z) < 0.04; }
 function placeLantern(x, z) {
+  if (!isDryGround(x, z)) { hintText = "Set it down on dry ground"; hintT = 1.4; return; }   // §P2 dry ground only
   if (placedLanterns.length >= 64) { showCard("That's plenty", "You can't set out any more lanterns here."); return; }
   const gy = surfaceAt(x, z).h;
   placedLanterns.push({ x, y: gy, z });
@@ -7706,6 +7709,7 @@ function pickUpLantern(L) {
 // §P2 set the held bucket (with its water + creatures) down on the ground; it saves per seed.
 function placeBucket(x, z) {
   const s = Inv.hotbar[Inv.selected]; if (!s || s.id !== "bucket") return;
+  if (!isDryGround(x, z)) { hintText = "Set it down on dry ground"; hintT = 1.4; return; }   // §P2 dry ground only
   if (placedBuckets.length >= 64) { showCard("That's plenty", "No room to set another bucket down here."); return; }
   placedBuckets.push({ x, y: surfaceAt(x, z).h, z, bk: bkOfSlot(s) });
   Inv.hotbar[Inv.selected] = null; Inv.emit(); syncBucket();   // that one bucket leaves the belt and stays on the ground
@@ -7714,9 +7718,10 @@ function placeBucket(x, z) {
 function pickUpBucket(pb) {
   const i = placedBuckets.indexOf(pb); if (i < 0) return;
   const slot = { id: "bucket", qty: 1, bk: pb.bk };            // the picked-up bucket keeps its water + creatures
-  const bi = Inv.hotbar.indexOf(null);
-  if (bi >= 0) Inv.hotbar[bi] = slot;
-  else { const mi = Inv.main.indexOf(null); if (mi >= 0) Inv.main[mi] = slot; else { showCard("Pack full", "No room to pick up the bucket."); return; } }
+  if (!Inv.hotbar[Inv.selected]) Inv.hotbar[Inv.selected] = slot;   // §P2 to the selected belt slot if it's free,
+  else { const bi = Inv.hotbar.indexOf(null);                       // else the first free belt slot, else the bag
+    if (bi >= 0) Inv.hotbar[bi] = slot;
+    else { const mi = Inv.main.indexOf(null); if (mi >= 0) Inv.main[mi] = slot; else { showCard("Pack full", "No room to pick up the bucket."); return; } } }
   placedBuckets.splice(i, 1); Inv.emit(); syncBucket(); if (onDig) onDig("pickup"); saveWorld();
 }
 // §P2 right-click in the world: pick up a placed lantern/bucket you're aiming at,
@@ -7739,7 +7744,10 @@ function drawPlacedLanterns(view) {
   propUniforms(view); const a = _lanternArr; let n = 0;
   const px = cam.pos[0], pz = cam.pos[2], gl2 = 0.6 + 0.4 * lanternFlicker();   // warm glow tint pulse
   for (const L of placedLanterns) { if ((L.x-px)**2 + (L.z-pz)**2 > DRAW_R*DRAW_R) continue;
-    const o = n*10; a[o]=L.x; a[o+1]=L.y; a[o+2]=L.z; a[o+3]=1.5; a[o+4]=0; a[o+5]=0; a[o+6]=0; a[o+7]=1.0; a[o+8]=0.88*gl2+0.3; a[o+9]=0.6*gl2+0.2; n++; if (n >= 64) break; }
+    const o = n*10; a[o]=L.x; a[o+1]=L.y; a[o+2]=L.z; a[o+3]=1.5; a[o+4]=0; a[o+5]=0; a[o+6]=0;
+    if (L.out) { a[o+7]=0.5; a[o+8]=0.55; a[o+9]=0.6; }   // §P2 snuffed by the tide: a cold, dim pail (no warm glow)
+    else { a[o+7]=1.0; a[o+8]=0.88*gl2+0.3; a[o+9]=0.6*gl2+0.2; }
+    n++; if (n >= 64) break; }
   if (n) placedLanternDyn.draw(a, n);
 }
 // §P2 buckets set down in the world: the pail, a little water surface if it holds water, and a
@@ -9599,6 +9607,27 @@ function bucketPourWater() {
   if (!bucket.water) return;
   bucket.water = false; if (onDig) onDig("splash"); saveState();
   if (bucketLook.open) updateBucketLook();
+}
+// §P2 the tide reaching a set-down bucket or lantern: the bucket's creatures swim out into the risen sea with a
+// splash and the pail fills with seawater (it stays put); a covered lantern is snuffed out, and relights when the
+// tide falls away. Each transition fires once (flags), so it's cheap to run every frame.
+function updatePlacedTide() {
+  for (const pb of placedBuckets) {
+    const flooded = waterDepthAt(pb.x, pb.z) > 0.18;
+    if (flooded && !pb.flooded) {
+      pb.flooded = true;
+      for (const c of pb.bk.creatures) {                 // creatures swim / crawl out into the water that reached them
+        const e = spawnFromBucket(c, pb.x + (rng()-0.5)*1.2, pb.z + (rng()-0.5)*1.2, { hr: 6 });
+        if (e && DUMP_CRAWL[c.t]) e.returning = true;
+      }
+      pb.bk.creatures = []; pb.bk.water = true;          // the sea fills the pail; the bucket itself stays put
+      if (onDig) onDig("splash");
+      sparkle(pb.x, waterSurfaceAt(pb.x, pb.z) + 0.1, pb.z, [0.6, 0.85, 0.95], 8);
+      spawnSand(pb.x, surfaceAt(pb.x, pb.z).h + 0.1, pb.z, 8, [0.72, 0.86, 0.96]);
+      saveWorld();
+    } else if (!flooded && pb.flooded) pb.flooded = false;   // uncovered again at low tide (ready to flood next high tide)
+  }
+  for (const L of placedLanterns) L.out = waterDepthAt(L.x, L.z) > 0.12;   // §P2 the tide snuffs a covered lantern
 }
 /* ===================================================================== *
  * § 11.6  MINI 3D VIEWS, bucket overview & close-up inspect, drawn with
@@ -12836,7 +12865,7 @@ function frame(now) {
    }
   }
 
-  if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateFishing(dt); updateCatchCine(dt); updateEat(dt); }   // §14A/B/C + §Fishing + §P2 eating
+  if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateFishing(dt); updateCatchCine(dt); updateEat(dt); updatePlacedTide(); }   // §14A/B/C + §Fishing + §P2 eating + §P2 tide over placed buckets/lanterns
   updateCatchPop(dt);   // §catch5 the non-blocking catch card's own timer (runs even in menus, so it fades on its own)
   updateFade(dt);
   safetyCheck(dt);
@@ -13121,19 +13150,33 @@ function frame(now) {
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
+    if (!buildMode && curTarget && curTarget.kind === "placedbucket") {   // §P2 placed-bucket tooltip: "Bucket (N)" with its creature count
+      const pb = curTarget.obj, n = (pb.bk && pb.bk.creatures) ? pb.bk.creatures.length : 0;
+      promptEl.textContent = `Bucket (${n}) · ${IS_TOUCH ? "tap to open" : "click to open, right-click to pick up"}`;
+      promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
+      crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
+    }
+    if (!buildMode && curTarget && curTarget.kind === "lantern") {   // §P2 placed-lantern tooltip
+      const L = curTarget.obj;
+      promptEl.textContent = `Lantern${L && L.out ? " (out)" : ""} · ${IS_TOUCH ? "tap to pick up" : "right-click to pick up"}`;
+      promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
+      crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
+    }
   } else { promptEl.style.display = "none"; crossEl.className = ""; crossEl.style.display = "none"; curTarget = null; }
   const titleUp = (mode === "preview" || mode === "intro");       // hide in-world readouts behind the title
-  hud.style.display = titleUp ? "none" : "block";
+  // §P2 the seed / tide / mode / POI readout is now a DEBUG-only bottom-left block (the clean screen shows none of it)
+  hud.style.display = (titleUp || !debugMode) ? "none" : "block";
   const helpEl = document.getElementById("help"); if (helpEl) helpEl.style.display = titleUp ? "none" : "";
-  const tc = document.getElementById("tidecurve"); if (tc) tc.style.display = titleUp ? "none" : "";
-  const ti = tideInfo();
-  const mins = Math.floor(ti.tToLow / 60), secs = Math.floor(ti.tToLow % 60);
-  if (!titleUp) hud.textContent =
-    `seed ${SEED_STR}  ·  ${archetype}\n` +
-    `tide ${ti.rising ? "▲ rising" : "▼ falling"}${ti.minusNow ? " ·· MINUS" : ""}  ·  low in ${mins}:${String(secs).padStart(2, "0")}` +
-    `${clock.speed > 1 ? `  (${clock.speed}×)` : ""}${clock.paused ? "  (paused)" : ""}\n` +
-    `mode ${mode}  ·  POIs ${POIS.map((p) => p.type).join(", ")}`;
-  if (mode === "walk") drawTideCurve();
+  const tc = document.getElementById("tidecurve"); if (tc) tc.style.display = (titleUp || !debugMode) ? "none" : "";
+  if (!titleUp && debugMode) { const ti = tideInfo();
+    const mins = Math.floor(ti.tToLow / 60), secs = Math.floor(ti.tToLow % 60);
+    hud.textContent =
+      `seed ${SEED_STR}  ·  ${archetype}\n` +
+      `tide ${ti.rising ? "▲ rising" : "▼ falling"}${ti.minusNow ? " ·· MINUS" : ""}  ·  low in ${mins}:${String(secs).padStart(2, "0")}` +
+      `${clock.speed > 1 ? `  (${clock.speed}×)` : ""}${clock.paused ? "  (paused)" : ""}\n` +
+      `mode ${mode}  ·  POIs ${POIS.map((p) => p.type).join(", ")}`;
+  }
+  if (mode === "walk" && debugMode) drawTideCurve();
   updateBucketPanel();
   updateBucketLook();
   updateInspectView();
