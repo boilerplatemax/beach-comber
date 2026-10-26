@@ -3012,11 +3012,21 @@ const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, prevFeetY: 0, sprintin
    // kept as a constant-false so existing reads are harmless
 // §P1 the player standing height here (terrain, or a fallen trunk you're on)
 // §P1 grounded probe with a few cm of tolerance, so bumps and slope changes don't read as airborne
-// §strip jump functions (queueJump/canJumpNow/doJump/tryJump) removed.
+// §P2 jump input buffer: a Space press sets this; the frame loop fires a jump while it's >0 and you can jump.
+let jumpBuffer = 0;
+// §P2 spring off the ground. Only the frame loop calls this (grounded or inside the coyote window).
+function doJump() {
+  player.vy = TUNE.JUMP_SPEED; player.airborne = true; player.coyote = 0; jumpBuffer = 0;
+  camYVel = Math.min(camYVel, -2.4);        // §P2 a quick crouch-dip on take-off; the camera spring recovers it (springy feel)
+  if (onDig) onDig("pat");                  // §P2 a soft take-off scuff
+}
 // §P1 ONE fixed physics step, the only place gravity + ground contact write player.feetY.
 function stepVertical(standH, g) {
   if (player.airborne) {
-    player.vy -= (player.vy > 0 ? GRAVITY_UP : GRAVITY_DOWN) * PHYS_STEP;
+    // §P2 apex float: ease gravity near the top of the arc (|vy| small) for a brief, lighter hang
+    let grav = player.vy > 0 ? GRAVITY_UP : GRAVITY_DOWN;
+    if (Math.abs(player.vy) < TUNE.APEX_SPEED) grav *= TUNE.APEX_GRAV_MUL;
+    player.vy -= grav * PHYS_STEP;
     player.feetY += player.vy * PHYS_STEP;
     if (player.vy <= 0 && player.feetY <= standH) {                        // ground contact
       const fall = -player.vy;
@@ -3987,6 +3997,9 @@ addEventListener("keydown", (e) => {
     if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); if (heave) heaveStrike(); else pryStrike(); return; }
     if (e.code === "Escape") { if (heave) cancelHeave(); else cancelPry(); return; }
   }
+  // §P2 jump: Space buffers a jump (the frame loop fires it when grounded / within coyote). Swimming uses
+  // Space for swim-up, so skip it there. Never interrupts a swing or any action; you can jump mid-action.
+  if (e.code === "Space" && !e.repeat && mode === "walk" && !pauseStage && !isPanelOpen() && !player.swimming) { e.preventDefault(); jumpBuffer = TUNE.JUMP_BUFFER; }
   if (e.code === "KeyG") setGFXCustom("dither", !GFX.dither);   // §13.6 quick dither toggle (syncs graphics settings)
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE" && !e.repeat && !pauseStage) { if (mode === "walk" || menuIsOpen()) toggleMenu(); }   // §2 one menu key: Satchel / Bucket / Journal
@@ -4009,7 +4022,10 @@ addEventListener("keydown", (e) => {
     if (e.code === "KeyG") { fpDbg = !fpDbg; const n = (typeof validateFootprints === "function") ? validateFootprints() : 0; showCard("Debug: spawn footprints", fpDbg ? `Faint = footprints, red = overlaps (${n}).` : "Off."); }   // §P3 footprint / overlap overlay
   }
 });
-addEventListener("keyup", (e) => { keys[e.code] = false; });
+addEventListener("keyup", (e) => { keys[e.code] = false;
+  // §P2 variable jump height: letting go of Space while still rising clips the climb short
+  if (e.code === "Space" && player.airborne && player.vy > 0) player.vy *= TUNE.JUMP_CUT;
+});
 
 canvas.addEventListener("mousedown", (e) => {
   if (IS_TOUCH) return;
@@ -8352,6 +8368,10 @@ const TUNABLES = [
   { k: "WRONG_TOOL_MUL", min: 0.1, max: 1.0, step: 0.02 },
   { k: "HARVEST_SPEED", min: 0.5, max: 2.5, step: 0.05 },
   { k: "BREAK_IGNORE_T", min: 0.0, max: 1.0, step: 0.05 },
+  { k: "JUMP_SPEED", min: 4.0, max: 11.0, step: 0.1 },
+  { k: "JUMP_CUT", min: 0.1, max: 1.0, step: 0.02 },
+  { k: "APEX_SPEED", min: 0.0, max: 6.0, step: 0.1 },
+  { k: "APEX_GRAV_MUL", min: 0.2, max: 1.0, step: 0.02 },
 ];
 function DBG_GET(k) { return (k in TUNE) ? TUNE[k] : 0; }     // §CH-D data-driven off the central TUNE object
 function DBG_SET(k, v) { if (k in TUNE) TUNE[k] = v; }
@@ -8763,6 +8783,11 @@ const TUNE = {
   WRONG_TOOL_MUL: 0.34,             // §P2 effort per strike with the wrong tool (≈ 1/3 → ~3x the hits). 1 = right tool.
   HARVEST_SPEED: 1.33,              // §P3 damage per strike on trees/stumps/boulders (1.33 ≈ 25% fewer hits). 1 = old pace.
   BREAK_IGNORE_T: 0.4,              // §P3 after an object breaks, ignore terrain hits until mouse-up or this long
+  JUMP_SPEED: 7.6,                  // §P2 take-off velocity (m/s). Peak height ≈ v²/(2·GRAVITY_UP) ≈ 1.2 m.
+  JUMP_CUT: 0.42,                   // §P2 variable height: releasing Space while rising scales the remaining up-velocity.
+  APEX_SPEED: 3.2,                  // §P2 near the top of the arc (|vy| below this) gravity eases → a brief, lighter float.
+  APEX_GRAV_MUL: 0.55,             // §P2 gravity multiplier inside the apex-float window (floatier hang time).
+  JUMP_BUFFER: 0.11,                // §P2 pressing Space this long before landing still fires the jump on touchdown.
 };
 // Per-material dig cost from the resolved surface material (NATURAL already resolves to grass/sand/… by height).
 function digCostFor(x, z) {
@@ -12710,7 +12735,11 @@ function frame(now) {
     const standH = Math.max(g.h, trunkHeightAt(player.x, player.z));   // stand on a fallen trunk (or terrain)
     // coyote window + buffered jump
     player.coyote = player.airborne ? Math.max(0, player.coyote - dt) : COYOTE_TIME;
-    // §strip buffered-jump firing removed
+    // §P2 buffered jump: a recent Space press fires once you're grounded (or within the coyote window),
+    // so a press landing a hair early still jumps. Not while swimming (Space is swim-up there).
+    if (jumpBuffer > 0) jumpBuffer = Math.max(0, jumpBuffer - dt);
+    const canJump = !player.swimming && player.vy <= 0.01 && (!player.airborne || player.coyote > 0);
+    if (jumpBuffer > 0 && canJump) doJump();
     // §P1 fixed-timestep vertical sim (feetY is the single owner of player Y); render interpolates between steps
     physAcc += dt; let nSteps = 0;
     while (physAcc >= PHYS_STEP && nSteps < 5) { player.prevFeetY = player.feetY; stepVertical(standH, g); physAcc -= PHYS_STEP; nSteps++; }
