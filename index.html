@@ -3813,7 +3813,7 @@ canvas.addEventListener("mousedown", (e) => {
   if (mode === "walk" && selectedTool() === "rod" && !isPanelOpen()) { if (softTargetUnderCrosshair()) { useHeld = true; clickAt(0,0); return; } rodPressStart(); return; }        // §Fishing charge/hook/reel
   useHeld = true; clickAt(0, 0);                 // §13.2 hold to keep swinging at a work target
 });
-addEventListener("mouseup", (e) => { if (e.button === 0) { useHeld = false; rodPressEnd(); } });
+addEventListener("mouseup", (e) => { if (e.button === 0) { useHeld = false; breakIgnoreUntil = 0; rodPressEnd(); } });   // §P3 release ends the post-break terrain lockout early
 // §13.2 scroll wheel cycles belt slots (skips empties)
 addEventListener("wheel", (e) => {
   if (mode !== "walk" || isPanelOpen()) return;
@@ -8171,7 +8171,7 @@ function targetAlongRay(r, sticky) {
   // §tools big objects read generously, any part of the trunk OR the crown within reach grabs the whole tree
   for (const o of treeObjs) { if (o.gone || o.falling) continue; const gy = surfaceAt(o.x, o.z).h;
     if (o.fallen) { const [cx, cz] = fallenCrownPos(o);                                   // the whole lying length: stump end → crown end
-      capsule(o, "fallentree", (o.x+cx)/2, (o.z+cz)/2, o.x, gy+0.3, o.z, cx, surfaceAt(cx, cz).h+0.4, cz, 1.1 + o.scale*0.02); }
+      capsule(o, "fallentree", (o.x+cx)/2, (o.z+cz)/2, o.x, gy+0.3, o.z, cx, surfaceAt(cx, cz).h+0.5, cz, 1.5 + o.scale*0.08); }   // §P3 a fatter capsule down the whole trunk, easy to hit anywhere
     else { capsule(o, "tree", o.x, o.z, o.x, gy-0.3, o.z, o.x, gy+o.scale*1.05, o.z, 1.0 + o.scale*0.07);   // tall, fat trunk capsule (full height)
       sphere(o, "tree", o.x, o.z, o.scale*0.92, o.scale*0.5); } }                          // + a generous crown sphere up top
   for (const o of rockObjs) { if (o.gone) continue; const gy = surfaceAt(o.x, o.z).h;
@@ -8248,6 +8248,12 @@ function useToolOnTarget(t) {
   return false;
 }
 function interactTarget(t) { if (!t) return; if (reachForTool(t) === "fail") return; if (useToolOnTarget(t)) setWorkLock(t); }   // the bare interact key (E)
+// §P3 after an object (tree / stump / boulder / driftwood) breaks, swallow terrain hits for a
+// moment so a still-held or rapid click doesn't immediately dig a hole where it stood. Cleared
+// early on mouse/touch release.
+let breakIgnoreUntil = 0;
+function objectBroke() { breakIgnoreUntil = performance.now() / 1000 + (TUNE.BREAK_IGNORE_T || 0); }
+function breakLockActive() { return performance.now() / 1000 < breakIgnoreUntil; }
 function clickAt(ndcx, ndcy) {
   if (mode !== "walk") return;
   if (heave) { heaveStrike(); return; }             // §21D a click is a heave strike while the boulder mini-game is up
@@ -8256,6 +8262,7 @@ function clickAt(ndcx, ndcy) {
   const tgt = (ndcx === 0 && ndcy === 0) ? effectiveTarget() : targetAlongRay(r);   // §13.2 work lock keeps the locked entity
   if (tgt && reachForTool(tgt) === "fail") return;   // §11.3 reach for the right tool (or react if we own none)
   if (useToolOnTarget(tgt)) { setWorkLock(tgt); return; }
+  if (breakLockActive()) return;                     // §P3 just broke something → don't chew up the terrain under it
   // otherwise use the equipped tool on the ground / object under the crosshair, within reach
   const pt = rayGround(ndcx, ndcy); if (!pt) return;
   if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return;   // too far: do nothing
@@ -10136,7 +10143,7 @@ function fallRestLean(o) {
   return Math.max(0.5, Math.min(Math.PI/2 + 0.9, lean - 0.06));   // a hair short so it rests on its underside, not its centre
 }
 function startFall(o) {
-  o.falling = true; o.fall = 0;
+  o.falling = true; o.fall = 0; objectBroke();                 // §P3 don't dig the spot where the tree just stood
   o.leanDir = Math.atan2(o.z - player.z, o.x - player.x);      // topple away from the player
   o.treeScale = o.scale;
   o.restLean = fallRestLean(o);                                // §R4 precompute the resting pose before animating
@@ -10240,7 +10247,8 @@ function stumpStrike(st) {
   if (st.hp <= 0.001) {
     for (let i = 0, n = 1 + (rng()*2|0); i < n; i++) spawnFind("log", st.x + (rng()-0.5), st.z + (rng()-0.5));
     const i = stumps.indexOf(st); if (i >= 0) stumps.splice(i, 1);
-    applyDig(st.x, st.z, 1.0, Math.atan2(player.z - st.z, player.x - st.x));    // leaves a small hole that heals
+    applyDig(st.x, st.z, 1.2, Math.atan2(player.z - st.z, player.x - st.x));    // §P3 breaking a stump digs the ground beneath it (leaves a healing hole)
+    objectBroke();                                                             // §P3 then ignore terrain hits briefly
     saveWorld();
   }
 }
@@ -10303,7 +10311,7 @@ function mineObj(o) {                                           // one pickaxe s
     for (let i = 0; i < 2 + (rng()*2|0); i++) dropRubble(o.x+(rng()-0.5)*2.5, o.z+(rng()-0.5)*2.5, 0.5+rng()*0.5);
   }
   if (o.hp <= 0.001) {                                         // destroyed completely, nothing left but Stone rubble
-    o.gone = true; o.scale = 0; setRockInstance(o);
+    o.gone = true; o.scale = 0; setRockInstance(o); objectBroke();   // §P3 don't dig where the boulder was
     if (o.coll) { o.coll.r = 0; rebuildCollHash(); }
     // §menu mining a rock that still has a cluster gives those barnacles / oysters too
     if (o.barn && o.barn.amt > 0) { for (let i = 0; i < o.barn.amt; i++) spawnFind("barnacle", o.x+(rng()-0.5)*1.4, o.z+(rng()-0.5)*1.4); o.barn.amt = 0; }
@@ -10407,7 +10415,7 @@ function breakDriftwood(d) {
     if (selectedTool() !== "axe") { tooTiredOrCant(d.x, d.z, false); return true; }   // §P2 a whole log still needs the axe
     if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
     shovelSwing = 1; spendStamina(TUNE.CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
-    d.gone = true; const nSticks = 2 + (rng()*3|0); Inv.add("stick", nSticks); discovered.add("f_stick");
+    d.gone = true; objectBroke(); const nSticks = 2 + (rng()*3|0); Inv.add("stick", nSticks); discovered.add("f_stick");
     spawnSand(d.x, surfaceAt(d.x,d.z).h + 0.2, d.z, 8, [0.6,0.5,0.4]);
     showCard("Driftwood", "Chopped into " + nSticks + " sticks."); saveWorld();
   } else {                                        // a small piece → pick it up directly
