@@ -3991,6 +3991,7 @@ addEventListener("keydown", (e) => {
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE" && !e.repeat && !pauseStage) { if (mode === "walk" || menuIsOpen()) toggleMenu(); }   // §2 one menu key: Satchel / Bucket / Journal
   if (e.code === "KeyF" && !e.repeat && !pauseStage && !isPanelOpen() && !(debugMode && e.shiftKey)) { interact(); }   // §2 the action key: pick up / inspect / interact
+  if (e.code === "KeyQ" && !e.repeat && !pauseStage && !isPanelOpen() && mode === "walk") { invDrop(INV_SLOTS + Inv.selected, true); }   // §satchel Minecraft-style drop: Q drops one of the held (selected belt) item
   if (e.code === "Tab") { e.preventDefault(); if (!pauseStage && (mode === "walk" || menuIsOpen())) cycleMenuTab(1); }   // §2 switch tabs within the menu (opens it on the last tab if closed)
   if (e.code === "KeyP" && !e.repeat) { if (pauseStage) closePause(); else if (mode === "walk" && !isPanelOpen()) openPause(); }   // §R4 P pauses/resumes (auto-pickup now lives in Settings)
   if (/^Digit[1-8]$/.test(e.code)) selectHotbar(+e.code.slice(5) - 1);
@@ -7935,10 +7936,12 @@ function buildPanels() {
   renderHotbar();
   applyBagTexture();
   const panel = document.getElementById("invpanel");
-  panel.addEventListener("pointerdown", invPointerDown);
+  panel.addEventListener("pointerdown", invPointerDown);       // §P2 touch drag (desktop uses the mouse handlers below)
   document.addEventListener("pointermove", invPointerMove);
   document.addEventListener("pointerup", invPointerUp);
-  panel.addEventListener("contextmenu", (e) => { e.preventDefault(); const s = e.target.closest(".islot"); if (s && s.dataset.idx !== undefined && Inv.cell(+s.dataset.idx)) showContextMenu(+s.dataset.idx, e.clientX, e.clientY); });
+  panel.addEventListener("mousedown", invMouseDown);           // §P2 desktop: left carry / right actions-menu
+  document.addEventListener("mousemove", invMouseMove);
+  panel.addEventListener("contextmenu", (e) => e.preventDefault());   // §P2 the menu opens from invMouseDown; just stop the browser menu
   document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#ctxmenu")) hideContextMenu(); }, true);
   const bag = document.getElementById("bagBtn");
   // §mob9 the circular backpack button is retired on mobile (the on-screen "Bag" button in the control column
@@ -7951,7 +7954,9 @@ function buildPanels() {
     const x = document.createElement("button"); x.id = "combinedClose"; x.type = "button"; x.setAttribute("aria-label", "Close"); x.textContent = "✕";
     comb.appendChild(x);
     x.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); closeMenu(); });
-    comb.addEventListener("pointerdown", (e) => { if (e.target === comb) closeMenu(); });   // tap the dimmed area outside the panels
+    comb.addEventListener("pointerdown", (e) => { if (e.target !== comb) return;   // the dimmed area outside the panels
+      if (carry) { carryDropWorld(); return; }   // §P2 clicking outside while carrying drops it in front
+      closeMenu(); });
   }
 }
 // procedural canvas-bag texture (noise weave + dashed stitched seam), matching the palette
@@ -8043,6 +8048,7 @@ function openBucketMenu(bk) {
   uiUnlock();
 }
 function closeMenu() {   // §menu also clears any creature close-up so it reopens clean
+  if (carry) carryReturn();   // §satchel return a carried item to the pack on close
   if (typeof SND !== "undefined") SND.play("menu_close");
   if (typeof inspect !== "undefined" && inspect.open) { inspect.open = false; if (inspect.el) inspect.el.style.display = "none"; }
   invOpen = false; bucketLook.open = false; bucketLook.bk = null;
@@ -8068,7 +8074,7 @@ function renderInventory() {
   let html = `<div class="ihead"><h2>Satchel</h2></div>`;
   html += `<div class="compartment"><div class="clabel">Bag</div><div class="igrid">${bag}</div></div>`;
   html += `<div class="compartment"><div class="clabel">Belt</div><div class="igrid hot">${hot}</div></div>`;
-  if ((menuHintShown || 0) < INV_HINT_MAX) html += `<div class="ihint">${IS_TOUCH ? "tap for actions, drag to move" : "click for actions, drag to move, shift-click to the belt"}</div>`;
+  if ((menuHintShown || 0) < INV_HINT_MAX) html += `<div class="ihint">${IS_TOUCH ? "tap for actions, drag to move" : "left-click to pick up / place, right-click for actions, shift-click to the belt"}</div>`;
   const p = document.getElementById("invpanel"); p.innerHTML = html;
 }
 /* ---- item actions (§10.3) ---- */
@@ -8140,6 +8146,7 @@ function showTip(idx, x, y) { const c = Inv.cell(idx); if (!c) { hideTip(); retu
   t.style.display = "block"; t.style.left = Math.min(innerWidth - 210, x + 16) + "px"; t.style.top = (y + 16) + "px"; }
 function hideTip() { document.getElementById("itip").style.display = "none"; }
 function invPointerDown(e) {
+  if (e.pointerType && e.pointerType !== "touch") return;   // §P2 desktop uses the mouse carry system below; this drag path is touch-only
   const slot = e.target.closest(".islot"); if (!slot || slot.dataset.idx === undefined) return;
   const idx = +slot.dataset.idx, cell = Inv.cell(idx); if (!cell) return;
   e.preventDefault(); hideTip(); hideContextMenu();
@@ -8148,6 +8155,7 @@ function invPointerDown(e) {
   showGhost(cell, e.clientX, e.clientY);
 }
 function invPointerMove(e) {
+  if (e.pointerType && e.pointerType !== "touch") return;   // §P2 touch-only; the mouse uses invMouseMove
   if (!drag) {
     if (!invOpen) return;
     const slot = e.target.closest && e.target.closest(".islot");
@@ -8160,6 +8168,7 @@ function invPointerMove(e) {
   const t = document.elementFromPoint(e.clientX, e.clientY), ts = t && t.closest && t.closest(".islot"); if (ts) ts.classList.add("dragover");
 }
 function invPointerUp(e) {
+  if (e.pointerType && e.pointerType !== "touch") return;   // §P2 touch-only
   if (!drag) return; hideGhost();
   const from = drag.from, moved = drag.moved; drag = null;
   document.querySelectorAll(".islot.dragover").forEach((s) => s.classList.remove("dragover"));
@@ -8170,6 +8179,65 @@ function invPointerUp(e) {
   else if (panel.contains(t)) { const m = Inv.main.indexOf(null); if (m >= 0) invMove(from, m); }   // dropped in the bag → first free pocket
   else invDrop(from, false);                                  // released outside → drop the stack
   if (invOpen) renderInventory();
+}
+
+/* ---- §P2 Minecraft-style satchel clicks (desktop, mouse): left picks up / places / swaps on the
+   cursor, right opens the actions menu, shift+left quick-moves belt↔bag. ---- */
+let carry = null;   // { id, qty } lifted onto the cursor, or null
+function carryGhost(x, y) {
+  const g = document.getElementById("dragGhost");
+  if (!carry) { g.style.display = "none"; return; }
+  const it = ITEMS[carry.id];
+  g.innerHTML = `<img src="${it.icon}" style="width:100%;height:100%;image-rendering:pixelated">${carry.qty > 1 ? `<span>${carry.qty}</span>` : ""}`;
+  g.style.left = x + "px"; g.style.top = y + "px"; g.style.display = "block";
+}
+function placeCarryInto(idx) {
+  const b = Inv.cell(idx);
+  if (!b) { Inv.setCell(idx, { id: carry.id, qty: carry.qty }); carry = null; }
+  else if (b.id === carry.id && ITEMS[carry.id] && ITEMS[carry.id].stackable) {
+    const room = (ITEMS[carry.id].maxStack || 99) - b.qty, move = Math.min(room, carry.qty);
+    b.qty += move; carry.qty -= move; if (carry.qty <= 0) carry = null;
+  } else { const tmp = { id: b.id, qty: b.qty }; Inv.setCell(idx, { id: carry.id, qty: carry.qty }); carry = tmp; }   // swap
+  Inv.emit();
+}
+function carryReturn() {   // put the carried stack back into the pack (first free slot); drop if it can't fit and is droppable
+  if (!carry) return;
+  const free = [];
+  for (let i = 0; i < INV_SLOTS; i++) if (!Inv.main[i]) free.push(i);
+  for (let i = 0; i < HOTBAR_SLOTS; i++) if (!Inv.hotbar[i]) free.push(INV_SLOTS + i);
+  if (free.length) { Inv.setCell(free[0], { id: carry.id, qty: carry.qty }); carry = null; Inv.emit(); }
+  else if (FINDS[carry.id]) { dropItemWorld(carry.id, carry.qty); carry = null; }
+  hideGhost();
+}
+function carryDropWorld() {   // clicking outside the panel while carrying drops it in front (tools can't litter → returned)
+  if (!carry) return;
+  if (FINDS[carry.id]) { dropItemWorld(carry.id, carry.qty); carry = null; hideGhost(); }
+  else carryReturn();
+  if (invOpen) renderInventory();
+}
+function invMouseDown(e) {
+  if (e.button !== 0 && e.button !== 2) return;
+  const slot = e.target.closest && e.target.closest(".islot");
+  if (!slot || slot.dataset.idx === undefined) return;
+  e.preventDefault(); hideTip();
+  const idx = +slot.dataset.idx;
+  if (e.button === 2) {   // right click → actions menu (only when not carrying)
+    hideContextMenu();
+    if (!carry && Inv.cell(idx)) showContextMenu(idx, e.clientX, e.clientY);
+    return;
+  }
+  hideContextMenu();
+  if (e.shiftKey && !carry) { if (Inv.cell(idx)) { quickMove(idx); if (invOpen) renderInventory(); } return; }   // shift+left → belt↔bag
+  if (carry) placeCarryInto(idx);
+  else { const c = Inv.cell(idx); if (c) { carry = { id: c.id, qty: c.qty }; Inv.setCell(idx, null); Inv.emit(); } }   // pick up the stack
+  carryGhost(e.clientX, e.clientY);
+  if (invOpen) renderInventory();
+}
+function invMouseMove(e) {
+  if (carry) { carryGhost(e.clientX, e.clientY); hideTip(); return; }
+  if (!invOpen) return;
+  const slot = e.target.closest && e.target.closest(".islot");
+  if (slot && slot.dataset.idx !== undefined && Inv.cell(+slot.dataset.idx)) showTip(+slot.dataset.idx, e.clientX, e.clientY); else hideTip();
 }
 
 /* ---- debug panel ---- */
