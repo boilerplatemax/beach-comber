@@ -2526,33 +2526,12 @@ uniform vec3 uCamPos, uSunDir, uZenith, uHorizon, uWarm;
 uniform float uTime, uFogDensity, uFogNear, uWaterLevel, uWaterQ;
 uniform sampler2D uHeight, uFilled;
 ${SKY_GLSL}
-// §smoothline manual 2x2 bilinear sample of the heightmap, done in the FRAGMENT shader only. This smooths the
-// shoreline into a continuous contour on devices without OES_texture_float_linear (iOS/Safari), where the
-// heightmap is sampled NEAREST and the waterline would otherwise step along the texel grid. Fragment texture
-// fetches are cheap; we deliberately do NOT add any taps in the vertex shader (vertex texture fetch is very
-// slow on mobile GPUs and was the real cost of the earlier laggy version).
-float sampleH(sampler2D tex, vec2 uv) {
-  vec2 res = vec2(${GRID}.0);
-  vec2 st = uv * res - 0.5;
-  vec2 f = fract(st);
-  vec2 b = (floor(st) + 0.5) / res;
-  float px = 1.0 / res.x, py = 1.0 / res.y;
-  float h00 = texture(tex, b).r;
-  float h10 = texture(tex, b + vec2(px, 0.0)).r;
-  float h01 = texture(tex, b + vec2(0.0, py)).r;
-  float h11 = texture(tex, b + vec2(px, py)).r;
-  return mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
-}
 void main() {
   vec2 uv = clamp((vWorld.xz + ${HALF_F}) / ${WORLD_F}, 0.0, 1.0);
-  float terr = sampleH(uHeight, uv);              // §smoothline bilinear → continuous waterline, no tile steps
-  float rim = texture(uFilled, uv).r;             // §smoothline NEAREST on purpose: bilinear-ing the fill-level DEM
-  // smears it up toward the land near the coast, which spikes local and paints the shallow shoreline with the
-  // DEEP water colour (a dark band) and stops it filling. In the open-water region local is just uWaterLevel, so
-  // the smooth waterline comes entirely from the bilinear terrain above; rim only matters inland (pools), where
-  // NEAREST is correct. depth below is therefore the true shallow depth again.
+  float terr = texture(uHeight, uv).r;
+  float rim = texture(uFilled, uv).r;
   float local = max(uWaterLevel, rim);
-  if (terr > local - 0.02) discard;               // ground above the local surface (opaque hard edge, as before)
+  if (terr > local - 0.02) discard;               // ground above the local surface
   float depth = local - terr;
 
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));  // faceted wave normals
