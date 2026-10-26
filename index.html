@@ -1341,9 +1341,12 @@ function computeBasins() {
       done[ni] = 1; push(filled[ni], ni);
     }
   }
-  // §12A drop any trapped water sitting above the shore band, tide pools and seeping
-  // water belong in the intertidal / shore zone, never as ponds up the mountain.
-  for (let i = 0; i < N; i++) if (heightmap[i] > SHORE_WATER_MAX) filled[i] = heightmap[i];
+  // §12A drop any trapped water sitting above the shore band: tide pools and seeping water belong
+  // in the intertidal / shore zone, never as ponds up the island. §worldbug this now tests the water
+  // SURFACE (filled), not just the ground height, so a deep inland bowl whose rim dams water well
+  // above the tide line (the "floating lake" that sat proud of gently sloped land) is drained to dry
+  // terrain too. Shore tide pools (surface at or below the spring-high band) are untouched.
+  for (let i = 0; i < N; i++) if (filled[i] > SHORE_WATER_MAX) filled[i] = heightmap[i];
   extractPools();
 }
 
@@ -5257,13 +5260,11 @@ function emitPOI(m, poi) {
       m.col.push(lm.col[i], lm.col[i+1], lm.col[i+2]);
     }
   };
+  // §worldbug cairn, tide-pool and sea-cave rocks are now emitted as breakable dynamic rocks in
+  // seedLandmarkRocks(), not baked into this static mesh, so they can be mined. Only the hut and pier
+  // (non-rock landmarks) stay in the POI mesh.
   if (poi.type === "cairn") {
-    const lm = Mesh(); let r = 1.3, y = 0;
-    const rand = mulberry32((x * 131 + z * 977) >>> 0);
-    for (let k = 0; k < 6; k++) { const mm = Mesh(); mRock(mm, rand, [0.5,0.48,0.45]);
-      for (let i=0;i<mm.pos.length;i+=3){ lm.pos.push(mm.pos[i]*r, mm.pos[i+1]*r*0.6+y, mm.pos[i+2]*r); lm.col.push(mm.col[i],mm.col[i+1],mm.col[i+2]); }
-      y += r * 0.7; r *= 0.82; }
-    put(lm, x, g, z, 0);
+    return;   // the cairn's stacked stones are spawned as breakable rocks instead
   } else if (poi.type === "hut") {
     const lm = Mesh(), wood = [0.35,0.28,0.2], roof = [0.25,0.22,0.2];
     mBox(lm, 0, 1.4, 0, 2.2, 1.4, 1.8, wood);
@@ -5277,18 +5278,7 @@ function emitPOI(m, poi) {
     mBox(lm, 0, 2.3, 7.5, 1.7, 0.12, 8, wood);
     const dir = Math.atan2(-x, z);               // point out to sea
     put(lm, x, Math.max(g, -1), z, dir);
-  } else if (poi.type === "tidepools" || poi.type === "seacave") {
-    const lm = Mesh(), rock = [0.44,0.43,0.42];
-    const rand = mulberry32((x * 71 + z * 233) >>> 0);
-    const n = poi.type === "seacave" ? 5 : 9;
-    for (let k = 0; k < n; k++) {
-      const mm = Mesh(); mRock(mm, rand, rock);
-      const s = 1.2 + rand() * 2.2, ox = (rand()-0.5)*9, oz = (rand()-0.5)*9;
-      const oy = poi.type === "seacave" ? 2 + rand()*3 : 0;
-      for (let i=0;i<mm.pos.length;i+=3){ lm.pos.push(mm.pos[i]*s+ox, mm.pos[i+1]*s+oy, mm.pos[i+2]*s+oz); lm.col.push(mm.col[i],mm.col[i+1],mm.col[i+2]); }
-    }
-    put(lm, x, g, z, 0);
-  }
+  }   // §worldbug tidepools / seacave rocks moved to seedLandmarkRocks() (breakable)
 }
 
 /* --------------------------------------------------------------------- *
@@ -8636,7 +8626,7 @@ function targetAlongRay(r, sticky) {
       capsule(o, "fallentree", (o.x+cx)/2, (o.z+cz)/2, o.x, gy+0.3, o.z, cx, surfaceAt(cx, cz).h+0.5, cz, 1.5 + o.scale*0.08); }   // §P3 a fatter capsule down the whole trunk, easy to hit anywhere
     else { capsule(o, "tree", o.x, o.z, o.x, gy-0.3, o.z, o.x, gy+o.scale*1.05, o.z, 1.0 + o.scale*0.07);   // tall, fat trunk capsule (full height)
       sphere(o, "tree", o.x, o.z, o.scale*0.92, o.scale*0.5); } }                          // + a generous crown sphere up top
-  for (const o of rockObjs) { if (o.gone) continue; const gy = surfaceAt(o.x, o.z).h;
+  for (const o of rockObjs) { if (o.gone) continue; const gy = surfaceAt(o.x, o.z).h + (o.yOff||0);   // §worldbug a stacked landmark rock sits at its yOff
     capsule(o, ((o.barn && o.barn.amt > 0) || (o.oyst && o.oyst.amt > 0)) ? "searock" : "rock", o.x, o.z, o.x, gy-0.1, o.z, o.x, gy+o.sc*0.55, o.z, 0.6 + o.sc*0.5); }
   for (const s of stumps) { const gy = surfaceAt(s.x, s.z).h; capsule(s, "stump", s.x, s.z, s.x, gy-0.1, s.z, s.x, gy+0.9, s.z, 1.15); }
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
@@ -9102,24 +9092,17 @@ function seedSetPieces() {
   if (wc) { const facing = Math.atan2(-wc.z, -wc.x);                 // toward the island centre
     for (let i = 0; i < 18; i++) { const t = i/17, ang = facing + Math.PI + (t - 0.5) * 1.9, R = 11;
       setPieces.weir.push({ x: wc.x + Math.cos(ang)*R, z: wc.z + Math.sin(ang)*R, s: 0.8 + rng()*0.5, yaw: rng()*6.283 }); } }
-  // drowned forest: a cluster of old stumps even lower, only minus tides clear them
+  // §worldbug the drowned forest (a cluster of old submerged stumps) is removed from generation. Its
+  // seeding draws are kept verbatim so every seed's rng stream (and thus the rest of the world) is
+  // unchanged, we just never record the stumps, so nothing is built or drawn.
   const dc = findShoreBand(-TIDE_RANGE * 0.16);
-  if (dc) for (let i = 0; i < 12; i++) { const a = rng()*6.283, r = rng()*15;
-    setPieces.drowned.push({ x: dc.x + Math.cos(a)*r, z: dc.z + Math.sin(a)*r, s: 0.7 + rng()*0.7, yaw: rng()*6.283 }); }
+  if (dc) for (let i = 0; i < 12; i++) { const a = rng()*6.283, r = rng()*15; const s = 0.7 + rng()*0.7, yaw = rng()*6.283;
+    void a; void r; void s; void yaw; }   // (draws preserved; drowned stump intentionally not added)
 }
 function drawSetPieces(view) {
-  if (!setPieces.weir.length && !setPieces.drowned.length) return;
-  if (setPieces.weir.length && !setPieces.weirDyn) setPieces.weirDyn = makeDynamic(boulderMesh(), 40);
-  if (setPieces.drowned.length && !setPieces.drownedDyn) setPieces.drownedDyn = makeDynamic(stumpMesh(), 40);
-  propUniforms(view);
-  const a = rockScratch; let n = 0;
-  for (const s of setPieces.weir) { if (n >= 40) break; const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const o = n*10, y = heightAt(s.x, s.z); a[o]=s.x;a[o+1]=y;a[o+2]=s.z;a[o+3]=s.s;a[o+4]=s.yaw;a[o+5]=0;a[o+6]=0;a[o+7]=0.5;a[o+8]=0.5;a[o+9]=0.53; n++; }
-  if (n) setPieces.weirDyn.draw(a, n);
-  n = 0;
-  for (const s of setPieces.drowned) { if (n >= 40) break; const dx = s.x-cam.pos[0], dz = s.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const o = n*10, y = heightAt(s.x, s.z); a[o]=s.x;a[o+1]=y;a[o+2]=s.z;a[o+3]=s.s;a[o+4]=s.yaw;a[o+5]=0;a[o+6]=0;a[o+7]=0.3;a[o+8]=0.27;a[o+9]=0.2; n++; }
-  if (n) setPieces.drownedDyn.draw(a, n);
+  // §worldbug the weir stones are now drawn as breakable dynamic rocks (seedLandmarkRocks → rockDyn), and the
+  // drowned forest is removed, so this set-piece pass no longer draws anything. setPieces.weir is kept only as
+  // the position data seedLandmarkRocks reads. (Function retained so the frame-loop call sites stay valid.)
 }
 
 function seedDigSpots() {
@@ -11001,6 +10984,33 @@ function maybeScatterSeed() {
   const x = t.x + Math.cos(a) * r, z = t.z + Math.sin(a) * r;
   if (surfaceAt(x, z).h > 0.5) spawnFind(SEED_FOR[t.species] || "nut", x, z);
 }
+// §worldbug the POI rock clusters (cairn, tide-pool shelf, sea-cave stacks) and the fish-weir stones used
+// to be baked into the static POI / set-piece meshes, so they could never be mined. They are now spawned as
+// ordinary dynamic breakable rocks (mineObj / rockDyn), so a pickaxe breaks them into Stone like any boulder.
+// Positions mirror emitPOI exactly (same per-POI local PRNG, which never touches the world-gen rng stream),
+// so the landmarks look the same, just interactive. Run once per generation, after initWorldObjs().
+function pushLandmarkRock(x, z, yOff, sc, tint, yaw) {
+  const hp = Math.max(3, Math.min(4, Math.round(sc)));
+  rockObjs.push({ dyn: true, x, z, yOff: yOff || 0, yaw: yaw || 0, tint, sc, hp, maxhp: hp, scale: sc, baseTint: [1,1,1], split: false, gone: false, coll: null });
+}
+function seedLandmarkRocks() {
+  for (const p of POIS) {
+    const x = p.x, z = p.z;
+    if (p.type === "cairn") {
+      const rand = mulberry32((x * 131 + z * 977) >>> 0); let r = 1.3, y = 0;   // same stack as emitPOI
+      for (let k = 0; k < 6; k++) { const mm = Mesh(); mRock(mm, rand, [0.5,0.48,0.45]);   // advance the local PRNG exactly as emitPOI did
+        pushLandmarkRock(x, z, y, r, [0.5,0.48,0.45], rand()*6.283);
+        y += r * 0.7; r *= 0.82; }
+    } else if (p.type === "tidepools" || p.type === "seacave") {
+      const rand = mulberry32((x * 71 + z * 233) >>> 0);
+      const n = p.type === "seacave" ? 5 : 9;
+      for (let k = 0; k < n; k++) { const mm = Mesh(); mRock(mm, rand, [0.44,0.43,0.42]);
+        const s = 1.2 + rand()*2.2, ox = (rand()-0.5)*9, oz = (rand()-0.5)*9, oy = p.type === "seacave" ? 2 + rand()*3 : 0;
+        pushLandmarkRock(x + ox, z + oz, oy, s, [0.44,0.43,0.42], rand()*6.283); }
+    }
+  }
+  for (const s of setPieces.weir) pushLandmarkRock(s.x, s.z, 0, s.s, [0.5,0.5,0.53], s.yaw);   // the fish-weir arc stones
+}
 function spawnRockNode() {
   for (let tries = 0; tries < 20; tries++) {
     const a = rng()*6.283, r = HALF*(0.2+rng()*0.6), x = Math.sin(a)*r, z = -Math.cos(a)*r;
@@ -11085,8 +11095,9 @@ function drawTools(view) {
   if (nrub) rubbleDyn.draw(rubbleScratch, nrub);
   // dynamic rock nodes (mined boulders that shrank as they're chipped away) stay on the boulder mesh
   let nr = 0;
-  for (const o2 of rockObjs) { if (!o2.dyn || o2.gone || nr >= 200) continue; const o = nr*10, y = surfaceAt(o2.x,o2.z).h + o2.sc*0.1, dk = 1-0.5*(1-o2.hp/o2.maxhp);
-    rockScratch[o]=o2.x;rockScratch[o+1]=y;rockScratch[o+2]=o2.z;rockScratch[o+3]=o2.scale;rockScratch[o+4]=0;rockScratch[o+5]=0;rockScratch[o+6]=0;rockScratch[o+7]=0.95*dk;rockScratch[o+8]=0.92*dk;rockScratch[o+9]=0.88*dk; nr++; }
+  for (const o2 of rockObjs) { if (!o2.dyn || o2.gone || nr >= 200) continue; const o = nr*10, y = surfaceAt(o2.x,o2.z).h + o2.sc*0.1 + (o2.yOff||0), dk = 1-0.5*(1-o2.hp/o2.maxhp);
+    const tn = o2.tint || [0.95,0.92,0.88];   // §worldbug landmark rocks (cairn/tidepools/seacave/weir) carry their own grey tint + a stacking yOff
+    rockScratch[o]=o2.x;rockScratch[o+1]=y;rockScratch[o+2]=o2.z;rockScratch[o+3]=o2.scale;rockScratch[o+4]=o2.yaw||0;rockScratch[o+5]=0;rockScratch[o+6]=0;rockScratch[o+7]=tn[0]*dk;rockScratch[o+8]=tn[1]*dk;rockScratch[o+9]=tn[2]*dk; nr++; }
   if (nr) rockDyn.draw(rockScratch, nr);
 }
 const palmScratch = new Float32Array(48*10), pineScratch = new Float32Array(48*10), broadleafScratch = new Float32Array(48*10), rockScratch = new Float32Array(200*10), rubbleScratch = new Float32Array(200*10);
@@ -12460,6 +12471,7 @@ seedDigSpots();
 initShovelFP();
 initWorldObjs();
 seedBarnacles();   // §5 barnacle crusts on intertidal rocks (needs rockObjs)
+seedLandmarkRocks();   // §worldbug make the POI rock clusters + fish-weir stones breakable (needs rockObjs)
 initCottage();     // §19 the home-base cottage near spawn (needs terrain + colliders)
 seedWeakStones();  // §weak7 weak breakable stones scattered on beach & forest floor
 seedHeaveBoulders();  // §21D heavy boulders to lever over (needs colliders + cottage)
@@ -12590,6 +12602,7 @@ function generateWorld() {
   seedDigSpots();
   initWorldObjs();
   seedBarnacles();
+  seedLandmarkRocks();   // §worldbug breakable POI rock clusters + weir stones
   initCottage();
   seedWeakStones();
   seedHeaveBoulders();
