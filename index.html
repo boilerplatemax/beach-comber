@@ -3856,9 +3856,9 @@ addEventListener("keydown", (e) => {
   if (e.code === "Escape" && pauseStage) { if (pauseStage === "controls") { showPause(); } else closePause(); return; }   // §2 controls → pause; pause → resume
   if (e.code === "Escape" && menuIsOpen()) { closeMenu(); return; }   // §2 Esc closes the Satchel/Bucket/Journal menu
   if (e.code === "Escape" && mode === "walk") { openPause(); return; }   // §2 Esc opens the pause menu
-  if ((typeof pry !== "undefined" && pry) || (typeof heave !== "undefined" && heave) || (typeof shuck !== "undefined" && shuck)) {   // §12C / §21D / §23 mini-games capture space / esc
-    if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); if (shuck) shuckStrike(); else if (heave) heaveStrike(); else pryStrike(); return; }
-    if (e.code === "Escape") { if (shuck) cancelShuck(); else if (heave) cancelHeave(); else cancelPry(); return; }
+  if ((typeof pry !== "undefined" && pry) || (typeof heave !== "undefined" && heave)) {   // §12C / §21D mini-games capture space / esc
+    if (e.code === "Space" || e.code === "Enter") { e.preventDefault(); if (heave) heaveStrike(); else pryStrike(); return; }
+    if (e.code === "Escape") { if (heave) cancelHeave(); else cancelPry(); return; }
   }
   if (buildMode) {                                              // §16B placement controls
     if (e.code === "Escape") { exitBuildMode(); return; }
@@ -4310,7 +4310,7 @@ function isPanelOpen() {
       || (typeof pauseStage !== "undefined" && !!pauseStage);
 }
 // §A6 a modal UI panel is open (satchel, journal, bucket view, inspect, stash, trade, settings, pause, fish reveal),
-// while one is up, camera look and world clicks are blocked. (The click-driven mini-games pry/shuck/heave are NOT modal.)
+// while one is up, camera look and world clicks are blocked. (The click-driven mini-games pry/heave are NOT modal.)
 function menuModalOpen() {
   return (typeof invOpen !== "undefined" && invOpen)
       || (typeof inspect !== "undefined" && inspect.open)
@@ -7779,7 +7779,7 @@ function invDrop(idx, one) {
 function saveState() {
   try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup, variants: variantsSeen,
     heaves: heaveBoulders.map((b,i)=>b.flipped?[i,+b.refillAt.toFixed(2),+b.flippedAt.toFixed(2)]:0).filter(e=>e),  // §21D heaved boulders (index, refillAt, flippedAt)
-    pearls: pearlsSeen, oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)]),  // §23 pearl sightings + oyster-bed stock
+    oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)]),  // §23 oyster-bed stock
     hsFlipped: horseshoesFlipped,  // §41 horseshoe crabs turned back over
     events: seenEvents.slice(0, 40),  // §B5 the journal's seen-events log
     geodes: geodes.map((g,i)=>g.cracked?i:-1).filter(i=>i>=0),  // §40 which geodes are already cracked
@@ -7797,7 +7797,6 @@ function loadState() {
       if (typeof s.cleanup === "number") beachCleanup = s.cleanup;   // §5 beach-cleanup tally
       if (s.variants && typeof s.variants === "object") variantsSeen = s.variants;   // §22 variant sightings per species
       if (Array.isArray(s.heaves)) _savedHeave = s.heaves;   // §21D heaved boulders (applied in seedHeaveBoulders)
-      if (s.pearls && typeof s.pearls === "object") pearlsSeen = s.pearls;   // §23 pearl sightings per variant
       if (Array.isArray(s.oysters)) _savedOysters = s.oysters;   // §23 oyster-bed stock (applied in seedOysterBeds)
       if (Array.isArray(s.geodes)) _savedGeodes = s.geodes;   // §40 cracked geodes (applied in seedGeodes)
       if (Array.isArray(s.geodesTaken)) _savedGeodesTaken = s.geodesTaken;   // §A3 geodes whose halves were taken
@@ -8380,7 +8379,7 @@ function DBG_SET(k, v) { switch (k) {
 /* ---- drop an item back onto the ground near the player ---- */
 
 // E interacts with whatever the crosshair is on (same target as a click).
-function interact() { if (shuck) { shuckStrike(); return; } if (heave) { heaveStrike(); return; } if (pry) { pryStrike(); return; }
+function interact() { if (heave) { heaveStrike(); return; } if (pry) { pryStrike(); return; }
   if (mode === "walk" && buildMode) { placeBuildAtGhost(); return; }      // §16B E also places the ghost
   if (mode === "walk" && !isPanelOpen()) { const b = buildInFront(); if (b) {   // §16B use a piece, or crouch+E to pick it up
     const def = BUILD_DEFS[b.type], hasUse = def.storage || def.dry || def.shelter;
@@ -8415,7 +8414,6 @@ function journalCount(tab) {
   if (tab === "angling") { let n = 0; for (const k in FISH_SPECIES) if (rodRecord[k]) n++; return [n, Object.keys(FISH_SPECIES).length]; }
   if (tab === "cookbook") return [cookbook.size, DISHES.length];
   if (tab === "collections") { let n = 0; for (const set of COLLECTION_SETS) { const [a,b] = setProgress(set); if (b>0 && a>=b) n++; } return [n, COLLECTION_SETS.length]; }
-  if (tab === "pearls") { let n = 0; for (const v of PEARL_ORDER) if (pearlsSeen[v] > 0) n++; return [n, PEARL_ORDER.length]; }
   if (tab === "events") return [seenEvents.length, seenEvents.length];   // §B5
   const opened = chests.filter(c => c.opened).length; return [opened, chests.length];
 }
@@ -8451,12 +8449,6 @@ function journalGrid(tab) {
       <b style="font-size:15px;color:#ffe6b0">${set.name}</b> <span style="font-size:12px">${n}/${t} &nbsp; ${head}</span></div>
       <div class="jgrid" style="margin:0">${cells}</div></div>`;
   }).join("");
-  if (tab === "pearls") { const ic = pearlIcons();
-    return PEARL_ORDER.map(v => { const got = pearlsSeen[v] > 0;
-      if (!got) return `<div class="jcard unk"><img src="${ic[v]||""}"><div class="jname">??? </div></div>`;
-      return `<div class="jcard"><img src="${ic[v]}"><div class="jname">${PEARL_LABEL[v]}</div><div class="jqty">×${pearlsSeen[v]}</div></div>`;
-    }).join("");
-  }
   if (tab === "events") {   // §B5 a log of the natural events you've witnessed
     if (!seenEvents.length) return `<div class="makehint">No events yet. Watch the shore, gulls circling and a line at the top of the screen will point you to the next one.</div>`;
     return seenEvents.map(e => `<div class="jcard" style="width:auto;min-width:200px"><div class="jname" style="white-space:normal">${e.label}</div><div class="jqty">day ${e.day}</div></div>`).join("");
@@ -8465,7 +8457,7 @@ function journalGrid(tab) {
 }
 function renderJournal() {
   const j = document.getElementById("journal");
-  const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["collections","Collections"],["pearls","Pearls"],["events","Events"],["treasure","Treasure"]];   // §A6 Cookbook removed · §B5 Events added
+  const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["collections","Collections"],["events","Events"],["treasure","Treasure"]];   // §A6 Cookbook removed · §B5 Events added · §strip Pearls removed
   const tabHtml = tabs.map(([id,lbl]) => { const [n,t] = journalCount(id);
     return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
   const cleanupLine = `<div class="jstat">Beach cleanup, <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared · Horseshoes turned over, <b>${horseshoesFlipped}</b></div>`;
@@ -8728,7 +8720,7 @@ function useToolOnTarget(t) {
     case "rubble": pickRubble(t.obj); return true;
     case "weakstone": pickStone(t.obj); return true;   // §stonepick pick the dome stone up into the pack
     case "heaveboulder": return heaveBoulderAction(t.obj);   // §21D lever a heavy boulder over (shovel)
-    case "oysterbed": return oysterBedAction(t.obj);   // §23 pick & shuck an oyster at low tide
+    case "oysterbed": return oysterBedAction(t.obj);   // §23 pick an oyster off the cluster at low tide
     case "geode": return geodeAction(t.obj);   // §40 crack a geode open with a pickaxe
     case "bush": harvestBush(t.obj); return true;
     case "crop": harvestCrop(t.obj); return true;
@@ -8760,7 +8752,6 @@ function useToolOnTarget(t) {
 function interactTarget(t) { if (!t) return; if (reachForTool(t) === "fail") return; if (useToolOnTarget(t)) setWorkLock(t); }   // the bare interact key (E)
 function clickAt(ndcx, ndcy) {
   if (mode !== "walk") return;
-  if (shuck) { shuckStrike(); return; }             // §23 a click is a shuck strike while the oyster mini-game is up
   if (heave) { heaveStrike(); return; }             // §21D a click is a heave strike while the boulder mini-game is up
   if (pry) { pryStrike(); return; }                 // §12C a click is a pry strike while the mini-game is up
   const r = rayFromNDC(ndcx, ndcy);
@@ -11760,26 +11751,15 @@ function heaveBoulderAction(b) {
 function heaveBoulderPrompt(b) { const has = selectedTool()==="shovel" || (autoSwitch && ownsTool("shovel")); return b.flipped ? "levered aside" : (has ? (IS_TOUCH?"hold to heave it over":"heave it over") : "needs the shovel to lever"); }   // §tool2 toolkit reaches for the shovel on action
 
 /* ===================================================================== *
- * § 23  OYSTERS & PEARLS, craggy oyster beds on the intertidal flats, bared
- *   at low tide. Pick one by hand and shuck it: work the knife into the hinge
- *   (the pry dial), open it clean for the meat and a chance at a pearl; force
- *   it and the shell cracks (meat, no pearl). Pearls come ~1 in 25, in five
- *   colours plus baroque & giant, logged in their own journal page.
+ * § 23  OYSTERS, craggy oyster beds on the intertidal flats, bared at low
+ *   tide. Pick oysters straight off a cluster into the satchel, like
+ *   barnacles. A picked-clean bed seeds again in a day or two.
  * ===================================================================== */
 const OYSTER_BED_N = 10;                          // oyster beds per island (tunable)
 const OYSTER_PER_BED_MIN = 3, OYSTER_PER_BED_MAX = 6;   // live oysters a bed holds
 const OYSTER_REFILL_DAYS = 2.5;                   // days for a picked-clean bed to seed again
 const OYSTER_EXPOSE = 0.12;                        // water depth below which a bed is bared & workable
-const SHUCK_NEED = 4;                              // clean hinge-strikes to open an oyster
-const SHUCK_MISS_MAX = 4;                          // forced strikes before the shell cracks (meat, no pearl)
-const PEARL_P = 0.04;                              // ~1 in 25 clean shucks yields a pearl (tunable)
-const PEARL_COLORS = ["white","cream","pink","golden","black"];
-const PEARL_COLOR_W = [0.40, 0.26, 0.18, 0.10, 0.06];   // weighted, white common, black rarest
-const PEARL_BAROQUE_P = 0.16, PEARL_GIANT_P = 0.05;     // shape / size rolled on top of colour
-const PEARL_TINT = { white:[0.95,0.96,0.99], cream:[0.95,0.9,0.76], pink:[0.98,0.82,0.85], golden:[0.96,0.82,0.42], black:[0.26,0.29,0.36], baroque:[0.93,0.93,0.95], giant:[0.95,0.96,0.99] };
-const PEARL_LABEL = { white:"White", cream:"Cream", pink:"Pink", golden:"Golden", black:"Black", baroque:"Baroque", giant:"Giant" };
-const PEARL_ORDER = ["white","cream","pink","golden","black","baroque","giant"];
-let oysterBeds = [], oysterBedDyn = null, shuck = null, pearlsSeen = {}, _savedOysters = null, PEARL_ICONS = null;
+let oysterBeds = [], oysterBedDyn = null, _savedOysters = null;
 const oysterScratch = new Float32Array(OYSTER_BED_N * 10);
 // §clust8 OYSTERS: a clump of rough GREY ELONGATED shells, overlapping at angles (clearly not the small white barnacle cones).
 function oysterClusterMesh() {
@@ -11801,19 +11781,6 @@ function oysterClusterMesh() {
   }
   return m;
 }
-function pearlMesh(variant) {
-  const m = Mesh(), giant = variant==="giant", r = giant ? 0.17 : 0.1, col = PEARL_TINT[variant] || PEARL_TINT.white;
-  mergeMesh(m, discMesh(0, r, 8, r*0.95, col));                                           // top half
-  mergeMesh(m, discMesh(0, r, 8, -r*0.95, [col[0]*0.9, col[1]*0.9, col[2]*0.92]));        // bottom half (a touch darker)
-  if (variant==="baroque") for (const [ox,oy,oz] of [[0.7,0.25,0.1],[-0.5,-0.3,0.6],[0.2,0.5,-0.7]]) {   // lumpy knobs
-    const d = Mesh(); mergeMesh(d, discMesh(0, r*0.5, 6, r*0.5, col)); mergeMesh(d, discMesh(0, r*0.5, 6, -r*0.5, col)); mergeAt(m, d, ox*r, oy*r, oz*r);
-  }
-  return m;
-}
-ITEMS.pearl = { id:"pearl", name:"Pearl", category:"treasure", rarity:"rare", stackable:true, maxStack:9,
-  desc:"A lustrous pearl, coaxed from a wild oyster. A keepsake, or a gift.", model:()=>pearlMesh("white"), tint:[1,1,1] };
-function pearlIcons() { if (!PEARL_ICONS) { PEARL_ICONS = {}; for (const v of PEARL_ORDER) PEARL_ICONS[v] = buildMeshIcon(pearlMesh(v), PEARL_TINT[v]||[1,1,1]); } return PEARL_ICONS; }
-function recordPearl(k) { pearlsSeen[k] = (pearlsSeen[k]||0) + 1; }
 function seedOysterBeds() {
   oysterBeds = []; const loW = TIDE_MID - TIDE_RANGE*0.45, hiBand = TIDE_MID + TIDE_RANGE*0.18;
   for (let k=0; k<4000 && oysterBeds.length<OYSTER_BED_N; k++) {
@@ -11843,75 +11810,19 @@ function drawOysterBeds(view) {
   if (n) oysterBedDyn.draw(oysterScratch, n);
 }
 function oysterBedExposed(b) { return waterDepthAt(b.x, b.z) < OYSTER_EXPOSE; }
-function oysterBedPrompt(b) { return b.n <= 0 ? "picked clean, give it a day or two" : (IS_TOUCH ? "tap to pick & shuck" : "pick & shuck an oyster"); }   // §water workable underwater too
-function oysterBedAction(b) {
+function oysterBedPrompt(b) { return b.n <= 0 ? "picked clean, give it a day or two" : (IS_TOUCH ? "tap to pick an oyster" : "pick an oyster"); }   // §water workable underwater too
+function oysterBedAction(b) {   // §strip oysters now pick straight off the cluster into the satchel, like barnacles (no shucking, no pearls)
   if (b.n <= 0) { showCard("Picked clean", "You've worked this bed recently. Give it a day or two to seed again."); return true; }
-  startShuck(b); return true;
-}
-function startShuck(b) {
-  if (shuck || heave || pry) return;
-  shuck = { b, x: b.x, z: b.z, pos: rng(), dir: rng()<0.5?1:-1, speed: 1.45, opens: 0, misses: 0, need: SHUCK_NEED, cool: 0, sweetC: 0.22+rng()*0.56, sweetW: 0.15 };   // §menu harder: faster needle, smaller sweet zone
-  const el = document.getElementById("pryoverlay"); el.style.display = "flex";
-  const hint = document.getElementById("pryhint"); if (hint) hint.textContent = "Work the knife into the hinge, strike the glowing arc";
-  uiUnlock();
-}
-function cancelShuck() { shuck = null; document.getElementById("pryoverlay").style.display = "none"; const hint = document.getElementById("pryhint"); if (hint) hint.textContent = "Shovel the latch, strike the glowing arc"; }
-function updateShuck(dt) {
-  if (!shuck) return;
-  const b = shuck.b;
-  if (b.n <= 0 || Math.hypot(b.x-player.x, b.z-player.z) > REACH+4) { cancelShuck(); return; }   // §water no longer cancels when the tide covers the bed
-  shuck.cool = Math.max(0, shuck.cool - dt);
-  shuck.pos += shuck.dir * shuck.speed * dt;
-  if (shuck.pos > 1) { shuck.pos = 1; shuck.dir = -1; } if (shuck.pos < 0) { shuck.pos = 0; shuck.dir = 1; }
-  drawShuck();
-}
-function shuckStrike() {
-  if (!shuck || shuck.cool > 0) return;
-  shuck.cool = 0.2;
-  const hit = Math.abs(shuck.pos - shuck.sweetC) < shuck.sweetW/2;
-  if (hit) {
-    shuck.opens++; if (onDig) onDig("scrape"); if (typeof sparkle === "function") sparkle(shuck.x, surfaceAt(shuck.x,shuck.z).h+0.2, shuck.z, [0.8,0.8,0.75], 3);
-    shuck.sweetC = 0.2 + rng()*0.6; shuck.speed += 0.08;
-    if (shuck.opens >= shuck.need) resolveShuck(true);
-  } else {
-    shuck.misses++; if (onDig) onDig("crack"); camNudge = Math.max(camNudge, 0.02);
-    if (shuck.misses >= SHUCK_MISS_MAX) resolveShuck(false);
-  }
-}
-function resolveShuck(clean) {
-  const b = shuck.b, x = shuck.x, z = shuck.z; cancelShuck();
+  const added = Inv.add("oyster", 1);
+  if (!added) { showCard("Satchel full", "No room for another oyster."); return true; }
   b.n = Math.max(0, b.n - 1); b.pickedAt = tideDay; if (b.n <= 0) b.refillAt = tideDay + OYSTER_REFILL_DAYS;
-  const firstO = !discovered.has("f_oyster"); Inv.add("oyster", 1); discovered.add("f_oyster"); if (typeof notify === "function") notify("oyster", 1, firstO);
-  if (clean && rng() < PEARL_P) givePearl(x, z);
-  else if (clean) showCard("Shucked clean", "A plump oyster, opened neat, good eating. No pearl in this one.");
-  else showCard("Shell cracked", "You forced the knife and the shell splintered. The meat's still good, but a pearl wouldn't have survived that.");
+  if (onDig) onDig("scrape");
+  if (typeof sparkle === "function") sparkle(b.x, surfaceAt(b.x, b.z).h+0.2, b.z, [0.8,0.8,0.75], 4);
+  const firstO = !discovered.has("f_oyster"); discovered.add("f_oyster"); if (typeof notify === "function") notify("oyster", 1, firstO);
+  if (b.n <= 0) showCard("Picked clean", "That's the last oyster off this bed, it'll seed again in a day or two.");
   if (typeof checkSets === "function") checkSets();
   saveState();
-}
-function givePearl(x, z) {
-  let col = PEARL_COLORS[0], acc = 0, t = 0; for (const w of PEARL_COLOR_W) t += w; let r = rng()*t;   // weighted colour
-  for (let i=0;i<PEARL_COLORS.length;i++){ acc += PEARL_COLOR_W[i]; if (r < acc) { col = PEARL_COLORS[i]; break; } }
-  const giant = rng() < PEARL_GIANT_P, baroque = !giant && rng() < PEARL_BAROQUE_P;
-  recordPearl(col); if (giant) recordPearl("giant"); if (baroque) recordPearl("baroque");
-  Inv.add("pearl", 1); discovered.add("f_pearl");
-  if (typeof SND !== "undefined") { SND.play("discover"); setTimeout(() => { try { SND.play("discover"); } catch (e) {} }, 200); }
-  if (typeof sparkle === "function") sparkle(x, surfaceAt(x,z).h+0.3, z, PEARL_TINT[col], 22);
-  const kind = giant ? "a huge " : baroque ? "a wild, baroque " : "a ";
-  showCard("A pearl!", "The shell parts and there it is, " + kind + PEARL_LABEL[col].toLowerCase() + " pearl, catching the light. One in twenty-five oysters, they say.");
-}
-function drawShuck() {
-  const cv = document.getElementById("prycv"); if (!pryCtx) pryCtx = cv.getContext("2d");
-  const c = pryCtx, W = cv.width, H = cv.height, cx = W/2, cy = H*0.62, R = 86;
-  c.clearRect(0,0,W,H);
-  const a0 = Math.PI*1.15, a1 = Math.PI*1.85, span = a1 - a0; c.lineCap = "round";
-  c.strokeStyle = "rgba(255,255,255,.14)"; c.lineWidth = 12; c.beginPath(); c.arc(cx, cy, R, a0, a1); c.stroke();
-  const sA = a0 + span*(shuck.sweetC - shuck.sweetW/2), sB = a0 + span*(shuck.sweetC + shuck.sweetW/2);
-  c.strokeStyle = "#a9d8e0"; c.lineWidth = 12; c.beginPath(); c.arc(cx, cy, R, sA, sB); c.stroke();
-  c.shadowColor = "rgba(169,216,224,.7)"; c.shadowBlur = 10; c.beginPath(); c.arc(cx, cy, R, sA, sB); c.stroke(); c.shadowBlur = 0;
-  const mA = a0 + span*shuck.pos;
-  c.strokeStyle = "#ffe6b0"; c.lineWidth = 4; c.beginPath(); c.moveTo(cx+Math.cos(mA)*(R-12), cy+Math.sin(mA)*(R-12)); c.lineTo(cx+Math.cos(mA)*(R+12), cy+Math.sin(mA)*(R+12)); c.stroke();
-  for (let i=0;i<shuck.need;i++){ c.fillStyle = i < shuck.opens ? "#a9d8e0" : "rgba(255,255,255,.2)"; c.beginPath(); c.arc(cx - (shuck.need-1)*9 + i*18, cy+26, 5, 0, 6.283); c.fill(); }
-  for (let i=0;i<SHUCK_MISS_MAX;i++){ c.fillStyle = i < shuck.misses ? "#d98a6a" : "rgba(255,255,255,.12)"; c.beginPath(); c.arc(cx + W*0.32 - i*13, cy+26, 4, 0, 6.283); c.fill(); }   // crack meter
+  return true;
 }
 
 /* ===================================================================== *
@@ -13993,7 +13904,7 @@ function frame(now) {
   updateDigging(dt);
   if (mode === "walk") updateBucketMoisture(dt);   // §13.3 creatures dry out in a dry bucket (real-time)
   // §13.2 hold the use button to keep swinging at a work target (no repeated clicks needed)
-  if (useHeld && mode === "walk" && !pry && !shuck && !invOpen && !isPanelOpen()) {
+  if (useHeld && mode === "walk" && !pry && !invOpen && !isPanelOpen()) {
     const t = effectiveTarget();
     if (t && WORK_KINDS[t.kind] && canHeavyAction() && shovelSwing < 0.15) clickAt(0, 0);
   }
@@ -14011,7 +13922,6 @@ function frame(now) {
   updateHeaveBoulders(dt);  // §21D heavy-boulder roll + reset
   updateHeave(dt);       // §21D the boulder heave mini-game
   updateOysterBeds();    // §23 oyster beds reseed over days
-  updateShuck(dt);       // §23 the oyster shucking mini-game
   updateHorseshoeNight(dt);  // §41 horseshoe-crab spawning / stranding on spring nights
   updateFindableEvent(dt);   // §B5 keep the active event's chevron/gulls/sound cue going
   updatePry(dt);
