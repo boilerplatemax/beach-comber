@@ -720,6 +720,21 @@
     box-shadow: inset 2px 2px 0 var(--parch-hi), inset -2px -2px 0 #6e4f2b, 0 2px 0 #4a3317; }
   #catchpop .cp-keep:active, #catchpop .cp-rel:active { transform: translateY(1px); }
   #catchpop .cp-hint { font-size: 11px; color: var(--pink-dim); opacity: .85; margin-top: 2px; letter-spacing: .02em; }
+  /* ---- §UI creature inspect: a contained modal the SAME size as the item inspect (no full-screen blue).
+         The blue water sits on the canvas itself at a constant size, so rotating the creature never shrinks it. ---- */
+  #inspectview.waterbg { background: rgba(6,10,13,.72) !important; backdrop-filter: blur(2px) !important; }
+  #inspectview.waterbg #inspectbox { background-color: var(--parch) !important; background-image: var(--grain) !important; background-blend-mode: multiply;
+    border: 3px solid var(--wood-lo) !important; clip-path: none !important;
+    box-shadow: inset 0 0 0 3px var(--wood), inset 0 0 0 5px var(--parch-lo),
+      inset 4px 4px 0 5px rgba(255,248,224,.35), inset -4px -4px 0 5px rgba(120,86,40,.35),
+      0 6px 0 rgba(0,0,0,.28), 0 16px 34px rgba(0,0,0,.55) !important; }
+  #inspectview.waterbg #inspectcanvas { width: 300px !important; height: 300px !important;
+    background: radial-gradient(120% 120% at 50% 18%, #4a97b2 0%, #26708c 48%, #123c4f 100%) !important;
+    box-shadow: inset 0 0 0 3px #0e3242, inset 0 0 22px rgba(10,34,48,.8) !important; }
+  @media (max-width: 680px) { #inspectview.waterbg #inspectcanvas { width: 240px !important; height: 240px !important; } }
+  /* ---- §UI bucket modal: the bucket sits directly on the parchment (no inner dark/recessed square) ---- */
+  #bucketlookcanvas { background: transparent !important; box-shadow: none !important; }
+  #bucketlookbox { padding: 20px 24px 18px; }
 </style>
 </head>
 <body>
