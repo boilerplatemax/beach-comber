@@ -2029,7 +2029,6 @@ function updateRain(dt) {
 }
 function drawRain(view) {
   if (!weather) return;
-  if (typeof insideCottage === "function" && cottage && insideCottage(cam.pos[0], cam.pos[2]) && cam.pos[1] < cottage.floorY + C_H + C_ROOF_RISE) return;   // §3 no rain, rings or puddles indoors
   const amt = weather.rain;
   if (amt > 0.02 && rainDrops.length) {
     if (!rainDyn) rainDyn = makeDynamic(streakMesh(), RAIN_MAX);
@@ -2817,10 +2816,6 @@ function stepVertical(standH, g) {
   if (player.airborne) {
     player.vy -= (player.vy > 0 ? GRAVITY_UP : GRAVITY_DOWN) * PHYS_STEP;
     player.feetY += player.vy * PHYS_STEP;
-    if (player.vy > 0 && typeof insideCottage === "function" && cottage && insideCottage(player.x, player.z)) {   // §3 head bonks the ceiling, can't jump through the roof
-      const headMax = cottage.floorY + C_H - 0.14 - EYE;
-      if (player.feetY > headMax) { player.feetY = headMax; player.vy = 0; if (onDig) onDig("thud"); }
-    }
     if (player.vy <= 0 && player.feetY <= standH) {                        // ground contact
       const fall = -player.vy;
       player.feetY = standH; player.vy = 0; player.airborne = false; player.coyote = COYOTE_TIME;
@@ -7439,7 +7434,7 @@ function setLanternUniform(U) {   // call after the program + its uniforms are b
   if (!U || U.uLanternI === undefined) return;
   const p = activeLanternPos();
   // §3 indoors every wall is within the lantern's falloff, so the same intensity blows out to white, ease it off so it reads like outdoors and stays warm
-  const indoor = (typeof insideCottage === "function" && cottage && insideCottage(cam.pos[0], cam.pos[2]) && cam.pos[1] < cottage.floorY + C_H + C_ROOF_RISE) ? LANTERN_INDOOR : 1;
+  const indoor = 1;
   gl.uniform1f(U.uLanternI, p ? LANTERN_I * lanternFlicker() * indoor : 0);
   if (p) gl.uniform3f(U.uLanternPos, p[0], p[1], p[2]);
 }
@@ -8091,7 +8086,7 @@ function journalGrid(tab) {
     const [n,t] = setProgress(set), done = n >= t;
     const cells = set.members.map(mem => { const got = memberGot(mem), ic = memberIcon(mem);
       return `<div class="jcard${got?"":" unk"}" title="${memberLabel(mem)}"><img src="${ic}"><div class="jname">${got?memberLabel(mem):"???"}</div></div>`; }).join("");
-    const head = done ? `<span style="color:#9fe6a0;font-weight:700">COMPLETE</span>` : `<span style="opacity:.7">reward: ${REWARD_LABEL[set.reward]||"a keepsake"}</span>`;
+    const head = done ? `<span style="color:#9fe6a0;font-weight:700">COMPLETE</span>` : `<span style="opacity:.7">collecting…</span>`;
     return `<div style="grid-column:1/-1;margin:2px 0 10px"><div style="display:flex;justify-content:space-between;align-items:baseline;margin:0 2px 7px;border-bottom:1px solid rgba(255,220,150,.18);padding-bottom:5px">
       <b style="font-size:15px;color:#ffe6b0">${set.name}</b> <span style="font-size:12px">${n}/${t} &nbsp; ${head}</span></div>
       <div class="jgrid" style="margin:0">${cells}</div></div>`;
@@ -8324,18 +8319,7 @@ function targetAlongRay(r, sticky) {
   for (const ch of chests) { if (ch.carried) continue;                                                                          // §12C
     if (ch.opened && ch.looted) sphere(ch, "openchest", ch.x, ch.z, 0.3, 0.9);                                                   // carry an emptied chest
     else if (ch.exposed) sphere(ch, "chest", ch.x, ch.z, 0.3, 0.9); }
-  // §house8 the cottage's indoor fixtures (hearth/stove, sea chest, bed, displays, trophies, aquarium) are only
-  // reachable, and only show their prompt, while you're actually INSIDE the cottage, so you can't use them, or read
-  // subtitles about them, through a wall from outside.
-  const inHouse = !!(cottage && typeof insideCottage === "function" && insideCottage(player.x, player.z));
-  for (let i = 0; i < storageBoxes.length; i++) { if (storageBoxes[i].cottage && !inHouse) continue; sphere(storageBoxes[i], "storagebox", storageBoxes[i].x, storageBoxes[i].z, 0.3, 0.8); }
-  if (inHouse) { const bw = cotLocalToWorld(C_BED.x, C_BED.z); sphere(cottage, "cotbed", bw[0], bw[1], 0.75, 1.7); }   // §19B the cottage bed
-  if (inHouse) for (const s of COT_SLOTS) { const w = cotLocalToWorld(s.x, s.z), gy = surfaceAt(w[0], w[1]).h;         // §19C display slots
-    sphere(s, "dispslot", w[0], w[1], (cottage.floorY + s.y) - gy, 0.16); }
-  if (inHouse) for (const s of TROPHY_SLOTS) { const w = cotLocalToWorld(s.x, s.z), gy = surfaceAt(w[0], w[1]).h;      // §19D fish-trophy mounts
-    sphere(s, "cottrophy", w[0], w[1], (cottage.floorY + s.y) - gy, 0.3); }
-  if (inHouse) { const w = cotLocalToWorld(C_AQ.x, C_AQ.z), gy = surfaceAt(w[0], w[1]).h;                              // §19E the aquarium tank
-    sphere(cottage, "aqua", w[0], w[1], (cottage.floorY + AQ_STAND + AQ_WH*0.5) - gy, 0.6); }
+  for (let i = 0; i < storageBoxes.length; i++) sphere(storageBoxes[i], "storagebox", storageBoxes[i].x, storageBoxes[i].z, 0.3, 0.8);   // §strip only free-standing storage boxes remain (cottage removed)
   for (const L of placedLanterns) sphere(L, "lantern", L.x, L.z, 0.4, 0.6);   // §tools pick a set-down lantern back up
 
   // stickiness: keep the locked target unless another is clearly closer
@@ -8349,8 +8333,8 @@ let curTarget = null;    // recomputed each frame from the crosshair (desktop)
 // §A3 target kinds that ANY held item can act on (harvest a plant, hit a creature, pick a find, open a thing).
 // The tool-gated kinds (tree/fallentree/rock/searock/stump/geode/heaveboulder) are deliberately excluded.
 const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","tallgrass","salt",
-  "flotsam","barnacle","nest","driftwood","chest","openchest","storagebox","cotbed","dispslot",
-  "cottrophy","aqua","lantern","fence","crate","barrel","searock"]);
+  "flotsam","barnacle","nest","driftwood","chest","openchest","storagebox",
+  "lantern","fence","crate","barrel","searock"]);
 function softTargetUnderCrosshair() { const t = effectiveTarget(); return (t && SOFT_INTERACT.has(t.kind)) ? t : null; }
 function useToolOnTarget(t) {
   if (!t) return false;
@@ -8379,10 +8363,6 @@ function useToolOnTarget(t) {
     case "fence": return chopFence(t.obj);
     case "openchest": pickUpChest(t.obj); return true;
     case "storagebox": openStash(storageBoxes.indexOf(t.obj)); return true;
-    case "cotbed": trySleepCottage(); return true;       // §19B sleep / set respawn at the cottage
-    case "dispslot": toggleDisplaySlot(t.obj); return true;   // §19C place / take a displayed find
-    case "cottrophy": toggleTrophy(t.obj); return true;       // §19D mount / take down a fish trophy
-    case "aqua": useAquarium(); return true;                  // §19E pour creatures / refresh water / decorate
     case "lantern": pickUpLantern(t.obj); return true;   // §tools pick a set-down lantern back up
     case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
     case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
@@ -11321,629 +11301,32 @@ function updateHorseshoeNight(dt) {
 }
 
 /* ===================================================================== *
- * § 19  THE COTTAGE, a weathered home base near spawn: shelter, hearth,
- *        bed, storage, displays, an aquarium & collection-set rewards.
- *        (§19A shell + fixtures; interactivity follows in §19B+.)
+ * § 19  (removed) THE COTTAGE and all its fixtures (bed, hearth, sea chest,
+ *        displays, trophies, aquarium, protected pad) are stripped out.
+ *        Inert stubs keep the scattered cottage guards valid; the player now
+ *        just spawns on open coastal ground (findSpawn), no home base.
+ *        The collection-set journal machinery below is kept.
  * ===================================================================== */
-//, dimensions (local space: origin = floor centre, +z = door/front), §3 ~1.3× larger, taller ceiling
-const C_IX = 3.55, C_IZ = 2.9, C_H = 3.5, C_T = 0.16;          // interior half-x/half-z, wall height (ceiling well above any jump), thickness
-const C_DW = 0.9, C_DH = 2.2;                                  // door half-width (gap = 2·DW), height
-const C_WW = 1.0, C_WH = 0.9, C_WY = 1.55, C_WZ = 0.45;        // window width, height, sill height, z-start on the side walls (front half)
-const C_OX = C_IX + C_T, C_OZ = C_IZ + C_T, C_TH = C_T / 2;
-const C_ZB = -(C_IZ + C_TH), C_ZF = (C_IZ + C_TH), C_XL = -(C_IX + C_TH), C_XR = (C_IX + C_TH);
-const C_ROOF_RISE = 1.7, C_EAVE = 0.45, C_DOOR_R = 2.8, C_DOOR_SPD = 3.6, C_DOOR_OPEN = 1.4;   // door auto-opens within range
-//, interior anchors (local), all wall-relative so nothing overlaps the walls, shared by meshes & interaction, 
-const C_HEARTH = { x: 0, z: C_ZB + 0.5 }, C_FIRE = { x: 0, y: 0.2, z: C_ZB + 0.62 };   // back wall centre (chimney stays inside)
-const C_BED = { x: C_XL + 0.72, z: C_ZB + 1.35 }, C_CHEST = { x: C_XL + 0.7, z: C_ZF - 0.9 };  // §chest5 bed back-left; chest moved to the clear FRONT-LEFT corner (was front-right, overlapping the aquarium)
-const C_CAB = { x: C_XR - 0.62, z: -0.3 }, C_AQ = { x: C_XR - 0.95, z: C_ZF - 1.4 };    // cabinet mid-right, aquarium front-right (clear of the inner wall face)
-//, palette, 
-const CWC = {
-  plank: [0.57,0.51,0.43], plankDk: [0.48,0.42,0.35], beam: [0.35,0.29,0.23],
-  floor: [0.5,0.42,0.33], floor2: [0.44,0.37,0.29], roof: [0.44,0.45,0.47], roofU: [0.3,0.28,0.26],
-  stone: [0.53,0.51,0.48], stoneDk: [0.42,0.4,0.37], frame: [0.4,0.34,0.27],
-  bed: [0.5,0.34,0.3], quilt: [0.74,0.76,0.78], pillow: [0.88,0.86,0.82], cab: [0.46,0.37,0.28],
-};
-let cottage = null;   // populated by initCottage()
-const cottageScratch = new Float32Array(10);
-
-// ---- wall helpers: a flat wall spanning an axis with a rectangular hole cut out ----
-function holedWallX(m, zc, zh, X, H, hx0, hx1, hy0, hy1, col) {    // wall x∈[-X,X] at z=zc; hole x∈[hx0,hx1], y∈[hy0,hy1]
-  if (hy0 > 0.02) mBox(m, 0, hy0/2, zc, X, hy0/2, zh, col);
-  if (hy1 < H-0.02) mBox(m, 0, (hy1+H)/2, zc, X, (H-hy1)/2, zh, col);
-  if (hx0 > -X+0.02) mBox(m, (-X+hx0)/2, (hy0+hy1)/2, zc, (X+hx0)/2, (hy1-hy0)/2, zh, col);
-  if (hx1 < X-0.02) mBox(m, (hx1+X)/2, (hy0+hy1)/2, zc, (X-hx1)/2, (hy1-hy0)/2, zh, col);
-}
-function holedWallZ(m, xc, xh, Z, H, hz0, hz1, hy0, hy1, col) {    // wall z∈[-Z,Z] at x=xc; hole z∈[hz0,hz1], y∈[hy0,hy1]
-  if (hy0 > 0.02) mBox(m, xc, hy0/2, 0, xh, hy0/2, Z, col);
-  if (hy1 < H-0.02) mBox(m, xc, (hy1+H)/2, 0, xh, (H-hy1)/2, Z, col);
-  if (hz0 > -Z+0.02) mBox(m, xc, (hy0+hy1)/2, (-Z+hz0)/2, xh, (hy1-hy0)/2, (Z+hz0)/2, col);
-  if (hz1 < Z-0.02) mBox(m, xc, (hy0+hy1)/2, (hz1+Z)/2, xh, (hy1-hy0)/2, (Z-hz1)/2, col);
-}
-function frameRectX(m, zc, x0, x1, y0, y1, col) { const t = 0.06, zh = C_TH + 0.02;
-  mBox(m, (x0+x1)/2, y0, zc, (x1-x0)/2+t, t, zh, col); mBox(m, (x0+x1)/2, y1, zc, (x1-x0)/2+t, t, zh, col);
-  mBox(m, x0, (y0+y1)/2, zc, t, (y1-y0)/2, zh, col); mBox(m, x1, (y0+y1)/2, zc, t, (y1-y0)/2, zh, col); }
-function frameRectZ(m, xc, z0, z1, y0, y1, col) { const t = 0.06, xh = C_TH + 0.02;
-  mBox(m, xc, y0, (z0+z1)/2, xh, t, (z1-z0)/2+t, col); mBox(m, xc, y1, (z0+z1)/2, xh, t, (z1-z0)/2+t, col);
-  mBox(m, xc, (y0+y1)/2, z0, xh, (y1-y0)/2, t, col); mBox(m, xc, (y0+y1)/2, z1, xh, (y1-y0)/2, t, col); }
-
-// ---- interior fixtures (static wood/stone) ----
-function cotHearthMesh() { const m = Mesh(); const s = CWC.stone, sd = CWC.stoneDk;
-  mBox(m, 0, 0.06, 0.3, 1.0, 0.06, 0.2, s);                       // hearthstone apron at the floor
-  mBox(m, -0.68, 0.68, 0, 0.17, 0.68, 0.38, sd);                  // left jamb (fire burns at floor level between the jambs)
-  mBox(m, 0.68, 0.68, 0, 0.17, 0.68, 0.38, sd);                   // right jamb
-  mBox(m, 0, 0.6, -0.26, 0.55, 0.6, 0.12, sd);                    // fire-back slab
-  mBox(m, 0, 1.42, 0.02, 1.0, 0.13, 0.42, s);                     // mantle beam
-  mBox(m, 0, 2.05, -0.04, 0.6, 0.5, 0.3, sd);                     // chimney breast
-  mBox(m, 0, 0.12, 0.04, 0.3, 0.05, 0.08, CWC.beam); mBox(m, 0, 0.17, 0.04, 0.08, 0.05, 0.28, [0.4,0.3,0.2]);   // firewood
-  return m; }
-function flameMesh() { const m = Mesh();   // a few translucent-looking flame tongues (tinted per instance), sized for the hearth
-  for (let i = 0; i < 4; i++) { const a = i/4*6.283; mTri(m, [Math.cos(a)*0.16, 0.0, Math.sin(a)*0.16], [Math.cos(a+1.4)*0.16, 0.0, Math.sin(a+1.4)*0.16], [0, 0.85, 0], [1,1,1]); }
-  return m; }
-let cottageFlameDyn = null;
-function cotBedMesh() { const m = Mesh();
-  mBox(m, 0, 0.18, 0, 0.5, 0.12, 0.95, CWC.bed);                  // frame
-  mBox(m, 0, 0.34, 0.05, 0.46, 0.08, 0.86, CWC.quilt);           // mattress / quilt
-  mBox(m, 0, 0.44, -0.72, 0.42, 0.1, 0.16, CWC.pillow);          // pillow
-  mBox(m, 0, 0.62, 0.92, 0.5, 0.44, 0.06, CWC.bed);              // footboard
-  mBox(m, 0, 0.78, -0.95, 0.5, 0.58, 0.06, CWC.bed);             // headboard
-  return m; }
-function cotCabinetMesh() { const m = Mesh();
-  mBox(m, 0, 0.48, 0, 0.42, 0.48, 0.3, CWC.cab);                 // lower cupboard
-  mBox(m, -0.4, 1.28, 0, 0.03, 0.44, 0.28, CWC.cab); mBox(m, 0.4, 1.28, 0, 0.03, 0.44, 0.28, CWC.cab);  // corner posts
-  mBox(m, 0, 0.98, 0, 0.4, 0.02, 0.28, CWC.cab); mBox(m, 0, 1.4, 0, 0.4, 0.02, 0.28, CWC.cab);          // two glass-shelf boards
-  mBox(m, 0, 1.74, 0, 0.42, 0.03, 0.3, CWC.cab);                 // top board
-  return m; }
-function cotShelfMesh(w) { const m = Mesh(); mBox(m, 0, 0, 0, w/2, 0.03, 0.16, CWC.plankDk);
-  mBox(m, -w/2+0.08, -0.08, 0, 0.04, 0.08, 0.13, CWC.beam); mBox(m, w/2-0.08, -0.08, 0, 0.04, 0.08, 0.13, CWC.beam); return m; }
-
-// ---- the cottage shell ----
-function cottageBodyMesh() { const m = Mesh();
-  for (let i=0;i<7;i++){ const z0=-C_OZ+2*C_OZ*i/7, z1=-C_OZ+2*C_OZ*(i+1)/7; mBox(m,0,0.03,(z0+z1)/2, C_OX,0.03,(z1-z0)/2-0.008, i%2?CWC.floor:CWC.floor2); }  // floor planks
-  mBox(m, 0, C_H/2, C_ZB, C_OX, C_H/2, C_TH, CWC.plank);                                  // §3 back wall is solid, the hearth & chimney live here (no window to clash with)
-  holedWallX(m, C_ZF, C_TH, C_OX, C_H, -C_DW, C_DW, 0, C_DH, CWC.plankDk);                // front wall + doorway
-  holedWallZ(m, C_XL, C_TH, C_OZ, C_H, C_WZ, C_WZ+C_WW, C_WY, C_WY+C_WH, CWC.plank);      // left wall + window (front half)
-  holedWallZ(m, C_XR, C_TH, C_OZ, C_H, C_WZ, C_WZ+C_WW, C_WY, C_WY+C_WH, CWC.plank);      // right wall + window (front half, above the aquarium)
-  for (const sx of [-1,1]) for (const sz of [-1,1]) mBox(m, sx*C_OX, C_H/2, sz*C_OZ, C_T*0.75, C_H/2, C_T*0.75, CWC.beam);  // corner posts
-  mBox(m, 0, C_H+0.04, 0, C_OX+0.05, 0.08, C_OZ+0.05, CWC.beam);   // top plate
-  frameRectX(m, C_ZF, -C_DW, C_DW, 0, C_DH, CWC.frame);           // door frame
-  frameRectZ(m, C_XL, C_WZ, C_WZ+C_WW, C_WY, C_WY+C_WH, CWC.frame);
-  frameRectZ(m, C_XR, C_WZ, C_WZ+C_WW, C_WY, C_WY+C_WH, CWC.frame);
-  mergeAt(m, cotHearthMesh(), C_HEARTH.x, 0, C_HEARTH.z);
-  mergeAt(m, cotBedMesh(), C_BED.x, 0, C_BED.z);
-  // §cot5 the 4-slot glass display cabinet is removed
-  mBox(m, C_XL+0.16, C_WY-0.04, C_WZ+C_WW/2, C_TH+0.12, 0.05, C_WW/2+0.1, CWC.frame);     // left windowsill
-  for (const sx of [C_XL+1.0, C_XR-1.0]) for (let k=0;k<3;k++) mergeAt(m, cotShelfMesh(1.4), sx, 1.1+k*0.62, C_ZB+0.14);   // shelves flanking the hearth on the back wall
-  // §cotstilt FOUNDATION STILTS + SKIRT. On sloped sites the flattened pad only pins the coarse terrain grid, so the
-  // ground dips a little below the floor at the downhill wall line and the house reads as "floating". Timber piles plus
-  // a recessed skirt board close that gap: the buried parts (flat / uphill sides) are hidden under the opaque terrain,
-  // the exposed parts (downhill) look like a proper raised beach-cottage foundation. All geometry lives below the floor (y<0).
-  const SK_D = 1.3, SK_T = 0.06, POST = 0.15, PILE = 1.55;   // skirt depth, skirt board thickness, pile half-width, pile length
-  // recessed skirt boards (back + both sides solid; front split around the doorway)
-  mBox(m, 0, -SK_D/2, C_ZB, C_OX-0.04, SK_D/2, SK_T, CWC.plankDk);
-  mBox(m, C_XL, -SK_D/2, 0, SK_T, SK_D/2, C_OZ-0.04, CWC.plankDk);
-  mBox(m, C_XR, -SK_D/2, 0, SK_T, SK_D/2, C_OZ-0.04, CWC.plankDk);
-  for (const seg of [[-C_OX,-C_DW],[C_DW,C_OX]]) { const cx=(seg[0]+seg[1])/2, hx=(seg[1]-seg[0])/2; if (hx>0.02) mBox(m, cx, -SK_D/2, C_ZF, hx, SK_D/2, SK_T, CWC.plankDk); }   // front skirt flanks the door
-  // timber piles at the corners and the midpoints of each side, standing proud of the skirt so they read as stilts
-  const piles = [[-C_OX,-C_OZ],[C_OX,-C_OZ],[-C_OX,C_OZ],[C_OX,C_OZ],[0,-C_OZ],[0,C_OZ],[-C_OX,0],[C_OX,0]];
-  for (const [px,pz] of piles) mBox(m, px, -PILE/2, pz, POST, PILE/2, POST, CWC.beam);
-  return m; }
-function cottageRoofMesh() { const m = Mesh();
-  const X = C_OX + C_EAVE, Z = C_OZ + C_EAVE, y0 = C_H, yp = C_H + C_ROOF_RISE;
-  mQuad(m, [-X,y0,-Z],[0,yp,-Z],[0,yp,Z],[-X,y0,Z], CWC.roof);             // left slope
-  mQuad(m, [X,y0,-Z],[X,y0,Z],[0,yp,Z],[0,yp,-Z], CWC.roof);              // right slope
-  mQuad(m, [-X,y0-0.05,Z],[0,yp-0.05,Z],[0,yp-0.05,-Z],[-X,y0-0.05,-Z], CWC.roofU);   // undersides
-  mQuad(m, [X,y0-0.05,-Z],[0,yp-0.05,-Z],[0,yp-0.05,Z],[X,y0-0.05,Z], CWC.roofU);
-  mTri(m, [-C_OX,y0,C_ZB],[C_OX,y0,C_ZB],[0,yp,C_ZB], CWC.plankDk);       // gable ends
-  mTri(m, [-C_OX,y0,C_ZF],[0,yp,C_ZF],[C_OX,y0,C_ZF], CWC.plankDk);
-  mBox(m, 0, yp, 0, 0.08, 0.08, Z, CWC.beam);                            // ridge beam
-  return m; }
-function cottageGlassMesh() { const m = Mesh(), g = [1,1,1];
-  mQuad(m, [C_XL,C_WY,C_WZ],[C_XL,C_WY,C_WZ+C_WW],[C_XL,C_WY+C_WH,C_WZ+C_WW],[C_XL,C_WY+C_WH,C_WZ], g);                 // left window
-  mQuad(m, [C_XR,C_WY,C_WZ],[C_XR,C_WY,C_WZ+C_WW],[C_XR,C_WY+C_WH,C_WZ+C_WW],[C_XR,C_WY+C_WH,C_WZ], g);                 // right window
-  return m; }
-function cottageDoorMesh() { const m = Mesh(), w = 2*C_DW;   // hinge-local: door hangs in -x from the hinge
-  mBox(m, -w/2, C_DH/2, 0, w/2-0.02, C_DH/2-0.01, 0.04, CWC.plankDk);
-  mBox(m, -w/2, C_DH*0.55, 0.05, w/2-0.12, 0.05, 0.02, CWC.beam);          // cross-brace
-  mBox(m, -w+0.16, 1.0, 0.07, 0.04, 0.09, 0.03, [0.22,0.2,0.18]);          // handle
-  return m; }
-
-function cotLocalToWorld(lx, lz) { const c = cottage, cy = Math.cos(c.yaw), sy = Math.sin(c.yaw); return [ c.x + lx*cy + lz*sy, c.z - lx*sy + lz*cy ]; }
-function cotWorldToLocal(wx, wz) { const c = cottage, cy = Math.cos(c.yaw), sy = Math.sin(c.yaw), dx = wx-c.x, dz = wz-c.z; return [ dx*cy - dz*sy, dx*sy + dz*cy ]; }
-function insideCottage(wx, wz) { if (!cottage) return false; const l = cotWorldToLocal(wx, wz); return Math.abs(l[0]) < C_OX+0.1 && Math.abs(l[1]) < C_OZ+0.1; }
-// §cot7 within `pad` metres of the cottage (its footprint plus a buffer) — used to keep nests, water and clutter away from home
-function nearCottage(wx, wz, pad) { if (!cottage) return false; return Math.hypot(wx-cottage.x, wz-cottage.z) < (pad || 8); }
-
-// §2 the cottage must sit well above the highest tide + storm wash, off the cliffs, with a clear door approach
-let COTTAGE_MIN_Y = MAX_HIGH_TIDE + 1.6;         // floor sits this far above spring high (tunable), never floods (the sim's water never exceeds spring high); §island9 let, recomputed per seed
-const COTTAGE_APPROACH = 3.6;                       // metres of cleared, flattened ground in front of the door (tunable)
-const COTTAGE_PROTECT_R = 8.0;                      // no dig/mine/place within this radius of the cottage (tunable)
-const C_OX_PAD = C_OX + 0.7, C_OZ_PAD = C_OZ + 0.7; // flattened pad half-extents (a little past the walls)
-// Validate a candidate site+orientation. Returns {y, range} if good, else null.
-function cottageSiteOK(x, z, yaw) {
-  const cy = Math.cos(yaw), sy = Math.sin(yaw), L2W = (lx, lz) => [x + lx*cy + lz*sy, z - lx*sy + lz*cy];
-  let mn = 1e9, mx = -1e9;
-  const corners = [[0,0],[C_OX,C_OZ],[-C_OX,C_OZ],[C_OX,-C_OZ],[-C_OX,-C_OZ],[C_OX,0],[-C_OX,0],[0,C_OZ],[0,-C_OZ]];
-  for (const [lx,lz] of corners) { const w = L2W(lx, lz), s = surfaceAt(w[0], w[1]);
-    if (s.h < COTTAGE_MIN_Y) return null;                               // the building sits above the highest tide + storm
-    if (waterDepthAt(w[0], w[1]) > 0.0) return null;
-    if (s.slope > 1.1) return null;                                     // a cliff/steep corner (we flatten gentle slopes, not cliffs)
-    mn = Math.min(mn, s.h); mx = Math.max(mx, s.h);
-  }
-  if (mx - mn > 3.2) return null;                                       // too steep even to flatten into a tidy pad
-  if (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, C_OX + 1.2)) return null;   // trees/rocks/POIs in the footprint
-  const padY = mx;                                                      // the pad (and thus the approach) will be levelled to here
-  for (let d = C_OZ + 0.6; d <= C_OZ + COTTAGE_APPROACH; d += 0.8) {     // the walkable approach straight out from the door (local +z)
-    const w = L2W(0, d), s = surfaceAt(w[0], w[1]);                      // we'll flatten it, so only reject water, a huge fill, or props
-    if (waterDepthAt(w[0], w[1]) > 0.0 || s.h < padY - 4) return null;
-    if (typeof bigPropBlocking === "function" && bigPropBlocking(w[0], w[1], 0.8)) return null;
-  }
-  return { y: mx, range: mx - mn };
-}
-// Flatten a level pad (+ door approach) into the terrain under the cottage, blending out smoothly.
-function flattenCottagePad() {
-  if (!cottage) return; const c = cottage, padY = c.floorY + 0.02;
-  // the terrain grid is coarse (cells several metres wide), so flatten a generous landing and blend out over a long, gentle ramp
-  const APR = COTTAGE_APPROACH + CELL, BLEND = Math.max(11, CELL*3), reach = Math.max(C_OX_PAD, C_OZ_PAD + APR) + BLEND + CELL;   // §unstuck longer, gentler blend so every pad edge stays walkable
-  const gcx = (c.x+HALF)/CELL, gcz = (c.z+HALF)/CELL, rg = reach/CELL;
-  const minx = Math.max(0, Math.floor(gcx-rg)), maxx = Math.min(GRID-1, Math.ceil(gcx+rg));
-  const minz = Math.max(0, Math.floor(gcz-rg)), maxz = Math.min(GRID-1, Math.ceil(gcz+rg));
-  const cy = Math.cos(c.yaw), sy = Math.sin(c.yaw);
-  for (let gz = minz; gz <= maxz; gz++) for (let gx = minx; gx <= maxx; gx++) {
-    const wx = gx*CELL - HALF, wz = gz*CELL - HALF, dx = wx-c.x, dz = wz-c.z, lx = dx*cy - dz*sy, lz = dx*sy + dz*cy;
-    const ox = Math.max(0, Math.abs(lx) - C_OX_PAD);
-    const oz = lz > 0 ? Math.max(0, lz - (C_OZ_PAD + APR)) : Math.max(0, -lz - C_OZ_PAD);   // approach extends on the +z (door) side
-    const out = Math.hypot(ox, oz); if (out > BLEND) continue;
-    const t = out <= 0 ? 1 : 1 - out/BLEND, f = t*t*(3-2*t), i = gz*GRID+gx;               // smoothstep blend
-    built[i] = f * (padY - (heightmap[i] + dig[i]));                                        // absolute: lift/cut toward padY (re-applied each load; not persisted)
-    // §cot7 the core pad (inside the footprint) is forced DRY: drop its water-fill below the floor and clear any pond,
-    // so a basin/tide-pool/filled hole the cottage happens to sit over never renders water inside the home.
-    if (out <= 0.001) { filled[i] = Math.min(filled[i], padY - 3); if (ponded.has(i)) ponded.delete(i); }
-  }
-  rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz);
-  resnapPropsRegion(c.x-reach, c.z-reach, c.x+reach, c.z+reach);
-}
-// Is this spot the cottage's protected ground (the pad, the approach, or the 8m bubble)?
-function inCottageProtected(wx, wz) {
-  if (!cottage) return false;
-  if (Math.hypot(wx-cottage.x, wz-cottage.z) < COTTAGE_PROTECT_R) return true;
-  const l = cotWorldToLocal(wx, wz);
-  return Math.abs(l[0]) < C_OX_PAD + 0.8 && l[1] > 0 && l[1] < C_OZ_PAD + COTTAGE_APPROACH + 0.8;   // the approach strip reaches a bit further out
-}
-let _cotProtT = 0;
-function cottageProtectBlock(wx, wz) {   // §2 the normal failure reaction (recoil) if you try to alter protected ground
-  if (!inCottageProtected(wx, wz)) return false;
-  if (typeof failStrike === "function") failStrike(false, wx, surfaceAt(wx, wz).h + 0.3, wz);
-  if (clock.t - _cotProtT > 2) { _cotProtT = clock.t; showCard("Too close to the cottage", "The ground around your home stays clear, no digging, mining or building here."); }
-  return true;
-}
-function addCottageColliders() {
-  const add = (lx, lz, r) => { const w = cotLocalToWorld(lx, lz); colliders.push({ x:w[0], z:w[1], r, kind:"cottage" }); };
-  for (let x=-C_OX; x<=C_OX+0.001; x+=0.45) { add(x, C_ZB, 0.3); if (Math.abs(x) > C_DW+0.04) add(x, C_ZF, 0.3); }   // front skips the doorway
-  for (let z=-C_OZ; z<=C_OZ+0.001; z+=0.45) { add(C_XL, z, 0.3); add(C_XR, z, 0.3); }
-  rebuildCollHash();
-}
-function initCottage() {
-  const sp = findSpawn(), rng = mulberry32((SEED_INT ^ 0x19c077a9) >>> 0);
-  const toHigh = (typeof HIGH !== "undefined") ? Math.atan2(HIGH.x - sp.x, -(HIGH.z - sp.z)) : sp.yaw;   // uphill, toward the island's high ground
-  let best = null, tried = 0, passed = 0;
-  // several passes, each reaching further uphill, so the cottage lands on high dry ground set back from the beach
-  const passes = [
-    { n: 110, rMin: 6, rSpan: 18, spread: 1.4 },   // just inland, aimed uphill
-    { n: 120, rMin: 10, rSpan: 34, spread: 2.4 },   // further up the slope, wider arc
-    { n: 150, rMin: 8, rSpan: 55, spread: 6.283 }, // anywhere reachable
-  ];
-  for (const ps of passes) {
-    for (let k = 0; k < ps.n; k++) {
-      tried++;
-      const ang = toHigh + (rng()-0.5) * ps.spread, r = ps.rMin + rng()*ps.rSpan;
-      const x = sp.x + Math.sin(ang)*r, z = sp.z - Math.cos(ang)*r;
-      // try a few door orientations: toward spawn (open beach), and down the local slope (open ground)
-      const g = (typeof groundGradient === "function") ? groundGradient(x, z) : { dx: sp.x-x, dz: sp.z-z };
-      const yaws = [Math.atan2(sp.x - x, sp.z - z), Math.atan2(g.dx, g.dz), Math.atan2(sp.x - x, sp.z - z) + 0.9];
-      for (const yaw of yaws) {
-        const ok = cottageSiteOK(x, z, yaw); if (!ok) continue; passed++;
-        const dSpawn = Math.hypot(x - sp.x, z - sp.z);
-        const score = ok.range * 3 + dSpawn * 0.12;                    // flatter + nearer spawn is better
-        if (!best || score < best.score) best = { x, z, y: ok.y, score, yaw, range: ok.range };
-      }
-    }
-    if (best) break;
-  }
-  if (!best) {   // last resort: march uphill from spawn to the flattest high-enough spot we can find, then flatten hard
-    let fb = null;
-    for (let r = 8; r <= 70; r += 3) {
-      const x = sp.x + Math.sin(toHigh)*r, z = sp.z - Math.cos(toHigh)*r, s = surfaceAt(x, z);
-      if (waterDepthAt(x, z) > 0) continue;
-      const cand = { x, z, y: Math.max(s.h, COTTAGE_MIN_Y), yaw: Math.atan2(sp.x - x, sp.z - z), slope: s.slope };
-      if (!fb || (s.h >= COTTAGE_MIN_Y && cand.slope < fb.slope)) fb = cand;
-      if (s.h >= COTTAGE_MIN_Y && s.slope < 0.5) { fb = cand; break; }
-    }
-    best = fb || { x: sp.x, z: sp.z, y: Math.max(surfaceAt(sp.x, sp.z).h, COTTAGE_MIN_Y), yaw: sp.yaw };
-    console.warn("[cottage] no validated site, uphill fallback @ (" + best.x.toFixed(1) + ", " + best.z.toFixed(1) + ")");
-  }
-  cottage = { x: best.x, z: best.z, yaw: best.yaw, floorY: best.y - 0.02,
-    doorSwing: 0, cosy: 0, hearthLit: false, disp: {}, trophies: [], lastCatch: null, rewards: [],
-    aqua: { creatures: [], decor: [], freshAt: 0 } };
-  console.log(`[cottage] site @ (${best.x.toFixed(1)}, ${best.z.toFixed(1)}) floorY ${cottage.floorY.toFixed(2)} yaw ${(best.yaw).toFixed(2)} | range ${(best.range!=null?best.range.toFixed(2):"n/a")} · tried ${tried}, ${passed} valid · minY ${COTTAGE_MIN_Y.toFixed(1)}`);
-  cottage.bodyDyn = makeDynamic(cottageBodyMesh(), 1);
-  cottage.roofDyn = makeDynamic(cottageRoofMesh(), 1);
-  cottage.glassDyn = makeDynamic(cottageGlassMesh(), 1);
-  cottage.doorDyn = makeDynamic(cottageDoorMesh(), 1);
-  addCottageColliders();
-}
-function cottageIsLit() {
-  if (!cottage) return 0; let v = cottage.hearthLit ? 1 : 0;
-  if (typeof lanternLit === "function" && lanternLit() && insideCottage(player.x, player.z)) v = Math.max(v, 0.9);
-  for (const L of placedLanterns) if (insideCottage(L.x, L.z)) { v = Math.max(v, 0.8); break; }
-  return Math.max(v, cottage.cosy * 0.5);
-}
-function cottageWindowGlow() {
-  const night = 1 - clamp(((SKY.sun[1] || 0) + 0.05) * 3, 0, 1), lit = cottageIsLit(), g = night * (0.25 + 0.95*lit);
-  return [0.5 + g*1.3, 0.55 + g*0.8, 0.68 + g*0.18];
-}
-function updateCottage(dt) {
-  if (!cottage || mode === "menu") return; const c = cottage;
-  const d = cotLocalToWorld(0, C_ZF);
-  const near = insideCottage(player.x, player.z) || Math.hypot(player.x-d[0], player.z-d[1]) < C_DOOR_R;
-  const before = c.doorSwing > 0.5;
-  c.doorSwing += ((near?1:0) - c.doorSwing) * Math.min(1, dt*C_DOOR_SPD);
-  if (c.doorSwing < 0.001) c.doorSwing = 0;
-  if ((c.doorSwing > 0.5) !== before && typeof SND !== "undefined") SND.play("creak", { position:[d[0], c.floorY+1, d[1]], volume:0.45 });
-  updateAquarium(dt);
-  c.setT = (c.setT || 0) + dt; if (c.setT > 1.5) { c.setT = 0; if (typeof checkSets === "function") checkSets(); }   // §19F watch for newly-completed collection sets
-}
-function drawCottage(view) {
-  if (!cottage) return; const c = cottage;
-  const dx = c.x-cam.pos[0], dz = c.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) return;
-  propUniforms(view); const a = cottageScratch;
-  a[0]=c.x;a[1]=c.floorY;a[2]=c.z;a[3]=1;a[4]=c.yaw;a[5]=0;a[6]=0;a[7]=1;a[8]=1;a[9]=1;
-  c.bodyDyn.draw(a, 1);
-  const hinge = cotLocalToWorld(C_DW, C_ZF);                      // door, hinged at the right jamb
-  a[0]=hinge[0];a[2]=hinge[1];a[4]=c.yaw + c.doorSwing*C_DOOR_OPEN; c.doorDyn.draw(a, 1);
-  const camIn = insideCottage(cam.pos[0], cam.pos[2]) && cam.pos[1] < c.floorY + C_H + C_ROOF_RISE;
-  if (!camIn) { a[0]=c.x;a[2]=c.z;a[4]=c.yaw; c.roofDyn.draw(a, 1); }
-  const glow = cottageWindowGlow();                              // §cot5 real translucent glass, you see the outside through it; a warm glow at night when lit
-  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
-  gl.uniform1f(propU.uGhost, 1); gl.uniform3fv(propU.uGhostCol, glow);   // the ghost path renders at 0.5 alpha, so the view beyond shows through the pane
-  a[0]=c.x;a[2]=c.z;a[4]=c.yaw;a[7]=1;a[8]=1;a[9]=1; c.glassDyn.draw(a, 1);
-  gl.uniform1f(propU.uGhost, 0);
-  gl.depthMask(true); gl.disable(gl.BLEND);
-}
-// §19B fixtures that depend on the loaded world/storage (run after loadWorld + loadStorage):
-//   the sea chest shares the stash. (§strip the hearth fire + cooking are gone.)
-function initCottageFixtures() {
-  if (!cottage) return;
-  // §chest5 keep the cottage chest anchored to the cottage's own position & rotation. Re-seat any existing one
-  // to the current C_CHEST (so an older save that stored it at the old overlapping spot is corrected on load).
-  const cw = cotLocalToWorld(C_CHEST.x, C_CHEST.z);
-  const existing = storageBoxes.find(b => b.cottage);
-  if (existing) { existing.x = cw[0]; existing.z = cw[1]; existing.yaw = cottage.yaw; }
-  else storageBoxes.push({ x: cw[0], z: cw[1], yaw: cottage.yaw, cottage: true });
-  auditCottageInterior();
-}
-// §chest5 sanity-check the interior layout: no two furniture footprints may overlap, and nothing may sit below the floor.
-// Footprints are local-space AABBs (everything is axis-aligned in the cottage's own frame). Logs any violation.
-function auditCottageInterior() {
-  if (!cottage) return;
-  const floorY = cottage.floorY;
-  const items = [
-    { name: "chest",   x: C_CHEST.x, z: C_CHEST.z, hx: CHEST_W,  hz: CHEST_D,  y: floorY + 0.06 },
-    { name: "aquarium", x: C_AQ.x,    z: C_AQ.z,    hx: AQ_TWx+0.06, hz: AQ_TWz+0.06, y: floorY },
-    { name: "bed",     x: C_BED.x,   z: C_BED.z,   hx: 0.78,     hz: 1.05,     y: floorY },
-    { name: "hearth",  x: C_HEARTH.x, z: C_HEARTH.z, hx: 0.7,      hz: 0.5,      y: floorY },
-  ];
-  let issues = 0;
-  for (let i = 0; i < items.length; i++) {
-    if (items[i].y < floorY - 0.001) { console.warn(`[cottage audit] ${items[i].name} sits below the floor (y ${items[i].y.toFixed(2)} < floor ${floorY.toFixed(2)})`); issues++; }
-    for (let j = i + 1; j < items.length; j++) {
-      const a = items[i], b = items[j];
-      if (Math.abs(a.x - b.x) < a.hx + b.hx && Math.abs(a.z - b.z) < a.hz + b.hz) {
-        const ox = (a.hx + b.hx) - Math.abs(a.x - b.x), oz = (a.hz + b.hz) - Math.abs(a.z - b.z);
-        console.warn(`[cottage audit] ${a.name} overlaps ${b.name} (by ${ox.toFixed(2)}×${oz.toFixed(2)} in local x×z)`); issues++;
-      }
-    }
-  }
-  if (!issues) console.log("[cottage audit] interior OK, no overlaps, nothing below the floor");
-  return issues;
-}
-// §19B sleep in the cottage bed: it becomes your respawn point; at night, skip to morning.
-function trySleepCottage() {
-  const wake = cotLocalToWorld(0, C_IZ - 0.7);
-  shelterSpawn = { x: wake[0], z: wake[1] };
-  cottage.isRespawn = true;
-  const night = dayNightEnabled && dayFactor() < 0.35;
-  if (night) {
-    startFade(() => { timeOfDay = MORNING_TIME; updateSun();
-      const b = cotLocalToWorld(C_BED.x, C_BED.z + 0.95), h = surfaceAt(b[0], b[1]).h;
-      player.x = b[0]; player.z = b[1]; player.feetY = h; player.eyeY = h + EYE; player.vy = 0; player.airborne = false;
-      stamina = 1; exhausted = false; player.breath = BREATH_MAX; });
-    if (onDig) onDig("eat");
-    showCard("You sleep until morning", "Rested. The cottage is your home now, you'll wake here.");
-  } else {
-    stamina = 1; exhausted = false;
-    showCard("Home sweet home", dayNightEnabled ? "The cottage is your respawn point. Sleep here at night to skip to morning."
-      : "The cottage is your respawn point. A rest here restores your stamina.");
-  }
-}
-function saveCottage() { if (!cottage) return; try { localStorage.setItem("bcc_"+SEED_STR, JSON.stringify({ cosy: cottage.cosy, disp: cottage.disp, trophies: cottage.trophies, lastCatch: cottage.lastCatch, aqua: cottage.aqua, rewards: cottage.rewards, flog: findLog })); } catch(e){} }
-function loadCottage() { if (!cottage) return; try { const o = JSON.parse(localStorage.getItem("bcc_"+SEED_STR)||"null"); if (!o) return;
-  if (typeof o.cosy === "number") cottage.cosy = o.cosy;
-  if (o.disp && typeof o.disp === "object") cottage.disp = o.disp;
-  if (Array.isArray(o.trophies)) cottage.trophies = o.trophies;
-  if (o.lastCatch) cottage.lastCatch = o.lastCatch;
-  if (o.aqua && typeof o.aqua === "object") { cottage.aqua = Object.assign({ creatures: [], decor: [], freshAt: 0 }, o.aqua);
-    if (!Array.isArray(cottage.aqua.creatures)) cottage.aqua.creatures = []; if (!Array.isArray(cottage.aqua.decor)) cottage.aqua.decor = []; }
-  if (Array.isArray(o.rewards)) cottage.rewards = o.rewards;
-  if (o.flog && typeof o.flog === "object") Object.assign(findLog, o.flog);
-} catch(e){} }
-
-/* §19C DISPLAYS, place any find from the satchel onto a shelf/cabinet/sill slot.
-   It shows the real 3D model and stays put; interact again to take it back.
-   Hovering a placed find shows its name and where & when it was found.      */
-const findLog = {};   // itemId → { day, where } recorded on first discovery (for display tooltips)
-function findWhereLabel() {
-  if (waterDepthAt(player.x, player.z) > 0.3) return "in the shallows";
-  const k = (typeof surfaceKind === "function") ? surfaceKind(player.x, player.z) : "sand";
-  if (k === "wet") return "at the waterline";
-  if (k === "rock") return "among the rocks";
-  if (k === "grass") return "up in the grass";
-  return "on the beach";
-}
-function recordFind(id) { if (!id || findLog[id]) return; findLog[id] = { day: Math.floor(tideDay) + 1, where: findWhereLabel() }; }
-const COT_NOT_DISPLAY = new Set(["toolkit","shovel","axe","pickaxe","bucket","rod","lantern","chestbox"]);
-function isDisplayable(id) { const it = ITEMS[id]; return !!(it && it.model) && !COT_NOT_DISPLAY.has(id); }
-// slot anchors (local): back-wall shelves, front-wall shelves, glass cabinet, windowsill
-const COT_SLOTS = (function () { const s = []; let i = 0;
-  const add = (x, y, z, face, surf) => s.push({ key: "s" + (i++), x, y, z, face: face || 0, surf });
-  // §3 back-wall shelves flanking the hearth (left & right), 3 tiers each, 3 slots per shelf, matches cottageBodyMesh
-  for (const sx of [C_XL+1.0, C_XR-1.0]) for (let k = 0; k < 3; k++) { const y = 1.1 + k*0.62 + 0.05; for (const dx of [-0.46,0,0.46]) add(sx+dx, y, C_ZB+0.17, 0, "shelf"); }
-  i += 4;   // §cot5 glass cabinet removed, advance the key counter by its 4 old slots so the windowsill keys below don't shift (saved displays stay put)
-  for (const dz of [-0.3, 0, 0.3]) add(C_XL+0.2, C_WY+0.03, C_WZ+C_WW/2+dz, -Math.PI/2, "sill");                        // left windowsill
-  return s;
-})();
-const COT_SLOT_MAP = {}; for (const s of COT_SLOTS) COT_SLOT_MAP[s.key] = s;
-const dispScratch = new Float32Array(COT_SLOTS.length * 10);
-const dispCache = {};
-function meshBounds(m) { let a = [1e9,1e9,1e9], b = [-1e9,-1e9,-1e9];
-  for (let i = 0; i < m.pos.length; i += 3) for (let j = 0; j < 3; j++) { a[j] = Math.min(a[j], m.pos[i+j]); b[j] = Math.max(b[j], m.pos[i+j]); }
-  return { a, b }; }
-function dispModel(id) {   // cached normalized drawer: fits each find to a consistent display size
-  if (dispCache[id] !== undefined) return dispCache[id];
-  const it = ITEMS[id]; if (!it || !it.model) return (dispCache[id] = null);
-  const m = it.model(), bd = meshBounds(m), ext = Math.max(bd.b[0]-bd.a[0], bd.b[1]-bd.a[1], bd.b[2]-bd.a[2]) || 1;
-  const scale = 0.33 / ext, yOff = -bd.a[1] * scale;
-  return (dispCache[id] = { dyn: makeDynamic(m, COT_SLOTS.length), scale, yOff, tint: it.tint || [1,1,1] });
-}
-function toggleDisplaySlot(slot) {
-  const cur = cottage.disp[slot.key];
-  if (cur) {
-    if (Inv.add(cur.id, 1) > 0) { delete cottage.disp[slot.key]; if (onDig) onDig("pickup"); saveCottage(); if (typeof checkSets === "function") checkSets(); }
-    else { showCard("Pack full", "No room to take it back."); }
-    return;
-  }
-  const sel = selectedItem();
-  if (!isDisplayable(sel)) { showCard("Nothing to display", "Hold a find (not a tool) and aim at a shelf to place it."); return; }
-  const fl = findLog[sel] || { day: Math.floor(tideDay)+1, where: findWhereLabel() };
-  cottage.disp[slot.key] = { id: sel, day: fl.day, where: fl.where };
-  Inv.remove(sel, 1); if (onDig) onDig("pat"); if (typeof SND !== "undefined") SND.play("discover", { volume: 0.25 });
-  saveCottage(); if (typeof checkSets === "function") checkSets();
-}
-function displaySlotPrompt(slot) {
-  const cur = cottage.disp[slot.key];
-  if (cur) { const nm = ITEMS[cur.id] ? ITEMS[cur.id].name : cur.id; return `${nm}, found Day ${cur.day}, ${cur.where}` + (IS_TOUCH ? " · tap to take" : " · F to take back"); }
-  const sel = selectedItem();
-  if (isDisplayable(sel)) { const nm = ITEMS[sel] ? ITEMS[sel].name : sel; return (IS_TOUCH ? "tap" : "click/F") + ` to display ${nm}`; }
-  return "Display spot, hold a find to place it here";
-}
-function drawCottageDisplays(view) {
-  if (!cottage) return; const byId = {};
-  for (const k in cottage.disp) { const d = cottage.disp[k]; if (d) (byId[d.id] = byId[d.id] || []).push(k); }
-  let any = false;
-  for (const id in byId) { const mi = dispModel(id); if (!mi) continue; if (!any) { propUniforms(view); any = true; }
-    const arr = dispScratch; let n = 0;
-    for (const k of byId[id]) { const s = COT_SLOT_MAP[k]; if (!s) continue; const w = cotLocalToWorld(s.x, s.z), o = n*10;
-      arr[o]=w[0]; arr[o+1]=cottage.floorY+s.y+mi.yOff; arr[o+2]=w[1]; arr[o+3]=mi.scale; arr[o+4]=cottage.yaw+s.face; arr[o+5]=0; arr[o+6]=0;
-      arr[o+7]=mi.tint[0]; arr[o+8]=mi.tint[1]; arr[o+9]=mi.tint[2]; n++; }
-    if (n) mi.dyn.draw(arr, n);
-  }
-}
-// §5 small markers so empty display spots are easy to find, a little peg/stand on each, with a soft glow when you're holding something to place
-let slotPegDyn = null, slotGlowDyn = null;
-function slotPegMesh() { const m = Mesh(); const base = [0.46,0.39,0.3], knob = [0.6,0.5,0.38];
-  mBox(m, 0, 0.012, 0, 0.055, 0.012, 0.05, base);             // a small stand plate
-  mBox(m, 0, 0.055, 0, 0.012, 0.045, 0.012, knob);            // a slender peg
-  return m; }
-function drawCottageSlotMarkers(view) {
-  if (!cottage) return;
-  const empties = []; for (const s of COT_SLOTS) if (!cottage.disp[s.key]) empties.push(s);
-  if (!empties.length) return;
-  if (!slotPegDyn) slotPegDyn = makeDynamic(slotPegMesh(), COT_SLOTS.length);
-  propUniforms(view); const a = dispScratch; let n = 0;
-  for (const s of empties) { const w = cotLocalToWorld(s.x, s.z); const dx = w[0]-cam.pos[0], dz = w[1]-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const o = n*10; a[o]=w[0];a[o+1]=cottage.floorY+s.y;a[o+2]=w[1];a[o+3]=1;a[o+4]=cottage.yaw+s.face;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
-  if (n) slotPegDyn.draw(a, n);
-  // soft pulsing glow on empty spots while holding a displayable find
-  if (typeof isDisplayable === "function" && isDisplayable(selectedItem())) {
-    if (!slotGlowDyn) slotGlowDyn = makeDynamic(discMesh(0, 0.11, 12, 0, [1,1,1]), COT_SLOTS.length);
-    const g = 0.35 + 0.3*(0.5 + 0.5*Math.sin(clock.t*4.5));
-    gl.uniform1f(propU.uGhost, 1); gl.uniform3fv(propU.uGhostCol, [1.0,0.88,0.52]);
-    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE); gl.depthMask(false);
-    let k = 0; for (const s of empties) { const w = cotLocalToWorld(s.x, s.z); const dx = w[0]-cam.pos[0], dz = w[1]-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-      const o = k*10; a[o]=w[0];a[o+1]=cottage.floorY+s.y+0.06;a[o+2]=w[1];a[o+3]=1;a[o+4]=cottage.yaw+s.face;a[o+5]=0;a[o+6]=0;a[o+7]=g;a[o+8]=g*0.86;a[o+9]=g*0.5; k++; }
-    if (k) slotGlowDyn.draw(a, k);
-    gl.depthMask(true); gl.disable(gl.BLEND); gl.uniform1f(propU.uGhost, 0);
-  }
-}
-
-/* §19D FISH TROPHIES, mount your latest catch on a wall board with its weight;
-   a record catch gets a small brass plaque. Interact again to take it down.    */
-const TROPHY_SLOTS = [   // §3 on bare wall, clear of shelves/windows/furniture
-  { key:"t0", x: C_XL+1.0, y: 2.65, z: C_ZB+0.14, nx:0, nz:1, face:0 },           // back wall, high above the left shelves
-  { key:"t1", x: C_XR-1.0, y: 2.65, z: C_ZB+0.14, nx:0, nz:1, face:0 },           // back wall, high above the right shelves
-  { key:"t2", x: C_XR-0.12, y: 2.3, z: -1.5, nx:-1, nz:0, face:-Math.PI/2 },     // right wall, back
-  { key:"t3", x: C_XL+0.12, y: 2.3, z: C_ZB+1.35, nx:1, nz:0, face:Math.PI/2 },  // left wall, above the bed
-];
-const TROPHY_SLOT_MAP = {}; for (const s of TROPHY_SLOTS) TROPHY_SLOT_MAP[s.key] = s;
-let trophyBoardDyn = null, brassDyn = null; const trophyFishCache = {};
-function trophyBoardMesh() { const m = Mesh();
-  mBox(m, 0, 0, 0, 0.56, 0.4, 0.04, CWC.plankDk);                                   // shield board
-  mBox(m, 0, 0.44, 0, 0.5, 0.05, 0.06, CWC.beam); mBox(m, 0, -0.44, 0, 0.5, 0.05, 0.06, CWC.beam);   // trims
-  return m; }
-function brassPlaqueMesh() { const m = Mesh(); mBox(m, 0, 0, 0, 0.26, 0.075, 0.03, [0.72,0.58,0.25]); mBox(m, 0, 0, 0.02, 0.22, 0.05, 0.02, [0.88,0.74,0.42]); return m; }
-function trophyFish(species) {
-  if (trophyFishCache[species] !== undefined) return trophyFishCache[species];
-  let mesh = null; try { mesh = catchSpeciesMesh(species); } catch(e) {}
-  if (!mesh) return (trophyFishCache[species] = null);
-  const bd = meshBounds(mesh), ext = Math.max(bd.b[0]-bd.a[0], bd.b[1]-bd.a[1], bd.b[2]-bd.a[2]) || 1;
-  const scale = 0.6/ext, cy = (bd.a[1]+bd.b[1])/2 * scale;
-  return (trophyFishCache[species] = { dyn: makeDynamic(mesh, TROPHY_SLOTS.length), scale, cy, tint: (typeof SPECIES_HUD_COL !== "undefined" && SPECIES_HUD_COL[species]) || [0.7,0.75,0.8] });
-}
-function fishLabel(sp) { return (FISH_SPECIES[sp] && FISH_SPECIES[sp].label) || sp; }
-function toggleTrophy(slot) {
-  const existing = cottage.trophies.find(t => t.slot === slot.key);
-  if (existing) { cottage.trophies = cottage.trophies.filter(t => t !== existing); if (onDig) onDig("pickup"); saveCottage(); return; }
-  const c = cottage.lastCatch;
-  if (!c) { showCard("Nothing to mount", "Reel in a fish on the rod, then mount it here as a trophy."); return; }
-  cottage.trophies.push({ slot: slot.key, species: c.species, weight: c.weight, record: !!c.record, day: c.day });
-  cottage.lastCatch = null;
-  const w = cotLocalToWorld(slot.x, slot.z);
-  if (typeof sparkle === "function") sparkle(w[0], cottage.floorY+slot.y, w[1], c.record ? [1,0.85,0.4] : [0.8,0.85,0.9], c.record ? 14 : 6);
-  if (typeof SND !== "undefined") SND.play(c.record ? "discover" : "pat");
-  showCard("Mounted!", `${fishLabel(c.species)}, ${c.weight.toFixed(2)} kg` + (c.record ? ", a record! A brass plaque is yours." : "."));
-  saveCottage(); if (typeof checkSets === "function") checkSets();
-}
-function trophyPrompt(slot) {
-  const t = cottage.trophies.find(x => x.slot === slot.key);
-  if (t) return `${fishLabel(t.species)}, ${t.weight.toFixed(2)} kg${t.record ? " (record!)" : ""}` + (IS_TOUCH ? " · tap to remove" : " · F to take down");
-  if (cottage.lastCatch) return (IS_TOUCH ? "tap" : "click/F") + ` to mount your ${fishLabel(cottage.lastCatch.species)}`;
-  return "Trophy mount, catch a fish, then mount it here";
-}
-function drawCottageTrophies(view) {
-  if (!cottage || !cottage.trophies.length) return;
-  if (!trophyBoardDyn) trophyBoardDyn = makeDynamic(trophyBoardMesh(), TROPHY_SLOTS.length);
-  if (!brassDyn) brassDyn = makeDynamic(brassPlaqueMesh(), TROPHY_SLOTS.length);
-  propUniforms(view); const a = dispScratch;
-  let nb = 0; for (const t of cottage.trophies) { const s = TROPHY_SLOT_MAP[t.slot]; if (!s) continue; const w = cotLocalToWorld(s.x, s.z), o = nb*10;
-    a[o]=w[0];a[o+1]=cottage.floorY+s.y;a[o+2]=w[1];a[o+3]=1;a[o+4]=cottage.yaw+s.face;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; nb++; }
-  if (nb) trophyBoardDyn.draw(a, nb);
-  let np = 0; for (const t of cottage.trophies) { if (!t.record) continue; const s = TROPHY_SLOT_MAP[t.slot]; if (!s) continue;
-    const w = cotLocalToWorld(s.x + s.nx*0.05, s.z + s.nz*0.05), o = np*10;
-    a[o]=w[0];a[o+1]=cottage.floorY+s.y-0.33;a[o+2]=w[1];a[o+3]=1;a[o+4]=cottage.yaw+s.face;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; np++; }
-  if (np) brassDyn.draw(a, np);
-  const bySp = {}; for (const t of cottage.trophies) (bySp[t.species] = bySp[t.species] || []).push(t);
-  for (const sp in bySp) { const fm = trophyFish(sp); if (!fm) continue; let n = 0;
-    for (const t of bySp[sp]) { const s = TROPHY_SLOT_MAP[t.slot]; if (!s) continue; const w = cotLocalToWorld(s.x + s.nx*0.16, s.z + s.nz*0.16), o = n*10;
-      a[o]=w[0];a[o+1]=cottage.floorY+s.y-fm.cy+0.03;a[o+2]=w[1];a[o+3]=fm.scale;a[o+4]=cottage.yaw+s.face;a[o+5]=0;a[o+6]=0;a[o+7]=fm.tint[0];a[o+8]=fm.tint[1];a[o+9]=fm.tint[2]; n++; }
-    if (n) fm.dyn.draw(a, n); }
-}
-
-/* §19E AQUARIUM, a glass tank with a sandy bottom. Pour in bucket creatures and
-   they live here (simple swim/crawl animation); decorate with rocks & sea plants;
-   the water needs fresh seawater every couple of days or the residents go sluggish. */
-const AQ_TWx = 0.42, AQ_TWz = 0.62, AQ_STAND = 0.5, AQ_WH = 0.52, AQ_SAND = 0.06;
-const AQUA_FRESH_DAYS = 2;
-const AQUA_SWIM = new Set(["fish","minnow"]);
-const AQUA_DRIFT = new Set(["jelly"]);
-const AQUA_DECOR = new Set(["stone","rock","pebble","seaweed","kelp","eelgrass","seamoss","redalgae","coral","shell","cockle"]);
-let aquaSolidDyn = null, aquaWaterDyn = null;
-function aquaSolidMesh() { const m = Mesh(); const wood = CWC.cab, sand = [0.86,0.8,0.64], rim = [0.33,0.33,0.36], top = AQ_STAND+AQ_WH;
-  for (const sx of [-1,1]) for (const sz of [-1,1]) mBox(m, sx*(AQ_TWx-0.05), AQ_STAND/2, sz*(AQ_TWz-0.05), 0.05, AQ_STAND/2, 0.05, wood);   // legs
-  mBox(m, 0, AQ_STAND-0.03, 0, AQ_TWx+0.03, 0.03, AQ_TWz+0.03, wood);                 // stand top
-  mBox(m, 0, AQ_STAND+AQ_SAND/2, 0, AQ_TWx-0.04, AQ_SAND/2, AQ_TWz-0.04, sand);        // sand bottom
-  for (const yy of [AQ_STAND, top]) { for (const sz of [-1,1]) mBox(m, 0, yy, sz*AQ_TWz, AQ_TWx, 0.025, 0.025, rim); for (const sx of [-1,1]) mBox(m, sx*AQ_TWx, yy, 0, 0.025, 0.025, AQ_TWz, rim); }  // frame rims
-  for (const sx of [-1,1]) for (const sz of [-1,1]) mBox(m, sx*AQ_TWx, AQ_STAND+AQ_WH/2, sz*AQ_TWz, 0.025, AQ_WH/2, 0.025, rim);   // corner posts
-  return m; }
-function aquaWaterMesh() { const m = Mesh(), w = [1,1,1], y1 = AQ_STAND+AQ_WH-0.02, y0 = AQ_STAND+AQ_SAND, ix = AQ_TWx-0.03, iz = AQ_TWz-0.03;
-  mQuad(m, [-ix,y1,-iz],[ix,y1,-iz],[ix,y1,iz],[-ix,y1,iz], w);                        // surface
-  mQuad(m, [-ix,y0,iz],[ix,y0,iz],[ix,y1,iz],[-ix,y1,iz], w); mQuad(m, [ix,y0,-iz],[-ix,y0,-iz],[-ix,y1,-iz],[ix,y1,-iz], w);
-  mQuad(m, [ix,y0,iz],[ix,y0,-iz],[ix,y1,-iz],[ix,y1,iz], w); mQuad(m, [-ix,y0,-iz],[-ix,y0,iz],[-ix,y1,iz],[-ix,y1,-iz], w);
-  return m; }
-function aquaStale() { return cottage && cottage.aqua && (tideDay - cottage.aqua.freshAt) > AQUA_FRESH_DAYS; }
-function addAquaResident(c) {
-  const a = Math.random()*6.283, sp = 0.08 + Math.random()*0.08;
-  cottage.aqua.creatures.push({ t: c.t, scale: c.scale || 1, tint: c.tint || [1,1,1], special: !!c.special, name: c.name, variant: c.variant,
-    lx: (Math.random()-0.5)*AQ_TWx, lz: (Math.random()-0.5)*AQ_TWz, ly: AQUA_SWIM.has(c.t) ? 0.2 : 0.02,
-    vx: Math.cos(a)*sp, vz: Math.sin(a)*sp, yaw: a, phase: Math.random()*6,
-    swim: AQUA_SWIM.has(c.t), drift: AQUA_DRIFT.has(c.t) });
-}
-function addAquaDecor(id) { cottage.aqua.decor.push({ id, lx: (Math.random()-0.5)*(AQ_TWx*1.4), lz: (Math.random()-0.5)*(AQ_TWz*1.4) }); }
-function updateAquarium(dt) {
-  const aq = cottage.aqua; if (!aq || !aq.creatures.length) return; const sp = aquaStale() ? 0.3 : 1;
-  const bx = AQ_TWx-0.09, bz = AQ_TWz-0.09;
-  for (const r of aq.creatures) { r.phase += dt;
-    if (r.swim) { r.lx += r.vx*dt*sp; r.lz += r.vz*dt*sp; r.ly = clamp(r.ly + Math.sin(r.phase*0.8)*dt*0.12*sp, 0.08, AQ_WH-0.14);
-      if (r.lx < -bx || r.lx > bx) { r.vx *= -1; r.lx = clamp(r.lx,-bx,bx); } if (r.lz < -bz || r.lz > bz) { r.vz *= -1; r.lz = clamp(r.lz,-bz,bz); }
-      r.yaw = Math.atan2(r.vx, r.vz);
-    } else if (r.drift) { r.ly = clamp(0.24 + Math.sin(r.phase*0.5)*0.14, 0.08, AQ_WH-0.1); r.lx = clamp(r.lx + Math.sin(r.phase*0.3)*dt*0.06*sp, -bx, bx); r.yaw += dt*0.3*sp;
-    } else { r.lx += r.vx*dt*0.4*sp; r.lz += r.vz*dt*0.4*sp; r.ly = 0.02;
-      if (r.lx < -bx || r.lx > bx) { r.vx *= -1; r.lx = clamp(r.lx,-bx,bx); } if (r.lz < -bz || r.lz > bz) { r.vz *= -1; r.lz = clamp(r.lz,-bz,bz); }
-      if (Math.random() < dt*0.4) { const a = Math.random()*6.283; r.vx = Math.cos(a)*0.08; r.vz = Math.sin(a)*0.08; r.yaw = a; } }
-  }
-}
-function drawCottageAquarium(view) {
-  if (!cottage || !cottage.aqua) return; const c = cottage, aq = c.aqua;
-  const aw = cotLocalToWorld(C_AQ.x, C_AQ.z); const dx = aw[0]-cam.pos[0], dz = aw[1]-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) return;
-  if (!aquaSolidDyn) aquaSolidDyn = makeDynamic(aquaSolidMesh(), 1);
-  if (!aquaWaterDyn) aquaWaterDyn = makeDynamic(aquaWaterMesh(), 1);
-  propUniforms(view); const a = cottageScratch;
-  a[0]=aw[0];a[1]=c.floorY;a[2]=aw[1];a[3]=1;a[4]=c.yaw;a[5]=0;a[6]=0;a[7]=1;a[8]=1;a[9]=1; aquaSolidDyn.draw(a, 1);
-  // decor on the sand
-  const sandY = c.floorY + AQ_STAND + AQ_SAND;
-  const byDecor = {}; for (const d of aq.decor) (byDecor[d.id] = byDecor[d.id] || []).push(d);
-  for (const id in byDecor) { const mi = dispModel(id); if (!mi) continue; const arr = dispScratch; let n = 0;
-    for (const d of byDecor[id]) { const w = cotLocalToWorld(C_AQ.x + d.lx, C_AQ.z + d.lz), o = n*10;
-      arr[o]=w[0];arr[o+1]=sandY+mi.yOff*0.7;arr[o+2]=w[1];arr[o+3]=mi.scale*0.7;arr[o+4]=c.yaw;arr[o+5]=0;arr[o+6]=0;arr[o+7]=mi.tint[0];arr[o+8]=mi.tint[1];arr[o+9]=mi.tint[2]; n++; }
-    if (n) mi.dyn.draw(arr, n); }
-  // residents
-  const bySp = {}; for (const r of aq.creatures) (bySp[r.t] = bySp[r.t] || []).push(r);
-  for (const t in bySp) { const cd = CREATURES[t]; if (!cd || !cd.dyn) continue; const arr = dispScratch; let n = 0;
-    const sc = Math.min(0.32, (cd.base || 0.6) * 0.24);
-    for (const r of bySp[t]) { if (n >= 20) break; const w = cotLocalToWorld(C_AQ.x + r.lx, C_AQ.z + r.lz), o = n*10;
-      arr[o]=w[0];arr[o+1]=sandY+r.ly;arr[o+2]=w[1];arr[o+3]=sc;arr[o+4]=c.yaw+r.yaw;arr[o+5]=0;arr[o+6]=0;arr[o+7]=r.tint[0];arr[o+8]=r.tint[1];arr[o+9]=r.tint[2]; n++; }
-    if (n) cd.dyn.draw(arr, n); }
-  // translucent water (via the ghost-alpha path), tinted murky when stale
-  const wc = aquaStale() ? [0.42,0.56,0.44] : [0.38,0.62,0.8];
-  propUniforms(view); gl.uniform1f(propU.uGhost, 1); gl.uniform3fv(propU.uGhostCol, wc);
-  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
-  a[0]=aw[0];a[1]=c.floorY;a[2]=aw[1];a[3]=1;a[4]=c.yaw;a[5]=0;a[6]=0;a[7]=wc[0];a[8]=wc[1];a[9]=wc[2]; aquaWaterDyn.draw(a, 1);
-  gl.disable(gl.BLEND); gl.depthMask(true); gl.uniform1f(propU.uGhost, 0);
-}
-function aquaPrompt() {
-  const held = selectedItem(), aq = cottage.aqua;
-  if (held === "bucket" && bucket.creatures.length) return (IS_TOUCH?"tap":"click/F") + ` to pour ${bucket.creatures.length} creature${bucket.creatures.length!==1?"s":""} into the tank`;
-  if (held === "bucket" && aquaStale() && bucket.water) return (IS_TOUCH?"tap":"click/F") + " to refresh the tank water";
-  if (held === "bucket" && aq.creatures.length && bucketUnitsUsed() < BUCKET_UNITS) return (IS_TOUCH?"tap":"click/F") + " to scoop a resident back into the bucket";
-  if (held === "bucket" && bucket.water) return (IS_TOUCH?"tap":"click/F") + " to refresh the tank water";
-  if (AQUA_DECOR.has(held) && Inv.has(held)) return (IS_TOUCH?"tap":"click/F") + ` to place ${ITEMS[held]?ITEMS[held].name:held} in the tank`;
-  return `Aquarium, ${aq.creatures.length} resident${aq.creatures.length!==1?"s":""}` + (aquaStale() ? " · water murky, pour in seawater" : " · water fresh");
-}
-function useAquarium() {
-  const held = selectedItem(), aq = cottage.aqua;
-  if (held === "bucket") {
-    if (bucket.creatures.length) { for (const cr of bucket.creatures) addAquaResident(cr); bucket.creatures = []; aq.freshAt = tideDay;
-      if (onDig) onDig("splash"); const w = cotLocalToWorld(C_AQ.x, C_AQ.z); if (typeof sparkle === "function") sparkle(w[0], cottage.floorY+AQ_STAND+AQ_WH, w[1], [0.6,0.85,0.95], 8);
-      showCard("Into the tank", "The creatures settle into their new home."); saveCottage(); saveState(); if (typeof checkSets === "function") checkSets(); return; }
-    if (aquaStale() && bucket.water) { bucket.water = false; aq.freshAt = tideDay; if (onDig) onDig("splash");
-      showCard("Fresh seawater", "The tank is clean and clear again, the residents perk up."); saveCottage(); saveState(); return; }
-    // §6 scoop a resident back OUT into the bucket (to move or release it)
-    if (aq.creatures.length) {
-      const r = aq.creatures[aq.creatures.length - 1], need = creatureUnits(r);
-      if (bucketUnitsUsed() + need > BUCKET_UNITS) { showCard("No room in the bucket", `${CREATURES[r.t]?CREATURES[r.t].label:r.t} needs ${need} of the ${BUCKET_UNITS - bucketUnitsUsed()} units left, empty the bucket first.`); return; }
-      aq.creatures.pop();
-      bucket.creatures.push({ t: r.t, scale: r.scale, tint: r.tint || [1,1,1], special: !!r.special, name: r.name, variant: r.variant,
-        moist: 1, caught: { biome: "the aquarium", tide: "a quiet afternoon" } });
-      bucket.water = true;
-      if (onDig) onDig("splash"); const w = cotLocalToWorld(C_AQ.x, C_AQ.z); if (typeof sparkle === "function") sparkle(w[0], cottage.floorY+AQ_STAND+AQ_WH, w[1], [0.6,0.85,0.95], 6);
-      showCard("Scooped out", `${CREATURES[r.t]?CREATURES[r.t].label:r.t} is back in the bucket, carry it out and tip it into the sea, or move it elsewhere.`);
-      saveCottage(); saveState(); return;
-    }
-    if (bucket.water) { bucket.water = false; aq.freshAt = tideDay; if (onDig) onDig("splash");
-      showCard("Fresh seawater", "The tank is clean and clear again."); saveCottage(); saveState(); return; }
-    showCard("Empty bucket", "Scoop up creatures or seawater first, then pour them into the tank."); return;
-  }
-  if (AQUA_DECOR.has(held) && Inv.has(held)) { addAquaDecor(held); Inv.remove(held, 1); if (onDig) onDig("pat"); showCard("Decorated", `Added ${ITEMS[held]?ITEMS[held].name:held} to the tank.`); saveCottage(); return; }
-  showCard("Aquarium", `${aq.creatures.length} creature${aq.creatures.length!==1?"s":""} living here.` + (aquaStale() ? " The water's gone murky, pour in a bucket of seawater." : " Water's fresh.") + " Pour bucket creatures in, or decorate with rocks and sea plants.");
-}
+let cottage = null;
+function insideCottage() { return false; }
+function nearCottage() { return false; }
+function inCottageProtected() { return false; }
+function cottageProtectBlock() { return false; }
+function updateCottage() {}
+function drawCottage() {}
+function drawCottageDisplays() {}
+function drawCottageSlotMarkers() {}
+function drawCottageTrophies() {}
+function drawCottageAquarium() {}
+function drawCottageDecor() {}
+function initCottage() {}
+function initCottageFixtures() {}
+function flattenCottagePad() {}
+function trySleepCottage() {}
+function saveCottage() {}
+function loadCottage() {}
+function useAquarium() {}
+function aquaStale() { return false; }
 
 /* §19F COLLECTION SETS, group finds/creatures/fish into sets; completing one
    chimes, sparkles, and drops a decoration into the cottage (which gets cosier). */
@@ -11965,66 +11348,24 @@ function memberIcon(m) { return m.kind === "find" ? ((ITEMS[m.id]&&ITEMS[m.id].i
   : m.kind === "creature" ? ((CREATURES[m.id]&&CREATURES[m.id].icon)||"") : ((FISH_SPECIES[m.id]&&ITEMS[FISH_SPECIES[m.id].item]&&ITEMS[FISH_SPECIES[m.id].item].icon)||""); }
 function memberLabel(m) { return m.kind === "find" ? ((ITEMS[m.id]&&ITEMS[m.id].name)||m.id) : m.kind === "creature" ? CREATURES[m.id].label : FISH_SPECIES[m.id].label; }
 function setProgress(set) { let n = 0; for (const m of set.members) if (memberGot(m)) n++; return [n, set.members.length]; }
-function updateCosy() {
-  if (!cottage) return; const rewards = (cottage.rewards||[]).length, disp = Object.keys(cottage.disp||{}).length,
-    troph = (cottage.trophies||[]).length, aq = (cottage.aqua && cottage.aqua.creatures.length) ? 1 : 0;
-  cottage.cosy = clamp(0.16*rewards + 0.02*disp + 0.03*troph + 0.1*aq, 0, 1);
-}
-function grantReward(set) { if (set.id === "angler") Inv.add("worm", 20); }   // decorations appear via cottage.rewards; angler also tops up bait
+// §strip the cottage is gone, so a completed set no longer drops a decoration; it still chimes,
+// sparkles and logs in the journal. Completions are tracked per seed so the chime fires only once.
+let collectedSets = new Set();
+try { collectedSets = new Set(JSON.parse(localStorage.getItem("bcsets_" + SEED_STR) || "[]")); } catch (e) {}
+function updateCosy() {}   // no cottage to make cosy any more
+function grantReward(set) { if (set.id === "angler") Inv.add("worm", 20); }   // the angler set still tops up bait
 function celebrateSet(set) {
   if (typeof SND !== "undefined") { SND.play("discover"); setTimeout(() => { try { SND.play("discover"); } catch(e){} }, 170); }
-  showCard("Collection complete! " + set.name, "Reward: " + (REWARD_LABEL[set.reward]||"a keepsake") + " has appeared in your cottage.");
-  const w = cotLocalToWorld(0, 0.3); if (typeof sparkle === "function") sparkle(w[0], cottage.floorY+1.4, w[1], [1,0.9,0.5], 26);
+  showCard("Collection complete! " + set.name, "Logged in your field journal.");
+  if (typeof sparkle === "function") sparkle(player.x, surfaceAt(player.x, player.z).h + 1.4, player.z, [1,0.9,0.5], 26);
   const j = document.getElementById("journal"); if (j && ['flex','block'].indexOf(j.style.display)>=0) { j.classList.add("setflash"); setTimeout(() => j.classList.remove("setflash"), 1000); if (journalTab === "collections") renderJournal(); }
 }
 function checkSets() {
-  if (!cottage) return; if (!cottage.rewards) cottage.rewards = [];
   let changed = false;
   for (const set of COLLECTION_SETS) { const [n,t] = setProgress(set);
-    if (t > 0 && n >= t && !cottage.rewards.includes(set.reward)) { cottage.rewards.push(set.reward); grantReward(set); celebrateSet(set); changed = true; } }
-  updateCosy();
-  if (changed) saveCottage();
+    if (t > 0 && n >= t && !collectedSets.has(set.id)) { collectedSets.add(set.id); grantReward(set); celebrateSet(set); changed = true; } }
+  if (changed) { try { localStorage.setItem("bcsets_" + SEED_STR, JSON.stringify([...collectedSets])); } catch (e) {} }
 }
-// ---- reward decorations + cobwebs ----
-function rugMesh() { const m = Mesh(), c1 = [0.62,0.3,0.28], c2 = [0.78,0.62,0.42];
-  mBox(m,0,0,0,0.95,0.012,0.68,c1); mBox(m,0,0.014,0,0.82,0.008,0.56,c2); mBox(m,0,0.018,0,0.52,0.006,0.34,c1); return m; }
-function shipBottleMesh() { const m = Mesh(); mergeMesh(m, bottleMesh()); mBox(m,0,0.4,0,0.012,0.14,0.012,[0.5,0.4,0.3]); mTri(m,[0,0.52,0],[0.1,0.4,0],[0,0.3,0],[0.9,0.88,0.82]); return m; }
-function curtainMesh() { const m = Mesh(), cl = [0.72,0.5,0.46], rod = [0.4,0.32,0.26];
-  mBox(m,0,0.44,0,0.62,0.03,0.04,rod); mBox(m,-0.5,0,0,0.08,0.44,0.03,cl); mBox(m,0.5,0,0,0.08,0.44,0.03,cl); return m; }
-function floatsStrMesh() { const m = Mesh(); for (let i=0;i<5;i++){ const x=(i-2)*0.19; mergeAt(m, glassFloatMesh(), x, -Math.abs(x)*0.12, 0); } return m; }
-function netDecorMesh() { const m = Mesh(), c = [0.56,0.5,0.4]; for (let i=0;i<6;i++) mBox(m,(i-2.5)*0.15,0,0,0.008,0.42,0.008,c); for (let j=0;j<4;j++) mBox(m,0,(j-1.5)*0.2,0,0.42,0.008,0.008,c); return m; }
-function chimesMesh() { const m = Mesh(), met = [0.72,0.74,0.78]; mBox(m,0,0.42,0,0.2,0.02,0.05,[0.4,0.3,0.24]);
-  for (let i=0;i<4;i++){ const x=(i-1.5)*0.09; mBox(m,x,0.16,0,0.016,0.26,0.016,met); } mBox(m,0,0.02,0,0.08,0.03,0.02,[0.6,0.45,0.3]); return m; }
-function anglerBoardMesh() { const m = Mesh(); mergeMesh(m, trophyBoardMesh()); const oar=[0.55,0.42,0.3]; mBox(m,0,0,0.05,0.045,0.5,0.045,oar); mBox(m,0,-0.32,0.05,0.1,0.14,0.03,oar); return m; }
-function cobwebMesh() { const m = Mesh(), w = [0.82,0.82,0.85];
-  for (let k=0;k<3;k++){ const a0=k*0.5, a1=(k+1)*0.5; mTri(m,[0,0,0],[-Math.cos(a0)*0.5,-Math.sin(a0)*0.5,0],[-Math.cos(a1)*0.5,-Math.sin(a1)*0.5,0],w); }
-  return m; }
-const decorDyn = {};
-function drawDecorPiece(id, meshFn, lx, ly, lz, scale, faceYaw, tint) {
-  if (!decorDyn[id]) decorDyn[id] = makeDynamic(meshFn(), 4);
-  const w = cotLocalToWorld(lx, lz), a = cottageScratch;
-  a[0]=w[0];a[1]=cottage.floorY+ly;a[2]=w[1];a[3]=scale;a[4]=cottage.yaw+(faceYaw||0);a[5]=0;a[6]=0;a[7]=tint[0];a[8]=tint[1];a[9]=tint[2];
-  decorDyn[id].draw(a, 1);
-}
-function drawCottageDecor(view) {
-  if (!cottage) return; const r = cottage.rewards || []; propUniforms(view); const wt = [1,1,1];
-  if (r.includes("rug")) drawDecorPiece("rug", rugMesh, 0, 0.03, 0.5, 1, 0, wt);
-  if (r.includes("shipbottle")) drawDecorPiece("shipbottle", shipBottleMesh, C_HEARTH.x+0.55, 1.52, C_HEARTH.z+0.08, 0.45, 0, wt);
-  if (r.includes("curtains")) drawDecorPiece("curtains", curtainMesh, C_XL+0.18, C_WY+0.5, C_WZ+C_WW/2, 1, -Math.PI/2, wt);   // §3 over the left window (back window is gone)
-  if (r.includes("floats")) drawDecorPiece("floats", floatsStrMesh, C_XR-0.3, 2.3, C_ZB+0.3, 0.85, 0, wt);
-  if (r.includes("net")) drawDecorPiece("net", netDecorMesh, C_XR-1.7, 1.35, C_ZF-0.11, 1, Math.PI, wt);
-  if (r.includes("chimes")) drawDecorPiece("chimes", chimesMesh, C_DW+0.5, 2.0, C_ZF-0.16, 1, 0, wt);
-  // §cot5 the left-wall mounted oar & glass floats (the "anglerboard" décor) is removed
-  // dust & cobwebs clear as the cottage gets cosier
-  if (cottage.cosy < 0.45) { if (!decorDyn.web) decorDyn.web = makeDynamic(cobwebMesh(), 4);
-    const a = dispScratch; let n = 0;
-    const corners = [[C_IX-0.15, C_IZ-0.15, 0], [-(C_IX-0.15), C_IZ-0.15, Math.PI/2], [C_IX-0.15, -(C_IZ-0.15), -Math.PI/2], [-(C_IX-0.15), -(C_IZ-0.15), Math.PI]];
-    for (const [lx,lz,fy] of corners) { const w = cotLocalToWorld(lx, lz), o = n*10;
-      a[o]=w[0];a[o+1]=cottage.floorY+C_H-0.12;a[o+2]=w[1];a[o+3]=0.9;a[o+4]=cottage.yaw+fy;a[o+5]=0;a[o+6]=0;a[o+7]=0.8;a[o+8]=0.8;a[o+9]=0.82; n++; }
-    decorDyn.web.draw(a, n);
-  }
-}
-
 /* ---- save / load planted trees & stumps (per seed) ---- */
 function saveWorld() {
   try { localStorage.setItem("bcw_" + SEED_STR, JSON.stringify({
@@ -12848,7 +12189,6 @@ function frame(now) {
   updateBarnacles();   // §5 barnacles regrow over time
   updateChests(dt);
   updateWeather(dt);     // §20 weather state machine, fog/light/wind, lightning, after-storm
-  updateCottage(dt);     // §19 door swing + creak
   updateWeakStones(dt);  // §weak7 broken spots regrow a stone, out of view
   updateHeaveBoulders(dt);  // §21D heavy-boulder roll + reset
   updateHeave(dt);       // §21D the boulder heave mini-game
@@ -13111,12 +12451,6 @@ function frame(now) {
   drawChests(view);
   drawStorage(view);
   drawBuilds(view);        // §16B placed building pieces + the placement ghost
-  drawCottage(view);       // §19 the home-base cottage (shell, door, roof, glowing windows)
-  drawCottageDisplays(view);   // §19C placed finds on shelves / cabinet / windowsill
-  drawCottageSlotMarkers(view);   // §5 pegs/stands on empty display spots (+ a soft glow when holding a find to place)
-  drawCottageTrophies(view);   // §19D mounted fish trophies
-  drawCottageAquarium(view);   // §19E the aquarium tank, residents & decor
-  drawCottageDecor(view);      // §19F/§19G reward decorations + cobwebs that clear as it gets cosy
   drawSalt(view);
   drawLife(view);
   drawFlotsam(view);   // §5 floating debris on the water surface (drawn before the transparent water)
@@ -13285,11 +12619,6 @@ function frame(now) {
     if (!buildMode && curTarget && curTarget.kind === "searock") {   // §menu cluster-rock tooltip, scraping/picking is the action for any item
       const o = curTarget.obj;
       promptEl.textContent = (o && o.oyst && o.oyst.amt > 0) ? (IS_TOUCH?"tap":"click/F") + " to pick an oyster" : (IS_TOUCH?"tap":"click/F") + " to scrape barnacles";
-      promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
-      crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
-    }
-    if (!buildMode && curTarget && (curTarget.kind === "dispslot" || curTarget.kind === "cottrophy" || curTarget.kind === "aqua")) {   // §19C–E cottage tooltip overrides the generic prompt
-      promptEl.textContent = curTarget.kind === "dispslot" ? displaySlotPrompt(curTarget.obj) : curTarget.kind === "cottrophy" ? trophyPrompt(curTarget.obj) : aquaPrompt();
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
