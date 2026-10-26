@@ -5023,6 +5023,8 @@ function emitPOI(m, poi) {
  * --------------------------------------------------------------------- */
 
 let propTypes = [];
+let kelpStalks = [];             // §P3 harvestable bull-kelp: parallel to the kelp instance buffer (ii = instance index)
+let kelpType = null;             // §P3 the "kelp" propType (its instance buffer holds per-stalk scale; 0 = harvested/hidden)
 const bigCells = new Set();      // keeps trunks/boulders from stacking
 
 function nearPOI(x, z, extra) {
@@ -5134,6 +5136,7 @@ function buildProps() {
   const SUBMERGE_LINE = TIDE_MID - TIDE_RANGE * 0.5;                // deeper than an ordinary low tide → stays underwater
   const lushAt = (x, z) => nMacro.fbm(x * 0.013 + 40, z * 0.013 - 25, 4, 2, 0.5);   // 0..1 patchy seabed richness
   const eelgrass = [], kelpF = [], seamoss = [], redalgae = [];
+  kelpStalks = [];
   scatter(5, 1.0, 7000, (x, z) => { const h = surfaceAt(x, z).h, d = -h;
     if (d < 1.2 || d > 8 || h > SUBMERGE_LINE || !seabedOK(x, z) || nearPOI(x, z, 1)) return;
     const lush = lushAt(x, z); if (lush < 0.44) return;             // sandy / barren stretches stay bare
@@ -5158,6 +5161,7 @@ function buildProps() {
     if (rng() > 0.22 + (lush - 0.52) * 0.95) return;
     const sc = Math.max(1.4, (TIDE_MID - 0.6 - h) / 2.0) * (0.78 + rng()*0.32);   // §gulls heights vary per plant; crown reaches toward (not always to) the surface
     pushInst(kelpF, x, h, z, sc, rng()*6.28, 0, 0, vary([0.52,0.56,0.4], 0.12));   // §gulls olive-brown-green, not near-white (no more white tops)
+    kelpStalks.push({ x, z, h, sc, ii: kelpF.length/10 - 1 });                     // §P3 harvestable: ii indexes the kelp instance buffer
   });
   // occasional old fence posts (collide)
   const fences = scatter(28, 1.0, 600, (x, z, inst) => {
@@ -5184,6 +5188,7 @@ function buildProps() {
     { kind: "poi",    foliage: false, snap: false, inst: makeInstanced(poiMesh, poiMesh.pos.length ? [0,0,0, 1,0,0,0, 1,1,1] : []) },
   ];
   rockStyleTypes = [propTypes.find(t=>t.kind==="rock"), propTypes.find(t=>t.kind==="rockSlab"), propTypes.find(t=>t.kind==="rockJag")];   // §13.7 rounded / slab / jagged, by collider.styleIdx
+  kelpType = propTypes.find(t => t.kind === "kelp");   // §P3 for harvesting standing bull kelp
   initPropDeltas();
   rebuildCollHash();
   validateProps();
@@ -5860,7 +5865,12 @@ function musselMesh() { const m = Mesh(); mCyl(m,-0.2,0.2,0.1,0.02,6,[0.18,0.2,0
 function limpetMesh() { const m = Mesh(); mCyl(m,0,0.14,0.2,0.0,8,[0.7,0.64,0.5]); mergeMesh(m, discMesh(0,0.2,8,0,[0.6,0.55,0.44])); return m; }
 function wormcastMesh() { const m = Mesh(); for (let i=0;i<5;i++){ const a=i*0.9; mCyl(m, 0.02*i, 0.06+0.02*i, 0.06-0.008*i, 0.055-0.008*i, 6, [0.4,0.33,0.24]); } return m; }
 function pickleweedMesh() { const m = Mesh(); const g=[0.42,0.56,0.33]; for (let i=0;i<4;i++){ const a=i/4*6.283, r=0.06; for(let s=0;s<3;s++) mCyl(m, 0.1+s*0.12, 0.2+s*0.12, 0.04, 0.035, 5, [g[0],g[1]-s*0.03,g[2]]); } return m; }
-function kelpMesh() { const m = Mesh(); mCyl(m,0,1.4,0.04,0.06,6,[0.32,0.26,0.14]); mCyl(m,1.4,1.7,0.12,0.06,7,[0.4,0.34,0.18]); for(let i=0;i<4;i++){const a=i/4*6.283; mBox(m, Math.cos(a)*0.3, 1.8+i*0.05, Math.sin(a)*0.3, 0.5, 0.03, 0.12, [0.34,0.3,0.16]); } return m; }
+// §P3 dropped bull-kelp item: a small coiled stipe with its float bulb + a couple of blades, item-sized (~0.3 tall) like the other finds
+function kelpMesh() { const m = Mesh(); const stipe=[0.34,0.29,0.18], bulb=[0.5,0.44,0.24], bulb2=[0.42,0.37,0.2], blade=[0.34,0.42,0.22];
+  for (let i=0;i<7;i++){ const a=i*0.9, r=0.1; mBox(m, Math.cos(a)*r, 0.05, Math.sin(a)*r, 0.05, 0.03, 0.05, stipe); }   // the stipe coiled on itself
+  mCyl(m, 0.08, 0.2, 0.02, 0.07, 8, bulb); mCyl(m, 0.2, 0.3, 0.07, 0.015, 8, bulb2);                                     // float bulb
+  for (let i=0;i<3;i++){ const a=i/3*6.283; mBox(m, Math.cos(a)*0.14, 0.09, Math.sin(a)*0.14, 0.18, 0.015, 0.05, blade); }   // blades splayed low
+  return m; }
 // §gulls a tangle of loose bull kelp that drifts flat on the water surface (a float bulb + stipe + blades lying out)
 function looseKelpMesh() { const m = Mesh(); const bulb=[0.5,0.44,0.24], bulb2=[0.42,0.37,0.2], blade=[0.34,0.42,0.22], stipe=[0.34,0.29,0.18];
   mCyl(m, 0.0, 0.12, 0.02, 0.1, 8, bulb); mCyl(m, 0.12, 0.24, 0.1, 0.02, 8, bulb2);   // float bulb peeking above the surface
@@ -8166,6 +8176,12 @@ function targetAlongRay(r, sticky) {
   for (const cr of crops) sphere(cr, "crop", cr.x, cr.z, 0.5*cr.scale, 1.0*cr.scale);   // §17 harvestable crops
   if (typeof tallGrass !== "undefined") for (const g of tallGrass) if (!g.cut) sphere(g, "tallgrass", g.x, g.z, 0.4*g.scale, 0.7*g.scale);   // §veg5 strip tall grass for fibre
   if (typeof plants !== "undefined") for (const pl of plants) if (!pl.cut) sphere(pl, "plant", pl.x, pl.z, 0.35*pl.scale, 0.55*pl.scale);   // §P3 pick flowers / ferns
+  // §P3 standing bull kelp: a tall capsule down the whole stipe (seabed → crown) so any part in reach grabs it,
+  // from above or below the surface. A harvested stalk has its instance scale zeroed, so skip those.
+  if (kelpType && kelpType.inst.data) { const kd = kelpType.inst.data, gate = (STICK_REACH + 3) * (STICK_REACH + 3);
+    for (const k of kelpStalks) { const ex = k.x - r.o[0], ez = k.z - r.o[2]; if (ex*ex + ez*ez > gate) continue;   // cheap reach gate before the capsule test (there are many stalks)
+      if (kd[k.ii*10+3] <= 0.001) continue; const top = k.h + k.sc*1.95;
+      capsule(k, "kelp", k.x, k.z, k.x, k.h, k.z, k.x, top, k.z, 0.5 + k.sc*0.18); } }
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
   for (const s of weakStones) if (!s.picked) sphere(s, "weakstone", s.x, s.z, 0.4*s.sc, 0.55 + s.sc*0.4);   // §stonepick pick up a dome stone with any item (picked ones aren't targetable)
   // §heave-removed: heave boulders are no longer targetable
@@ -8191,7 +8207,7 @@ let curTarget = null;    // recomputed each frame from the crosshair (desktop)
 // something (so a click can fall through to a ground tool-use otherwise).
 // §A3 target kinds that ANY held item can act on (harvest a plant, hit a creature, pick a find, open a thing).
 // The tool-gated kinds (tree/fallentree/rock/searock/stump/geode/heaveboulder) are deliberately excluded.
-const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","tallgrass","salt",
+const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","tallgrass","plant","kelp","salt",
   "flotsam","barnacle","nest","driftwood","chest","openchest","storagebox",
   "lantern","fence","crate","barrel","searock"]);
 function softTargetUnderCrosshair() { const t = effectiveTarget(); return (t && SOFT_INTERACT.has(t.kind)) ? t : null; }
@@ -8215,6 +8231,7 @@ function useToolOnTarget(t) {
     case "crop": harvestCrop(t.obj); return true;
     case "tallgrass": harvestTallGrass(t.obj); return true;   // §veg5 strip for Plant Fiber
     case "plant": harvestPlant(t.obj); return true;           // §P3 pick a flower or fern
+    case "kelp": harvestKelp(t.obj); return true;             // §P3 pick standing bull kelp (above or below water)
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "flotsam": collectFlotsam(t.obj); return true;   // §5 scoop floating debris straight from the water
     case "barnacle": scrapeBarnacle(t.obj); return true;   // §5 scrape with the Tool Kit (or a shovel) for bait
@@ -9509,6 +9526,20 @@ function harvestPlant(p) {
   if (onDig) onDig("pluck"); saveWorld();
 }
 function plantPrompt(p) { const v = IS_TOUCH ? "tap" : "click"; return p.cut ? "" : (v + " to pick the " + p.type); }
+// §P3 standing bull kelp. A harvest hides the one instance (scale → 0) and queues it to regrow
+// through the shared foliage-regrow path. Works from above or below the surface (the capsule spans
+// the whole stipe). "ii" indexes the kelp instance buffer; a zeroed scale means already picked.
+function kelpCut(k) { return !(kelpType && kelpType.inst.data) || kelpType.inst.data[k.ii*10+3] <= 0.001; }
+function harvestKelp(k) {
+  if (kelpCut(k)) { showCard("Picked already", "This kelp will grow back in a day or two."); return; }
+  const o = k.ii*10, data = kelpType.inst.data, first = !discovered.has("f_kelp");
+  Inv.add("kelp", 1); discovered.add("f_kelp"); if (typeof notify === "function") notify("kelp", 1, first);
+  removedFoliage.push({ t: kelpType, i: k.ii, scale: data[o+3], regrowAt: clock.t + DAY_PERIOD * (1.5 + rng()) });
+  data[o+3] = 0;                                                    // hide the stalk (scale → 0)
+  gl.bindBuffer(gl.ARRAY_BUFFER, kelpType.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, (o+3)*4, data, o+3, 1);
+  if (onDig) onDig("pluck"); saveWorld();
+}
+function kelpPrompt(k) { const v = IS_TOUCH ? "tap" : "click"; return kelpCut(k) ? "" : (v + " to pick the kelp"); }
 function drawPlants(view) {
   if (!plants.length) return;
   propUniforms(view); const a = rockScratch;
@@ -11963,6 +11994,7 @@ function resetWorldState() {
   builtCells.clear(); built.fill(0);
   digCells = new Map(); ponded.clear();
   particles.length = 0; toasts.length = 0;
+  removedFoliage.length = 0;   // §P3 drop stale hide/regrow entries (they point at the old island's prop buffers)
   // Reproduce a fresh page load's zeroed per-cell fields: buildHeightmap never
   // writes material/matField (paintBiomes only touches the coastal band), so
   // without this the new island inherits the old one's biome paint in every
@@ -12532,8 +12564,8 @@ function frame(now) {
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
-    if (!buildMode && curTarget && (curTarget.kind === "tallgrass" || curTarget.kind === "plant")) {   // §veg5/§P3 tall-grass + flower/fern tooltip
-      promptEl.textContent = curTarget.kind === "plant" ? plantPrompt(curTarget.obj) : tallGrassPrompt(curTarget.obj);
+    if (!buildMode && curTarget && (curTarget.kind === "tallgrass" || curTarget.kind === "plant" || curTarget.kind === "kelp")) {   // §veg5/§P3 tall-grass + flower/fern + kelp tooltip
+      promptEl.textContent = curTarget.kind === "plant" ? plantPrompt(curTarget.obj) : curTarget.kind === "kelp" ? kelpPrompt(curTarget.obj) : tallGrassPrompt(curTarget.obj);
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
