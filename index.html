@@ -860,7 +860,7 @@ const COAST_BIOMES = {
   sandy:   { mat: 3, feet: "sand",  speed: 1.0, tell: 1.0, crit: ["crab","gull","piper"],
              finds: ["shell","seaglass","sanddollar","moonsnail","cockle","feather","nautilus"], label: "Sandy beach" },
   cobble:  { mat: 4, feet: "gravel", speed: 0.92, tell: 0.5, crit: ["crab","hopper","gull"],
-             finds: ["seaglass","agate","stone","shell","driftwood","barnacle","feather"], label: "Cobble beach", flip: true },
+             finds: ["seaglass","stone","shell","driftwood","barnacle","feather"], label: "Cobble beach", flip: true },
   reef:    { mat: 5, feet: "rock",  speed: 0.85, tell: 0.4, crit: ["star","anemone","urchin"],
              finds: ["mussel","limpet","seaglass","shell","cuttle","oyster","barnacle","nautilus"], label: "Rocky reef shelf" },
   mudflat: { mat: 6, feet: "mud",   speed: 0.6, tell: 1.3, crit: ["heron","piper","gull"],
@@ -1868,7 +1868,6 @@ function updateCreatureSound(dt) {
   else if (e.t === "piper") say("peep", 0.28);
   else if (e.t === "crab") say("skitter", 0.25);
   else if (e.t === "seal") say("seal_bark", 0.3);
-  else if (e.t === "octopus") say("jet", 0.1);
   else if (e.t === "clam" || e.t === "cockle") say("squirt", 0.1);
   // night critters (these types arrive in the Night phase; harmless if absent)
   if (night) { if (e.t === "owl") say("owl", 0.4); else if (e.t === "bat") say("bat", 0.5); else if (e.t === "raccoon") say("raccoon", 0.3); else if (e.t === "horseshoe") say("hcrab_scrape", 0.2); }
@@ -1890,10 +1889,10 @@ function wireSound() {
 /* ---- tide events (§C): each high tide rolls what the next low washes up ---- */
 const TIDE_EVENTS = [
   { id: "calm", w: 50 }, { id: "storm", w: 14 }, { id: "kelp", w: 12 }, { id: "stars", w: 8 },
-  { id: "jelly", w: 8 }, { id: "driftseed", w: 6 }, { id: "floats", w: 3 }, { id: "oddity", w: 1 },
+  { id: "jelly", w: 8 }, { id: "driftseed", w: 6 }, { id: "oddity", w: 1 },
 ];
 const EVENT_LABEL = { calm: "A calm tide", storm: "A storm surge", kelp: "A kelp storm", stars: "A sea-star stranding",
-  jelly: "A jellyfish bloom", driftseed: "A drift-seed day", floats: "Glass floats washed in", oddity: "Something rare washed in" };
+  jelly: "A jellyfish bloom", driftseed: "A drift-seed day", oddity: "Something rare washed in" };
 let nextEvent = "calm", currentEvent = "calm", eventRolled = false, starsRescued = 0, carryingStars = 0;
 function rollTideEvent() { let tot = 0; for (const e of TIDE_EVENTS) tot += e.w; let x = rng() * tot; for (const e of TIDE_EVENTS) { x -= e.w; if (x <= 0) return e.id; } return "calm"; }
 // Storminess 0..1 to telegraph an approaching storm/kelp wash through sky + surf (no UI text).
@@ -2089,7 +2088,7 @@ function drawRain(view) {
 
 /* §20D AFTER A STORM, the morning after a storm day brings the best wash-up:
    more & rarer finds, kelp piles, bigger driftwood, maybe a chest, and gulls. */
-const STORM_RARE = ["agate","nautilus","glassfloat","bone","seabean","bell","tin","fossil","float","egg","moonsnail","sanddollar"];
+const STORM_RARE = ["nautilus","seabean","bell","tin","fossil","egg","moonsnail","sanddollar"];
 function spawnWashedChest() {
   let spot = null;
   for (let k=0;k<40 && !spot;k++){ const a = rng()*6.283, r = HALF*(0.3+rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z);
@@ -3041,7 +3040,7 @@ function startleNear(x, z) {
   }
 }
 // §R4 weapons can strike any creature. Small per-species HP; a hit hurts and scatters it, enough hits kill it.
-const CREATURE_HP = { crab:2, hermit:2, piper:2, hopper:1, gull:3, seal:6, heron:3, seaduck:2, snail:1, shrimp:1, octopus:2, star:1, urchin:1, anemone:1, jelly:1 };
+const CREATURE_HP = { crab:2, hermit:2, piper:2, hopper:1, gull:3, seal:6, heron:3, seaduck:2, snail:1, shrimp:1, star:1, urchin:1, anemone:1, jelly:1 };
 const CREATURE_DROP = { crab:"crabmeat", hermit:"crabmeat", lobster:"crabmeat", gull:"feather", piper:"feather", heron:"feather", seaduck:"feather" };
 function creatureHP(t) { return CREATURE_HP[t] || 2; }
 function creatureAt(x, y, z, r) { let best = null, bd = r*r;
@@ -4403,7 +4402,7 @@ let chewT = 0;
 
 /* ---- the interaction target, independent of the equipped tool (§11.2 / §11.3) ---- */
 // Which tool performs the primary action on each target kind.
-const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", crop: "hand", seaweed: "hand", goblin: "hand", goat: "hand", salt: "hand", creature: "hand", nest: "hand", chest: "hand", openchest: "hand", storagebox: "hand", driftwood: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
+const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", crop: "hand", goblin: "hand", goat: "hand", salt: "hand", creature: "hand", nest: "hand", chest: "hand", openchest: "hand", storagebox: "hand", driftwood: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
 function aimInfo() {
   if (mode !== "walk") return null;
   if (curTarget) return { kind: curTarget.kind, obj: curTarget.obj, x: curTarget.x, z: curTarget.z, need: TOOL_FOR_KIND[curTarget.kind] || "hand" };
@@ -4416,7 +4415,6 @@ function aimInfo() {
   if (CROP_SEED[tool]) return canPlantCrop(CROP_SEED[tool], pt[0], pt[1]) ? { kind: "ground", x: pt[0], z: pt[1], need: "self" } : null;
   if (tool === "bucket") { const atWater = waterDepthAt(pt[0], pt[1]) > 0.08;
     return (bucket.water || bucket.creatures.length || atWater) ? { kind: "ground", x: pt[0], z: pt[1], need: "bucket" } : null; }
-  if (tool === "leaves") return { kind: "ground", x: pt[0], z: pt[1], need: "self" };
   if (surfaceKind(pt[0], pt[1]) !== "rock") return { kind: "ground", x: pt[0], z: pt[1], need: "shovel" };   // diggable ground → a shovel target
   return null;
 }
@@ -5022,7 +5020,7 @@ function makeInstanced(mesh, inst) {
  * --------------------------------------------------------------------- */
 
 let POIS = [];
-const POI_R = { lighthouse: 6, tidepools: 9, seacave: 7, cairn: 3, hut: 4, pier: 5 };
+const POI_R = { tidepools: 9, seacave: 7, cairn: 3, hut: 4, pier: 5 };
 
 function marchToShore(ang) {                 // find the waterline along a bearing
   const dx = Math.sin(ang), dz = -Math.cos(ang);
@@ -5042,10 +5040,10 @@ function placePOIs() {
   // archetype-weighted pool
   const pool = [];
   const add = (t, n) => { for (let i = 0; i < n; i++) pool.push(t); };
-  add("lighthouse", 2); add("cairn", 2); add("hut", 1);
+  add("cairn", 2); add("hut", 1);
   if (CHARACTER === "lowlands" || CHARACTER === "atoll") { add("tidepools", 4); }   // §4 pier/plank-deck POI removed (read as "wooden grates")
   if (CHARACTER === "highlands") { add("tidepools", 3); add("seacave", 2); }
-  if (CHARACTER === "peaks") { add("seacave", 3); add("tidepools", 2); add("lighthouse", 2); }
+  if (CHARACTER === "peaks") { add("seacave", 3); add("tidepools", 2); add("cairn", 2); }
   const want = 2 + Math.floor(rng() * 3);   // 2–4
   let tries = 0;
   while (out.length < want && tries < 120) {
@@ -5053,7 +5051,7 @@ function placePOIs() {
     const type = pool[(rng() * pool.length) | 0];
     if (out.some((o) => o.type === type) && tries < 95) continue;   // prefer variety
     let pos = null;
-    if (type === "lighthouse" || type === "cairn") {
+    if (type === "cairn") {
       // a high point, jittered
       pos = { x: HIGH.x + (rng() - 0.5) * 120, z: HIGH.z + (rng() - 0.5) * 120 };
       if (heightAt(pos.x, pos.z) < HIGH.h * 0.45) continue;
@@ -5090,16 +5088,7 @@ function emitPOI(m, poi) {
       m.col.push(lm.col[i], lm.col[i+1], lm.col[i+2]);
     }
   };
-  if (poi.type === "lighthouse") {
-    const lm = Mesh(), white = [0.85,0.85,0.82], red = [0.6,0.2,0.18];
-    mCyl(lm, 0, 7, 3.2, 2.2, 10, white);
-    mCyl(lm, 7, 13, 2.2, 1.7, 10, red);
-    mCyl(lm, 13, 18, 1.7, 1.4, 10, white);
-    mBox(lm, 0, 19, 0, 1.6, 1.4, 1.6, [0.2,0.22,0.24]);
-    mBox(lm, 0, 20.6, 0, 1.0, 0.4, 1.0, [1.0, 0.92, 0.5]);   // lantern (bright)
-    mCyl(lm, 21, 22.4, 0.9, 0, 6, red);
-    put(lm, x, g, z, rng() * 6.28);
-  } else if (poi.type === "cairn") {
+  if (poi.type === "cairn") {
     const lm = Mesh(); let r = 1.3, y = 0;
     const rand = mulberry32((x * 131 + z * 977) >>> 0);
     for (let k = 0; k < 6; k++) { const mm = Mesh(); mRock(mm, rand, [0.5,0.48,0.45]);
@@ -5781,7 +5770,6 @@ function jellyMesh() { const m = discMesh(0.3,0.4,8,0.25,[0.75,0.7,0.85]); for(l
 // finds
 function shellMesh() { const m = Mesh(); mCyl(m,0,0.4,0.25,0,7,[0.9,0.85,0.78]); for(let i=0;i<5;i++){const a=i/5*6.283; mTri(m,[0,0,0],[Math.cos(a)*0.28,0.05,Math.sin(a)*0.28],[Math.cos(a+0.6)*0.28,0.05,Math.sin(a+0.6)*0.28],[0.85,0.78,0.7]);} return m; }
 function glassMesh(col) { const m = Mesh(); mRock(m, mulberry32(7), col); return m; }
-function floatMesh() { const m = Mesh(); mRock(m, mulberry32(11), [0.4,0.6,0.55]); return m; }
 function cuttleMesh() { return discMesh(0.05,0.4,6,0.05,[0.92,0.9,0.85]); }
 // §13.3 a small curled, drab dried husk, the sun-dried remains of a soft shore creature
 function huskMesh() { const m = discMesh(0.0,0.26,6,0.17,[0.56,0.5,0.42]); mergeMesh(m, discMesh(0.0,0.24,6,-0.08,[0.47,0.42,0.35])); return m; }
@@ -5789,7 +5777,6 @@ function huskMesh() { const m = discMesh(0.0,0.26,6,0.17,[0.56,0.5,0.42]); merge
 function glassFloatMesh() { const m = Mesh(); const c=[0.42,0.66,0.56]; mergeMesh(m, discMesh(0.0,0.42,8,0.34,c)); mergeMesh(m, discMesh(0.0,0.42,8,-0.34,[c[0]*0.9,c[1]*0.9,c[2]*0.9])); mCyl(m,0.3,0.46,0.08,0.06,6,[0.3,0.4,0.34]); return m; }
 function eggMesh() { const m = Mesh(); mBox(m,0,0.1,0,0.35,0.1,0.22,[0.12,0.1,0.09]); for(const s of [-1,1]) mTri(m,[s*0.35,0.1,0.22],[s*0.6,0.3,0.3],[s*0.35,0.1,-0.22],[0.1,0.09,0.08]); return m; }
 function bottleMesh() { const m = Mesh(); mCyl(m,0,0.7,0.2,0.2,7,[0.35,0.5,0.4]); mCyl(m,0.7,1.0,0.2,0.09,7,[0.35,0.5,0.4]); mCyl(m,1.0,1.15,0.09,0.09,6,[0.3,0.25,0.2]); return m; }
-function boneMesh() { const m = Mesh(); mCyl(m,-0.6,0.6,0.16,0.16,6,[0.88,0.85,0.78]); mRock(m,mulberry32(3),[0.88,0.85,0.78]); return m; }
 // tools & dug finds
 // §R4 first-person tools, bold, recognizable Minecraft-style heads. Modelled upright: the hand grips low
 // (y≈0), the head sits at the top (y≈0.8+). The FP transform angles them into the lower-right, head up & in.
@@ -6011,8 +5998,6 @@ function saltPanMesh() { const m = Mesh();
     mBox(m, Math.cos(a)*r, 0.02 + (i%2)*0.035, Math.sin(a)*r, 0.07, 0.045, 0.07, i%2 ? [0.95,0.96,0.99] : [0.86,0.89,0.93]); }
   mBox(m, 0, 0.07, 0, 0.1, 0.06, 0.1, [0.97,0.98,1.0]);
   return m; }
-function leafPileMesh() { const m = Mesh(); const cols = [[0.52,0.46,0.26],[0.46,0.4,0.22],[0.58,0.5,0.3],[0.5,0.44,0.24]];
-  for (let i = 0; i < 10; i++) { const a = i/10*6.283, r = 0.05 + (i%4)*0.07; mBox(m, Math.cos(a)*r, 0.04+(i%2)*0.03, Math.sin(a)*r, 0.11, 0.03, 0.11, cols[i%4]); } return m; }
 function stickMesh() { const m = Mesh(); mBox(m,0,0.04,0,0.38,0.03,0.035,[0.45,0.34,0.22]); mBox(m,0.03,0.08,0.02,0.33,0.03,0.035,[0.4,0.3,0.2]); mBox(m,-0.02,0.06,-0.03,0.3,0.028,0.03,[0.48,0.36,0.24]); return m; }
 // §A7/§C2 Plant Fiber: a small splayed bundle of dry grass strands (stripped from tall grass → twisted into rope)
 function fiberMesh() { const m = Mesh(); const c = [0.84,0.78,0.52], c2 = [0.72,0.65,0.42];
@@ -6077,7 +6062,6 @@ function mudMatMesh()    { return clumpMesh([0.34,0.28,0.20]); }
 // --- Part C biome finds & critters ---
 function sanddollarMesh() { const m = discMesh(0, 0.26, 10, 0.03, [0.92,0.9,0.84]); mergeMesh(m, discMesh(-0.01, 0.26, 10, -0.02, [0.86,0.84,0.78])); return m; }
 function moonsnailMesh() { const m = Mesh(); mCyl(m,0,0.22,0.2,0.05,8,[0.6,0.56,0.62]); mergeMesh(m, discMesh(0,0.2,8,0.08,[0.68,0.62,0.66])); return m; }
-function agateMesh() { const m = Mesh(); mRock(m, mulberry32(0xa6a7 ^ SEED_INT), [0.82,0.58,0.4]); return m; }
 function musselMesh() { const m = Mesh(); mCyl(m,-0.2,0.2,0.1,0.02,6,[0.18,0.2,0.32]); mergeMesh(m, discMesh(0.2,0.1,6,0.05,[0.24,0.26,0.4])); return m; }
 function limpetMesh() { const m = Mesh(); mCyl(m,0,0.14,0.2,0.0,8,[0.7,0.64,0.5]); mergeMesh(m, discMesh(0,0.2,8,0,[0.6,0.55,0.44])); return m; }
 function wormcastMesh() { const m = Mesh(); for (let i=0;i<5;i++){ const a=i*0.9; mCyl(m, 0.02*i, 0.06+0.02*i, 0.06-0.008*i, 0.055-0.008*i, 6, [0.4,0.33,0.24]); } return m; }
@@ -6163,11 +6147,6 @@ function shrimpMesh() { const m = Mesh(); const c=[0.92,0.62,0.52];
   mBox(m,-0.08,0.12,0,0.045,0.05,0.055,c);
   for (const s of [-1,1]) mBox(m,-0.13,0.13,s*0.03,0.045,0.004,0.018,[0.35,0.3,0.3]);
   mBox(m,0.33,0.11,0,0.04,0.015,0.08,[0.86,0.5,0.42]); return m; }
-function octopusMesh() { const m = Mesh(); const c=[0.72,0.42,0.47];
-  mergeMesh(m, discMesh(0.1,0.17,8,0.14,c)); mCyl(m,0,0.12,0.17,0.12,8,c);
-  for (let i=0;i<8;i++){ const a=i/8*6.283; mergeAt(m, (()=>{const d=Mesh(); mCyl(d,0,0.18,0.035,0.012,4,[c[0]*0.9,c[1],c[2]]); return d;})(), Math.cos(a)*0.14, 0, Math.sin(a)*0.14); }   // §playtest1 eight arms
-  for (const s of [-1,1]) mergeAt(m, (()=>{const d=Mesh(); mBox(d,0,0,0,0.028,0.028,0.012,[0.08,0.08,0.08]); return d;})(), s*0.07, 0.15, 0.13);
-  return m; }
 function seaDuckMesh() { const m = Mesh(); const body=[0.26,0.27,0.31], head=[0.14,0.14,0.17], bill=[0.32,0.3,0.3], white=[0.86,0.86,0.9];
   mergeMesh(m, discMesh(0.12,0.22,8,0.1,body)); mCyl(m,0.04,0.16,0.22,0.16,8,body);
   mBox(m,0.17,0.15,0,0.08,0.03,0.1,body);
@@ -6364,11 +6343,6 @@ function seaMossMesh(){ const m=Mesh(); const c=[0.42,0.5,0.36], c2=[0.5,0.42,0.
 function redAlgaeMesh(){ const m=Mesh(); const base=[0.5,0.2,0.3], tip=[0.74,0.36,0.46];
   for(let i=0;i<4;i++){ const a=i/4*6.283+0.3; wavyRibbon(m,{h:0.5+(i%2)*0.28, w0:0.06, w1:0.02, seg:6, dir:a, amp:0.16, freq:1.5, phase:i*1.1, droop:0.1, bx:Math.cos(a)*0.04, bz:Math.sin(a)*0.04, twist:0.6, c0:base, c1:tip}); }
   return m; }
-function seaLettuceMesh(cropped){ const m=Mesh(); const g=[0.38,0.76,0.4], g2=[0.5,0.85,0.46];
-  const n = cropped?3:7, H = cropped?0.14:0.45;
-  for(let i=0;i<n;i++){ const a=i/n*6.283, r=0.05+(i%2)*0.04, c=(i%2?g:g2);
-    mergeAt(m, (i%2? boxM(0.09,H*0.5,0.005,c) : boxM(0.005,H*0.5,0.09,c)), Math.cos(a)*r, H*0.5, Math.sin(a)*r); }
-  return m; }
 // §17.5/§17.6 a cute chibi goblin trader, big round eyes, rounded head, loincloth. Faces +z (eyes forward).
 function goblinMesh(v){ const m=Mesh();
   const skin=v.skin, skin2=[skin[0]*0.85,skin[1]*0.85,skin[2]*0.83], inner=[0.55,0.4,0.5],  // purplish inner ear
@@ -6525,7 +6499,6 @@ const CREATURES = {
   // §16.1 new tide-pool & nearshore life
   snail:    { mesh: () => seaSnailMesh(),            base: 0.4, max: 120, label: "Sea Snail", desc: "A periwinkle grazing the pool floor, slow and unbothered." },
   shrimp:   { mesh: () => shrimpMesh(),              base: 0.4, max: 160, label: "Shrimp", desc: "A near-clear shrimp flicking backwards through a tide pool." },
-  octopus:  { mesh: () => octopusMesh(),             base: 0.5, max: 60, label: "Tiny Octopus", desc: "A little octopus tucked in a crevice, it jets away if you crowd it." },
   seaduck:  { mesh: () => seaDuckMesh(),             base: 0.7, max: 70, label: "Little Sea Duck", desc: "A small diving duck riding the swell just off the shore." },
   // §21C life that hides under stones, scatters when a stone is lifted, then hides again
   gunnel:   { mesh: () => gunnelMesh(),              base: 0.5, max: 60, label: "Gunnel", desc: "A little eel-like fish that wriggles away the instant its stone is lifted.", stoneCritter: 1, aquatic: 1 },
@@ -6542,17 +6515,15 @@ const CREATURES = {
 };
 // §R4 explicit per-creature bucketability, small aquatic & intertidal life only. Never birds (gull, piper,
 // heron, seaduck), mammals (seal, otter, raccoon, goat), or large/game fish (flounder, rockfish, lingcod).
-const BUCKETABLE_TYPES = { crab:1, hermit:1, fish:1, minnow:1, flounder:1, rockfish:1, lingcod:1, star:1, urchin:1, anemone:1, jelly:1, shrimp:1, snail:1, hopper:1, octopus:1, horseshoe:1, gunnel:1, chiton:1, lobster:1 };   // §6 the swimming fish are scoopable too; §21C gunnel/chiton are aquatic; §lob5 lobsters scoop in too; land stone-critters are inspect-only
+const BUCKETABLE_TYPES = { crab:1, hermit:1, fish:1, minnow:1, flounder:1, rockfish:1, lingcod:1, star:1, urchin:1, anemone:1, jelly:1, shrimp:1, snail:1, hopper:1, horseshoe:1, gunnel:1, chiton:1, lobster:1 };   // §6 the swimming fish are scoopable too; §21C gunnel/chiton are aquatic; §lob5 lobsters scoop in too; land stone-critters are inspect-only
 for (const k in CREATURES) CREATURES[k].bucketable = !!BUCKETABLE_TYPES[k];
 const FINDS = {
   shell:    { mesh: () => shellMesh(),              base: 0.5, max: 200, label: "Spiral Shell", desc: "An empty whelk, worn smooth.", rare: 0 },
   seaglass: { mesh: () => glassMesh([0.4,0.7,0.6]), base: 0.35,max: 200, label: "Sea Glass", desc: "A frosted shard, tumbled by the waves.", rare: 0 },
-  float:    { mesh: () => floatMesh(),              base: 0.55,max: 90, label: "Glass Float", desc: "A fishing-net float, long adrift.", rare: 1 },
   molt:     { mesh: () => crabMesh([0.8,0.72,0.62]), base: 0.55,max: 120, label: "Crab Molt", desc: "A hollow shell a crab outgrew.", rare: 0 },
   cuttle:   { mesh: () => cuttleMesh(),             base: 0.5, max: 140, label: "Cuttlebone", desc: "Chalky white, light as air.", rare: 0 },
   egg:      { mesh: () => eggMesh(),                base: 0.5, max: 110, label: "Mermaid's Purse", desc: "The egg case of a skate.", rare: 1 },
   bottle:   { mesh: () => bottleMesh(),             base: 0.7, max: 50, label: "Old Bottle", desc: "Sea-green glass, stoppered tight.", rare: 1 },
-  bone:     { mesh: () => boneMesh(),               base: 1.0, max: 40, label: "Whale Bone", desc: "A great pale vertebra from the deep.", rare: 2 },
   // --- buried finds (dug up with the shovel) ---
   clam:     { mesh: () => clamMesh(),               base: 0.5, max: 80, label: "Clam", desc: "A fat bivalve, hinged shut.", rare: 0 },
   cockle:   { mesh: () => shellMesh(),              base: 0.42,max: 80, label: "Cockle", desc: "A ribbed little shell from the shallows.", rare: 0 },
@@ -6568,7 +6539,6 @@ const FINDS = {
   pinecone: { mesh: () => coneMesh2(),              base: 0.4, max: 30, label: "Pine Cone", desc: "A conifer seed, plant it on soil or grass.", rare: 1 },
   nut:      { mesh: () => nutMesh(),                 base: 0.4, max: 30, label: "Nut", desc: "A broadleaf seed, plant it on soil or grass.", rare: 1 },
   salt:     { mesh: () => saltMesh(),               base: 0.45,max: 40, label: "Sea Salt", desc: "Coarse crystals scraped from a dried pool rim. Goats love it.", rare: 1 },
-  leaves:   { mesh: () => leafPileMesh(),           base: 0.6, max: 60, label: "Leaves", desc: "A handful of dry leaves. Compost for saplings, or a treat for goats.", rare: 0 },
   stick:    { mesh: () => stickMesh(),              base: 0.5, max: 60, label: "Sticks", desc: "Snapped twigs from a tree's crown.", rare: 0 },
   fiber:    { mesh: () => fiberMesh(),              base: 0.4, max: 80, label: "Plant Fiber", desc: "Tough strands stripped from tall grass. Twist a few together into rope.", rare: 0 },
   // --- inland raw materials (dug from grass / dirt / forest) ---
@@ -6584,7 +6554,6 @@ const FINDS = {
   // --- Part C biome finds ---
   sanddollar:{ mesh: () => sanddollarMesh(),        base: 0.5, max: 120, label: "Sand Dollar", desc: "A pale urchin test, round as a coin.", rare: 1 },
   moonsnail:{ mesh: () => moonsnailMesh(),          base: 0.5, max: 120, label: "Moon Snail Shell", desc: "A smooth grey whorl from the sand flats.", rare: 1 },
-  agate:    { mesh: () => agateMesh(),              base: 0.4, max: 80, label: "Agate", desc: "A banded pebble that glows in the light. Prized on cobble beaches.", rare: 2 },
   mussel:   { mesh: () => musselMesh(),             base: 0.45,max: 140, label: "Mussel", desc: "A blue-black shell, clustered on the reef.", rare: 0 },
   limpet:   { mesh: () => limpetMesh(),             base: 0.4, max: 120, label: "Limpet", desc: "A little conical cap, clamped to the rock.", rare: 0 },
   wormcast: { mesh: () => wormcastMesh(),           base: 0.4, max: 100, label: "Worm Cast", desc: "A coiled squiggle of mud, a lugworm lives below.", rare: 0 },
@@ -6602,7 +6571,6 @@ const FINDS = {
   rope:     { mesh: () => ropeMesh(),               base: 0.5, max: 60, label: "Coiled Rope", desc: "A tangle of weathered rope, washed in on the surge.", rare: 0 },
   crate:    { mesh: () => crateMesh(),              base: 0.7, max: 40, label: "Broken Crate", desc: "A salt-stained wooden crate, its boards sprung.", rare: 1 },
   // §14B a glass fishing float lost from some far-off net, rolled onto the seabed
-  glassfloat:{ mesh: () => glassFloatMesh(), base: 0.6, max: 40, label: "Glass Float", desc: "A sea-green glass orb from a fishing net, found resting on the seabed.", rare: 2 },
   // §13.3 dried remains, what a scooped or stranded creature leaves behind when it dries out completely
   driedstar:{ mesh: () => starMesh([0.64,0.57,0.47]), base: 0.6, max: 60, label: "Dried Sea Star", desc: "A sea star left too long in the air, stiff and curled.", rare: 1 },
   husk:     { mesh: () => huskMesh(),               base: 0.45,max: 60, label: "Dried Husk", desc: "The shrivelled remains of a small shore creature that dried out.", rare: 0 },
@@ -6704,10 +6672,9 @@ function populateLife() {
     for (let i = 0; i < 2 + (rng()*3|0); i++) spawnCreature(rng()<0.5?"anemone":"star", cx+(rng()-0.5)*rad, cz+(rng()-0.5)*rad, { poolRim: p.rim });
     if (rng() < 0.6) spawnCreature("urchin", cx+(rng()-0.5)*rad, cz+(rng()-0.5)*rad, { poolRim: p.rim });
     if (rng() < 0.5) spawnCreature("hermit", cx+(rng()-0.5)*rad, cz+(rng()-0.5)*rad, { hr: rad, poolRim: p.rim });
-    // §16.1 more pool life: shrimp flicking about, grazing snails, the occasional shy octopus
+    // §16.1 more pool life: shrimp flicking about, grazing snails
     for (let i = 0; i < 1 + (rng()*3|0); i++) spawnCreature("shrimp", cx+(rng()-0.5)*rad, cz+(rng()-0.5)*rad, { hx: cx, hz: cz, hr: rad, poolRim: p.rim });
     for (let i = 0; i < (rng()*3|0); i++) spawnCreature("snail", cx+(rng()-0.5)*rad, cz+(rng()-0.5)*rad, { hx: cx, hz: cz, hr: rad, poolRim: p.rim });
-    if (rng() < 0.3) spawnCreature("octopus", cx+(rng()-0.5)*rad, cz+(rng()-0.5)*rad, { hx: cx, hz: cz, hr: rad, poolRim: p.rim });
   }
   // crabs along the shore band (wet sand zone)
   for (let i = 0; i < 70; i++) {
@@ -6738,13 +6705,13 @@ function populateLife() {
     else if (t === "hopper" && rng() < 0.5) spawnCreature("hopper", x, z, { timer: rng() });
     else if (t === "crab" && rng() < 0.4) spawnCreature("crab", x, z, { hr: 10 });
   }
-  // §14B underwater finds scattered on the seabed, reward for diving (shells, sand dollars, glass floats)
+  // §14B underwater finds scattered on the seabed, reward for diving (shells, sand dollars)
   const SEABED_FINDS = ["sanddollar","shell","moonsnail","seaglass","mussel","limpet","oyster","nautilus","barnacle"];
   for (let i = 0; i < 130; i++) {
     const a = rng()*6.283, r = HALF*(0.35 + rng()*0.55), x = Math.sin(a)*r, z = -Math.cos(a)*r;
     const h = surfaceAt(x, z).h, ci = cellIndex(x, z);
     if (h > -1 || h < -16 || ci < 0 || filled[ci] > waterLevel + 0.35) continue;   // open seabed only
-    const t = rng() < 0.06 ? "glassfloat" : SEABED_FINDS[(rng()*SEABED_FINDS.length)|0];
+    const t = SEABED_FINDS[(rng()*SEABED_FINDS.length)|0];
     spawnFind(t, x, z);
   }
   // §14C huntable fish by depth zone + schooling minnows in the shallows
@@ -6824,12 +6791,11 @@ function washUp(initial) {
     // event flavour (rare finds weighted down; see §C variety)
     if (ev === "kelp" && roll < 0.55) { spawnFind("kelp", x, z); if (rng() < 0.5) { const p = cb.finds[(rng()*cb.finds.length)|0]; if (FINDS[p]) spawnFind(p, x+(rng()-0.5), z+(rng()-0.5)); } continue; }
     if (ev === "driftseed" && roll < 0.5) { spawnFind(rng() < 0.65 ? "seabean" : "coconut", x, z); continue; }
-    if (ev === "floats" && roll < 0.4) { spawnFind("float", x, z); continue; }
-    if (ev === "storm" && roll < 0.28) { spawnFind(["driftwood","float","bottle","rope","crate"][(rng()*5)|0], x, z); continue; }   // generic flotsam, not wreck debris
+    if (ev === "storm" && roll < 0.28) { spawnFind(["driftwood","bottle","rope","crate"][(rng()*4)|0], x, z); continue; }   // generic flotsam, not wreck debris
     // otherwise biome-weighted: mostly commons, rarer finds sit lower / farther out
     const low = h < waterLevel + 1.6;
     let pick;
-    if (low && rng() < (ev === "storm" ? 0.42 : 0.22)) pick = ["float","egg","bottle","bone","agate"][(rng()*5)|0];
+    if (low && rng() < (ev === "storm" ? 0.42 : 0.22)) pick = ["egg","bottle"][(rng()*2)|0];
     else pick = cb.finds[(rng()*cb.finds.length)|0];
     if (typeof rollRareFind === "function" && rng() < (ev === "storm" ? RARE_WASH_P*1.8 : RARE_WASH_P)) { rollRareFind(x, z); continue; }   // §40 a rare natural find now and then (more after a storm)
     if (FINDS[pick]) spawnFind(pick, x, z);
@@ -6848,7 +6814,7 @@ function washUp(initial) {
     for (let i = 0; i < 24; i++) {
       const a = rng()*6.283, r = HALF*(0.3 + rng()*0.62), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z);
       if (h > waterLevel + 0.2 && h < waterLevel + 2.2) {                 // the freshly-bared outer shelf
-        const pick = rng() < 0.3 ? ["float","bell","tin","bone"][(rng()*4)|0] : ["float","egg","bottle","cuttle","seaglass"][(rng()*5)|0];
+        const pick = rng() < 0.3 ? ["bell","tin"][(rng()*2)|0] : ["egg","bottle","cuttle","seaglass"][(rng()*4)|0];
         if (FINDS[pick]) spawnFind(pick, x, z);
       }
     }
@@ -7283,7 +7249,7 @@ function clampFishWater(e, dt) {
 // §R4 per-species top speeds (m/s). `dx,dz` passed to behave() are (entity − player), so they already
 // point AWAY from the player, fleeFrom moves along them. Nothing here moves toward the player.
 const CRIT_SPD = {
-  crab:    { cruise: 2.4, flee: 5.0 }, piper:   { cruise: 3.0, flee: 5.5 }, octopus: { cruise: 0.5, flee: 5.0 },
+  crab:    { cruise: 2.4, flee: 5.0 }, piper:   { cruise: 3.0, flee: 5.5 },
   seaduck: { cruise: 1.3, flee: 3.4 }, heron:   { cruise: 0.8, flee: 3.2 }, seal:    { cruise: 0.0, flee: 5.0 },
   snail:   { cruise: 0.25, flee: 0.25 }, hermit: { cruise: 0.5, flee: 0.5 }, shrimp:  { cruise: 1.8, flee: 5.0 },
   hopper:  { cruise: 0.5, flee: 2.0 },
@@ -7409,13 +7375,6 @@ function behave(e, dt, d, dx, dz) {
     const fast = d < 6 ? 5.5 : 1.8;
     e.timer -= dt; if (e.timer < 0 || d < 5) { e.timer = 0.3 + rng()*0.9; e.tx = e.hx+(rng()-0.5)*(e.hr||3); e.tz = e.hz+(rng()-0.5)*(e.hr||3); }
     const a = Math.atan2(e.tz-e.z, e.tx-e.x); e.x += Math.cos(a)*dt*fast; e.z += Math.sin(a)*dt*fast; e.yaw = a + Math.PI;   // tail-first
-  } else if (e.t === "octopus") {                                 // §R4 crawls slowly between den & pools; jets fast AWAY only when startled
-    if (e.jet > 0) e.jet -= dt;
-    if (d < 3.2) { e.cdState = "jet"; e.jet = Math.max(e.jet || 0, 0.7); }   // startled → a short fast jet
-    if (e.jet > 0) { fleeFrom(e, dx, dz, dt, CRIT_SPD.octopus.flee * Math.min(1, e.jet/0.5)); }   // the jet eases off
-    else { e.cdState = "crawl"; e.timer -= dt; if (e.timer < 0) { e.timer = 2.5 + rng()*3.5; e.vx = (rng()-0.5)*0.4; e.vz = (rng()-0.5)*0.4; }
-      e.x += e.vx*dt*CRIT_SPD.octopus.cruise*2; e.z += e.vz*dt*CRIT_SPD.octopus.cruise*2; e.yaw = Math.atan2(e.vz||0.01, e.vx||0.01); }
-    if (Math.hypot(e.x-e.hx, e.z-e.hz) > (e.hr||3)) { e.vx = (e.hx-e.x)*0.1; e.vz = (e.hz-e.z)*0.1; }   // tethered to its den
   } else if (e.t === "seaduck") {                                 // §16.1 paddles off the shore, flees, stays on water
     if (d < 11) { e.cdState = "flee"; fleeFrom(e, dx, dz, dt, CRIT_SPD.seaduck.flee); }
     else { e.cdState = "paddle"; e.timer -= dt; if (e.timer < 0) { e.timer = 1.5 + rng()*3; e.tx = e.hx+(rng()-0.5)*e.hr; e.tz = e.hz+(rng()-0.5)*e.hr; }
@@ -7497,7 +7456,7 @@ function drawLife(view) {
         else if (e.t === "lobster") { y = g + 0.1; if (e.flick > 0) { lean = Math.sin((e.flick/0.5)*Math.PI) * 0.6; ld = e.yaw; } }   // §lob5 sits on the seabed; a quick backward lurch on the tail-flick
         else if (e.t === "anemone") sc = e.scale * (1 - 0.6*e.closed);
         else if (e.t === "seaduck") y = waterSurfaceAt(e.x, e.z) + 0.03 + Math.sin(e.phase*2)*0.03;   // §16.1 bobs on the water
-        if (e.t === "star" || e.t === "anemone" || e.t === "urchin" || e.t === "snail" || e.t === "octopus") y += 0.02;
+        if (e.t === "star" || e.t === "anemone" || e.t === "urchin" || e.t === "snail") y += 0.02;
         else if (e.t === "shrimp") y += 0.06;
       } else {   // §A2 a dropped find: hover + bob a few cm above the ground, spin slowly, upright (no tilt)
         y = g + FIND_HOVER + Math.sin(animT*FIND_BOB_SPD + e.phase)*FIND_BOB_AMP;
@@ -7626,7 +7585,6 @@ digItem("coconut", "Coconut", "seed", "common", "A palm seed, plant it on sand."
 digItem("pinecone", "Pine Cone", "seed", "common", "A conifer seed, plant it on soil or grass.", () => coneMesh2(), [0.44,0.32,0.2]);
 digItem("nut", "Nut", "seed", "common", "A broadleaf seed, plant it on soil or grass.", () => nutMesh(), [0.5,0.36,0.22]);
 digItem("salt", "Sea Salt", "consumable", "uncommon", "Coarse crystals. Hold it to coax wild goats.", () => saltMesh(), [0.93,0.95,0.97]);
-digItem("leaves", "Leaves", "material", "common", "Dry leaves. Compost for saplings, or a goat treat.", () => leafPileMesh(), [0.55,0.5,0.3]);
 digItem("stick", "Sticks", "material", "common", "Snapped twigs from a crown.", () => stickMesh(), [0.45,0.34,0.22]);
 // dug finds (collected from holes)
 function digItem(id, name, cat, rar, desc, meshFn, tint) { ITEMS[id] = { id, name, category: cat, rarity: rar, stackable: cat !== "relic", maxStack: cat === "relic" ? 1 : 99, desc, model: meshFn, tint: tint || [1,1,1] }; }
@@ -7662,8 +7620,6 @@ digItem("seed_cassava", "Cassava Cutting", "seed", "common", "A stem cutting, pl
 digItem("seed_banana", "Banana Sucker", "seed", "common", "A young banana shoot to replant on soil.", () => cropSeedMesh([0.46,0.6,0.3]), [0.46,0.6,0.3]);
 digItem("seed_pineapple", "Pineapple Crown", "seed", "common", "The leafy crown, press it into soil or sand to root.", () => cropSeedMesh([0.42,0.6,0.35]), [0.42,0.6,0.35]);
 digItem("seed_taro", "Taro Top", "seed", "common", "A taro top to replant in damp soil.", () => cropSeedMesh([0.46,0.56,0.42]), [0.46,0.56,0.42]);
-digItem("sealettuce", "Sea Lettuce", "consumable", "common", "A ribbon of bright green sea lettuce, picked fresh off the seabed.", () => seaLettuceMesh(false), [0.4,0.78,0.42]);
-EDIBLE.sealettuce = 0.1;
 EDIBLE.cassava = 0.22; EDIBLE.banana = 0.18; EDIBLE.pineapple = 0.2; EDIBLE.taro = 0.22;
 COOKABLE.cassava = 1; COOKABLE.taro = 1;   // the roots are better roasted
 COOKABLE.crabmeat = 1;                      // §R4 crab meat cooks up better too
@@ -7692,7 +7648,7 @@ DISHES.forEach(([id, name, col, val, boost]) => { DISH_SET[id] = { id, name, col
 // which pot-ingredient category a food falls into (drives the dish you get)
 const FOOD_CAT = {
   rawfish:"sea", surfperch:"sea", rockfish:"sea", lingcod:"sea", ratfish:"sea", clam:"sea", cockle:"sea",
-  mussel:"sea", oyster:"sea", crabmeat:"sea", kelp:"sea", sealettuce:"sea", seaweed:"sea",
+  mussel:"sea", oyster:"sea", crabmeat:"sea", kelp:"sea", seaweed:"sea",
   cooked_rawfish:"sea", cooked_clam:"sea", cooked_cockle:"sea", cooked_mussel:"sea", cooked_oyster:"sea",
   cassava:"root", taro:"root", coconut:"root", cooked_cassava:"root", cooked_taro:"root",
   banana:"fruit", pineapple:"fruit", berry:"fruit",
@@ -8229,7 +8185,7 @@ function itemPrimary(idx) {
   const c = Inv.cell(idx); if (!c) return; const it = ITEMS[c.id];
   if (idx >= INV_SLOTS) { Inv.selected = idx - INV_SLOTS; renderHotbar(); return; }     // belt tile → select
   if (isFood(c.id)) { eatItem(idx); return; }
-  if (it.category === "tool" || it.category === "material" || it.category === "seed" || c.id === "leaves" || c.id === "bucket" || c.id === "salt") { equipToBelt(idx); return; }
+  if (it.category === "tool" || it.category === "material" || it.category === "seed" || c.id === "bucket" || c.id === "salt") { equipToBelt(idx); return; }
   showInspect(c.id);                                                                    // a find → inspect
 }
 function quickMove(idx) {   // shift-click: bag ↔ belt
@@ -8718,7 +8674,6 @@ function targetAlongRay(r, sticky) {
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
   for (const cr of crops) sphere(cr, "crop", cr.x, cr.z, 0.5*cr.scale, 1.0*cr.scale);   // §17 harvestable crops
   if (typeof tallGrass !== "undefined") for (const g of tallGrass) if (!g.cut) sphere(g, "tallgrass", g.x, g.z, 0.4*g.scale, 0.7*g.scale);   // §veg5 strip tall grass for fibre
-  for (const sw of seaweedBeds) if (sw.ripe) sphere(sw, "seaweed", sw.x, sw.z, 0.6*sw.scale, 0.9*sw.scale);   // §17.2 pick sea lettuce
   for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
   for (const s of weakStones) if (!s.picked) sphere(s, "weakstone", s.x, s.z, 0.4*s.sc, 0.55 + s.sc*0.4);   // §stonepick pick up a dome stone with any item (picked ones aren't targetable)
   // §heave-removed: heave boulders are no longer targetable
@@ -8755,7 +8710,7 @@ let curTarget = null;    // recomputed each frame from the crosshair (desktop)
 // something (so a click can fall through to a ground tool-use otherwise).
 // §A3 target kinds that ANY held item can act on (harvest a plant, hit a creature, pick a find, open a thing).
 // The tool-gated kinds (tree/fallentree/rock/searock/stump/geode/heaveboulder) are deliberately excluded.
-const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","seaweed","tallgrass","salt",
+const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","tallgrass","salt",
   "flotsam","barnacle","nest","driftwood","chest","openchest","storagebox","campfire","cotbed","dispslot",
   "cottrophy","aqua","lantern","fence","crate","barrel","searock"]);
 function softTargetUnderCrosshair() { const t = effectiveTarget(); return (t && SOFT_INTERACT.has(t.kind)) ? t : null; }
@@ -8777,7 +8732,6 @@ function useToolOnTarget(t) {
     case "geode": return geodeAction(t.obj);   // §40 crack a geode open with a pickaxe
     case "bush": harvestBush(t.obj); return true;
     case "crop": harvestCrop(t.obj); return true;
-    case "seaweed": harvestSeaweed(t.obj); return true;
     case "tallgrass": harvestTallGrass(t.obj); return true;   // §veg5 strip for Plant Fiber
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "flotsam": collectFlotsam(t.obj); return true;   // §5 scoop floating debris straight from the water
@@ -8825,7 +8779,6 @@ function clickAt(ndcx, ndcy) {
   else if (MAT_ITEM[tool] !== undefined) placeMaterial(pt[0], pt[1]);
   else if (SEED_TREE[tool]) plantAt(pt[0], pt[1]);
   else if (CROP_SEED[tool]) plantCrop(pt[0], pt[1]);            // §17 plant a crop seed on soil
-  else if (tool === "leaves") useLeavesAt(pt[0], pt[1]);
   else if (tool === "chestbox") placeStorageBox(pt[0], pt[1]);   // §12C place an emptied chest as storage
   else if (tool === "lantern") placeLantern(pt[0], pt[1]);       // §tools set a lit lantern on the ground
   else if (isFood(selectedItem())) eatSelected();               // §15 clicking food in hand eats it
@@ -8850,7 +8803,7 @@ function interactWith(e) {
     discovered.add("f_" + e.t);
     notify(e.t, 1, first);
     if (FINDS[e.t] && FINDS[e.t].litter) { beachCleanup++; }   // §5 clearing litter counts toward the beach-cleanup tally
-    if (SEED_TREE[e.t] || e.t === "salt" || e.t === "leaves") Inv.autoHotbar(e.t);   // handy items go to the hotbar
+    if (SEED_TREE[e.t] || e.t === "salt") Inv.autoHotbar(e.t);   // handy items go to the hotbar
     if (e.t === "bottle" && !e.drop && typeof bottleMapChance === "function") bottleMapChance();   // §12C a bottle may hold a map piece
     if (e.drop) { const di = worldDrops.indexOf(e.drop); if (di >= 0) worldDrops.splice(di, 1); saveDrops(); }  // picked a dropped item back up
     const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
@@ -9103,7 +9056,7 @@ function digBiome(x, z) {
 const BLIND_LOOT = {
   wet:    { rawChance: 0.28, raw: ["cockle", "shell"],              find: ["seaglass", "clam", "bottle"] },
   sand:   { rawChance: 0.24, raw: ["driftwood", "shell", "cockle"], find: ["bottle", "coin", "ceramic"] },
-  inland: { rawChance: 0.85, raw: ["worm", "root", "flint", "stone"],find: ["bone", "ceramic", "coin"] },
+  inland: { rawChance: 0.85, raw: ["worm", "root", "flint", "stone"],find: ["ceramic", "coin"] },
 };
 
 // apply a strike's displacement to the offset layer, then push updates
@@ -9537,7 +9490,7 @@ function removeBuiltAt(x, z) {
 const bucket = { water: false, creatures: [] };
 // §6 the bucket holds a fixed volume of SPACE rather than a head-count: little critters take 1 unit, fish 2-3 by size
 const BUCKET_UNITS = 6;                           // total space (tunable)
-const CREATURE_UNITS = { lingcod: 3, rockfish: 2, flounder: 2, fish: 2, octopus: 2, jelly: 2, horseshoe: 2, lobster: 3 };   // §lob5 a lobster takes 3 of the bucket's units; the rest default to 1
+const CREATURE_UNITS = { lingcod: 3, rockfish: 2, flounder: 2, fish: 2, jelly: 2, horseshoe: 2, lobster: 3 };   // §lob5 a lobster takes 3 of the bucket's units; the rest default to 1
 function creatureUnits(c) { let u = CREATURE_UNITS[c && c.t] || 1; if (c && c.variant === "giant") u += 1; return Math.min(u, BUCKET_UNITS); }
 function bucketUnitsUsed() { let u = 0; for (const c of bucket.creatures) u += creatureUnits(c); return u; }
 // §13.3 moisture: a creature out of water dries out over DRY_OUT_TIME real-seconds (tunable, ~5 min).
@@ -9546,7 +9499,7 @@ const DRY_OUT_TIME = 300;                        // seconds from soaked to dead 
 // what each creature leaves behind once it dries out completely → a Find
 const DRIED_REMAINS = { crab: "molt", hermit: "shell", lobster: "molt", star: "driedstar", urchin: "sanddollar",
                         fish: "husk", anemone: "husk", jelly: "husk", hopper: "husk", piper: "husk",
-                        snail: "shell", shrimp: "husk", octopus: "husk" };   // §16.1
+                        snail: "shell", shrimp: "husk" };   // §16.1
 // where/when a creature was scooped, for the close-up inspect card (§11.7)
 function catchBiomeLabel(x, z) {
   if (waterDepthAt(x, z) > 0.05) return "the shallows";
@@ -9639,7 +9592,7 @@ function pourIntoHole(x, z) {
   saveState();
 }
 // §playtest1 what a creature does when poured onto dry land
-const DUMP_CRAWL = { crab:1, hermit:1, horseshoe:1, octopus:1 };                          // crawl back to the water
+const DUMP_CRAWL = { crab:1, hermit:1, horseshoe:1 };                          // crawl back to the water
 const DUMP_STAY = { star:1, urchin:1, anemone:1, cucumber:1, nudibranch:1, jelly:1, snail:1 };   // stuck fast, stay put
 // everything else (fish, sculpin, shrimp) can only flop in place. All of them still dry out on the moisture timer.
 // Pour out onto dry ground: crawlers make for water, others flop/stay where they land.
@@ -9729,10 +9682,10 @@ const bucketRingMesh = makeDynamic((function () { const m = Mesh(); const c = [0
     mTri(m, [Math.cos(a0)*ri,0,Math.sin(a0)*ri], [Math.cos(a0)*ro,0,Math.sin(a0)*ro], [Math.cos(a1)*ro,0,Math.sin(a1)*ro], c);
     mTri(m, [Math.cos(a0)*ri,0,Math.sin(a0)*ri], [Math.cos(a1)*ro,0,Math.sin(a1)*ro], [Math.cos(a1)*ri,0,Math.sin(a1)*ri], c); }
   return m; })(), 40);
-const CRAWLER = { crab:1, hermit:1, star:1, anemone:1, urchin:1, hopper:1, snail:1, octopus:1 };    // live on the floor, not mid-water
+const CRAWLER = { crab:1, hermit:1, star:1, anemone:1, urchin:1, hopper:1, snail:1 };    // live on the floor, not mid-water
 const BOTTOM = { star:1, anemone:1, urchin:1 };                                 // §13.3 mostly stay put on the bottom
 // §13.3 calmer motion: gentle, capped speeds, nothing darts or spins in a pail
-const BUCKET_SPEED = { fish:0.14, jelly:0.06, crab:0.10, hermit:0.07, star:0.015, hopper:0.11, piper:0.10, anemone:0, urchin:0, minnow:0.16, shrimp:0.13, snail:0.03, octopus:0.05 };
+const BUCKET_SPEED = { fish:0.14, jelly:0.06, crab:0.10, hermit:0.07, star:0.015, hopper:0.11, piper:0.10, anemone:0, urchin:0, minnow:0.16, shrimp:0.13, snail:0.03 };
 const BUCKET_WATER_COL = [0.16, 0.42, 0.52];
 const BUCKET_TURN = 1.1;                                                        // max heading change (rad/s), no spinning
 // §13.3 moisture → a drab, dried-out look as a creature dries. 1 = soaked (true colour), 0 = bone dry.
@@ -10069,7 +10022,7 @@ let crops = [];     // { type, x, z, ripe, ripeAt, scale, yaw, wild, grown }
 const CROP_GROW_DAYS = 2.5;     // in-game days for a planted seed to first ripen (tunable)
 const CROP_REGROW_DAYS = 2;     // days to re-ripen after a harvest, crops are perennial (tunable)
 // §A3 harvest yields are a small random range per plant, inclusive (tunable). Anything unlisted gives 1–3.
-const HARVEST_YIELD = { banana:[2,5], berry:[3,7], cassava:[2,4], pineapple:[1,3], taro:[2,4], sealettuce:[1,3], pickleweed:[2,4], fiber:[1,3] };
+const HARVEST_YIELD = { banana:[2,5], berry:[3,7], cassava:[2,4], pineapple:[1,3], taro:[2,4], pickleweed:[2,4], fiber:[1,3] };
 function harvestYield(id) { const r = HARVEST_YIELD[id] || [1,3]; return r[0] + (rng()*(r[1]-r[0]+1)|0); }
 const CROP_TYPES = ["cassava", "banana", "pineapple", "taro"];
 // where each wild crop likes to grow (a height band + max slope)
@@ -10139,44 +10092,6 @@ function drawCrops(view) {
   }
 }
 
-/* §17.2 harvestable sea-lettuce beds on the shallow seabed, pick them for food; some host a critter */
-let seaweedBeds = [];
-const SEAWEED_REGROW_DAYS = 1.5;      // in-game days to grow back after picking (tunable)
-function seedSeaweedBeds() {
-  seaweedBeds = [];
-  for (let i = 0; i < 80; i++) {
-    const a = rng()*6.283, r = HALF*(0.18 + rng()*0.52), x = Math.sin(a)*r, z = -Math.cos(a)*r;
-    const h = surfaceAt(x, z).h, d = -h, ci = cellIndex(x, z);
-    if (d < 1 || d > 6 || ci < 0 || ponded.has(ci) || filled[ci] > waterLevel + 0.35) continue;
-    const lush = nMacro.fbm(x*0.013 + 40, z*0.013 - 25, 4, 2, 0.5); if (lush < 0.5) continue;
-    if (seaweedBeds.some(b => Math.hypot(b.x-x, b.z-z) < 4.5)) continue;
-    seaweedBeds.push({ x, z, ripe: true, regrowAt: 0, scale: 0.9 + rng()*0.4, yaw: rng()*6.28 });
-    if (rng() < 0.45) spawnCreature(rng() < 0.6 ? "snail" : "shrimp", x+(rng()-0.5)*1.4, z+(rng()-0.5)*1.4, { hx: x, hz: z, hr: 3, poolRim: waterSurfaceAt(x, z) });   // a home for a critter
-  }
-}
-function updateSeaweed() { for (const b of seaweedBeds) if (!b.ripe && clock.t >= b.regrowAt) b.ripe = true; }
-function nearestSeaweed(x, z, maxd) { let best = null, bd = maxd; for (const b of seaweedBeds) { const dd = Math.hypot(b.x-x, b.z-z); if (dd < bd) { bd = dd; best = b; } } return best; }
-function harvestSeaweed(b) {
-  if (!b.ripe) { showCard("Already picked", "This bed will grow back in a day or so."); return; }
-  const n = harvestYield("sealettuce"); for (let i = 0; i < n; i++) Inv.add("sealettuce", 1);
-  b.ripe = false; b.regrowAt = clock.t + SEAWEED_REGROW_DAYS * DAY_PERIOD;
-  if (onDig) onDig("pluck"); sparkle(b.x, surfaceAt(b.x, b.z).h + 0.4, b.z, [0.4, 0.8, 0.4], 6);
-  showCard("Picked Sea Lettuce ×" + n, "Fresh and salty, eat it now or save it."); saveWorld();
-}
-let seaweedRipeDyn = null, seaweedCropDyn = null;
-function drawSeaweedBeds(view) {
-  if (!seaweedBeds.length) return;
-  if (!seaweedRipeDyn) { seaweedRipeDyn = makeDynamic(seaLettuceMesh(false), 80); seaweedCropDyn = makeDynamic(seaLettuceMesh(true), 80); }
-  propUniforms(view);
-  gl.uniform1f(propU.uSway, 1); gl.uniform1i(propU.uClampTop, 1); gl.uniform1f(propU.uClampY, waterLevel - 0.04);   // sway + stay under the surface
-  const a = rockScratch;
-  for (const [ripe, dyn] of [[true, seaweedRipeDyn], [false, seaweedCropDyn]]) { let n = 0;
-    for (const b of seaweedBeds) { if (b.ripe !== ripe) continue; const dx = b.x-cam.pos[0], dz = b.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R || n >= 80) continue;
-      const o = n*10, y = surfaceAt(b.x, b.z).h; a[o]=b.x;a[o+1]=y;a[o+2]=b.z;a[o+3]=b.scale;a[o+4]=b.yaw;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
-    if (n) dyn.draw(a, n);
-  }
-  gl.uniform1f(propU.uSway, 0); gl.uniform1i(propU.uClampTop, 0);
-}
 
 /* ===================================================================== *
  * § 17.5  GOBLIN TRADERS, whimsical, scrappy NPCs you barter with
@@ -10189,7 +10104,6 @@ function goblinTrades() {   // Minecraft-villager-style: a few simple give → g
   const all = [
     { give:[["plasticbottle",2]], get:["coin",1], uses:0, max:6 },
     { give:[["bottlecap",3]], get:["seaglass",1], uses:0, max:6 },
-    { give:[["sealettuce",3]], get:["berry",1], uses:0, max:5 },
     { give:[["nautilus",1]], get:["coin",2], uses:0, max:3 },
     { give:[["coin",2]], get:["rope",1], uses:0, max:4 },
     { give:[["coin",3]], get:["coconut",2], uses:0, max:4 },
@@ -10265,7 +10179,7 @@ function doTrade(g, i) {
 }
 
 /* §18 shiny finds wink at you from far off when you carry a lit lantern at night */
-const GLINT_FINDS = { seaglass:1, agate:1, coin:1, bottle:1, float:1, glassfloat:1, jewelry:1, porcelain:1, compass:1, moonsnail:1, nautilus:1, ceramic:1, bell:1, tin:1, sanddollar:1 };
+const GLINT_FINDS = { seaglass:1, coin:1, bottle:1, jewelry:1, porcelain:1, compass:1, moonsnail:1, nautilus:1, ceramic:1, bell:1, tin:1, sanddollar:1 };
 const GLINT_R = 46;
 let glintDyn = null;
 function glintMesh(){ const m=Mesh(); const c=[1,1,1], r=0.12; for(const s of [1,-1]) for(let i=0;i<4;i++){ const a0=i/4*6.283,a1=(i+1)/4*6.283; mTri(m,[0,s*r,0],[Math.cos(a0)*r*0.5,0,Math.sin(a0)*r*0.5],[Math.cos(a1)*r*0.5,0,Math.sin(a1)*r*0.5],c); } return m; }
@@ -10504,7 +10418,7 @@ const RECIPES = [
     desc: "Cook food and harden spears nearby. Lays down in front of you." },
   { id: "cook",    label: "Cook Food", special: "cook", cost: [], station: "campfire",
     desc: "Roast a raw fish, shellfish or egg for double the nourishment." },
-  { id: "b_leanto", label: "Lean-to Shelter", build: "leanto", cost: [["stick", 4], ["log", 2], ["leaves", 3]], station: "hand",
+  { id: "b_leanto", label: "Lean-to Shelter", build: "leanto", cost: [["stick", 4], ["log", 2]], station: "hand",
     desc: "Sleep here at night to skip to morning and set it as your respawn." },
   { id: "b_chest", label: "Storage Chest", build: "chest", cost: [["log", 4]], station: "hand",
     desc: "Stash finds and materials. All your chests share one store." },
@@ -11231,11 +11145,10 @@ function chopFallen(o) {
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
   const [cx, cz] = fallenCrownPos(o), top = surfaceAt(cx, cz).h + 0.6;
-  if (o.crownChops > 0) {                                      // crown end first → Sticks + Leaves
+  if (o.crownChops > 0) {                                      // crown end first → Sticks (leaf bits fly as particles only)
     o.crownChops--; spawnLeaves(cx, cz, top, leafCol(o.species));
     if (o.crownChops === 0) {
       for (let i = 0; i < 2; i++) spawnFind("stick", cx + (rng()-0.5), cz + (rng()-0.5));
-      for (let i = 0, n = 1 + (rng()*2|0); i < n; i++) spawnFind("leaves", cx + (rng()-0.5), cz + (rng()-0.5));
     }
     return;
   }
@@ -11283,7 +11196,6 @@ function stumpStrike(st) {
   st.hp -= jobEffortMul();
   if (st.hp <= 0.001) {
     for (let i = 0, n = 1 + (rng()*2|0); i < n; i++) spawnFind("log", st.x + (rng()-0.5), st.z + (rng()-0.5));
-    if (rng() < 0.6) spawnFind("leaves", st.x + (rng()-0.5), st.z + (rng()-0.5));
     const i = stumps.indexOf(st); if (i >= 0) stumps.splice(i, 1);
     applyDig(st.x, st.z, 1.0, Math.atan2(player.z - st.z, player.x - st.x));    // leaves a small hole that heals
     saveWorld();
@@ -11402,16 +11314,10 @@ function updateTools(dt, gdt) {
   updateBerries();
   if (typeof updateTallGrass === "function") updateTallGrass();
   updateCrops();
-  updateSeaweed();
   updateGoblins(dt);
   // scattered seeds near mature trees slowly replenish (low density)
   seedScatterT += gdt;
   if (seedScatterT > 45) { seedScatterT = 0; maybeScatterSeed(); }
-}
-function useLeavesAt(x, z) {        // compost: a leaf speeds a nearby young sapling
-  if (!Inv.has("leaves")) return;
-  let best = null, bd = REACH + 1; for (const pl of planted) { if (plantStage(pl) >= 1) continue; const d = Math.hypot(pl.x-x, pl.z-z); if (d < bd) { bd = d; best = pl; } }
-  if (best) { Inv.remove("leaves", 1); best.plantedAt -= GROW_DAYS * DAY_PERIOD * 0.3; sparkle(best.x, surfaceAt(best.x, best.z).h + 0.6, best.z, [0.5, 0.82, 0.42], 7); saveWorld(); }
 }
 // The real toppled tree mesh weathers over a few in-game days: settles, then slowly sinks and vanishes.
 function updateFallen(dt, gdt) {
@@ -12957,13 +12863,13 @@ const _mf = (...ids) => ids.filter(id => FINDS[id]).map(id => ({ kind: "find", i
 const _mc = (...ids) => ids.filter(id => CREATURES[id]).map(id => ({ kind: "creature", id }));
 const _mfish = () => Object.keys(FISH_SPECIES).map(id => ({ kind: "fish", id }));
 const COLLECTION_SETS = [
-  { id:"glass",   name:"Sea Glass Rainbow", reward:"floats",     members:_mf("seaglass","agate","glassfloat","float","nautilus","moonsnail") },
+  { id:"glass",   name:"Sea Glass Rainbow", reward:"floats",     members:_mf("seaglass","nautilus","moonsnail") },
   { id:"shells",  name:"Shells of the Shore", reward:"net",       members:_mf("shell","cockle","mussel","oyster","limpet","sanddollar","clam") },
   { id:"pool",    name:"Tide Pool Residents", reward:"rug",       members:_mc("crab","anemone","star","urchin","hermit","snail","shrimp","hopper") },
-  { id:"night",   name:"Night Shift",        reward:"chimes",    members:_mc("octopus","jelly","hermit","shrimp") },
+  { id:"night",   name:"Night Shift",        reward:"chimes",    members:_mc("jelly","hermit","shrimp") },
   { id:"angler",  name:"Angler",             reward:"anglerboard",members:_mfish() },
   { id:"treasure", name:"Treasure Hunter",    reward:"shipbottle", members:_mf("jewelry","porcelain","compass","coin","bell","tin","fossil") },
-  { id:"oddities", name:"Oddities",           reward:"curtains",  members:_mf("bone","seabean","egg","cuttle","feather","glassfloat") },
+  { id:"oddities", name:"Oddities",           reward:"curtains",  members:_mf("seabean","egg","cuttle","feather") },
 ];
 const REWARD_LABEL = { floats:"hanging glass floats", net:"a decorative net", rug:"a woven rug", chimes:"wind chimes", anglerboard:"a mounted oar & floats", shipbottle:"a ship in a bottle", curtains:"window curtains" };
 function memberGot(m) { return m.kind === "find" ? discovered.has("f_"+m.id) : m.kind === "creature" ? discovered.has(m.id) : !!rodRecord[m.id]; }
@@ -13054,7 +12960,6 @@ function saveWorld() {
     shelter: shelterSpawn ? [+shelterSpawn.x.toFixed(1), +shelterSpawn.z.toFixed(1)] : null,  // §16C respawn point
     crops: crops.map(c => [c.type, +c.x.toFixed(1), +c.z.toFixed(1), +(c.yaw||0).toFixed(2), c.ripe?1:0,  // §17
       c.ripe ? 0 : Math.max(0, +(c.ripeAt - clock.t).toFixed(0)), +c.scale.toFixed(2), c.wild?1:0, c.grown?1:0]),
-    seaweed: seaweedBeds.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),  // §17.2 per-bed regrow (0 = ripe)
     lanterns: placedLanterns.map(L => [+L.x.toFixed(1), +L.z.toFixed(1)]),  // §tools lit lanterns set down in the world
   })); } catch (e) {}
 }
@@ -13102,7 +13007,6 @@ function loadWorld() {
       for (const b of builds) if (b.type === "leanto" && Math.hypot(b.x - shelterSpawn.x, b.z - shelterSpawn.z) < 0.6) b.respawn = true; }
     if (Array.isArray(w.crops)) { crops = w.crops.map(c => ({ type: c[0], x: c[1], z: c[2], yaw: c[3],  // §17 restore crops
       ripe: !!c[4], ripeAt: c[4] ? 0 : clock.t + (c[5] || 0), scale: c[6], wild: !!c[7], grown: !!c[8] })); }
-    if (Array.isArray(w.seaweed)) w.seaweed.forEach((v, i) => { if (seaweedBeds[i]) { if (v > 0) { seaweedBeds[i].ripe = false; seaweedBeds[i].regrowAt = clock.t + v; } else seaweedBeds[i].ripe = true; } });   // §17.2
     if (Array.isArray(w.lanterns)) placedLanterns = w.lanterns.map(([x, z]) => ({ x, y: surfaceAt(x, z).h, z }));   // §tools restore set-down lanterns
     rebuildCollHash();
   } catch (e) {}
@@ -13403,9 +13307,8 @@ const TREASURE_LOOT = [
   { id:"bottle",  min:1, max:2, w:3, fragile:true  },
   { id:"compass", min:1, max:1, w:2, fragile:false },
   { id:"lorenote", min:1, max:1, w:2, fragile:false },
-  { id:"agate",   min:1, max:2, w:2, fragile:false },
 ];
-const TREASURE_BONUS = ["compass", "jewelry", "agate", "bell", "fossil"];   // key-opening bonus
+const TREASURE_BONUS = ["compass", "jewelry", "bell", "fossil"];   // key-opening bonus
 const chestBodyDyn = makeDynamic(chestBodyMesh(false), 8);         // §R4 body + hinged lid drawn separately so the lid can swing open
 const chestBodyBarnDyn = makeDynamic(chestBodyMesh(true), 8);
 const chestLidDyn = makeDynamic(chestLidMesh(false), 8);
@@ -13738,7 +13641,6 @@ function goatAltTarget(g) {    // pick a new improbable high perch near home (or
 }
 function updateGoats(dt) {
   const px = player.x, pz = player.z, holdingSalt = selectedTool() === "salt";
-  const holdingLeaves = selectedTool() === "leaves" && Inv.has("leaves");
   const playerFast = player.sprinting;
   for (const g of goats) {
     g.chew += dt * (6 + Math.sin(clock.t + g.homeX));
@@ -13753,15 +13655,14 @@ function updateGoats(dt) {
 
     let speed = 3.2, tx = g.tx, tz = g.tz;
     if (g.tamed) {
-      if (holdingLeaves && dToP < 12 && dToP > 1.6) { tx = px; tz = pz; speed = 5; if (rng() < dt*0.5) { Inv.remove("leaves", 1); if (onGoat) onGoat("bleat"); sparkle(g.x, surfaceAt(g.x,g.z).h+0.8, g.z, [0.5,0.8,0.4], 4); } }  // comes to eat a leaf treat
-      else if (g.follow && dToP > 7) { tx = px; tz = pz; speed = 6.5; }         // follow at a distance
+      if (g.follow && dToP > 7) { tx = px; tz = pz; speed = 6.5; }         // follow at a distance
       else if (g.follow && dToP < 5) { tx = g.x - (px-g.x); tz = g.z - (pz-g.z); speed = 2; }
       else { // idle near player; paw at a buried thing sometimes
         if (g.pawT <= 0 && rng() < dt*0.4) goatPaw(g);
       }
     } else {
-      // skittish: flee unless the player comes slowly holding salt (or leaves, they get curious)
-      const spooked = dToP < (crouching ? 5 : 9) && !((holdingSalt || holdingLeaves) && !playerFast);   // §13.4 sneak closer when crouched
+      // skittish: flee unless the player comes slowly holding salt (they get curious)
+      const spooked = dToP < 9 && !(holdingSalt && !playerFast);
       if (spooked) { const a = Math.atan2(g.z - pz, g.x - px); tx = g.x + Math.cos(a)*14; tz = g.z + Math.sin(a)*14; speed = 7.5; g.state = "flee"; g.timer = 0.6; }
       else {
         g.timer -= dt;
@@ -13835,7 +13736,6 @@ seedBerryBushes();
 seedTallGrass();   // §veg5 harvestable tall-grass clumps (Plant Fiber)
 seedWildCrops();
 populateLife();
-seedSeaweedBeds();   // §17.2 after life[], so bed-dwelling critters aren't wiped
 recordCensus();      // §R4 remember starting populations for replenishment
 seedFlotsam();       // §5 a little floating debris already out on the water
 // §urgent4 goblin trader removed (no NPCs / trading)
@@ -13987,7 +13887,6 @@ function generateWorld() {
   seedTallGrass();
   seedWildCrops();
   populateLife();
-  seedSeaweedBeds();
   recordCensus();
   seedFlotsam();
   rebuildTerrainInPlace();
@@ -14364,7 +14263,6 @@ function frame(now) {
   drawTallGrass(view);   // §veg5
   drawBarnacles(view);   // §5 barnacle crusts on intertidal rocks (before the transparent water)
   drawCrops(view);
-  drawSeaweedBeds(view);
   drawGoblins(view);
   drawSacks(view);
   drawCampfires(view);
