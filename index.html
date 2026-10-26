@@ -667,6 +667,17 @@
     box-shadow: inset 1px 1px 0 var(--parch-hi), inset -1px -1px 0 #6e4f2b; border: 2px solid var(--slot-lo); }
   ::-webkit-scrollbar-thumb:hover { background: linear-gradient(#d9bd80,#b89a5c); }
   ::-webkit-scrollbar-corner { background: var(--slot-lo); }
+  /* ---- §UI rarity / tag corner markers (shape + colour, Stardew-style) ---- */
+  .rmark, .tmark { position: absolute; pointer-events: none; z-index: 3; filter: drop-shadow(0 0 1px rgba(0,0,0,.9)); image-rendering: auto; }
+  .rmark { left: 3px; bottom: 3px; }     /* bottom-left: clear of the hotkey number (TL) and qty (BR) */
+  .rmark.unc  { width: 8px; height: 8px; border-radius: 50%; background: #49b58f; box-shadow: 0 0 0 1px #0a2b22; }
+  .rmark.rare { width: 8px; height: 8px; background: #4f8fe0; transform: rotate(45deg); box-shadow: 0 0 0 1px #0a1c33; }
+  .rmark.leg  { width: 12px; height: 12px; background: #e7a92f;
+    clip-path: polygon(50% 0,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%); }
+  .tmark { right: 3px; top: 3px; width: 11px; height: 11px; background-size: contain; background-repeat: no-repeat; background-position: center; }
+  .tmark.food { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Ccircle cx='6' cy='7.2' r='4.3' fill='%23c0392b'/%3E%3Ccircle cx='6' cy='7.2' r='4.3' fill='none' stroke='%23000' stroke-opacity='.4' stroke-width='.6'/%3E%3Cpath d='M6 3.2 C6.6 1.6 8.2 1.3 9 1.6 C8.4 3.2 6.9 3.4 6 3.2 Z' fill='%235aa02f'/%3E%3C/svg%3E"); }
+  /* journal cards show the rarity marker too (bottom-left of the thumbnail) */
+  .jcard { position: relative; }
 </style>
 </head>
 <body>
@@ -7830,8 +7841,7 @@ function renderHotbar() {
     let it = c ? ITEMS[c.id] : null, mark = "";
     if (c && c.id === "bucket") mark = (bucket.water || bucket.creatures.length) ? `<i class="bkfull"></i>` : "";   // §P2 full/empty bucket tell on the belt
     const ic = it && it.icon ? `<img src="${it.icon}">` : "";
-    const shim = c && ITEMS[c.id] && (ITEMS[c.id].rarity === "uncommon" || ITEMS[c.id].rarity === "rare" || ITEMS[c.id].rarity === "legendary") ? " shimmer" : "";
-    return `<div class="hslot${i === Inv.selected ? " sel" : ""}${shim}" data-h="${i}">${ic}${mark}${c && c.qty > 1 ? `<span>${c.qty}</span>` : ""}<b>${i + 1}</b></div>`;
+    return `<div class="hslot${i === Inv.selected ? " sel" : ""}" data-h="${i}">${ic}${mark}${itemMarks(it, c)}${c && c.qty > 1 ? `<span>${c.qty}</span>` : ""}<b>${i + 1}</b></div>`;
   }).join("");
   el.querySelectorAll(".hslot").forEach((s) => {
     const pick = (e) => { e.preventDefault(); e.stopPropagation(); selectHotbar(+s.dataset.h); };
@@ -7849,8 +7859,19 @@ function slotHTML(cell, idx, hk) {
   const key = hk !== undefined ? `<i class="hk">${hk}</i>` : "";
   if (!cell) return `<div class="islot" data-idx="${idx}">${key}</div>`;
   const it = ITEMS[cell.id], ic = it && it.icon ? `<img src="${it.icon}">` : "";
-  const shim = (it && (it.rarity === "uncommon" || it.rarity === "rare" || it.rarity === "legendary")) ? " shimmer" : "";
-  return `<div class="islot full${shim}" data-idx="${idx}">${key}${ic}${cell.qty > 1 ? `<span>${cell.qty}</span>` : ""}</div>`;
+  return `<div class="islot full" data-idx="${idx}">${key}${ic}${itemMarks(it, cell)}${cell.qty > 1 ? `<span>${cell.qty}</span>` : ""}</div>`;
+}
+// §UI Stardew-style corner markers: rarity by SHAPE + colour (dot/diamond/star, not colour alone),
+// plus a small reusable tag-icon set for other properties (food, …). No more shiny sheen.
+function itemMarks(it, cell) {
+  if (!it) return "";
+  let m = "";
+  const r = it.rarity;
+  if (r === "uncommon")      m += `<i class="rmark unc"  title="Uncommon"></i>`;
+  else if (r === "rare")     m += `<i class="rmark rare" title="Rare"></i>`;
+  else if (r === "legendary")m += `<i class="rmark leg"  title="Legendary"></i>`;
+  if (typeof isFood === "function" && isFood(it.id)) m += `<i class="tmark food" title="Food"></i>`;
+  return m;
 }
 // Which compartment an item sorts into (§10.3).
 const COMPARTMENTS = ["Finds", "Food", "Materials", "Misc"];
