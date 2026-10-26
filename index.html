@@ -306,8 +306,10 @@
   @keyframes slotswap { 0%{transform:translateY(-5px) scale(1.12);box-shadow:0 0 16px rgba(255,235,170,.9)} 100%{transform:none} }
   .hslot img { width: 100%; height: 100%; image-rendering: pixelated; }
   .hslot b { position: absolute; left: 3px; top: 0; font-size: 10px; opacity: .6; color:#f0d9b0; }
-  .hslot .tkmode { position: absolute; right: 3px; top: 1px; font-size: 10px; font-weight: 700; font-style: normal;
-    color: #ffe6b0; text-shadow: 0 1px 2px #000; letter-spacing: 0; }
+  /* §P2 a small blue drop in the corner of the belt bucket icon when it holds water/creatures */
+  .hslot .bkfull { position: absolute; right: 3px; top: 2px; width: 9px; height: 11px;
+    background: radial-gradient(ellipse at 50% 70%, #6fd0e6, #2b86a8); border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+    box-shadow: 0 0 3px #1a5a72, inset 0 -1px 1px rgba(255,255,255,.4); }
   .hslot span { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 700; text-shadow: 0 1px 2px #000; }
   /* the satchel */
   #debugpanel { position: fixed; z-index: 13; display: none; background: var(--facet);
@@ -3791,7 +3793,6 @@ addEventListener("keyup", (e) => { keys[e.code] = false; });
 canvas.addEventListener("mousedown", (e) => {
   if (IS_TOUCH) return;
   if (menuModalOpen()) return;   // §A6 a menu is open: no world clicks, and don't re-grab pointer lock (which would let the camera turn)
-  if (e.button === 1 && mode === "walk" && selectedItem() === "toolkit") { e.preventDefault(); cycleToolkit(); return; }   // §13.2 middle-click cycles the Tool Kit
   if (e.button !== 0) return;
   if (document.pointerLockElement !== canvas) { canvas.requestPointerLock(); return; }
   // §A3 the rod and spear have their own primary use, but you can still harvest a plant / hit a creature / pick a find
@@ -4132,8 +4133,7 @@ function openSettings() {
       <div class="srow"><label>Test sound</label><button data-snd="test">Play ▶</button></div>
       <div class="srow"><label>Music</label><button data-snd="testmusic">${(typeof MUSIC !== "undefined" && MUSIC.playing()) ? "On ■" : "Off ▶"}</button></div>`,
     controls: `
-      <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
-      <div class="srow"><label>Auto tool-switch</label><button data-k="autoswitch">${onoff(autoSwitch)}</button></div>`,
+      <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>`,
     gameplay: `
       <div class="srow"><label>Auto-pickup</label><button data-k="autopick">${onoff(autoPickup)}</button></div>
       <div class="srow"><label>Hunger</label><button data-k="hunger">${onoff(hungerEnabled)}</button></div>
@@ -4156,7 +4156,6 @@ function openSettings() {
     const k = b.dataset.k;
     if (k === "hints") { hintsOn = !hintsOn; saveHints(); }
     else if (k === "autopick") { autoPickup = !autoPickup; saveAutoPick(); }
-    else if (k === "autoswitch") { autoSwitch = !autoSwitch; saveAutoSwitch(); }
     else if (k === "hunger") { setHungerEnabled(!hungerEnabled); }   // §13.8
     else if (k === "daynight") { setDayNight(!dayNightEnabled); }     // §13.9
     else if (k === "relaxfish") { setRelaxedFishing(!relaxedFishing); }   // §Fishing forgiving reel mini-game
@@ -4312,10 +4311,7 @@ function aimInfo() {
   return null;
 }
 // §13.2 the Tool Kit counts as owning the shovel, axe and pickaxe
-function ownsTool(id) {
-  if (Inv.hotbarHasId(id) || selectedTool() === id) return true;
-  return (id === "shovel" || id === "axe" || id === "pickaxe") && Inv.hotbarHasId("toolkit");
-}
+function ownsTool(id) { return Inv.hotbarHasId(id) || selectedTool() === id || Inv.has(id); }   // §P2 do you carry this tool anywhere
 // Do you OWN a tool that can affect this target (even if not equipped, auto-switch will reach for it)?
 function aimAffordable(info) {
   if (!info) return false;
@@ -6764,8 +6760,7 @@ function scrapeRockBarnacle(o) {
 function barnacleExposed(b) { return waterLevel < barnTop(b) + 0.35; }    // reachable when the tide isn't covering the rock
 function scrapeBarnacle(b) {
   if (!b || b.amt <= 0) { showCard("Bare rock", "Give the barnacles a few days to grow back."); return; }
-  if (!(selectedItem() === "toolkit" || selectedTool() === "shovel")) { showCard("Scrape them off", "Scrape barnacles with the Tool Kit (or a shovel)."); return; }
-  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
+  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §P2 any item scrapes them off
   shovelSwing = 1; spendStamina(TUNE.CHOP_COST*0.5, true); rootPlayer(); if (onDig) onDig("chop");
   const added = Inv.add("barnacle", 1);
   if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
@@ -7223,10 +7218,6 @@ ITEMS.rod = { id: "rod", name: "Fishing Rod", category: "tool", rarity: "tool", 
 FOOD_BOOST.surfperch={m:1.6,d:30}; FOOD_BOOST.rockfish={m:1.75,d:42}; FOOD_BOOST.lingcod={m:1.95,d:54}; FOOD_BOOST.ratfish={m:1.7,d:40};
 FOOD_BOOST.eel={m:1.85,d:48}; FOOD_BOOST.puffer={m:1.5,d:26}; FOOD_BOOST.flyingfish={m:1.55,d:28}; FOOD_BOOST.sunfish={m:2.2,d:70}; FOOD_BOOST.ghostfish={m:2.0,d:60};
 // §13.2 one Tool Kit replaces the three tool slots; Auto picks the right tool as you aim.
-ITEMS.toolkit = { id: "toolkit", name: "Tool Kit", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
-                  desc: "Shovel, axe and pickaxe in one. Auto mode picks the right one as you aim; press its slot again (or middle-click) to lock Shovel, Axe or Pickaxe.", model: () => shovelMesh(), tint: [1,1,1] };
-const TOOLKIT_MODES = ["auto", "shovel", "axe", "pickaxe"];
-const toolkit = { mode: "auto", tool: "shovel" };   // tool = current effective tool in auto mode
 // §13.2 work lock: after hitting an entity, keep acting on it (and keep its tool) even if aim drifts
 let workLock = null;   // { obj, kind, tool, until }
 let lastEntityHitT = -99, useHeld = false;
@@ -7247,9 +7238,6 @@ function effectiveTarget() {
   if (workLockActive() && workLockReach()) { const o = workLock.obj; return { kind: workLock.kind, obj: o, x: o.x, z: o.z }; }
   return curTarget || targetAlongRay(rayFromNDC(0, 0), curTarget);
 }
-function cycleToolkit() { const i = TOOLKIT_MODES.indexOf(toolkit.mode); toolkit.mode = TOOLKIT_MODES[(i+1) % TOOLKIT_MODES.length];
-  renderHotbar(); const lbl = toolkit.mode === "auto" ? "Auto" : toolkit.mode[0].toUpperCase()+toolkit.mode.slice(1);
-  showCard("Tool Kit: " + lbl, toolkit.mode === "auto" ? "Picks the right tool as you aim." : "Locked to the " + toolkit.mode + "."); }
 // materials & seeds (Phase 6; building comes later)
 digItem("log", "Log", "material", "common", "A length of trunk, fresh-cut.", () => logMesh(), [0.5,0.4,0.28]);
 digItem("stone", "Stone", "material", "common", "A heavy chunk of rock. Place it to build; only a pickaxe removes placed stone.", () => stoneMesh(), [0.52,0.5,0.47]);
@@ -7284,9 +7272,12 @@ EDIBLE.cassava = 0.22; EDIBLE.banana = 0.18; EDIBLE.pineapple = 0.2; EDIBLE.taro
 const CROP_SEED = { seed_cassava: "cassava", seed_banana: "banana", seed_pineapple: "pineapple", seed_taro: "taro" };
 const CROP_FOOD_SEED = { cassava: "seed_cassava", banana: "seed_banana", pineapple: "seed_pineapple", taro: "seed_taro" };
 
-/* ---- inventory (slot model + hotbar) ---- */
-// 36 main slots + an 8-slot hotbar; every cell is a {id,qty} stack or null.
-const INV_SLOTS = 36, HOTBAR_SLOTS = 8;
+/* ---- inventory (slot model + hotbar) ---- §P2 Minecraft-style ---- */
+// 32 slots total: an 8-slot belt (hotbar) + a 24-slot bag (main). Every cell is
+// a {id,qty} stack or null. No auto-sort, no compartments: items stay where you
+// put them and drag anywhere. New items fill the belt first, then the bag,
+// merging into existing stacks first; if both are full the item stays in the world.
+const INV_SLOTS = 24, HOTBAR_SLOTS = 8;
 const Inv = {
   main: new Array(INV_SLOTS).fill(null),
   hotbar: new Array(HOTBAR_SLOTS).fill(null),
@@ -7297,7 +7288,7 @@ const Inv = {
   count(id) { let c = 0; for (const s of this.main) if (s && s.id === id) c += s.qty; for (const s of this.hotbar) if (s && s.id === id) c += s.qty; return c; },
   has(id) { return this.count(id) > 0; },
   add(id, qty = 1) {
-    const it = ITEMS[id]; if (!it) return 0; let rem = qty; const arrs = [this.main, this.hotbar];
+    const it = ITEMS[id]; if (!it) return 0; let rem = qty; const arrs = [this.hotbar, this.main];   // §P2 belt first, then bag
     if (it.stackable) for (const arr of arrs) for (const s of arr) { if (rem <= 0) break; if (s && s.id === id && s.qty < it.maxStack) { const c = Math.min(it.maxStack - s.qty, rem); s.qty += c; rem -= c; } }
     for (const arr of arrs) for (let i = 0; i < arr.length; i++) { if (rem <= 0) break; if (!arr[i]) { const c = it.stackable ? Math.min(it.maxStack, rem) : 1; arr[i] = { id, qty: c }; rem -= c; } }
     const added = qty - rem; if (added > 0) this.emit(); return added;
@@ -7309,19 +7300,7 @@ const Inv = {
   autoHotbar(id) { if (this.hotbarHasId(id)) return; const hi = this.hotbar.indexOf(null); if (hi < 0) return; const mi = this.main.findIndex(s => s && s.id === id); if (mi < 0) return; this.hotbar[hi] = this.main[mi]; this.main[mi] = null; this.emit(); },
   cell(idx) { return idx < INV_SLOTS ? this.main[idx] : this.hotbar[idx - INV_SLOTS]; },
   setCell(idx, v) { if (idx < INV_SLOTS) this.main[idx] = v; else this.hotbar[idx - INV_SLOTS] = v; },
-  sort() {
-    const merged = {};
-    for (const s of this.main) if (s) { (merged[s.id] = merged[s.id] || { id: s.id, qty: 0 }).qty += s.qty; }
-    const stacks = [];
-    for (const id in merged) { let q = merged[id].qty; const ms = ITEMS[id].maxStack || 99; while (q > 0) { const c = Math.min(ms, q); stacks.push({ id, qty: c }); q -= c; } }
-    const CAT = { tool: 0, relic: 1, find: 2, material: 3, seed: 4, consumable: 5 };
-    const RAR = { tool: 0, legendary: 1, rare: 2, uncommon: 3, common: 4 };
-    stacks.sort((a, b) => { const ca = CAT[ITEMS[a.id].category] ?? 9, cb = CAT[ITEMS[b.id].category] ?? 9; if (ca !== cb) return ca - cb;
-      const ra = RAR[ITEMS[a.id].rarity] ?? 9, rb = RAR[ITEMS[b.id].rarity] ?? 9; if (ra !== rb) return ra - rb; return a.id < b.id ? -1 : 1; });
-    this.main = new Array(INV_SLOTS).fill(null);
-    for (let i = 0; i < stacks.length && i < INV_SLOTS; i++) this.main[i] = stacks[i];
-    this.emit();
-  },
+  // §P2 no auto-sort: the player arranges the pack by hand (free drag).
 };
 function selectedItem() { const c = Inv.hotbar[Inv.selected]; return c ? c.id : null; }   // raw belt item id
 // §18 the lantern: lit while it's the held (selected) belt item; a warm flicker; held at the hip
@@ -7369,13 +7348,11 @@ function drawPlacedLanterns(view) {
     const o = n*10; a[o]=L.x; a[o+1]=L.y; a[o+2]=L.z; a[o+3]=1.5; a[o+4]=0; a[o+5]=0; a[o+6]=0; a[o+7]=1.0; a[o+8]=0.88*gl2+0.3; a[o+9]=0.6*gl2+0.2; n++; if (n >= 64) break; }
   if (n) placedLanternDyn.draw(a, n);
 }
-// §13.2 the effective tool: the Tool Kit resolves to shovel/axe/pickaxe (by aim in Auto, or the locked mode)
-function selectedTool() { const c = Inv.hotbar[Inv.selected]; if (!c) return null;
-  if (c.id === "toolkit") return toolkit.mode === "auto" ? toolkit.tool : toolkit.mode;
-  return c.id; }
-function selectHotbar(i) { if (i < 0 || i >= HOTBAR_SLOTS) return;
-  if (i === Inv.selected && selectedItem() === "toolkit") { cycleToolkit(); return; }   // re-press cycles the mode
-  Inv.selected = i; renderHotbar(); }
+// §P2 Minecraft-style: the held belt item IS the tool. No auto-switch, no Tool Kit.
+function selectedTool() { const c = Inv.hotbar[Inv.selected]; return c ? c.id : null; }
+// §P2 effort multiplier for a work target by the held item: 1 with the right tool, WRONG_TOOL_MUL otherwise (≈3x hits).
+function toolMul(kind) { const opts = TOOLS_FOR_KIND[kind]; return (opts && opts.includes(selectedTool())) ? 1 : TUNE.WRONG_TOOL_MUL; }
+function selectHotbar(i) { if (i < 0 || i >= HOTBAR_SLOTS) return; Inv.selected = i; renderHotbar(); }
 
 /* ---- inventory stack operations (drag / split / drop) ---- */
 function invMove(from, to) {
@@ -7399,10 +7376,27 @@ function invDrop(idx, one) {
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 // §strip save format version. Bumped when the strip-down broke old saves; a stored save whose v
 // does not match is discarded on load so the game starts fresh (no backward-compat / migration).
-const SAVE_VERSION = 2;
+const SAVE_VERSION = 3;   // §P2 v3: Minecraft inventory (8 belt + 24 bag, discrete tools, per-item buckets). v2 saves migrate; older are wiped.
+// §P2 fold a v2 save's inventory into the new 8-belt + 24-bag model: a Tool Kit becomes a
+// separate shovel + axe + pickaxe; every other stack keeps its id/qty. Placement is belt-first,
+// merging into existing stacks, so hand-arrangement isn't preserved (a one-time migration).
+function migrateInvV2(s) {
+  Inv.main = new Array(INV_SLOTS).fill(null);
+  Inv.hotbar = new Array(HOTBAR_SLOTS).fill(null);
+  const place = (id, qty) => {
+    const it = ITEMS[id]; if (!it) return; let rem = qty; const arrs = [Inv.hotbar, Inv.main];
+    if (it.stackable) for (const arr of arrs) for (const c of arr) { if (rem <= 0) break; if (c && c.id === id && c.qty < it.maxStack) { const n = Math.min(it.maxStack - c.qty, rem); c.qty += n; rem -= n; } }
+    for (const arr of arrs) for (let i = 0; i < arr.length; i++) { if (rem <= 0) break; if (!arr[i]) { const n = it.stackable ? Math.min(it.maxStack, rem) : 1; arr[i] = { id, qty: n }; rem -= n; } }
+  };
+  for (const arr of [s.hotbar || [], s.main || []]) for (const c of arr) {
+    if (!c || !c.id) continue;
+    if (c.id === "toolkit") { place("shovel", 1); place("axe", 1); place("pickaxe", 1); }
+    else place(c.id, c.qty || 1);
+  }
+}
 function purgeSeedSaves() { for (const suf of ["bc_","bcw_","bcd_","bcs_","bcc_","bcg_","bcsets_"]) { try { localStorage.removeItem(suf + SEED_STR); } catch (e) {} } }
 function saveState() {
-  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ v: SAVE_VERSION, main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, tkMode: toolkit.mode, cleanup: beachCleanup, variants: variantsSeen,
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ v: SAVE_VERSION, main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, cleanup: beachCleanup, variants: variantsSeen,
     heaves: heaveBoulders.map((b,i)=>b.flipped?[i,+b.refillAt.toFixed(2),+b.flippedAt.toFixed(2)]:0).filter(e=>e),  // §21D heaved boulders (index, refillAt, flippedAt)
     oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)]),  // §23 oyster-bed stock
     hsFlipped: horseshoesFlipped,  // §41 horseshoe crabs turned back over
@@ -7414,9 +7408,13 @@ function saveState() {
 function loadState() {
   try {
     const s = JSON.parse(localStorage.getItem("bc_" + SEED_STR) || "null");
-    if (s && s.v !== SAVE_VERSION) { purgeSeedSaves(); return; }   // §strip old-version save → wipe this seed and start fresh
+    if (s && s.v !== SAVE_VERSION && s.v !== 2) { purgeSeedSaves(); return; }   // §P2 v2 migrates; anything else out of date is wiped
     if (s) {
-      if (Array.isArray(s.main)) { Inv.main = padArr(s.main, INV_SLOTS); Inv.hotbar = padArr(s.hotbar || [], HOTBAR_SLOTS); }
+      const migrate = (s.v === 2);   // §P2 old inventory layout → remap
+      if (Array.isArray(s.main) || Array.isArray(s.hotbar)) {
+        if (migrate) migrateInvV2(s);
+        else { Inv.main = padArr(s.main, INV_SLOTS); Inv.hotbar = padArr(s.hotbar || [], HOTBAR_SLOTS); }
+      }
       Inv.selected = Math.min(HOTBAR_SLOTS - 1, s.sel || 0); (s.disc || []).forEach((d) => discovered.add(d));
       starsRescued = s.rescued || 0;
       if (typeof s.cleanup === "number") beachCleanup = s.cleanup;   // §5 beach-cleanup tally
@@ -7428,7 +7426,6 @@ function loadState() {
       if (typeof s.hsFlipped === "number") horseshoesFlipped = s.hsFlipped;   // §41 horseshoe crabs turned back over
       if (Array.isArray(s.events)) seenEvents = s.events;   // §B5
       if (typeof s.hunger === "number") hunger = s.hunger;
-      if (s.tkMode && TOOLKIT_MODES.includes(s.tkMode)) toolkit.mode = s.tkMode;
       if (s.bucket) { bucket.water = !!s.bucket.water; bucket.creatures = Array.isArray(s.bucket.creatures) ? s.bucket.creatures : []; }
     }
   } catch (e) {}
@@ -7441,46 +7438,13 @@ const AUTO_PICK_R = 1.5, AUTO_PICK_GRACE = 2;      // reach radius · just-dropp
 let autoPickup = true;
 try { if (localStorage.getItem("bc_autopick") === "0") autoPickup = false; } catch (e) {}
 function saveAutoPick() { try { localStorage.setItem("bc_autopick", autoPickup ? "1" : "0"); } catch (e) {} }
-// §11.3 smart tool switching: reach for the right belt tool on use.
-let autoSwitch = true;
-try { if (localStorage.getItem("bc_autoswitch") === "0") autoSwitch = false; } catch (e) {}
-function saveAutoSwitch() { try { localStorage.setItem("bc_autoswitch", autoSwitch ? "1" : "0"); } catch (e) {} }
+// §P2 which tool is the RIGHT (full-speed) tool for each work kind; any other item still works, at WRONG_TOOL_MUL.
 const TOOLS_FOR_KIND = { tree: ["axe"], fallentree: ["axe"], stump: ["axe", "shovel"], rock: ["pickaxe"], heaveboulder: ["shovel"], geode: ["pickaxe"] };
-function autoSwitchTo(id) {                 // select the belt slot holding `id` (or set the Tool Kit to it)
-  if (selectedTool() === id) return true;
-  let i = Inv.hotbar.findIndex((s) => s && s.id === id);
-  if (i < 0) {                             // §13.2 no separate tool → use the Tool Kit if present
-    const tk = Inv.hotbar.findIndex((s) => s && s.id === "toolkit");
-    if (tk >= 0 && (id === "shovel" || id === "axe" || id === "pickaxe")) {
-      Inv.selected = tk; toolkit.tool = id; if (toolkit.mode !== "auto") toolkit.mode = id;   // honour a lock by matching it
-      renderHotbar(); const el = document.querySelector(`#hotbar .hslot[data-h="${tk}"]`); if (el) { el.classList.add("swap"); setTimeout(() => el.classList.remove("swap"), 260); }
-      return true;
-    }
-    return false;
-  }
-  Inv.selected = i; renderHotbar();
-  const el = document.querySelector(`#hotbar .hslot[data-h="${i}"]`);
-  if (el) { el.classList.add("swap"); setTimeout(() => el.classList.remove("swap"), 260); }
-  return true;
-}
-// Reach for a capable tool for an object target before acting.
-//   "ok" , a capable tool is (now) selected
-//   "fail", own no capable tool; failure reaction already played
-//   "pass", no specific tool needed, or owned-but-auto-switch-off: proceed as before
-function reachForTool(t) {
-  const opts = TOOLS_FOR_KIND[t.kind];
-  if (!opts) return "pass";
-  if (opts.includes(selectedTool())) return "ok";
-  const owned = opts.find((id) => ownsTool(id));
-  if (owned) { if (autoSwitch) { autoSwitchTo(owned); return "ok"; } return "pass"; }
-  failStrike(opts[0] === "pickaxe", t.x, surfaceAt(t.x, t.z).h + 0.4, t.z);   // can't: no such tool on the belt
-  return "fail";
-}
-// A failed chop/mine on diggable ground becomes a shovel dig when one is owned (§11.3).
-function groundAutoDig(pt) {
-  if (!autoSwitch || surfaceKind(pt[0], pt[1]) === "rock" || !ownsTool("shovel")) return false;
-  autoSwitchTo("shovel"); digAt(pt[0], pt[1]); return true;
-}
+// §P2 auto-switching removed. Whatever is in the selected belt slot is what you use;
+// any item hits any work target (the right tool is just faster, see toolMul). These
+// stay as trivial shims so the old call sites keep working without auto-switch logic.
+function reachForTool(t) { return "pass"; }           // never fail / never switch, always use the held item
+function groundAutoDig(pt) { return false; }          // no auto-dig: an axe/pick on bare ground just thuds
 function updateAutoPickup() {
   if (!autoPickup || mode !== "walk" || resting) return;
   const R2 = AUTO_PICK_R * AUTO_PICK_R;
@@ -7631,11 +7595,7 @@ function renderHotbar() {
   const el = document.getElementById("hotbar");
   el.innerHTML = Inv.hotbar.map((c, i) => {
     let it = c ? ITEMS[c.id] : null, mark = "";
-    if (c && c.id === "toolkit") {   // §13.2 show the active tool's icon + a mode mark
-      const active = toolkit.mode === "auto" ? toolkit.tool : toolkit.mode;
-      it = ITEMS[active] || it;
-      mark = `<i class="tkmode">${toolkit.mode === "auto" ? "A" : toolkit.mode[0].toUpperCase()}</i>`;
-    }
+    if (c && c.id === "bucket") mark = (bucket.water || bucket.creatures.length) ? `<i class="bkfull"></i>` : "";   // §P2 full/empty bucket tell on the belt
     const ic = it && it.icon ? `<img src="${it.icon}">` : "";
     const shim = c && ITEMS[c.id] && (ITEMS[c.id].rarity === "uncommon" || ITEMS[c.id].rarity === "rare" || ITEMS[c.id].rarity === "legendary") ? " shimmer" : "";
     return `<div class="hslot${i === Inv.selected ? " sel" : ""}${shim}" data-h="${i}">${ic}${mark}${c && c.qty > 1 ? `<span>${c.qty}</span>` : ""}<b>${i + 1}</b></div>`;
@@ -7644,8 +7604,6 @@ function renderHotbar() {
     const pick = (e) => { e.preventDefault(); e.stopPropagation(); selectHotbar(+s.dataset.h); };
     s.onclick = pick;
     s.addEventListener("touchstart", pick, { passive: false });   // mobile: tap a loop to switch tool
-    s.addEventListener("auxclick", (e) => { if (e.button === 1) { e.preventDefault();   // §13.2 middle-click cycles the Tool Kit
-      const c = Inv.hotbar[+s.dataset.h]; if (c && c.id === "toolkit") { Inv.selected = +s.dataset.h; cycleToolkit(); } } });
     s.addEventListener("contextmenu", (e) => {   // §13.3 right-click the bucket on the belt → Look inside
       const c = Inv.hotbar[+s.dataset.h]; if (c && c.id === "bucket") { e.preventDefault(); e.stopPropagation(); Inv.selected = +s.dataset.h; renderHotbar(); openMenu("bucket"); } });
   });
@@ -7701,20 +7659,15 @@ function toggleMenu() { if (menuIsOpen()) closeMenu(); else openMenu(); }
 function cycleMenuTab() { toggleMenu(); }   // §menu no tabs; Tab just toggles the combined view
 function renderInventory() {
   if (!invOpen) return;
-  // §strip the Make tab is gone (crafting removed); the satchel shows items only.
-  const groups = { Finds: [], Food: [], Materials: [], Misc: [] };
-  for (let i = 0; i < INV_SLOTS; i++) { const c = Inv.main[i]; if (c) groups[itemCompartment(c.id)].push(i); }
-  let html = `<div class="ihead"><h2>Satchel</h2></div>`;
-  for (const cat of COMPARTMENTS) {
-    const idxs = groups[cat], cells = Math.max(8, Math.ceil((idxs.length + 1) / 8) * 8);   // §inv5 exactly 8 slots per category (grows by 8 only if a category overflows, so nothing is ever hidden)
-    let grid = "";
-    for (let j = 0; j < cells; j++) grid += idxs[j] !== undefined ? slotHTML(Inv.main[idxs[j]], idxs[j]) : `<div class="islot"></div>`;
-    html += `<div class="compartment"><div class="clabel">${cat}</div><div class="igrid">${grid}</div></div>`;
-  }
+  // §P2 Minecraft-style: a flat 24-slot bag (items stay exactly where you put them, no
+  // compartments, no auto-sort) above the 8-slot belt. Drag moves anything anywhere;
+  // a click opens the item's action menu.
+  let bag = ""; for (let i = 0; i < INV_SLOTS; i++) bag += slotHTML(Inv.main[i], i);
   const hot = Inv.hotbar.map((c, i) => slotHTML(c, INV_SLOTS + i, i + 1)).join("");
-  html += `<div class="compartment"><div class="clabel">Tool belt</div><div class="igrid hot">${hot}</div></div>`;
-  // §inv5 the controls help line shows only the first few times the menu is opened, then retires
-  if ((menuHintShown || 0) < INV_HINT_MAX) html += `<div class="ihint">${IS_TOUCH ? "tap use, long-press for menu, drag to the belt" : "click use, shift-click to belt, right-click menu, drag to move"}</div>`;
+  let html = `<div class="ihead"><h2>Satchel</h2></div>`;
+  html += `<div class="compartment"><div class="clabel">Bag</div><div class="igrid">${bag}</div></div>`;
+  html += `<div class="compartment"><div class="clabel">Belt</div><div class="igrid hot">${hot}</div></div>`;
+  if ((menuHintShown || 0) < INV_HINT_MAX) html += `<div class="ihint">${IS_TOUCH ? "tap for actions, drag to move" : "click for actions, drag to move, shift-click to the belt"}</div>`;
   const p = document.getElementById("invpanel"); p.innerHTML = html;
 }
 /* ---- item actions (§10.3) ---- */
@@ -7740,11 +7693,33 @@ function quickMove(idx) {   // shift-click: bag ↔ belt
   if (idx >= INV_SLOTS) { const m = Inv.main.indexOf(null); if (m >= 0) invMove(idx, m); }
   else { const h = Inv.hotbar.indexOf(null); if (h >= 0) invMove(idx, INV_SLOTS + h); }
 }
+// §P2 which items are living things you can set free, and which can be set down in the world
+function isReleasable(id) { return id === "bug" || !!(CREATURES[id] && CREATURES[id].bucketable); }
+function isPlaceable(id) { return id === "lantern" || id === "bucket"; }
+function releaseItem(idx) {   // let a held bug/creature go near the player
+  const c = Inv.cell(idx); if (!c) return; const id = c.id;
+  const f = camForward(), x = player.x + f[0]*1.4 + (rng()-0.5), z = player.z + f[2]*1.4 + (rng()-0.5);
+  const t = id === "bug" ? "pillbug" : id;
+  if (typeof spawnCreature === "function" && CREATURES[t]) spawnCreature(t, x, z, { hr: 6 });
+  c.qty--; if (c.qty <= 0) Inv.setCell(idx, null); Inv.emit();
+  if (onDig) onDig("pickup"); showCard("Released", "You set it back down to go on its way.");
+}
+function placeHeldFromMenu(idx) {   // set a lantern/bucket down in front of the player
+  const c = Inv.cell(idx); if (!c) return;
+  const f = camForward(), x = player.x + f[0]*1.6, z = player.z + f[2]*1.6;
+  if (idx >= INV_SLOTS) Inv.selected = idx - INV_SLOTS; else { const h = Inv.hotbar.indexOf(null); if (h >= 0) invMove(idx, INV_SLOTS + h), Inv.selected = h; }   // the place* fns act on the held item
+  if (c.id === "lantern") placeLantern(x, z);
+  else if (c.id === "bucket" && typeof placeBucket === "function") placeBucket(x, z);
+  closeMenu();
+}
+// §P2 the item action menu: a plain click opens it (a click never eats). Inspect / Eat (food) /
+// Release (creatures & bugs) / Place (lantern, bucket) / Drop one / Drop all.
 function showContextMenu(idx, x, y) {
-  const c = Inv.cell(idx); if (!c) return; const it = ITEMS[c.id], opts = [];
-  if (isFood(c.id)) opts.push(["Eat", () => eatItem(idx)]);
-  if (it.category !== "find" && it.category !== "relic") opts.push([idx >= INV_SLOTS ? "Select" : "Equip", () => equipToBelt(idx)]);
+  const c = Inv.cell(idx); if (!c) return; const opts = [];
   opts.push(["Inspect", () => showInspect(c.id)]);
+  if (isFood(c.id)) opts.push(["Eat", () => eatItem(idx)]);
+  if (isReleasable(c.id)) opts.push(["Release", () => releaseItem(idx)]);
+  if (isPlaceable(c.id)) opts.push(["Place", () => placeHeldFromMenu(idx)]);
   if (FINDS[c.id]) { opts.push(["Drop one", () => invDrop(idx, true)]); if (c.qty > 1) opts.push(["Drop all", () => invDrop(idx, false)]); }
   const m = document.getElementById("ctxmenu");
   m.innerHTML = opts.map((o, i) => `<div data-i="${i}">${o[0]}</div>`).join("");
@@ -7768,8 +7743,7 @@ function invPointerDown(e) {
   const idx = +slot.dataset.idx, cell = Inv.cell(idx); if (!cell) return;
   e.preventDefault(); hideTip(); hideContextMenu();
   if (e.shiftKey) { quickMove(idx); return; }                 // shift-click → quick-move bag↔belt
-  drag = { from: idx, moved: false, x: e.clientX, y: e.clientY, t0: performance.now() };
-  drag.lp = setTimeout(() => { if (drag && !drag.moved) { showContextMenu(idx, drag.x, drag.y); drag = null; hideGhost(); } }, 480);  // long-press → menu
+  drag = { from: idx, moved: false, x: e.clientX, y: e.clientY, t0: performance.now() };   // §P2 a plain click (no drag) opens the action menu on pointer-up
   showGhost(cell, e.clientX, e.clientY);
 }
 function invPointerMove(e) {
@@ -7785,10 +7759,10 @@ function invPointerMove(e) {
   const t = document.elementFromPoint(e.clientX, e.clientY), ts = t && t.closest && t.closest(".islot"); if (ts) ts.classList.add("dragover");
 }
 function invPointerUp(e) {
-  if (!drag) return; clearTimeout(drag.lp); hideGhost();
+  if (!drag) return; hideGhost();
   const from = drag.from, moved = drag.moved; drag = null;
   document.querySelectorAll(".islot.dragover").forEach((s) => s.classList.remove("dragover"));
-  if (!moved) { itemPrimary(from); if (invOpen) renderInventory(); return; }   // a click = main action
+  if (!moved) { showContextMenu(from, e.clientX, e.clientY); return; }   // §P2 a plain click opens the action menu (never eats)
   const panel = document.getElementById("invpanel");
   const t = document.elementFromPoint(e.clientX, e.clientY), ts = t && t.closest && t.closest(".islot");
   if (ts && ts.dataset.idx !== undefined) invMove(from, +ts.dataset.idx);
@@ -7813,7 +7787,7 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgCreat">${forceSpawn ? "Hide all" : "Spawn all"}</button><button id="dbgPerf">${debugOn ? "Hide FPS" : "Show FPS"}</button></div>
     <div class="dbgrow"><button id="dbgBounds">${showBounds ? "Hide hitboxes" : "Show hitboxes"}</button><button id="dbgAudit">Run audit</button></div>
     <div class="dbgrow"><button id="dbgHints">${hintsOn ? "Hints: on" : "Hints: off"}</button><button id="dbgResetHints">Reset hints</button></div>
-    <div class="dbgrow"><button id="dbgAutoPick">${autoPickup ? "Auto-pickup: on" : "Auto-pickup: off"}</button><button id="dbgAutoSwitch">${autoSwitch ? "Auto-switch: on" : "Auto-switch: off"}</button></div>
+    <div class="dbgrow"><button id="dbgAutoPick">${autoPickup ? "Auto-pickup: on" : "Auto-pickup: off"}</button></div>
     <div class="dbgrow"><button id="dbgHunger">${hungerEnabled ? "Hunger: on" : "Hunger: off"}</button><button id="dbgBreath">${infiniteBreath ? "Breath: ∞" : "Breath: norm"}</button></div>
     <div class="dbgrow"><button id="dbgDeep">To deep water</button><button id="dbgAlert">${showAlert ? "Alertness: on" : "Alertness: off"}</button></div>
     <h3>Weather, ${weather ? (weather.forced ? "forced " : "") + WEATHER_LABEL[weather.state] : ", "}</h3>
@@ -7879,7 +7853,6 @@ function syncDebugPanel() {
   p.querySelector("#dbgHints").onclick = () => { hintsOn = !hintsOn; saveHints(); syncDebugPanel(); };
   p.querySelector("#dbgResetHints").onclick = () => { resetHints(); syncDebugPanel(); };
   p.querySelector("#dbgAutoPick").onclick = () => { autoPickup = !autoPickup; saveAutoPick(); syncDebugPanel(); };
-  p.querySelector("#dbgAutoSwitch").onclick = () => { autoSwitch = !autoSwitch; saveAutoSwitch(); syncDebugPanel(); };
   p.querySelector("#dbgHunger").onclick = () => { setHungerEnabled(!hungerEnabled); syncDebugPanel(); };   // §13.8
   p.querySelector("#dbgBreath").onclick = () => { infiniteBreath = !infiniteBreath; syncDebugPanel(); };   // §14A
   p.querySelectorAll("[data-wx]").forEach(btn => btn.onclick = () => { forceWeather(btn.dataset.wx || null); syncDebugPanel(); showCard("Weather", btn.dataset.wx ? "Forced: " + WEATHER_LABEL[btn.dataset.wx] : "Weather resumed (rolls per day)."); });   // §20 debug force weather
@@ -7907,6 +7880,7 @@ const TUNABLES = [
   { k: "REGEN_IDLE", min: 0.02, max: 0.4, step: 0.01 }, { k: "REGEN_REST", min: 0.05, max: 0.6, step: 0.02 },
   { k: "SPRINT_DRAIN", min: 0.0, max: 0.3, step: 0.01 }, { k: "SCRAMBLE_DRAIN", min: 0.0, max: 0.4, step: 0.01 },
   { k: "BLIND_FIND_CHANCE", min: 0.0, max: 0.3, step: 0.005 },
+  { k: "WRONG_TOOL_MUL", min: 0.1, max: 1.0, step: 0.02 },
 ];
 function DBG_GET(k) { return (k in TUNE) ? TUNE[k] : 0; }     // §CH-D data-driven off the central TUNE object
 function DBG_SET(k, v) { if (k in TUNE) TUNE[k] = v; }
@@ -8167,13 +8141,12 @@ function useToolOnTarget(t) {
     case "openchest": pickUpChest(t.obj); return true;
     case "storagebox": openStash(storageBoxes.indexOf(t.obj)); return true;
     case "lantern": pickUpLantern(t.obj); return true;   // §tools pick a set-down lantern back up
-    case "tree": if (tool === "axe") { chopStanding(t.obj); return true; } return false;
-    case "fallentree": if (tool === "axe") { chopFallen(t.obj); return true; } return false;
+    case "tree": chopStanding(t.obj); return true;                 // §P2 any item chops; the axe is just faster (toolMul)
+    case "fallentree": chopFallen(t.obj); return true;
     case "searock":   // §menu a shore rock with an oyster/barnacle cluster, scraping/picking takes priority over mining (any item)
       scrapeCluster(t.obj); return true;
-    case "rock": if (tool === "pickaxe") { mineObj(t.obj); return true; } return false;
-    case "stump": if (tool === "shovel") { stumpStrike(t.obj); return true; }
-                  if (tool === "axe") { chopStump(t.obj); return true; } return false;
+    case "rock": mineObj(t.obj); return true;                      // §P2 any item mines; the pickaxe is just faster
+    case "stump": if (tool === "shovel") { stumpStrike(t.obj); return true; } chopStump(t.obj); return true;   // §P2 shovel levers, anything else chops
   }
   return false;
 }
@@ -8291,6 +8264,7 @@ const TUNE = {
   SPRINT_DRAIN: 0.08, SCRAMBLE_DRAIN: 0.13, REGEN_ACTIVE: 0.05, REGEN_IDLE: 0.11, REGEN_REST: 0.26,
   EXHAUST_RECOVER: 0.33, COMMIT_TIME: 0.5,
   BLIND_FIND_CHANCE: 0.05,          // blind digging (no tell) rarely turns up a find; mostly raw material
+  WRONG_TOOL_MUL: 0.34,             // §P2 effort per strike with the wrong tool (≈ 1/3 → ~3x the hits). 1 = right tool.
 };
 // Per-material dig cost from the resolved surface material (NATURAL already resolves to grass/sand/… by height).
 function digCostFor(x, z) {
@@ -10000,7 +9974,7 @@ function chopStanding(o) {                                     // one axe strike
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.CHOP_COST, true); rootPlayer();
   if (onDig) onDig("chop");
-  o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species)); o.hp -= jobEffortMul();
+  o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species)); o.hp -= jobEffortMul() * toolMul("tree");   // §P2 the axe fells fast; anything else ~3x the hits
   if (o.hp <= 0.001) startFall(o);
 }
 function chopAt(x, z) {
@@ -10142,7 +10116,7 @@ function stumpStrike(st) {
   if (st.hp === undefined) st.hp = 4;
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
   spawnSand(st.x, surfaceAt(st.x, st.z).h + 0.3, st.z, 5, [0.5, 0.4, 0.28]);
-  st.hp -= jobEffortMul();
+  st.hp -= jobEffortMul() * toolMul("stump");   // §P2 shovel/axe are the right tools; anything else ~3x the hits
   if (st.hp <= 0.001) {
     for (let i = 0, n = 1 + (rng()*2|0); i < n; i++) spawnFind("log", st.x + (rng()-0.5), st.z + (rng()-0.5));
     const i = stumps.indexOf(st); if (i >= 0) stumps.splice(i, 1);
@@ -10201,7 +10175,7 @@ function mineObj(o) {                                           // one pickaxe s
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §13.2 too tired: gentle refusal, no swing
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.MINE_COST, true); rootPlayer();
   if (onDig) onDig("mine");
-  o.hp -= jobEffortMul();
+  o.hp -= jobEffortMul() * toolMul("rock");   // §P2 the pickaxe breaks rock fast; anything else ~3x the hits
   const sy = surfaceAt(o.x, o.z).h + o.sc*0.3;
   spawnSand(o.x, sy, o.z, 7, [0.5, 0.48, 0.46]);               // rock chips
   if (!o.split && o.hp <= Math.ceil(o.maxhp/2)) {              // cracks apart, shedding pickable rubble
@@ -10310,8 +10284,7 @@ function drawDriftwood(view) {
 function breakDriftwood(d) {
   if (!d || d.gone) return true;
   if (d.big) {                                   // a whole log → chop it into sticks (needs an axe)
-    if (selectedTool() !== "axe") { if (autoSwitch && autoSwitchTo("axe")) {} else { tooTiredOrCant(d.x, d.z, false); return true; } }
-    if (selectedTool() !== "axe") return true;
+    if (selectedTool() !== "axe") { tooTiredOrCant(d.x, d.z, false); return true; }   // §P2 a whole log still needs the axe
     if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
     shovelSwing = 1; spendStamina(TUNE.CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
     d.gone = true; const nSticks = 2 + (rng()*3|0); Inv.add("stick", nSticks); discovered.add("f_stick");
@@ -10452,7 +10425,7 @@ function pickStone(s) {
   if (typeof SND !== "undefined") SND.play("pickup");
   s.picked = true;                                          // gone from the world (reveals what was under it)
   s.regrowAt = tideDay + WEAK_REGROW_MIN + rng()*(WEAK_REGROW_MAX-WEAK_REGROW_MIN);
-  shovelSwing = Math.max(shovelSwing, 0.4); camNudge = 0.03; // a light lift, no stamina
+  camNudge = 0.03;   // §P2 a light lift, no tool swing: picking things up never swings the held item
   const gy = surfaceAt(s.x, s.z).h; spawnSand(s.x, gy + 0.08, s.z, 6, [0.5,0.48,0.46]);
   if (rng() < STONE_BUG_P) revealBug(s);                    // sometimes a bug is hiding under it (as before)
   if (typeof checkSets === "function") checkSets();
@@ -10700,7 +10673,7 @@ function heaveBoulderAction(b) {
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
   startHeave(b); return true;
 }
-function heaveBoulderPrompt(b) { const has = selectedTool()==="shovel" || (autoSwitch && ownsTool("shovel")); return b.flipped ? "levered aside" : (has ? (IS_TOUCH?"hold to heave it over":"heave it over") : "needs the shovel to lever"); }   // §tool2 toolkit reaches for the shovel on action
+function heaveBoulderPrompt(b) { const has = selectedTool()==="shovel"; return b.flipped ? "levered aside" : (has ? (IS_TOUCH?"hold to heave it over":"heave it over") : "needs the shovel to lever"); }
 
 /* ===================================================================== *
  * § 23  OYSTERS, craggy oyster beds on the intertidal flats, bared at low
@@ -10902,7 +10875,7 @@ function drawGeodes(view) {
   if (cn) geodeCrackedDyn.draw(geodeCrackScratch, cn);
 }
 function geodeAction(g) { return crackGeode(g); }
-function geodePrompt(g) { const has = selectedTool()==="pickaxe" || (autoSwitch && ownsTool("pickaxe")); return g.cracked ? ((IS_TOUCH?"tap":"click/F") + " to pick up the geode halves") : (has ? (IS_TOUCH?"hold to crack it open":"crack it open") : "a dull nodule, try a pickaxe"); }   // §tool2 toolkit reaches for the pickaxe on action
+function geodePrompt(g) { const has = selectedTool()==="pickaxe"; return g.cracked ? ((IS_TOUCH?"tap":"click/F") + " to pick up the geode halves") : (has ? (IS_TOUCH?"hold to crack it open":"crack it open") : "a dull nodule, try a pickaxe"); }
 
 /* ===================================================================== *
  * § 41  HORSESHOE CRABS, a living fossil plowing the sandy shallows day and
@@ -11679,14 +11652,20 @@ const fsTri = buildFsTri();
 buildIcons();
 buildPanels();
 loadState();
-// §13.2 migrate old saves: fold any separate shovel/axe/pickaxe belt slots into one Tool Kit
-for (let i = 0; i < Inv.hotbar.length; i++) { const s = Inv.hotbar[i]; if (s && (s.id === "shovel" || s.id === "axe" || s.id === "pickaxe")) Inv.hotbar[i] = null; }
-for (let i = 0; i < Inv.main.length; i++) { const s = Inv.main[i]; if (s && (s.id === "shovel" || s.id === "axe" || s.id === "pickaxe")) Inv.main[i] = null; }
-if (!Inv.hotbarHasId("toolkit")) Inv.hotbar[0] = { id: "toolkit", qty: 1 };   // slots: tool kit, bucket, spear
-if (!Inv.hotbarHasId("bucket")) Inv.hotbar[1] = { id: "bucket", qty: 1 };
-if (!Inv.hotbarHasId("rod") && !Inv.has("rod")) { const ri = Inv.hotbar.indexOf(null); if (ri >= 0) Inv.hotbar[ri] = { id: "rod", qty: 1 }; else Inv.add("rod", 1);   // §Fishing start with a rod
-  try { if (localStorage.getItem("bc_rodintro") !== "1") { Inv.add("worm", 3); localStorage.setItem("bc_rodintro", "1"); } } catch (e) {} }   // and a few starter worms, once
-if (!Inv.hotbarHasId("lantern")) { const li = Inv.hotbar.indexOf(null); if (li >= 0) Inv.hotbar[li] = { id: "lantern", qty: 1 }; }   // §18 start with a lantern on the belt
+// §P2 starting kit: one of each tool as its own belt item (Minecraft-style, no Tool Kit).
+// A brand-new game lays them out on the belt; an existing save keeps whatever the player carries,
+// and we only add a tool they are missing entirely (so picked-up/dropped tools aren't duplicated).
+(function startingKit() {
+  const KIT = ["shovel", "axe", "pickaxe", "rod", "bucket", "lantern"];
+  const carries = (id) => Inv.hotbarHasId(id) || Inv.has(id);
+  for (const id of KIT) {
+    if (carries(id)) continue;
+    const bi = Inv.hotbar.indexOf(null);
+    if (bi >= 0) Inv.hotbar[bi] = { id, qty: 1 };
+    else Inv.add(id, 1);   // belt full (migrated save): fall back to the bag
+  }
+  try { if (localStorage.getItem("bc_rodintro") !== "1") { Inv.add("worm", 3); localStorage.setItem("bc_rodintro", "1"); } } catch (e) {}   // a few starter worms, once
+})();
 renderHotbar();
 syncDebugPanel();
 seedDigSpots();
