@@ -658,7 +658,7 @@
 <div id="itip"></div>
 <div id="debugpanel"></div>
 <div id="help">
-  WASD move · Shift run · C crouch · Space jump · click or F to use / pick up / interact<br>
+  WASD move · Shift run · click or F to use / pick up / interact<br>
   1-8 hotbar · E opens the menu (Satchel · Bucket · Journal) · Tab tabs · Esc pause
 </div>
 
@@ -2779,16 +2779,13 @@ const EYE = 1.7;             // eye height above the ground
 // §foot2 stride length = metres per footstep (and per head-bob). ROOT CAUSE of the machine-gun steps: the map
 // speed is high (WALK_SPEED 9.5 m/s), so the old 0.7 m stride fired ~13 steps/sec. Size the stride from the
 // real speed to hit a human cadence: walk ≈ 1.8 steps/sec (9.5/1.8), sprint ≈ 2.6 (9.5*1.8 / 2.6). Tunable.
-let STRIDE_WALK = 5.3, STRIDE_SPRINT = 6.6, STRIDE_SCRAMBLE = 4.5;
+let STRIDE_WALK = 5.3, STRIDE_SPRINT = 6.6;
 const WALK_SPEED = 9.5;      // units / second (vast map, so not too slow)
 const SPRINT = 1.8;          // sprint multiplier
 // §slope5 steep ground is now WALKABLE, just slower, down to a trudge. Only near-vertical faces block you.
-let SLOPE_EASY = 18 * Math.PI / 180;      // full speed at or below this grade (tunable)
-let SLOPE_BLOCK = 65 * Math.PI / 180;     // ONLY near-vertical (65°+) is impassable, you slide back (tunable)
-let SLOPE_TRUDGE = 0.12;                   // minimum walk-speed fraction on very steep but passable ground (tunable)
-let SLOPE_LIMIT = 62 * Math.PI / 180;     // auxiliary: jump / stand / landing-revert threshold, just under the block (tunable)
-let SLOPE_IMPASS = SLOPE_BLOCK;           // uphill past this is impassable
-let SPRINT_SLOPE_MAX = 24 * Math.PI / 180;   // no sprinting above this uphill grade (tunable)
+// §strip slope limits removed: walk up/down any grade at normal speed. SLOPE_BLOCK kept only for the
+// spawn/unstuck wall probe; no slowdown, blocking, sliding or stamina cost from slope any more.
+const SLOPE_BLOCK = 65 * Math.PI / 180;
 const MOVE_SUBSTEP = 0.25;                // §13.1 substep distance so fast moves can't skip the slope check
 let _curSlopeDeg = 0, _curSpeedMul = 1;   // debug readout
 const WADE_DEPTH = 1.0;      // can wade up to this depth, then it blocks
@@ -2811,15 +2808,8 @@ function openSeaDepth(x, z) {
 }
 // The ONE place slope governs walking speed (§7). `grade` is the signed incline
 // (radians) in the travel direction: + uphill, − downhill. Returns a 0–1 multiplier.
-function slopeSpeedMul(grade) {
-  if (grade <= 0) return 1 - Math.min(0.4, -grade * 0.45);   // downhill: steeper = a bit slower (and slips)
-  // §slope5 smooth ease from full speed (at SLOPE_EASY) down to a slow trudge approaching SLOPE_BLOCK;
-  // only beyond SLOPE_BLOCK (near-vertical) is the grade impassable.
-  if (grade <= SLOPE_EASY) return 1;
-  if (grade >= SLOPE_BLOCK) return 0;
-  const t = (grade - SLOPE_EASY) / (SLOPE_BLOCK - SLOPE_EASY);   // 0..1 across the passable-but-steep band
-  return SLOPE_TRUDGE + (1 - SLOPE_TRUDGE) * (1 - t * t);         // ease-out: stays quick a while, then a trudge near vertical
-}
+function slopeSpeedMul(grade) { return 1; }   // §strip slope never slows you now
+// §strip old slope-curve removed.
 // Downhill unit direction + slope magnitude at a point (for slide-back on steep ground).
 function groundGradient(x, z) {
   const e = 1.2, hL = surfaceAt(x - e, z).h, hR = surfaceAt(x + e, z).h, hD = surfaceAt(x, z - e).h, hU = surfaceAt(x, z + e).h;
@@ -2843,12 +2833,8 @@ const camFx = { interp: true, bob: true, eyeSmooth: true, crouch: true, landDip:
 function camFxOn(k) { return !camFx.raw && camFx[k]; }
 const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, prevFeetY: 0, sprinting: false, scramble: 0, vy: 0, airborne: false, coyote: 0, landStun: 0,
                  swimming: false, underwater: false, breath: 40 };     // §14A swimming/breath (BREATH_MAX)
-let crouching = false;   // §13.4 crouch: lowers the camera, slows you, and makes creatures less skittish
-let crouchStillT = 0;    // time held crouched and still → counts as resting (faster recovery)
-let crouchKey = "KeyC";  // rebindable; "ControlLeft" is the Ctrl option in settings
-try { const ck = localStorage.getItem("bc_crouchKey"); if (ck === "KeyC" || ck === "ControlLeft") crouchKey = ck; } catch (e) {}
-const CROUCH_SPEED = 0.5, CROUCH_DROP = 0.55, CROUCH_REST_TIME = 2;   // §13.4 tunables
-function setCrouch(on) { crouching = on; if (!on) { crouchStillT = 0; resting = false; } }
+// §strip crouching removed (key, mobile button, creature-calm bonus, crouch-resting, camera dip).
+const crouching = false;   // kept as a constant-false so existing reads are harmless
 // §P1 the player standing height here (terrain, or a fallen trunk you're on)
 function standHeightAt(x, z) { return Math.max(surfaceAt(x, z).h, trunkHeightAt(x, z)); }
 // §P1 grounded probe with a few cm of tolerance, so bumps and slope changes don't read as airborne
@@ -2897,7 +2883,7 @@ function landJump(g, fall) {   // §strip jumping removed; this now only runs wh
     }
   }
   // landing on a too-steep slope slides you back to safe ground
-  if (g.slope > SLOPE_LIMIT && lastSafe) { player.x = lastSafe.x; player.z = lastSafe.z; }
+  // §strip landing on a steep slope no longer slides you back
 }
 
 // Spawn on dry sand at the shore, facing the island's highest point.
@@ -2964,8 +2950,8 @@ function swimStep(dt, right) {
   if (keys["KeyA"]) { wx -= right[0]; wz -= right[2]; moving = true; }
   if (Math.abs(analog.x) + Math.abs(analog.y) > 0.01) { wx += right[0]*analog.x + camF[0]*analog.y; wy += camF[1]*analog.y; wz += right[2]*analog.x + camF[2]*analog.y; moving = true; }
   if (keys["Space"] || mobileSwimUp) { wy += 1; moving = true; }
-  if (keys[crouchKey] || mobileSwimDown) { wy -= 1; moving = true; }
-  const diving = !outOfAir && (keys[crouchKey] || mobileSwimDown || (moving && wy < -0.05));   // §nodeath out of air: can't dive, you float up
+  if (keys["ControlLeft"] || keys["KeyC"] || mobileSwimDown) { wy -= 1; moving = true; }
+  const diving = !outOfAir && (keys["ControlLeft"] || keys["KeyC"] || mobileSwimDown || (moving && wy < -0.05));   // §nodeath out of air: can't dive, you float up
   const wl = Math.hypot(wx, wy, wz);
   const tired = exhausted || stamina < 0.02;
   player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01 && !tired && !isPanelOpen();
@@ -3883,7 +3869,6 @@ addEventListener("keydown", (e) => {
   if (e.code === "KeyD" && e.shiftKey && e.ctrlKey) { debugMode = !debugMode; syncDebugPanel(); }  // enable debug
   if (e.code === "KeyE" && !e.repeat && !pauseStage) { if (mode === "walk" || menuIsOpen()) toggleMenu(); }   // §2 one menu key: Satchel / Bucket / Journal
   if (e.code === "KeyF" && !e.repeat && !pauseStage && !isPanelOpen() && !(debugMode && e.shiftKey)) { interact(); }   // §2 the action key: pick up / inspect / interact
-  if (e.code === crouchKey && mode === "walk" && !isPanelOpen() && !e.repeat) { e.preventDefault(); if (!player.swimming) setCrouch(!crouching); }   // §13.4 toggle crouch (held key = swim down)
   if (e.code === "Tab") { e.preventDefault(); if (!pauseStage && (mode === "walk" || menuIsOpen())) cycleMenuTab(1); }   // §2 switch tabs within the menu (opens it on the last tab if closed)
   if (e.code === "KeyP" && !e.repeat) { if (pauseStage) closePause(); else if (mode === "walk" && !isPanelOpen()) openPause(); }   // §R4 P pauses/resumes (auto-pickup now lives in Settings)
   if (/^Digit[1-8]$/.test(e.code)) selectHotbar(+e.code.slice(5) - 1);
@@ -4144,10 +4129,9 @@ const PAUSE_VOL_DUCK = 0.3;        // §playtest1 pause keeps 30% volume (ducks 
 let pauseWasClockPaused = false;   // remember the debug clock state so Resume restores it
 let settingsFromPause = false;     // Settings opened from the pause menu → closing returns to pause
 function controlsRows() {
-  const crouch = crouchKey === "ControlLeft" ? "Ctrl" : "C";
   const rows = [
     ["Move", "W A S D"], ["Look", "Mouse"], ["Sprint", "Shift"],
-    ["Crouch / swim down", crouch + " (hold to dive)"], ["Use · pick up · interact", "Left-click or F"],
+["Use · pick up · interact", "Left-click or F"],
 ["Open menu (Satchel · Bucket · Journal)", "E"],
     ["Switch menu tab", "Tab"], ["Hotbar slot", "1 – 8 · scroll"], ["Lantern", "L"], ["Pause", "Esc"],
   ];
@@ -4254,7 +4238,6 @@ function openSettings() {
       <div class="srow"><label>Test sound</label><button data-snd="test">Play ▶</button></div>
       <div class="srow"><label>Music</label><button data-snd="testmusic">${(typeof MUSIC !== "undefined" && MUSIC.playing()) ? "On ■" : "Off ▶"}</button></div>`,
     controls: `
-      <div class="srow"><label>Crouch key</label><button data-k="crouchkey">${crouchKey === "ControlLeft" ? "Ctrl" : "C"}</button></div>
       <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
       <div class="srow"><label>Auto tool-switch</label><button data-k="autoswitch">${onoff(autoSwitch)}</button></div>`,
     gameplay: `
@@ -4285,7 +4268,6 @@ function openSettings() {
     else if (k === "relaxfish") { setRelaxedFishing(!relaxedFishing); }   // §Fishing forgiving reel mini-game
     else if (k === "infworms") { infiniteWorms = !infiniteWorms; try { localStorage.setItem("bc_infworms", infiniteWorms ? "1" : "0"); } catch (e) {} }   // §climb never run out of bait
     else if (k === "nostarve") { noStarvation = !noStarvation; try { localStorage.setItem("bc_nostarve", noStarvation ? "1" : "0"); } catch (e) {} }   // §climb hunger never reaches starving
-    else if (k === "crouchkey") { crouchKey = crouchKey === "KeyC" ? "ControlLeft" : "KeyC"; try { localStorage.setItem("bc_crouchKey", crouchKey); } catch (e) {} }
     else if (k === "showfps") { setShowFps(!showFps); }   // §fps toggle the on-screen FPS readout
     openSettings();
   });
@@ -4592,7 +4574,6 @@ if (IS_TOUCH) (function mobileControls() {
       unlockAudio();
       if (btn.dataset.act === "pause") openPause();
       else if (btn.dataset.act === "run") { mobileSprint = !mobileSprint; btn.style.background = mobileSprint ? "rgba(60,120,130,.8)" : ""; }
-      else if (btn.dataset.act === "crouch") { if (mode === "walk" && !isPanelOpen()) { setCrouch(!crouching); btn.style.background = crouching ? "rgba(60,120,130,.8)" : ""; } }   // §13.4 mobile crouch toggle
       else if (btn.dataset.act === "swimup") { mobileSwimUp = true; btn.style.background = "rgba(60,120,130,.8)"; }   // §14A hold to swim up
       else if (btn.dataset.act === "swimdown") { mobileSwimDown = true; btn.style.background = "rgba(60,120,130,.8)"; }
       else if (btn.dataset.act === "rod") { rodPressStart(); btn.style.background = "rgba(60,120,130,.8)"; }   // §Fishing hold to charge cast / reel in a fight
@@ -7249,7 +7230,7 @@ function behaveFish(e, dt, d, dx, dz) {
   if (e.alert === undefined) e.alert = 0;
   const reach = e.t === "lingcod" ? 16 : 11;
   const pmove = player.swimming || keys["KeyW"] || keys["KeyA"] || keys["KeyS"] || keys["KeyD"] || Math.abs(analog.x)+Math.abs(analog.y) > 0.01;
-  const speedFactor = player.sprinting ? 1.4 : (pmove ? (crouching ? 0.3 : 0.75) : 0.12);
+  const speedFactor = player.sprinting ? 1.4 : (pmove ? 0.75 : 0.12);
   const fdir = camForward(), toF = Math.hypot(dx, dz) || 1;
   const facing = Math.max(0, -(dx/toF)*fdir[0] - (dz/toF)*fdir[2]);   // is the player looking at the fish?
   let threat = 0;
@@ -7346,7 +7327,7 @@ function behave(e, dt, d, dx, dz) {
   }
   if (e.t === "crab") {
     if (e.burrow === undefined) e.burrow = 0;
-    const shy = crouching ? 1.2 : 2.4;                       // §13.4 less skittish when the player crouches
+    const shy = 2.4;
     if (e.state === "stormburied") { e.burrow = 1; if (!weather || weather.state !== "storm") e.state = "emerging"; return; }   // §20 stay dug in until the storm passes
     if (weather && weather.state === "storm" && e.state !== "sinking" && e.state !== "emerging" && waterDepthAt(e.x, e.z) < 0.1) {   // §20 crabs burrow in a storm
       e.state = "sinking"; e.burrow = 0; if (lifeVisible(e)) spawnSand(e.x, heightAt(e.x,e.z)+0.1, e.z, 6, [0.82,0.76,0.58]); return; }
@@ -7399,7 +7380,7 @@ function behave(e, dt, d, dx, dz) {
     e.closed += (((d < 2.5 || exposed) ? 1 : 0) - e.closed) * Math.min(1, dt*4);
   } else if (e.t === "piper") {
     // §R4 sandpiper: runs the swash edge, probes the sand, and keeps its distance (flees AWAY, never toward)
-    if (d < (crouching ? 3.5 : 7)) { e.cdState = "flee"; e.probe = 0; fleeFrom(e, dx, dz, dt, CRIT_SPD.piper.flee); return; }
+    if (d < 7) { e.cdState = "flee"; e.probe = 0; fleeFrom(e, dx, dz, dt, CRIT_SPD.piper.flee); return; }
     if (e.probe > 0) { e.probe -= dt; e.cdState = "probe"; return; }        // paused, beak down in the sand
     e.timer -= dt; if (e.timer < 0) { e.timer = 0.5 + rng()*1.3; e.side = rng() < 0.5 ? 1 : -1; if (rng() < 0.35) { e.probe = 0.4 + rng()*0.6; return; } }
     e.cdState = "run";
@@ -7436,7 +7417,7 @@ function behave(e, dt, d, dx, dz) {
       e.x += e.vx*dt*CRIT_SPD.octopus.cruise*2; e.z += e.vz*dt*CRIT_SPD.octopus.cruise*2; e.yaw = Math.atan2(e.vz||0.01, e.vx||0.01); }
     if (Math.hypot(e.x-e.hx, e.z-e.hz) > (e.hr||3)) { e.vx = (e.hx-e.x)*0.1; e.vz = (e.hz-e.z)*0.1; }   // tethered to its den
   } else if (e.t === "seaduck") {                                 // §16.1 paddles off the shore, flees, stays on water
-    if (d < (crouching ? 5 : 11)) { e.cdState = "flee"; fleeFrom(e, dx, dz, dt, CRIT_SPD.seaduck.flee); }
+    if (d < 11) { e.cdState = "flee"; fleeFrom(e, dx, dz, dt, CRIT_SPD.seaduck.flee); }
     else { e.cdState = "paddle"; e.timer -= dt; if (e.timer < 0) { e.timer = 1.5 + rng()*3; e.tx = e.hx+(rng()-0.5)*e.hr; e.tz = e.hz+(rng()-0.5)*e.hr; }
       const a = Math.atan2(e.tz-e.z, e.tx-e.x); e.x += Math.cos(a)*dt*CRIT_SPD.seaduck.cruise; e.z += Math.sin(a)*dt*CRIT_SPD.seaduck.cruise; e.yaw = a; }
     if (heightAt(e.x, e.z) > waterLevel - 0.2) { const grad = groundGradient(e.x, e.z); e.x += grad.dx*dt*2.2; e.z += grad.dz*dt*2.2; }   // keep to the water
@@ -8348,11 +8329,7 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgAxeAxis">Axe swing axis: ${dbgAxe.axis.toUpperCase()}</button><button id="dbgAxeDir">Axe swing dir: ${dbgAxe.dir > 0 ? "+1" : "-1"}</button></div>
     <div class="jhint">§axe8 Hold the AXE and chop: the two buttons above cycle its swing axis (X=overhead pitch, Y=yaw twist, Z=screen-plane sweep) and flip its direction, axe only (pickaxe unaffected). Tell me which axis+dir looks right and I'll bake it as the default. Other sliders fine-tune the resting pose; read-out above shows the final numbers.</div>
     <h3>Slopes</h3>
-    <label>Full-speed grade <b class="tvs" data-sk="easy">${(SLOPE_EASY*180/Math.PI).toFixed(0)}°</b> <input class="dbgslope" data-sk="easy" type="range" min="5" max="40" step="1" value="${(SLOPE_EASY*180/Math.PI).toFixed(0)}"></label>
-    <label>Block grade <b class="tvs" data-sk="block">${(SLOPE_BLOCK*180/Math.PI).toFixed(0)}°</b> <input class="dbgslope" data-sk="block" type="range" min="45" max="85" step="1" value="${(SLOPE_BLOCK*180/Math.PI).toFixed(0)}"></label>
-    <label>Jump/stand limit <b class="tvs" data-sk="limit">${(SLOPE_LIMIT*180/Math.PI).toFixed(0)}°</b> <input class="dbgslope" data-sk="limit" type="range" min="40" max="85" step="1" value="${(SLOPE_LIMIT*180/Math.PI).toFixed(0)}"></label>
-    <label>Trudge min speed <b class="tvs" data-sk="trudge">${SLOPE_TRUDGE.toFixed(2)}</b> <input class="dbgslope" data-sk="trudge" type="range" min="0.02" max="0.5" step="0.01" value="${SLOPE_TRUDGE}"></label>
-    <label>Sprint max grade <b class="tvs" data-sk="sprint">${(SPRINT_SLOPE_MAX*180/Math.PI).toFixed(0)}°</b> <input class="dbgslope" data-sk="sprint" type="range" min="10" max="45" step="1" value="${(SPRINT_SLOPE_MAX*180/Math.PI).toFixed(0)}"></label>
+    <div class="jhint">Slope limits removed: you walk any grade at full speed.</div>
     <h3>Footsteps</h3>
     <div class="jhint" id="dbgStepRate" style="margin-bottom:4px">steps/sec: 0</div>
     <label>Walk stride <b class="tvs" data-fk="walk">${STRIDE_WALK.toFixed(1)}m</b> <input class="dbgstride" data-fk="walk" type="range" min="1" max="10" step="0.1" value="${STRIDE_WALK}"></label>
@@ -8363,7 +8340,6 @@ function syncDebugPanel() {
       <button id="dbgCamInterp">interp: ${camFx.interp?"on":"OFF"}</button>
       <button id="dbgCamBob">bob: ${camFx.bob?"on":"OFF"}</button>
       <button id="dbgCamEye">eye-smooth: ${camFx.eyeSmooth?"on":"OFF"}</button>
-      <button id="dbgCamCrouch">crouch-dip: ${camFx.crouch?"on":"OFF"}</button>
       <button id="dbgCamLand">landing-dip: ${camFx.landDip?"on":"OFF"}</button>
     </div>
     <h3>Shovel / stamina</h3>
@@ -8392,11 +8368,6 @@ function syncDebugPanel() {
   { const tr = p.querySelector("#dbgToolReset"); if (tr) tr.onclick = () => { dbgTool.yaw = 0; dbgTool.pitch = 0; dbgTool.roll = 0; dbgTool.spin = 0; dbgTool.swingDir = 1; syncDebugPanel(); }; }
   { const aa = p.querySelector("#dbgAxeAxis"); if (aa) aa.onclick = () => { dbgAxe.axis = dbgAxe.axis === "x" ? "y" : dbgAxe.axis === "y" ? "z" : "x"; syncDebugPanel(); }; }   // §axe8 cycle X→Y→Z
   { const ad = p.querySelector("#dbgAxeDir"); if (ad) ad.onclick = () => { dbgAxe.dir = -dbgAxe.dir; syncDebugPanel(); }; }
-  p.querySelectorAll(".dbgslope").forEach((el) => el.oninput = (e) => {   // §slope5 live slope thresholds
-    const k = el.dataset.sk, v = +e.target.value, rad = v * Math.PI / 180;
-    if (k === "easy") SLOPE_EASY = rad; else if (k === "block") { SLOPE_BLOCK = rad; SLOPE_IMPASS = rad; } else if (k === "limit") SLOPE_LIMIT = rad; else if (k === "trudge") SLOPE_TRUDGE = v; else if (k === "sprint") SPRINT_SLOPE_MAX = rad;
-    const b = p.querySelector(`.tvs[data-sk="${k}"]`); if (b) b.textContent = k === "trudge" ? v.toFixed(2) : v + "°";
-  });
   p.querySelectorAll(".dbgstride").forEach((el) => el.oninput = (e) => {   // §foot2 live stride lengths (steps per metre)
     const k = el.dataset.fk, v = +e.target.value;
     if (k === "walk") STRIDE_WALK = v; else if (k === "sprint") STRIDE_SPRINT = v;
@@ -8419,7 +8390,6 @@ function syncDebugPanel() {
   p.querySelector("#dbgCamInterp").onclick = () => { camFx.interp = !camFx.interp; syncDebugPanel(); };
   p.querySelector("#dbgCamBob").onclick = () => { camFx.bob = !camFx.bob; syncDebugPanel(); };
   p.querySelector("#dbgCamEye").onclick = () => { camFx.eyeSmooth = !camFx.eyeSmooth; syncDebugPanel(); };
-  p.querySelector("#dbgCamCrouch").onclick = () => { camFx.crouch = !camFx.crouch; syncDebugPanel(); };
   p.querySelector("#dbgCamLand").onclick = () => { camFx.landDip = !camFx.landDip; syncDebugPanel(); };
   p.querySelector("#dbgDeep").onclick = () => teleportToDeepWater();
   p.querySelector("#dbgAlert").onclick = () => { showAlert = !showAlert; syncDebugPanel(); };   // §14C
@@ -8620,7 +8590,6 @@ function aStar(sxw, szw, gxw, gzw) {
       const nIdx = nj*navN+ni; if (closed[nIdx]) continue;
       const dh = navH(ni, nj) - ch, horiz = Math.hypot(d[0], d[1]) * NAV * CELL;
       const grade = Math.atan2(dh, horiz);
-      if (grade > SLOPE_LIMIT) continue;             // can't path up a cliff
       const cost = horiz * (1 + (dh > 0 ? grade * 3.0 : 0) + (dh < 0 ? -grade * 0.4 : 0));
       const t = g[cur] + cost;
       if (t < g[nIdx]) { g[nIdx] = t; came[nIdx] = cur; push(t + Hh(ni, nj) * NAV * CELL, nIdx); }
@@ -8991,14 +8960,13 @@ function updateHunger(gdt) { if (!hungerEnabled) { hunger = 1; return; }
   if (noStarvation && hunger < H_HUNGRY + 0.03) hunger = H_HUNGRY + 0.03;  // §climb no-starvation mode: never drops into the starving tier
   if (hungerTier() === "starving") { growlT -= gdt; if (growlT <= 0) { growlT = 11 + rng()*7; if (onDig) onDig("growl"); } } }
 function updateStamina(dt) {
-  if (mode !== "walk") { stamina = STAMINA_MAX; resting = false; exhausted = false; digCommit = 0; crouching = false; crouchStillT = 0; return; }
+  if (mode !== "walk") { stamina = STAMINA_MAX; resting = false; exhausted = false; digCommit = 0; return; }
   if (digCommit > 0) digCommit = Math.max(0, digCommit - dt);
   const moving = Math.abs(analog.x) + Math.abs(analog.y) > 0.01 || keys["KeyW"] || keys["KeyA"] || keys["KeyS"] || keys["KeyD"];
   if (moving) resting = false;
   const tier = hungerTier();
   // §13.1 sprinting drains fast, and much faster up any incline
   if (player.sprinting) spendStamina(SPRINT_DRAIN * dt * (1 + Math.max(0, player.incline || 0) * 4) * (tier === "hungry" ? 2 : 1));
-  if (player.scramble > 0.3) spendStamina(SCRAMBLE_DRAIN * dt * player.scramble);
   // §playtest1 don't regen while actively sprinting, otherwise regen cancels the drain and sprint is effectively infinite
   const regen = player.sprinting ? 0 : (resting ? REGEN_REST : (moving ? REGEN_ACTIVE : REGEN_IDLE)) * hungerRegenMul() * staminaBoostMult() * STAMINA_REGEN_MUL;   // §tune +15% regen
   const cap = maxStamina();
@@ -14216,15 +14184,9 @@ function frame(now) {
     if (keys["KeyA"]) { wx -= right[0]; wz -= right[2]; manual = true; }
     if (Math.abs(analog.x) + Math.abs(analog.y) > 0.01) { wx += right[0]*analog.x + hf[0]*analog.y; wz += right[2]*analog.x + hf[1]*analog.y; manual = true; }
     if (isPanelOpen()) { wx = 0; wz = 0; manual = false; }   // §13.4 a panel is open → no movement (world keeps running)
-    if (resting && (wx || wz)) { resting = false; }         // moving gets you up
-    if (resting) { wx = 0; wz = 0; manual = false; }         // sitting: no movement
     // §playtest2 tools no longer root you, you can walk/sprint and use tools at the same time (digCommit still paces strikes)
 
     const wl = Math.hypot(wx, wz);
-    // §13.4 crouched and still for a moment → rest (faster stamina recovery); any movement cancels it
-    if (crouching && wl < 0.01 && !player.airborne && digCommit <= 0 && !isPanelOpen()) {
-      crouchStillT += dt; if (crouchStillT > CROUCH_REST_TIME) resting = true;
-    } else if (crouching) { if (wl >= 0.01) { crouchStillT = 0; resting = false; } }
     const here = surfaceAt(player.x, player.z);
     const gg = groundGradient(player.x, player.z);   // §13.1 smoothed fall line + slope (stable on bumpy low-poly terrain)
     // signed grade in the travel direction: + uphill, − downhill (gradient projected onto travel)
@@ -14233,41 +14195,36 @@ function frame(now) {
     const uphillGrade = Math.max(0, fwdGrade);
     player.incline = uphillGrade;
     player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01 && hungerTier() !== "starving"
-                       && uphillGrade < SPRINT_SLOPE_MAX && !crouching
-                       && !exhausted && stamina > 0.02;  // §playtest1 sprint needs stamina, no more infinite sprint; §13.1 no sprint up a steep pitch; §13.4 or while crouched
+                       && !exhausted && stamina > 0.02;  // §playtest1 sprint needs stamina; §strip sprint allowed on any slope now
     let scrambleTarget = 0;
     _curSpeedMul = 1; _curSlopeDeg = gg.slope * 180 / Math.PI;
 
     if (wl > 0.01) {
       wx /= wl; wz /= wl;
-      let sm = slopeSpeedMul(fwdGrade);
-      _curSpeedMul = sm;
-      if (fwdGrade > 0.44) scrambleTarget = Math.min(1, (fwdGrade - 0.44) / 0.29);   // ~25°+ = scrambling
-      if (scrambleTarget > 0.35 && (exhausted || stamina < 0.03)) sm = 0;
+      _curSpeedMul = 1;   // §strip no slope slowdown
       const depth = waterLevel - here.h;
       let surfMul = 1;
       if (depth > 0.05) surfMul = Math.max(0.25, 1 - depth * 0.45); // deeper wading, slower
       else if (here.h < 12) surfMul = 0.9;                          // soft sand
-      const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * (crouching ? CROUCH_SPEED : 1) * sm * surfMul * (player.landStun > 0 ? 0.5 : 1) * matSpeedMul(Terrain.materialAt(player.x, player.z));
+      const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * surfMul * (player.landStun > 0 ? 0.5 : 1) * matSpeedMul(Terrain.materialAt(player.x, player.z));
       const dist = speed * dt;
       // Simple, robust movement: slide X and Z independently (so you glide along walls), blocking only
       // deep water or a near-vertical rise per frame (prevents climbing cliff faces without snagging on bumps).
-      const h0 = here.h, maxRise = dist * 3 + 0.65;
       let nx = player.x, nz = player.z;
       const WADE_INTO = SWIM_START + 0.7;   // §14A let wading carry you past the swim threshold so swimming kicks in
       const sX = surfaceAt(player.x + wx*dist, player.z);
-      if (waterLevel - sX.h <= WADE_INTO && sX.h - h0 <= maxRise) nx = player.x + wx*dist;
+      if (waterLevel - sX.h <= WADE_INTO) nx = player.x + wx*dist;   // §strip only water blocks horizontal move now
       const sZ = surfaceAt(nx, player.z + wz*dist);
-      if (waterLevel - sZ.h <= WADE_INTO && sZ.h - h0 <= maxRise) nz = player.z + wz*dist;
+      if (waterLevel - sZ.h <= WADE_INTO) nz = player.z + wz*dist;
       [nx, nz] = slideCircles(nx, nz);
       player.x = nx; player.z = nz;
       // §foot one footstep per stride of real distance travelled (not a timer), and the head-bob
       // phase advances in lock-step: PI of bob phase == one stride, so the bob peaks once per footfall.
-      const strideLen = scrambleTarget > 0.5 ? STRIDE_SCRAMBLE : player.sprinting ? STRIDE_SPRINT : STRIDE_WALK;
+      const strideLen = player.sprinting ? STRIDE_SPRINT : STRIDE_WALK;
       const prevBob = player.bob;
       player.bob += dist * (Math.PI / strideLen);
       if (Math.floor(player.bob / Math.PI) !== Math.floor(prevBob / Math.PI)) {
-        if (onFootstep) onFootstep(surfaceType(here.h, here.slope), scrambleTarget > 0.5 ? 1 : (player.sprinting ? 0.9 : 0.55));
+        if (onFootstep) onFootstep(surfaceType(here.h, here.slope), player.sprinting ? 0.9 : 0.55);
         _stepLog.push(clock.t);   // §foot2 for the debug steps/sec readout
       }
     }
@@ -14291,7 +14248,7 @@ function frame(now) {
     player.walkLen = moving ? Math.min(1, wl) : 0;              // §R4 feeds the first-person tool's walk bob
     const amp = (0.06 + (player.sprinting ? 0.05 : 0) + player.scramble * 0.07) * moving;
     const bobOff = camFxOn("bob") ? Math.sin(player.bob) * amp : 0;   // §foot head bob driven by the stride phase (one bob per footfall)
-    const sitTarget = camFxOn("crouch") ? (resting ? -0.8 : (crouching ? -CROUCH_DROP : 0)) : 0;   // §13.4 crouch / rest dip
+    const sitTarget = 0;   // §strip crouch/rest camera dip removed
     if (camFxOn("eyeSmooth")) camSit += (sitTarget - camSit) * Math.min(1, dt * 14);   // eye-height smoothing
     else camSit = sitTarget;
     player.eyeY = renderFeetY + EYE + camSit;                            // stable gameplay eye (rays, lantern, spear)
