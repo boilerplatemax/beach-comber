@@ -1192,7 +1192,6 @@ let weather = null;   // §20 the weather state (assigned in the §20 module bel
 let NIGHT_EDGE = -0.5;              // tunable: more negative → shorter night. -0.5 ≈ night is ~1/3 of the day
 function moonPhase() { return (tideDay / (TIDE_CYCLE_DAYS * 2)) % 1; }    // 0 = new moon, 0.5 = full moon (both land on spring tides)
 function moonIllum() { return 0.5 - 0.5 * Math.cos(moonPhase() * 6.2831853); }   // 0 (new) .. 1 (full)
-function moonName() { const p = moonPhase(); const names = ["new","waxing crescent","first quarter","waxing gibbous","full","waning gibbous","last quarter","waning crescent"]; return names[Math.round(p*8) % 8]; }
 function moonVec() {                                                      // the moon rides opposite the sun, high at midnight
   const ang = (timeOfDay - 0.8) * 6.2831853, el = Math.cos(ang) * 0.85, az = 0.5 + (timeOfDay + 0.5) * 3.0, ce = Math.cos(el);
   return [ce * Math.sin(az), el, -ce * Math.cos(az)];
@@ -1819,14 +1818,6 @@ function updateSurf() {
 // pause/hide handling: suspend audio when the tab is hidden or the game is paused
 document.addEventListener("visibilitychange", () => { try { if (!SND.ctx) return; if (document.hidden) SND.ctx.suspend(); else if (!pauseStage) SND.ctx.resume(); } catch (e) {} });
 // which footstep sound for the ground under the player
-function footSurface() {
-  if (typeof waterDepthAt === "function" && waterDepthAt(player.x, player.z) > 0.12) return "step_water";
-  if (typeof trunkHeightAt === "function" && trunkHeightAt(player.x, player.z) > -1e8 && player.feetY > surfaceAt(player.x, player.z).h + 0.3) return "step_wood";
-  const k = (typeof surfaceKind === "function") ? surfaceKind(player.x, player.z) : "sand";
-  if (k === "rock") return "step_rock"; if (k === "wet") return "step_wet";
-  if (surfaceAt(player.x, player.z).h > 11 && k !== "rock") return "step_grass";
-  return "step_sand";
-}
 // §foot footsteps are triggered by distance travelled in the movement loop (one per stride,
 // see STRIDE_* and onFootstep), not here. This stale bob-crossing trigger is removed so steps
 // don't fire twice (which read as "too fast").
@@ -1927,8 +1918,6 @@ function onThunder(delay) {   // §20 distant thunder follows the flash after a 
   if (typeof SND === "undefined") return;
   setTimeout(() => { try { SND.play("thunder", { volume: 0.45 + Math.random()*0.4 }); } catch (e) {} }, Math.max(100, (delay || 1) * 1000));
 }
-function weatherIsWet() { return weather.state === "rain" || weather.state === "storm"; }
-function rainAmt() { return weather.rain; }
 function initWeather() {   // set day-0 weather with no transition (no visible blend on load)
   const d = Math.floor(tideDay); weather.day = d; weather.state = weatherForDay(d); weather.windDir = weatherWindDir(d);
   const P = WEATHER_PARAMS[weather.state];
@@ -2380,19 +2369,6 @@ function buildTerrainMesh() {
   gl.bindVertexArray(null);
   return { count: terrainChunks.reduce((a, c) => a + c.count, 0) };
 }
-function rebuildChunkAt(gx, gz) {                   // rebuild chunk(s) covering a grid cell
-  const cx = Math.min(CHUNKS - 1, (gx / chunkCells) | 0), cz = Math.min(CHUNKS - 1, (gz / chunkCells) | 0);
-  const done = new Set();
-  for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) {
-    const c = (cz + dz) * CHUNKS + (cx + dx);
-    const ch = terrainChunks[c];
-    if (!ch || done.has(c)) continue;
-    // only rebuild neighbours whose shared edge the cell touches
-    if (gx < ch.x0 - 1 || gx > ch.x1 + 1 || gz < ch.z0 - 1 || gz > ch.z1 + 1) continue;
-    done.add(c); fillChunkPositions(ch, ch.scratch);
-    gl.bindBuffer(gl.ARRAY_BUFFER, ch.vbo); gl.bufferSubData(gl.ARRAY_BUFFER, 0, ch.scratch);
-  }
-}
 function drawTerrainChunks() {
   for (const ch of terrainChunks) { gl.bindVertexArray(ch.vao); gl.drawElements(gl.TRIANGLES, ch.count, gl.UNSIGNED_INT, 0); countDraw(ch.count / 3); }
 }
@@ -2775,7 +2751,7 @@ function openSeaDepth(x, z) {
 }
 // The ONE place slope governs walking speed (§7). `grade` is the signed incline
 // (radians) in the travel direction: + uphill, − downhill. Returns a 0–1 multiplier.
-function slopeSpeedMul(grade) { return 1; }   // §strip slope never slows you now
+   // §strip slope never slows you now
 // §strip old slope-curve removed.
 // Downhill unit direction + slope magnitude at a point (for slide-back on steep ground).
 function groundGradient(x, z) {
@@ -2805,11 +2781,6 @@ const crouching = false;   // kept as a constant-false so existing reads are har
 // §P1 the player standing height here (terrain, or a fallen trunk you're on)
 function standHeightAt(x, z) { return Math.max(surfaceAt(x, z).h, trunkHeightAt(x, z)); }
 // §P1 grounded probe with a few cm of tolerance, so bumps and slope changes don't read as airborne
-function playerGrounded() {
-  if (!player.airborne) return true;
-  if (player.coyote > 0) return true;
-  return Math.abs(player.feetY - standHeightAt(player.x, player.z)) < GROUND_TOL;
-}
 // §strip jump functions (queueJump/canJumpNow/doJump/tryJump) removed.
 // §P1 ONE fixed physics step, the only place gravity + ground contact write player.feetY.
 function stepVertical(standH, g) {
@@ -3006,11 +2977,6 @@ function startleNear(x, z) {
 const CREATURE_HP = { crab:2, hermit:2, hopper:1, seal:6, seaduck:2, snail:1, shrimp:1, star:1, urchin:1, anemone:1, jelly:1 };
 const CREATURE_DROP = { crab:"crabmeat", hermit:"crabmeat", lobster:"crabmeat" };
 function creatureHP(t) { return CREATURE_HP[t] || 2; }
-function creatureAt(x, y, z, r) { let best = null, bd = r*r;
-  for (const e of life) { if (e.kind !== "creature" || FISH[e.t] || e.dying !== undefined) continue;
-    const ey = e.y !== undefined ? e.y : heightAt(e.x, e.z) + 0.3;
-    const dd = (e.x-x)*(e.x-x) + (ey-y)*(ey-y) + (e.z-z)*(e.z-z); if (dd < bd) { bd = dd; best = e; } }
-  return best; }
 const DEATH_FLASH = 0.28;      // §B1 seconds of red flash before a creature dissolves (tunable)
 const DEATH_DISSOLVE = 1.0;    // §B1 seconds for the dither-dissolve to finish (tunable)
 function hurtCreature(e, hx, hz) {
@@ -3268,7 +3234,6 @@ function reelInEmpty() { if (rod.baitTaken && rod.baitId) { Inv.add(rod.baitId, 
 function loseBaitMaybe() { /* the bait is already off the hook, spent on the attempt */ }
 function endCast(cd) { rod.state = "idle"; rod.fish = null; rod.fight = null; rod.press = false; rod.pulse = 0; rod.bend = 0; rod.baitTaken = false; rod.cd = cd || 0.4; }
 // §strip fishing hotspots removed (bubbles + bite bonus). No hotspots ever, so this is always null.
-function hotspotNear(x, z) { return null; }
 
 function updateFishing(dt) {
   if (rod.cd > 0) rod.cd = Math.max(0, rod.cd - dt);
@@ -3307,23 +3272,6 @@ function updateFishing(dt) {
 }
 
 // ---- the reveal card (keep / release) ----
-function openFishReveal() {
-  const f = rod.fish, sp = FISH_SPECIES[f.species];
-  rod.state = "reveal"; fishReveal.open = true;
-  uiUnlock();
-  const el = document.getElementById("fishreveal");
-  el.innerHTML = `<div id="fishrevealbox">
-      <div class="frtitle">You landed a</div>
-      <h2>${sp.label}${f.record ? ` <span class="frrec">NEW RECORD</span>` : ""}</h2>
-      <div class="frweight">${f.weight.toFixed(2)} kg</div>
-      <div class="frsub">${f.record ? "Your biggest ever." : (rodRecord[f.species] ? `Your record: ${rodRecord[f.species].toFixed(2)} kg` : "")}</div>
-      <div class="frbtns"><button class="frkeep">Keep</button><button class="frrel">Release</button></div>
-      <div class="frhint">Keep it for food, or release it (the catch still goes in your journal).</div>
-    </div>`;
-  el.style.display = "flex";
-  el.querySelector(".frkeep").onclick = () => keepFish();
-  el.querySelector(".frrel").onclick = () => releaseFish();
-}
 function closeFishReveal() {
   fishReveal.open = false; const el = document.getElementById("fishreveal"); if (el) { el.style.display = "none"; el.onclick = null; }
   if (catchCine) { catchCine = null; if (typeof resize === "function") resize(); }   // §fishpolish end the cinematic + restore the normal FOV
@@ -3449,45 +3397,6 @@ function updateCatchPop(dt) {
   if (!catchPop) return;
   catchPopT -= dt;
   if (catchPopT <= 0) hideCatchPop();
-}
-function openCatchCard() {
-  const f = catchCine.f, sp = FISH_SPECIES[f.species], rar = catchCine.rar;
-  fishReveal.open = true;
-  uiUnlock();   // free the cursor for the card buttons
-  const icon = (typeof buildMeshIcon === "function") ? buildMeshIcon(catchSpeciesMesh(f.species), [1,1,1]) : null;
-  if (typeof gl !== "undefined") gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  const prev = rodRecord[f.species] && !f.record ? rodRecord[f.species] : 0;
-  const rc = `rgb(${rar.col[0]*255|0},${rar.col[1]*255|0},${rar.col[2]*255|0})`;
-  const el = document.getElementById("fishreveal");
-  el.innerHTML = `<div id="fishrevealbox" class="catchcard">
-      ${f.record ? `<div class="cc-ribbon">NEW RECORD</div>` : ``}
-      <div class="cc-top">
-        <span class="cc-rarity" style="background:${rc}">${rar.tier}</span>
-        ${icon ? `<img class="cc-icon" src="${icon}" alt="">` : `<div class="cc-icon"></div>`}
-        <div class="cc-name">${sp.label}</div>
-        <div class="cc-weight"><span class="cc-num">0.00</span><span class="u">kg</span></div>
-        <div class="cc-sub">${f.record ? "Your biggest ever!" : (prev ? `Your record: ${prev.toFixed(2)} kg` : "A fine catch.")}</div>
-      </div>
-      <div class="cc-btns">
-        <button class="cc-keep">Keep</button>
-        <button class="cc-rel">Release</button>
-      </div>
-      <div class="cc-hint">Enter or click to keep</div>
-    </div>`;
-  el.style.display = "flex";
-  const keepB = el.querySelector(".cc-keep"), relB = el.querySelector(".cc-rel");
-  keepB.onclick = (e) => { e.stopPropagation(); keepFish(); };
-  relB.onclick = (e) => { e.stopPropagation(); releaseFish(); };
-  el.onclick = () => keepFish();                             // click anywhere on the card = keep
-  if (typeof SND !== "undefined") SND.play("discover", { volume: 0.45, bus: "ui" });
-  // weight counts up
-  const numEl = el.querySelector(".cc-num"); let wt = 0; const target = f.weight, t0 = performance.now();
-  (function tick() {
-    if (!fishReveal.open || !numEl.isConnected) return;
-    const p = Math.min(1, (performance.now() - t0) / 700), e = 1 - Math.pow(1 - p, 3);
-    wt = target * e; numEl.textContent = wt.toFixed(2);
-    if (p < 1) requestAnimationFrame(tick); else numEl.textContent = target.toFixed(2);
-  })();
 }
 function drawCatchFish(view) {
   const cc = catchCine; if (!cc || fishReveal.open || !catchDyn) return;
@@ -5943,19 +5852,6 @@ function lanternMesh(){ const m=Mesh(); const mtl=[0.4,0.4,0.44], mtl2=[0.5,0.5,
   mCyl(m,0.42,0.52,0.03,0.04,5,mtl2); mergeAt(m, (()=>{const d=Mesh(); for(let i=0;i<5;i++){const a=i/5*3.14; mBox(d,Math.sin(a)*0.07,Math.cos(a)*0.07,0,0.012,0.012,0.012,mtl2);} return d;})(), 0,0.52,0);   // ring handle
   return m; }
 // §16 building pieces (placed in the world)
-function leantoMesh() { const m = Mesh(); const post=[0.46,0.36,0.24], leaf=[0.38,0.46,0.27], leaf2=[0.31,0.4,0.23];
-  const bx=0.8, bt=1.15, ft=0.5, fz=0.8, bz=-0.5;
-  for (const sx of [-bx,bx]) { mBox(m,sx,bt/2,bz,0.05,bt/2,0.05,post); mBox(m,sx,ft/2,fz,0.05,ft/2,0.05,post); }
-  mBox(m,0,bt,bz,bx+0.05,0.05,0.05,post); mBox(m,0,ft,fz,bx+0.05,0.05,0.05,post);   // ridge + front pole
-  const bl=[-bx,bt,bz], br=[bx,bt,bz], fl=[-bx,ft,fz], fr=[bx,ft,fz];
-  mQuad(m, bl,br,fr,fl, leaf);                                                       // sloped roof
-  mQuad(m, [-bx,bt+0.05,bz-0.03],[bx,bt+0.05,bz-0.03],[bx,ft+0.05,fz-0.03],[-bx,ft+0.05,fz-0.03], leaf2);
-  mQuad(m, [-bx,0,bz],[bx,0,bz],br,bl, leaf2);                                        // back wall
-  return m; }
-function fenceSegMesh() { const m = Mesh(); const w=[0.5,0.38,0.24]; for (const sx of [-0.55,0.55]) mBox(m,sx,0.35,0,0.05,0.35,0.05,w); mBox(m,0,0.52,0,0.56,0.035,0.04,w); mBox(m,0,0.28,0,0.56,0.035,0.04,w); return m; }
-function gateMesh() { const m = Mesh(); const w=[0.52,0.4,0.26], r=[0.62,0.5,0.32]; for (const sx of [-0.55,0.55]) mBox(m,sx,0.42,0,0.055,0.42,0.055,w); mBox(m,0,0.56,0,0.5,0.04,0.045,r); mBox(m,0,0.3,0,0.5,0.04,0.045,r); mBox(m,-0.22,0.43,0,0.03,0.18,0.04,r); mBox(m,0.22,0.43,0,0.03,0.18,0.04,r); return m; }
-function dryRackMesh() { const m = Mesh(); const w=[0.5,0.38,0.24], f=[0.72,0.68,0.6]; for (const sx of [-0.6,0.6]) { mBox(m,sx,0.48,-0.3,0.05,0.48,0.05,w); mBox(m,sx,0.48,0.3,0.05,0.48,0.05,w); } for (const z of [-0.3,0.3]) { mBox(m,0,0.9,z,0.64,0.035,0.04,w); mBox(m,0,0.64,z,0.64,0.035,0.04,w); } for (const x of [-0.3,0,0.3]) mBox(m,x,0.78,0,0.09,0.06,0.02,f); return m; }
-function signMesh() { const m = Mesh(); const w=[0.5,0.38,0.24], b=[0.76,0.66,0.47]; mBox(m,0,0.45,0,0.05,0.45,0.05,w); mBox(m,0,0.82,0.03,0.3,0.17,0.03,b); mBox(m,0,0.82,0.01,0.3,0.03,0.04,[0.56,0.46,0.3]); return m; }
 // §16.1 merge a sub-mesh translated by (x,y,z), lets a mesh be built from clustered parts
 function mergeAt(m, n, x, y, z) { for (let i = 0; i < n.pos.length; i += 3) { m.pos.push(n.pos[i]+x, n.pos[i+1]+y, n.pos[i+2]+z); m.col.push(n.col[i], n.col[i+1], n.col[i+2]); } }
 // §16.1 new finds
@@ -6016,11 +5912,6 @@ function bladeLeaf(m, bx, bz, dir, len, wide, droop, c0, c1, twist) {
                   droop: droop, bx, bz, twist: twist || 0, c0, c1 });
 }
 // §Crop polish, a small faceted berry (two low cones meeting into a closed little sphere)
-function berryBit(m, x, y, z, r, col) {
-  const d = Mesh(); const dk = [col[0]*0.82, col[1]*0.82, col[2]*0.82];
-  mergeMesh(d, discMesh(0, r, 5, r*0.95, col)); mergeMesh(d, discMesh(0, r, 5, -r*0.95, dk));   // top + bottom dome → closed
-  mergeAt(m, d, x, y, z);
-}
 // §Crop polish, one strongly-curved, faceted, tapered banana finger: hangs down from (bx,by,bz),
 // sweeps outward along `dir` and hooks its tip up, like a real banana. Centreline follows an arc.
 function bananaFinger(m, bx, by, bz, dir, len, col) {
@@ -6138,9 +6029,7 @@ function bananaIconMesh(){ const m=Mesh(); const y=[0.97,0.83,0.26], stem=[0.42,
   bananaFinger(m, -0.22, 0.52, 0, 0, 0.5, y);                 // sweeps right and hooks up → the half-moon shape, in the icon plane
   mBox(m, -0.22, 0.52, 0, 0.03, 0.05, 0.03, stem);            // a little stem at the base
   return m; }
-function bananaFoodMesh(){ const m=Mesh(); const y=[0.95,0.85,0.3], t=[0.4,0.34,0.2];   // a hand of 5 curved faceted fingers joined at a crown
-  for(let i=0;i<5;i++){ const a=(i/4-0.5)*1.3; bananaFinger(m, Math.sin(a)*0.03, 0.34, 0, a+1.5708, 0.3, [y[0],y[1]-i*0.015,y[2]]); }
-  mCyl(m,0.3,0.4,0.05,0.03,6,t); return m; }   // the stem crown they hang from
+   // the stem crown they hang from
 function pineappleFoodMesh(){ const m=Mesh(); const f=[0.9,0.72,0.28], f2=[0.74,0.54,0.2], g=[0.32,0.55,0.3], g2=[0.42,0.64,0.36];
   diamondOvoid(m, 0, 0.26, 0, 0.22, 0.16, f, f2);                                       // closed diamond-crosshatch body
   pineappleCrown(m, 0, 0.42, 0, g, g2);                                                 // leafy tuft from the top
@@ -6253,8 +6142,6 @@ function chitonMesh() { const m = Mesh();
 function pillbugMesh() { const m = Mesh(), c = [0.43,0.44,0.47]; mergeMesh(m, discMesh(0.0, 0.14, 7, 0.13, c));
   for (let i=0;i<5;i++) mBox(m, (i-2)*0.05, 0.08, 0, 0.012, 0.09, 0.14, [0.34,0.35,0.38]);
   mBox(m, 0.14, 0.05, 0, 0.03, 0.04, 0.09, [0.38,0.39,0.42]); return m; }
-function pillbugBallMesh() { const m = Mesh(); mergeMesh(m, discMesh(0.0, 0.13, 8, 0.24, [0.42,0.43,0.46])); mergeMesh(m, discMesh(0.0, 0.13, 8, -0.1, [0.36,0.37,0.4]));
-  for (let i=0;i<5;i++) { const a=i/5*3.14; mTri(m, [0,0.37,0],[Math.cos(a)*0.13,0.13,Math.sin(a)*0.13],[Math.cos(a+0.6)*0.13,0.13,Math.sin(a+0.6)*0.13],[0.33,0.34,0.37]); } return m; }
 function centipedeMesh() { const m = Mesh(), c = [0.56,0.3,0.24], leg = [0.4,0.22,0.18];
   for (let i=0;i<8;i++){ const x=(i-3.5)*0.09; mBox(m, x, 0.04, 0, 0.045, 0.035, 0.05, i%2?c:[c[0]*0.85,c[1]*0.85,c[2]*0.85]);
     mBox(m, x, 0.02, 0.07, 0.008, 0.008, 0.05, leg); mBox(m, x, 0.02, -0.07, 0.008, 0.008, 0.05, leg); }
@@ -6292,14 +6179,7 @@ function berryBushMesh(state) { const m = Mesh();
   }
   return m; }
 // fallen trunk: a log lying along +X from x=0 (base) to x=1 (unit, scaled by length)
-function fallenTrunkMesh() { const m = Mesh(); const c = BROWN;
-  mBox(m, 0.5, 0.17, 0, 0.5, 0.15, 0.15, c);
-  mergeMesh(m, discMesh(0.17, 0.15, 7, 0.0, [0.58,0.48,0.36]));              // base-end rings (approx)
-  return m; }
-function fallenCrownMesh() { const m = Mesh(); const g = [0.33, 0.48, 0.26];
-  for (let i = 0; i < 6; i++) { const a = i/6*6.283; mBox(m, Math.cos(a)*0.5, 0.42 + Math.sin(i)*0.18, Math.sin(a)*0.5, 0.42, 0.42, 0.42, [g[0]*(0.85+0.15*(i%2)), g[1], g[2]]); } mBox(m, 0, 0.5, 0, 0.5, 0.5, 0.5, g); return m; }
 // one short trunk section lying along +X (centered), drawn per fallen-tree segment
-function logSectionMesh() { const m = Mesh(); mBox(m, 0, 0.3, 0, 0.72, 0.3, 0.3, BROWN); mBox(m, 0.72, 0.3, 0, 0.03, 0.26, 0.26, [0.62,0.52,0.4]); mBox(m, -0.72, 0.3, 0, 0.03, 0.26, 0.26, [0.62,0.52,0.4]); return m; }
 
 // --- registries: mesh, palette, scale, how many may draw, behaviour ---
 const CREATURES = {
@@ -6805,7 +6685,6 @@ function recomputeClusterAttach() {
 }
 // the cluster's draw height; falls back to the old heuristic only if a raycast somehow found nothing
 function rockClusterTop(o) { if (!o.clAttach) attachRockCluster(o); return o.clAttach ? o.clAttach.y : surfaceAt(o.x, o.z).h + (o.scale || o.sc || 1) * 0.44; }
-function rockBarnTop(o) { return rockClusterTop(o); }
 function barnClusterTop(b) { if (!b.clAttach) attachBarnacle(b); return b.clAttach ? b.clAttach.y : barnTop(b); }
 // §clust8 validation: how many clusters sit more than the tolerance off their rock's real surface (should be 0)
 function validateClusters() {
@@ -7480,12 +7359,6 @@ function invMove(from, to) {
   } else { Inv.setCell(to, a); Inv.setCell(from, b); }   // swap
   Inv.emit();
 }
-function invSplit(idx) {
-  const s = Inv.cell(idx); if (!s || s.qty < 2 || !ITEMS[s.id] || !ITEMS[s.id].stackable) return;
-  let dest = -1; for (let i = 0; i < INV_SLOTS + HOTBAR_SLOTS; i++) if (i !== idx && !Inv.cell(i)) { dest = i; break; }
-  if (dest < 0) return;
-  const half = Math.floor(s.qty / 2); Inv.setCell(dest, { id: s.id, qty: half }); s.qty -= half; Inv.emit();
-}
 function invDrop(idx, one) {
   const s = Inv.cell(idx); if (!s) return;
   if (!FINDS[s.id]) { showCard("Can't drop that", "Tools stay in your pack."); return; }   // tools aren't world-droppable
@@ -7578,7 +7451,6 @@ function groundAutoDig(pt) {
   if (!autoSwitch || surfaceKind(pt[0], pt[1]) === "rock" || !ownsTool("shovel")) return false;
   autoSwitchTo("shovel"); digAt(pt[0], pt[1]); return true;
 }
-function toggleAutoPickup() { autoPickup = !autoPickup; saveAutoPick(); showCard("Auto-pickup " + (autoPickup ? "on" : "off"), "Loose items within reach collect themselves."); }
 function updateAutoPickup() {
   if (!autoPickup || mode !== "walk" || resting) return;
   const R2 = AUTO_PICK_R * AUTO_PICK_R;
@@ -7770,13 +7642,7 @@ let invOpen = false;
 let invTab = "items";   // §16 satchel tab: "items" | "make"
 // §menu E opens ONE combined view, the satchel and the bucket side by side, no tabs.
 function menuIsOpen() { return invOpen || bucketLook.open; }   // the combined satchel+bucket view
-function renderMenuTabs() { const el = document.getElementById("menutabs"); if (el) { el.classList.remove("show"); el.innerHTML = ""; } }   // §menu no tabs anymore
-function hideMenuBodies() {   // kept for any external callers; clears the combined view
-  invOpen = false; bucketLook.open = false;
-  const c = document.getElementById("combined"); if (c) c.style.display = "none";
-  const j = document.getElementById("journal"); if (['flex','block'].indexOf(j.style.display)>=0) j.style.display = "none";
-  hideTip(); hideContextMenu();
-}
+   // §menu no tabs anymore
 // §inv5 the controls help line in the satchel retires after the menu has been opened a few times
 let menuHintShown = 0; const INV_HINT_MAX = 3;
 try { menuHintShown = parseInt(localStorage.getItem("bc_menuhint") || "0", 10) || 0; } catch (e) {}
@@ -7803,12 +7669,6 @@ function closeMenu() {   // §menu clears any inspect overlay too, so it always 
 }
 function toggleMenu() { if (menuIsOpen()) closeMenu(); else openMenu(); }
 function cycleMenuTab() { toggleMenu(); }   // §menu no tabs; Tab just toggles the combined view
-function toggleInventory() {
-  invOpen = !invOpen; document.getElementById("invpanel").style.display = invOpen ? "block" : "none";
-  if (invOpen) { const j = document.getElementById("journal"); if (['flex','block'].indexOf(j.style.display)>=0) j.style.display = "none";   // §13.4 one panel at a time
-    renderInventory(); uiUnlock(); }   // free the cursor for the bag
-  else { hideTip(); hideContextMenu(); requestLock(); }                                                        // §13.1 back to the game
-}
 function renderInventory() {
   if (!invOpen) return;
   // §strip the Make tab is gone (crafting removed); the satchel shows items only.
@@ -8118,14 +7978,6 @@ function renderJournal() {
     else openInspect(k, "item");   // f: and a: both inspect the item model
   });
 }
-function toggleJournal() {
-  const j = document.getElementById("journal");
-  if (['flex','block'].indexOf(j.style.display)>=0) { j.style.display = "none"; requestLock(); return; }   // §13.1 back to the game
-  if (invOpen) { invOpen = false; document.getElementById("invpanel").style.display = "none"; hideTip(); hideContextMenu(); }   // §13.4 one panel at a time
-  uiUnlock();
-  renderJournal();
-  j.style.display = "block";
-}
 
 /* --------------------------------------------------------------------- *
  * § CLICK-TO-WALK  (A* on a coarse nav grid; avoids deep water, prop
@@ -8202,20 +8054,6 @@ function easeLookAt(x, z) {          // ease the view toward a world point (~0.4
   lookEaseT = 0.4;
 }
 function cancelPath() { pathActive = false; pathPts = []; pendingEntity = null; }
-function arrivePath() {
-  pathActive = false;
-  if (pendingEntity && life.includes(pendingEntity)) {
-    const e = pendingEntity; pendingEntity = null;
-    if (Math.hypot(e.x - player.x, e.z - player.z) < 5) { easeLookAt(e.x, e.z); interactWith(e); }
-  }
-  pendingEntity = null;
-}
-function walkTo(x, z, entity) {
-  const p = aStar(player.x, player.z, x, z);
-  if (!p || p.length < 1) return;
-  pathPts = p; pathI = 0; pathActive = true; pathGoal = [x, z]; pendingEntity = entity || null;
-  easeLookAt(x, z);                 // brief view ease toward the destination
-}
 // A ground point under a screen ray (NDC); marches until below the surface.
 /* --------------------------------------------------------------------- *
  * § TARGETING  (crosshair/tap raycast vs. the SAME objects we render,
@@ -8449,18 +8287,6 @@ function updateStarRescue() {
   }
 }
 const markerDyn = makeDynamic((function(){ const m = Mesh(); mCyl(m,0,3,0.25,0,5,[1,0.85,0.4]); mCyl(m,0,0.4,0.9,0.9,10,[1,0.85,0.4]); return m; })(), 1);
-function drawMarker(view) {
-  if (!pathActive || !pathGoal) return;
-  const g = heightAt(pathGoal[0], pathGoal[1]);
-  const o = lifeScratch;
-  o[0]=pathGoal[0]; o[1]=g; o[2]=pathGoal[1]; o[3]=1; o[4]=performance.now()*0.002; o[5]=0; o[6]=0; o[7]=1;o[8]=0.85;o[9]=0.4;
-  gl.useProgram(propProg);
-  gl.uniformMatrix4fv(propU.uProj, false, proj); gl.uniformMatrix4fv(propU.uView, false, view);
-  gl.uniform3fv(propU.uSunDir, SKY.sun); gl.uniform3fv(propU.uCamPos, cam.pos);
-  gl.uniform3fv(propU.uZenith, SKY.zenith); gl.uniform3fv(propU.uHorizon, SKY.horizon); gl.uniform3fv(propU.uWarm, SKY.warm);
-  gl.uniform1f(propU.uFogDensity, FOG_DENSITY); gl.uniform1f(propU.uFogNear, FOG_NEAR);
-  markerDyn.draw(o, 1);
-}
 
 function propUniforms(view) {
   gl.useProgram(propProg);
@@ -8516,7 +8342,7 @@ const H_FULL = 0.7, H_PECKISH = 0.4, H_HUNGRY = 0.18;   // tier thresholds
 function hungerTier() { return hunger > H_FULL ? "full" : hunger > H_PECKISH ? "peckish" : hunger > H_HUNGRY ? "hungry" : "starving"; }
 // §Cooking the one and only hunger penalty: a softer max-stamina cap when hungry (you tire sooner, never slower)
 function maxStamina() { if (!hungerEnabled) return STAMINA_MAX; const t = hungerTier(); return (t === "starving" ? 0.55 : t === "hungry" ? 0.8 : 1) * STAMINA_MAX; }   // §tune +30% headroom
-function heavyCostMul() { return 1; }    // §Cooking no extra cost when hungry
+    // §Cooking no extra cost when hungry
 function swingRateMul() { return 1; }    // §Cooking no slower swings when hungry
 // §tools effort & hunger: labour burns hunger (∝ stamina spent), recovery scales with fullness, and being fed makes heavy jobs land harder
 let EFFORT_HUNGER = 0.03;                 // §A5 hunger burned per unit of stamina spent on work, reduced ~40% (was 0.05); walking spends ~none
@@ -9394,9 +9220,6 @@ function initBucketLook() {
     if (best && typeof openInspect === "function") openInspect(best, "bucket");   // §menu opens an overlay on top of the combined view
   });
 }
-function openBucketLook() { initBucketLook(); bucketLook.open = true; bucketLook.el.style.display = "flex"; uiUnlock(); }
-function closeBucketLook() { bucketLook.open = false; if (bucketLook.el) bucketLook.el.style.display = "none";
-  if ((!inspect || !inspect.open) && typeof requestLock === "function") requestLock(); }
 function updateBucketLook() {
   if (!bucketLook.open) return;
   const cv = bucketLook.cv;
@@ -9574,7 +9397,6 @@ function berryState(b) { if (b.ripe) return "ripe";
   const total = BERRY_REGROW * DAY_PERIOD, prog = 1 - Math.max(0, (b.regrowAt - clock.t)) / total;
   return prog > 0.5 ? "green" : "bare"; }
 function updateBerries() { for (const b of berryBushes) if (!b.ripe && clock.t >= b.regrowAt) b.ripe = true; }
-function nearestBush(x, z, maxd) { let best = null, bd = maxd; for (const b of berryBushes) { const d = Math.hypot(b.x - x, b.z - z); if (d < bd) { bd = d; best = b; } } return best; }
 function harvestBush(b) {
   if (!b.ripe) { showCard("Not ripe", "This bush will berry again in a few days."); return; }
   const n = harvestYield("berry"); const first = !discovered.has("f_berry");
@@ -9696,7 +9518,6 @@ function plantCrop(x, z) {
   showCard("Planted " + ITEMS[type].name, "Ready in a couple of days, then it keeps producing.");
   saveWorld();
 }
-function nearestCrop(x, z, maxd) { let best = null, bd = maxd; for (const c of crops) { const d = Math.hypot(c.x-x, c.z-z); if (d < bd) { bd = d; best = c; } } return best; }
 const cropDyn = {};
 function drawCrops(view) {
   if (!crops.length) return; propUniforms(view); const a = rockScratch;
@@ -9717,20 +9538,7 @@ function drawCrops(view) {
 let goblins = [];
 let tradeOpen = false, tradeGoblin = null;
 const GOBLIN_SKINS = [[0.46,0.56,0.36],[0.5,0.6,0.4],[0.42,0.5,0.32],[0.52,0.58,0.42],[0.44,0.54,0.4],[0.5,0.52,0.3]];
-function clamp01(v){ return Math.max(0.12, Math.min(1, v)); }
-function goblinTrades() {   // Minecraft-villager-style: a few simple give → get trades, with limited stock that restocks
-  const all = [
-    { give:[["plasticbottle",2]], get:["coin",1], uses:0, max:6 },
-    { give:[["bottlecap",3]], get:["seaglass",1], uses:0, max:6 },
-    { give:[["nautilus",1]], get:["coin",2], uses:0, max:3 },
-    { give:[["coin",3]], get:["coconut",2], uses:0, max:4 },
-  ];
-  // each goblin offers a small, slightly different hand, one litter buy is always there, plus 3 others
-  const litter = all[(Math.random()*2)|0];
-  const rest = all.slice(2).sort(() => Math.random()-0.5).slice(0, 3);
-  return [litter, ...rest];
-}
-function spawnGoblin(x, z) { return null; }   // §urgent4 goblins/NPCs/trading removed
+   // §urgent4 goblins/NPCs/trading removed
 function updateGoblins(dt) {
   for (const g of goblins) {
     g.t += dt;
@@ -9766,7 +9574,7 @@ function drawGoblins(view) {
   }
 }
 /* ---- §urgent4 trade panel removed (no NPCs / trading) ---- */
-function openGoblinTrade(g) {}   // no-op
+   // no-op
 function closeTrade() { tradeOpen = false; tradeGoblin = null; document.getElementById("tradepanel").style.display = "none"; if (typeof requestLock === "function") requestLock(); }
 function renderTrade(g) {
   const p = document.getElementById("tradepanel"); if (!p || !tradeOpen) return;
@@ -9825,7 +9633,6 @@ let buildMode = null;                               // no build placement
 const buildGhost = { show: false, valid: false, x: 0, z: 0, y: 0 };
 const BUILD_DEFS = {};
 const BUILD_ICON = {};
-function buildInFront() { return null; }
 function drawBuilds() {}
 
 // Placed material in the wash zone slowly erodes; everywhere else it's permanent.
@@ -10810,7 +10617,6 @@ const HEAVE_RESET_DAYS = 3;                      // a heaved boulder left alone 
 const HEAVE_CRITTER_P = 0.42, HEAVE_CACHE_P = 0.40;  // rest (0.18) = a fossil
 let heaveBoulders = [], heaveBoulderDyn = null, heave = null, _savedHeave = null;
 const heaveScratch = new Float32Array(HEAVE_BOULDER_N * 10), heaveDampScratch = new Float32Array(HEAVE_BOULDER_N * 10);
-function heaveBoulderMesh() { const m = Mesh(); mRock(m, mulberry32(0x5bd1 ^ SEED_INT), [0.5, 0.48, 0.45]); return m; }
 function seedHeaveBoulders() {
   heaveBoulders = [];
   for (let k = 0; k < 4000 && heaveBoulders.length < HEAVE_BOULDER_N; k++) {
@@ -10992,7 +10798,6 @@ function drawOysterBeds(view) {
   }
   if (n) oysterBedDyn.draw(oysterScratch, n);
 }
-function oysterBedExposed(b) { return waterDepthAt(b.x, b.z) < OYSTER_EXPOSE; }
 function oysterBedPrompt(b) { return b.n <= 0 ? "picked clean, give it a day or two" : (IS_TOUCH ? "tap to pick an oyster" : "pick an oyster"); }   // §water workable underwater too
 function oysterBedAction(b) {   // §strip oysters now pick straight off the cluster into the satchel, like barnacles (no shucking, no pearls)
   if (b.n <= 0) { showCard("Picked clean", "You've worked this bed recently. Give it a day or two to seed again."); return true; }
@@ -11315,21 +11120,11 @@ function insideCottage() { return false; }
 function nearCottage() { return false; }
 function inCottageProtected() { return false; }
 function cottageProtectBlock() { return false; }
-function updateCottage() {}
-function drawCottage() {}
-function drawCottageDisplays() {}
-function drawCottageSlotMarkers() {}
-function drawCottageTrophies() {}
-function drawCottageAquarium() {}
-function drawCottageDecor() {}
 function initCottage() {}
 function initCottageFixtures() {}
 function flattenCottagePad() {}
-function trySleepCottage() {}
 function saveCottage() {}
 function loadCottage() {}
-function useAquarium() {}
-function aquaStale() { return false; }
 
 /* §19F COLLECTION SETS, group finds/creatures/fish into sets; completing one
    chimes, sparkles, and drops a decoration into the cottage (which gets cosier). */
@@ -11573,7 +11368,6 @@ function digTreasure(x, z) {
     }
   }
 }
-function exposedChestNear(x, z, maxd) { let best=null, bd=maxd; for (const c of chests) { if (!c.exposed || c.opened) continue; const d=Math.hypot(c.x-x,c.z-z); if (d<bd){bd=d;best=c;} } return best; }
 // a collected bottle sometimes holds a torn map piece for a chest you haven't fully charted
 function bottleMapChance() {
   if (rng() > 0.3) return;
@@ -11795,7 +11589,6 @@ function drawStorage(view) {
     digScratch[o]=bx.x;digScratch[o+1]=gy;digScratch[o+2]=bx.z;digScratch[o+3]=1;digScratch[o+4]=bx.yaw;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=0.9;digScratch[o+8]=0.86;digScratch[o+9]=0.8; n++; }
   if (n) storageDyn.draw(digScratch, n);
 }
-function nearestStorage(x, z, maxd) { let bi=-1, bd=maxd; for (let i=0;i<storageBoxes.length;i++){ const d=Math.hypot(storageBoxes[i].x-x, storageBoxes[i].z-z); if (d<bd){bd=d;bi=i;} } return bi; }
 function pickUpChest(c) {   // §12C carry an emptied, looted chest
   if (!c || !c.opened || !c.looted || c.carried) return;
   if (Inv.add("chestbox", 1) <= 0) { showCard("Pack full", "No room to carry the chest."); bagShake(); return; }
@@ -11888,17 +11681,6 @@ function drawGoats(view) {
     const tint = g.tamed ? [1.0, 0.98, 0.9] : [1, 1, 1];
     arr[o]=g.x; arr[o+1]=y+chew; arr[o+2]=g.z; arr[o+3]=1.4; arr[o+4]=g.yaw; arr[o+5]=g.lean; arr[o+6]=g.yaw+1.57; arr[o+7]=tint[0]; arr[o+8]=tint[1]; arr[o+9]=tint[2]; n++; }
   if (n) { propUniforms(view); goatDyn.draw(arr, n); }
-}
-function nearestGoat(x, z, maxd) { let best = null, bd = maxd; for (const g of goats) { const d = Math.hypot(g.x - x, g.z - z); if (d < bd) { bd = d; best = g; } } return best; }
-function offerSaltTo(g) {
-  if (g.tamed) { g.follow = !g.follow; showCard(g.name, g.follow ? "trots along behind you." : "settles in to wait here."); saveTamed(); return; }
-  if (selectedTool() !== "salt" || !Inv.has("salt")) { showCard("Hold out salt", "Select salt in the hotbar and approach a goat slowly."); return; }
-  if (clock.t - g.lastOffer < 120) return;    // still wary, wait a few game-minutes between offerings
-  Inv.remove("salt", 1);
-  g.lastOffer = clock.t; g.trust++;
-  if (onGoat) onGoat("bleat");
-  sparkle(g.x, surfaceAt(g.x, g.z).h + 1, g.z, [1, 1, 0.6], 7);
-  if (g.trust >= g.needTame) tameGoat(g);
 }
 function tameGoat(g) {
   if (goats.filter(x => x.tamed).length >= 3) { showCard("Herd's full", "You can keep three goats at a time."); return; }
