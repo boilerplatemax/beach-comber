@@ -1103,7 +1103,7 @@ const COAST_BIOMES = {
   reef:    { mat: 5, feet: "rock",  speed: 0.85, tell: 0.4, crit: ["star","anemone","urchin"],
              finds: ["mussel","limpet","seaglass","shell","cuttle","oyster","barnacle","nautilus"], label: "Rocky reef shelf" },
   mudflat: { mat: 6, feet: "mud",   speed: 0.6, tell: 1.3, crit: ["crab"],
-             finds: ["clam","cockle","wormcast","mud","worm","oyster"], label: "Mudflat" },
+             finds: ["clam","cockle","wormcast","worm","oyster"], label: "Mudflat" },
   marsh:   { mat: 1, feet: "grass", speed: 0.8, tell: 0.7, crit: ["crab","hopper"],
              finds: ["pickleweed","salt","cockle","shell","worm"], label: "Salt marsh" },
 };
@@ -1158,8 +1158,7 @@ const builtCells = new Set();                 // grid indices with built height 
    // scratch for base+dig texture uploads
 
 // Surface materials. 0 = "natural" (coloured by height/slope as before).
-const MAT = { NATURAL: 0, GRASS: 1, DIRT: 2, SAND: 3, GRAVEL: 4, STONE: 5, MUD: 6 };
-const MAT_ITEM = { dirt: MAT.DIRT, sand: MAT.SAND, gravel: MAT.GRAVEL, stone: MAT.STONE, mud: MAT.MUD };  // placeable material items
+const MAT = { NATURAL: 0, GRASS: 1, DIRT: 2, SAND: 3, GRAVEL: 4, STONE: 5, MUD: 6 };   // §matrm earth-material PLACEMENT (sand/dirt/gravel/mud items + the place ghost) was removed; these ids still drive the natural terrain surface
 // natural material of a base cell, from its height & local slope
 function defaultMat(i) {
   const hb = heightmap[i];
@@ -4744,7 +4743,7 @@ function munchFx(id) {
   else if (onDig) onDig("eat");
   const col = (ITEMS[id] && ITEMS[id].tint) || [0.8,0.7,0.5];                         // crumbs in the food's own colour
   const f = camForward(), mx = cam.pos[0] + f[0]*0.5, my = cam.pos[1] - 0.25, mz = cam.pos[2] + f[2]*0.5;
-  spawnSand(mx, my, mz, 2, col); chewT = 0.5; camNudge = Math.max(camNudge, 0.025);   // §pixui fewer crumbs
+  if (Math.random() < 0.6) spawnSand(mx, my - 0.18, mz, 1, col); chewT = 0.5; camNudge = Math.max(camNudge, 0.025);   // §look even fewer crumbs (one, only some bites) and a touch lower
 }
 function updateEat(dt) {
   if (!eating) return;
@@ -4774,7 +4773,6 @@ function aimInfo() {
   if (isFood(tool)) return { kind: "self", need: "hand" };                 // food in hand: eat anytime
   const pt = rayGround(0, 0); if (!pt) return null;
   if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return null;
-  if (MAT_ITEM[tool] !== undefined) return canPlaceAt(pt[0], pt[1]) ? { kind: "ground", x: pt[0], z: pt[1], need: "self" } : null;
   if (SEED_TREE[tool]) return canPlant(SEED_TREE[tool], pt[0], pt[1]) ? { kind: "ground", x: pt[0], z: pt[1], need: "self" } : null;
   if (CROP_SEED[tool]) return canPlantCrop(CROP_SEED[tool], pt[0], pt[1]) ? { kind: "ground", x: pt[0], z: pt[1], need: "self" } : null;
   if (tool === "bucket") { const atWater = waterDepthAt(pt[0], pt[1]) > 0.08;
@@ -6255,7 +6253,44 @@ function crabMeatMesh() { const m = Mesh(); const pink=[0.92,0.8,0.74], pink2=[0
   const lumps=[[0,0,0.17],[0.13,0.06,0.12],[-0.1,0.09,0.11],[0.05,-0.12,0.1]];
   for (let i=0;i<lumps.length;i++){ const [x,z,r]=lumps[i]; const d=Mesh(); mergeMesh(d, discMesh(0, r, 6, r*0.9, i%2?pink:pink2)); mergeMesh(d, discMesh(0, r, 6, -r*0.5, i%2?pink:pink2)); mergeAt(m, d, x, 0.04, z); }
   return m; }
-function coinMesh() { return discMesh(0.04,0.4,10,0.03,[0.7,0.6,0.32]); }
+// §models a worn round coin: a thin cylinder with a raised rim ring on each face and a faint embossed boss in the middle, not a plain disc.
+function coinMesh() { const m = Mesh(); const face=[0.74,0.62,0.3], edge=[0.6,0.5,0.24], hi=[0.84,0.72,0.4];
+  const R=0.38, T=0.07, S=13;
+  mCyl(m, -T/2, T/2, R, R, S, edge);                                   // milled edge band
+  mergeMesh(m, discMesh(T/2, R, S, 0.0, face));                        // top face
+  mergeMesh(m, discMesh(-T/2, R, S, 0.0, face));                       // bottom face
+  for (const sgn of [1,-1]) {                                          // a raised rim ring just inside the edge, both faces
+    const y = sgn*(T/2);
+    for (let i=0;i<S;i++){ const a0=i/S*6.283, a1=(i+1)/S*6.283, ro=R*0.94, ri=R*0.8, yr=y+sgn*0.012;
+      mQuad(m, [Math.cos(a0)*ro,y,Math.sin(a0)*ro],[Math.cos(a1)*ro,y,Math.sin(a1)*ro],[Math.cos(a1)*ri,yr,Math.sin(a1)*ri],[Math.cos(a0)*ri,yr,Math.sin(a0)*ri], hi);
+      mTri(m, [Math.cos(a0)*ri,yr,Math.sin(a0)*ri],[Math.cos(a1)*ri,yr,Math.sin(a1)*ri],[0,yr,0], face); }
+    // a faint embossed boss (a worn head/sigil) in the centre
+    mergeMesh(m, discMesh(y + sgn*0.018, R*0.26, 6, sgn*0.01, hi));
+  }
+  return m; }
+// §models a ceramic shard: a flat, gently-curved triangular piece with a glazed (reddish) outer face and a raised rim lip on the finished edge; the broken edges are rough bare clay.
+function ceramicShardMesh() { const m = Mesh();
+  const glaze=[0.72,0.33,0.18], glazeHi=[0.86,0.44,0.26], clay=[0.5,0.33,0.22], clayLo=[0.42,0.27,0.19];
+  const T=0.05;
+  const P=[[-0.36,0.02,-0.06],[0.34,-0.03,-0.12],[0.03,0.05,0.30]];    // three corners, slightly tilted (a curved pot wall)
+  const top=P.map(p=>[p[0],p[1]+T,p[2]]), bot=P.map(p=>[p[0],p[1],p[2]]);
+  mTri(m, top[0],top[1],top[2], glaze);                                // glazed outer face
+  mTri(m, bot[0],bot[2],bot[1], clay);                                 // rough clay inner face
+  const edgeCols=[glazeHi, clay, clayLo];                              // edge 0-1 = the finished glazed rim; the others are rough breaks
+  for (let i=0;i<3;i++){ const j=(i+1)%3; mQuad(m, top[i],top[j],bot[j],bot[i], edgeCols[i]); }
+  const mid=[(top[0][0]+top[1][0])/2,(top[0][1]+top[1][1])/2,(top[0][2]+top[1][2])/2];
+  mTri(m, top[0], top[1], [mid[0], mid[1]+0.045, mid[2]+0.02], glazeHi);   // a raised rim lip along the finished edge
+  return m; }
+// §models a fossil: a flat rounded beach stone with a raised coiled (ammonite) spiral ridge imprinted on its top face.
+function fossilMesh() { const m = Mesh(); const stone=[0.64,0.6,0.52], stone2=[0.55,0.51,0.44], ridge=[0.72,0.67,0.58];
+  const R=0.4, T=0.1, S=9;
+  mCyl(m, 0, T, R, R*0.95, S, stone2);                                 // the stone's rounded edge
+  mergeMesh(m, discMesh(T, R*0.95, S, 0.025, stone));                  // a slightly domed top
+  mergeMesh(m, discMesh(0, R, S, -0.012, stone2));                     // flat underside
+  const cy=T+0.028, turns=2.3, N=30, pts=[];                           // the coiled spiral, widening outward (an ammonite)
+  for (let i=0;i<=N;i++){ const t=i/N, ang=t*turns*6.283, r=0.04+t*0.27; pts.push([Math.cos(ang)*r, cy, Math.sin(ang)*r, 0.015+0.023*t]); }
+  mPathTube(m, pts, 4, ridge);
+  return m; }
 // §Fishing, first-person rod, the drifting bobber float, and the odd deep-water ratfish
 function rodMesh() {   // cork grip, a reel hung below the seat, and a long tapered blank with line guides
   const m = Mesh(); const cork=[0.74,0.58,0.36], blankD=[0.38,0.3,0.26], blankL=[0.56,0.46,0.4];
@@ -6534,11 +6569,7 @@ function eelgrassMesh() { const m = Mesh();
   return m; }
 // (driftwoodMesh is the horizontal lying log defined above; §13.1 removed a duplicate vertical version)
 // --- loose material clump (a handful of sand / dirt / gravel / mud) ---
-function clumpMesh(col) { const m = Mesh(); for (let i = 0; i < 7; i++) { const a = i/7*6.283, r = 0.03 + (i%3)*0.06; mBox(m, Math.cos(a)*r, 0.04+(i%2)*0.04, Math.sin(a)*r, 0.09, 0.05, 0.09, [col[0]*(0.9+0.1*(i%2)), col[1], col[2]]); } mBox(m,0,0.08,0,0.1,0.06,0.1,col); return m; }
-function sandMatMesh()   { return clumpMesh([0.86,0.78,0.59]); }
-function dirtMatMesh()   { return clumpMesh([0.40,0.30,0.20]); }
-function gravelMatMesh() { return clumpMesh([0.56,0.55,0.51]); }
-function mudMatMesh()    { return clumpMesh([0.34,0.28,0.20]); }
+// §matrm earth-material item meshes (sand/dirt/gravel/mud) removed with the material-placement feature
 // --- Part C biome finds & critters ---
 // §shells a sand dollar: a flat domed test with the classic raised 5-petal flower (petaloid) on top.
 function sanddollarMesh() { const base=[0.93,0.9,0.84], base2=[0.86,0.83,0.77], petal=[0.8,0.76,0.67], ctr=[0.78,0.74,0.66];
@@ -6639,6 +6670,21 @@ function nautilusMesh() { const m = Mesh();
 function oysterMesh(c, c2) { const m = Mesh(); c = c || [0.62,0.62,0.57]; c2 = c2 || [0.74,0.72,0.66];   // §pixui optional colours so the mussel can reuse this shell shape in dark blue-black
   mergeMesh(m, discMesh(0,0.27,7,0.11,c)); mergeMesh(m, discMesh(0.11,0.24,7,0.08,c2));
   for (let i=0;i<5;i++){ const a=i/5*6.283; mergeAt(m, (()=>{const d=Mesh(); mBox(d,0,0,0,0.05,0.035,0.05,c); return d;})(), Math.cos(a)*0.13, 0.08, Math.sin(a)*0.13); }
+  return m; }   // §shell the SEALED (live) oyster, craggy and clamped shut
+// §shell the OPEN/empty oyster shell (the byproduct after eating): a single cupped half, hollow, pale pearly inside.
+function oysterShellMesh() { const m = Mesh(); const out=[0.6,0.6,0.55], outHi=[0.72,0.7,0.64], inner=[0.88,0.87,0.83];
+  mergeMesh(m, discMesh(0, 0.28, 8, -0.12, out));        // outer underside, domed down
+  mergeMesh(m, discMesh(0.03, 0.25, 8, 0.08, inner));    // the pale hollow interior, a shallow dish facing up
+  for (let i=0;i<4;i++){ const a=i/4*6.283+0.3; mergeAt(m, boxM(0.04,0.028,0.05,outHi), Math.cos(a)*0.22, 0.03, Math.sin(a)*0.22); }   // a craggy rim
+  return m; }
+// §shell the OPEN/empty clam shell (the byproduct after eating): the two halves hinged open like a butterfly.
+function clamShellMesh() { const m = Mesh(); const out=[0.84,0.79,0.71], inner=[0.93,0.89,0.83];
+  for (const s of [-1,1]) { const half = Mesh();
+    mergeMesh(half, discMesh(0, 0.34, 7, -0.14, out));    // outer dome
+    mergeMesh(half, discMesh(0.02, 0.31, 7, 0.1, inner)); // pale inside
+    rotMeshX(half, s*0.95);                               // tilt the half open
+    mergeAt(m, half, 0, 0.09, s*0.17);                    // and splay the two apart at the hinge
+  }
   return m; }
 // §clust8 BARNACLES: a flat crust of small WHITE acorn cones, each a squat volcano with a dark aperture.
 function barnacleMesh() { const m = Mesh(); const sh=[0.94,0.92,0.87], sh2=[0.86,0.84,0.8], ap=[0.3,0.3,0.33];
@@ -7106,9 +7152,9 @@ const FINDS = {
   clam:     { mesh: () => clamMesh(),               base: 0.5, max: 80, label: "Clam", desc: "A fat bivalve, hinged shut.", rare: 0 },
   cockle:   { mesh: () => cockleMesh(),             base: 0.42,max: 80, label: "Cockle", desc: "A ribbed little shell from the shallows.", rare: 0 },
   scallop:  { mesh: () => scallopMesh(),            base: 0.46,max: 80, label: "Scallop Shell", desc: "A broad, boldly-ribbed fan with neat little wings at the hinge.", rare: 1 },
-  ceramic:  { mesh: () => glassMesh([0.7,0.6,0.5]), base: 0.5, max: 60, label: "Pottery Shard", desc: "Glazed clay, worn at the edges. Who drank from this?", rare: 1 },
+  ceramic:  { mesh: () => ceramicShardMesh(),       base: 0.45,max: 60, label: "Pottery Shard", desc: "Glazed clay, worn at the edges. Who drank from this?", rare: 1 },
   coin:     { mesh: () => coinMesh(),               base: 0.4, max: 60, label: "Old Coin", desc: "Green with age, the face long gone.", rare: 1 },
-  fossil:   { mesh: () => coinMesh(),               base: 0.4, max: 40, label: "Ammonite", desc: "A coiled creature turned to stone.", rare: 2 },   // §look was 0.55: the same coin disc mesh scaled up read far too big in the world; matched to the coin's size
+  fossil:   { mesh: () => fossilMesh(),             base: 0.4, max: 40, label: "Ammonite", desc: "A coiled creature turned to stone.", rare: 2 },   // §models flat stone with a raised spiral imprint; kept at its small item size
   bell:     { mesh: () => bellMesh(),               base: 0.6, max: 20, label: "Ship's Bell", desc: "Verdigris-green bronze. It still rings, faintly.", rare: 2 },
   tin:      { mesh: () => tinMesh(),                base: 0.34,max: 30, label: "Sealed Tin", desc: "Rust-flecked and heavy. Something shifts inside.", rare: 2 },   // §pixui smaller in the world (was oversized)
   // --- materials & seeds (chopping / mining / planting) ---
@@ -7123,10 +7169,7 @@ const FINDS = {
   flower:   { mesh: () => flowerItemMesh(),         base: 0.4, max: 80, label: "Flower", desc: "A bright wild bloom picked from the dune meadows.", rare: 0 },
   fern:     { mesh: () => fernItemMesh(),           base: 0.4, max: 80, label: "Fern", desc: "A soft green frond from the island's shaded interior.", rare: 0 },
   // --- inland raw materials (dug from grass / dirt / forest) ---
-  sand:     { mesh: () => sandMatMesh(),            base: 0.5, max: 60, label: "Sand", desc: "A double handful of sand. Place it to raise the ground.", rare: 0 },
-  dirt:     { mesh: () => dirtMatMesh(),            base: 0.5, max: 60, label: "Dirt", desc: "Dark earth. Place it to build up the ground.", rare: 0 },
-  gravel:   { mesh: () => gravelMatMesh(),          base: 0.5, max: 60, label: "Gravel", desc: "Loose pebbles. Place it to build up the ground.", rare: 0 },
-  mud:      { mesh: () => mudMatMesh(),             base: 0.5, max: 60, label: "Mud", desc: "Heavy, wet mud from the flats. Place it to build.", rare: 0 },
+  // §matrm earth-material items (sand/dirt/gravel/mud) removed with the material-placement feature
   worm:     { mesh: () => wormMesh(),               base: 0.4, max: 80, label: "Earthworm", desc: "A fat worm from the dark soil. Good bait.", rare: 0 },
   bug:      { mesh: () => beetleMesh(),             base: 0.4, max: 80, label: "Bug", desc: "A little bug from under a stone. Good on a hook, or drop it to let it go.", rare: 0, bait: 1 },   // §stonebug legacy generic bug item (kept so old saves still render); new picks give the specific species below
   // §P3 each land bug picked from under a stone is now its OWN item, with its own icon + journal entry (keys match the CREATURES entries); all work as fishing bait and can be dropped to release the live bug
@@ -7189,8 +7232,8 @@ const FINDS = {
   amethyst: { mesh: () => amethystMesh(),           base: 0.5, max: 20, label: "Amethyst", desc: "A cluster of violet crystal from inside a geode. Rare and lovely.", rare: 2 },
   hcmolt:   { mesh: () => horseshoeMesh(),           base: 0.6, max: 40, label: "Horseshoe Molt", desc: "The cast-off shell a horseshoe crab climbed out of as it grew, split at the front, light as paper, perfectly intact.", rare: 1 },
   // §P2 eating leftovers: the empty shells / peel you're left holding after a meal
-  oystershell: { mesh: () => oysterMesh(),           base: 0.5, max: 60, label: "Oyster Shell", desc: "An empty oyster shell, licked clean.", rare: 0, litter: 1 },
-  clamshell:   { mesh: () => clamMesh(),             base: 0.5, max: 60, label: "Clam Shell", desc: "The two empty halves of a clam.", rare: 0, litter: 1 },
+  oystershell: { mesh: () => oysterShellMesh(),      base: 0.5, max: 60, label: "Oyster Shell", desc: "An empty oyster shell, licked clean.", rare: 0, litter: 1 },
+  clamshell:   { mesh: () => clamShellMesh(),         base: 0.5, max: 60, label: "Clam Shell", desc: "The two empty halves of a clam, hinged open.", rare: 0, litter: 1 },
   musselshell: { mesh: () => musselMesh(),           base: 0.45,max: 60, label: "Mussel Shell", desc: "An empty blue-black mussel shell.", rare: 0, litter: 1 },
   bananapeel:  { mesh: () => bananaPeelMesh(),       base: 0.5, max: 60, label: "Banana Peel", desc: "A spent banana peel. Watch your step.", rare: 0, litter: 1 },
 };
@@ -8013,28 +8056,31 @@ function behave(e, dt, d, dx, dz) {
       if (e.burrow <= 0) { e.state = "wander"; spawnSand(e.x, heightAt(e.x,e.z)+0.1, e.z, 5, [0.82,0.76,0.58]); }
       return;
     }
-    // §1c keep crabs on the wet sand band as the tide shifts: outside the band, burrow (if on screen) or quietly reseat (if culled)
+    // §crabfix keep crabs on the wet band by STEERING back (a continuous bias), never by burrowing away; move along a
+    // smoothed heading so they glide instead of vibrating. The old cornered-burrow and out-of-band-burrow (which made
+    // them pop and vanish during normal play) are gone; only the storm shelter above still buries a crab.
     const band = waterLevel - heightAt(e.x, e.z);            // negative = above the water
-    if (band > 0.08 || band < -3.8) {
-      if (lifeVisible(e)) { e.state = "sinking"; e.burrow = 0; spawnSand(e.x, heightAt(e.x,e.z)+0.1, e.z, 8, [0.82,0.76,0.58]); if (crabLog) console.log(`crab#${e.id} out of band (visible) → burrow`); return; }
-      const sp = wetBandSpot(e.hx, e.hz); if (sp) { e.x = sp[0]; e.z = sp[1]; if (crabLog) console.log(`crab#${e.id} out of band (culled) → reseat`); } return;   // invisible: just move it, no pop
+    const grad = groundGradient(e.x, e.z);
+    let bx = 0, bz = 0, off = 0;
+    if (band > -0.3) { off = band + 0.3; bx = -grad.dx; bz = -grad.dz; }        // too dry → steer downhill toward the water
+    else if (band < -3.0) { off = -(band + 3.0); bx = grad.dx; bz = grad.dz; }  // too deep → steer uphill
+    const bw = Math.min(1.6, off * 2.2);
+    let dxD, dzD, spd;
+    if (band > 0.12 || band < -3.9) { dxD = bx; dzD = bz; spd = CRIT_SPD.crab.cruise * 1.15; e.cdState = "wander"; }   // well off the band: head straight back, no burrow
+    else if (d < 9) { const r = Math.hypot(dx, dz) || 1; dxD = dx/r + bx*bw; dzD = dz/r + bz*bw; spd = CRIT_SPD.crab.flee; e.cdState = "flee"; }   // flee the player, curving along the band
+    else {
+      e.timer -= dt; if (e.timer < 0) { e.timer = 1.6 + rng()*2.4; e.wdir = rng()*6.283; }               // re-roll a wander heading only now and then
+      let wx = Math.cos(e.wdir || 0), wz = Math.sin(e.wdir || 0);
+      if (Math.hypot(e.x-e.hx, e.z-e.hz) > e.hr) { wx = e.hx-e.x; wz = e.hz-e.z; }                        // turn home at the edge of its range
+      const wm = Math.hypot(wx, wz) || 1; dxD = wx/wm + bx*bw; dzD = wz/wm + bz*bw; spd = CRIT_SPD.crab.cruise; e.cdState = "wander";
     }
-    if (d < shy && waterDepthAt(e.x, e.z) < 0.1) {           // cornered on dry sand → burrow with a sand puff
-      e.state = "sinking"; e.burrow = 0; spawnSand(e.x, heightAt(e.x,e.z)+0.1, e.z, 8, [0.82,0.76,0.58]); if (crabLog) console.log(`crab#${e.id} cornered → burrow`); return;
-    }
-    // band-follow bias: nudge toward the water if drifting dry, uphill if drifting wet, so it never leaves the visible band
-    const grad = groundGradient(e.x, e.z); let bx = 0, bz = 0;
-    if (band > -0.4) { bx = -grad.dx; bz = -grad.dz; } else if (band < -2.8) { bx = grad.dx; bz = grad.dz; }
-    if (d < 11) {                                            // §R4 flee AWAY from the player, curving ALONG the band (dx,dz already point away)
-      e.cdState = "flee";
-      const r = Math.hypot(dx, dz) || 1; let fx = dx/r + bx*1.6, fz = dz/r + bz*1.6; const m = Math.hypot(fx, fz) || 1;
-      e.x += fx/m*dt*CRIT_SPD.crab.flee; e.z += fz/m*dt*CRIT_SPD.crab.flee; e.yaw = Math.atan2(fz, fx)+1.57; return;
-    }
-    e.cdState = "wander";
-    e.timer -= dt; if (e.timer < 0) { e.timer = 0.6+rng()*1.4; e.vx = (rng()-0.5); e.vz = (rng()-0.5); }
-    const wx = e.vx + bx*1.2, wz = e.vz + bz*1.2;
-    e.x += wx*dt*2.5; e.z += wz*dt*2.5; e.yaw = Math.atan2(wz, wx)+1.57;
-    if (Math.hypot(e.x-e.hx, e.z-e.hz) > e.hr) { e.vx = (e.hx-e.x)*0.1; e.vz = (e.hz-e.z)*0.1; }
+    const dm = Math.hypot(dxD, dzD) || 1; dxD /= dm; dzD /= dm;
+    if (e.hdx === undefined) { e.hdx = dxD; e.hdz = dzD; }                                                // ease a smoothed heading so motion + facing never jitter
+    const k = Math.min(1, dt * (e.cdState === "flee" ? 6 : 3));
+    e.hdx += (dxD - e.hdx) * k; e.hdz += (dzD - e.hdz) * k;
+    const hm = Math.hypot(e.hdx, e.hdz) || 1;
+    e.x += e.hdx/hm * spd * dt; e.z += e.hdz/hm * spd * dt;
+    e.yaw = Math.atan2(e.hdz, e.hdx) + 1.57;                                                              // crab walks sideways, facing its heading
   } else if (e.t === "fish") {
     const fast = d < 12 ? 7 : 2.5;
     e.timer -= dt; if (e.timer < 0 || d < 12) { e.timer = 0.4+rng()*1.2; e.tx = e.hx+(rng()-0.5)*e.hr; e.tz = e.hz+(rng()-0.5)*e.hr; }
@@ -8266,10 +8312,7 @@ function effectiveTarget() {
 // materials & seeds (Phase 6; building comes later)
 digItem("log", "Log", "material", "common", "A length of trunk, fresh-cut.", () => logMesh(), [0.5,0.4,0.28]);
 digItem("stone", "Stone", "material", "common", "A heavy chunk of rock. Place it to build; only a pickaxe removes placed stone.", () => weakStoneMesh(), [0.52,0.5,0.47]);   // §models icon matches the liftable dome stones in the world
-digItem("sand", "Sand", "material", "common", "A double handful of sand. Place it to raise the ground.", () => sandMatMesh(), [0.86,0.78,0.59]);
-digItem("dirt", "Dirt", "material", "common", "Dark earth. Place it to build up the ground.", () => dirtMatMesh(), [0.40,0.30,0.20]);
-digItem("gravel", "Gravel", "material", "common", "Loose pebbles. Place it to build up the ground.", () => gravelMatMesh(), [0.56,0.55,0.51]);
-digItem("mud", "Mud", "material", "common", "Heavy, wet mud from the flats. Place it to build.", () => mudMatMesh(), [0.34,0.28,0.20]);
+// §matrm earth-material items (sand/dirt/gravel/mud) removed with the material-placement feature
 digItem("coconut", "Coconut", "seed", "common", "A palm seed, plant it on sand.", () => coconutMesh(), [0.5,0.38,0.26]);
 digItem("pinecone", "Pine Cone", "seed", "common", "A conifer seed, plant it on soil or grass.", () => coneMesh2(), [0.44,0.32,0.2]);
 digItem("nut", "Nut", "seed", "common", "A broadleaf seed, plant it on soil or grass.", () => nutMesh(), [0.5,0.36,0.22]);
@@ -8281,8 +8324,8 @@ digItem("clam", "Clam", "find", "common", "A plump clam, still closed.", () => c
 digItem("cockle", "Cockle", "find", "common", "A little ribbed cockle shell.", () => cockleMesh(), [0.9,0.85,0.78]);
 digItem("scallop", "Scallop Shell", "find", "uncommon", "A broad, boldly-ribbed scallop fan with little wings at the hinge.", () => scallopMesh(), [0.92,0.82,0.74]);
 digItem("coin", "Old Coin", "find", "uncommon", "A corroded coin, its face long gone.", () => coinMesh(), [0.7,0.6,0.3]);
-digItem("ceramic", "Ceramic Shard", "find", "uncommon", "A piece of painted pottery.", () => glassMesh([0.7,0.6,0.5]), [0.8,0.7,0.6]);
-digItem("fossil", "Fossil", "find", "rare", "An ammonite turned to stone.", () => coinMesh(), [0.55,0.52,0.48]);
+digItem("ceramic", "Ceramic Shard", "find", "uncommon", "A broken piece of glazed pottery.", () => ceramicShardMesh(), [1,1,1]);
+digItem("fossil", "Fossil", "find", "rare", "A flat stone with a coiled shell pressed into its face.", () => fossilMesh(), [1,1,1]);
 digItem("bell", "Ship's Bell", "relic", "rare", "A green bronze bell from a lost vessel.", () => bellMesh(), [0.5,0.6,0.45]);
 digItem("tin", "Sealed Tin", "relic", "rare", "A rusted tin, something rattles inside.", () => tinMesh(), [0.6,0.55,0.5]);
 // §17 wild & farmed crops, foods and their plantable seeds
@@ -9505,7 +9548,6 @@ function clickAt(ndcx, ndcy) {
   if (tool === "shovel") digAt(pt[0], pt[1]);
   else if (tool === "axe") { if (!chopAt(pt[0], pt[1]) && !groundAutoDig(pt)) failStrike(false, pt[0], gy, pt[1]); }   // axe bit nothing → dig or thud
   else if (tool === "pickaxe") { if (!mineAt(pt[0], pt[1]) && !removeBuiltAt(pt[0], pt[1]) && !groundAutoDig(pt)) failStrike(true, pt[0], gy, pt[1]); }   // pick hit bare ground → dig or clink
-  else if (MAT_ITEM[tool] !== undefined) placeMaterial(pt[0], pt[1]);
   else if (SEED_TREE[tool]) plantAt(pt[0], pt[1]);
   else if (CROP_SEED[tool]) plantCrop(pt[0], pt[1]);            // §17 plant a crop seed on soil
   else if (tool === "chestbox") placeStorageBox(pt[0], pt[1]);   // §12C place an emptied chest as storage
@@ -10191,10 +10233,8 @@ function digAt(x, z) {
   const amt = (kind === "wet" ? 1.5 : kind === "dry" ? 1.1 : 0.7) * weak;
   const holeAng = Math.atan2(player.z - z, player.x - x);
   const wasAbove = waterSurfaceAt(x, z) < surfaceAt(x, z).h - 0.02;
-  const matItem = digMaterialItem(x, z);                     // what you dig out (grass → dirt)
-  paintCells(x, z, DIG_R * 0.55, MAT_ITEM[matItem], true);   // the floor of the hole shows the exposed material (grass regrows on heal)
+  paintCells(x, z, DIG_R * 0.55, digMaterialMat(x, z), true);   // the floor of the hole shows the exposed material (grass regrows on heal). §matrm digging no longer yields earth-material items
   applyDig(x, z, amt, holeAng);
-  Inv.add(matItem, 1);                                       // ~1 material per strike
   removeFoliageAround(x, z, DIG_R);                          // clear grass/seaweed with a burst
   spawnSand(x, sy + 0.3, z, 14, kind === "wet" ? [0.62, 0.56, 0.46] : kind === "gravel" ? [0.6, 0.58, 0.55] : [0.86, 0.78, 0.6]);
   if (wasAbove && waterSurfaceAt(x, z) >= surfaceAt(x, z).h - 0.02) spawnInflow(x, z);   // just hit the water table
@@ -10204,33 +10244,16 @@ function digAt(x, z) {
 /* ---- placing materials: raise the ground + paint its surface (§A) ---- */
 const MAT_COL_JS = [[0,0,0], [0.44,0.53,0.31], [0.40,0.30,0.20], [0.86,0.78,0.59], [0.56,0.55,0.51], [0.47,0.44,0.41], [0.34,0.28,0.20]];
 const PLACE_R = 4.8, PLACE_RAISE = 0.7;      // grid is coarse (~3m cells), so a "small" mound still spans a few cells
-function canPlaceAt(x, z) {
-  const dp = Math.hypot(x - player.x, z - player.z);
-  if (dp > REACH + 1.4 || dp < 0.8) return false;                 // out of reach, or inside the player
-  for (const g of goats) if (Math.hypot(g.x - x, g.z - z) < 1.0) return false;
-  for (const e of life) if (e.kind === "creature" && Math.hypot(e.x - x, e.z - z) < 1.0) return false;
-  if (bigPropBlocking(x, z, 0.8)) return false;                   // not inside trees / boulders / POIs
-  return true;
-}
-function placeMaterial(x, z) {
-  const id = selectedTool(), mat = MAT_ITEM[id]; if (mat === undefined) return;
-  if (cottageProtectBlock(x, z)) return;                  // §2 no raising ground on the cottage pad / approach
-  if (!Inv.has(id) || !canPlaceAt(x, z)) return;
-  Inv.remove(id, 1);
-  Terrain.edit(x, z, PLACE_R, PLACE_RAISE, "built", mat);         // raise built height + paint material
-  if (onDig) onDig("plant");
-  spawnSand(x, surfaceAt(x, z).h + 0.2, z, 8, MAT_COL_JS[mat] || [0.7,0.6,0.5]);
-  saveWorld();
-}
-// Pickaxe on placed stone (or any player-built ground) lowers it a step.
+// §matrm canPlaceAt()/placeMaterial() removed with the material-placement feature (earth-material items no longer exist)
+// Pickaxe on any legacy player-built ground lowers it a step (kept so old saves with built mounds can be flattened).
 function removeBuiltAt(x, z) {
   if (inCottageProtected(x, z)) return false;                  // §2 can't pickaxe away the cottage pad
   const i = cellIndex(x, z); if (i < 0 || built[i] <= 0.01) return false;
   Terrain.edit(x, z, PLACE_R, -Math.min(built[i] + 0.2, PLACE_RAISE + 0.2), "built");
   // if fully removed, clear its painted material back to natural
   const j = cellIndex(x, z); if (j >= 0 && built[j] <= 0.02) { material[j] = MAT.NATURAL; updateHeightTex((j%GRID)-2, ((j/GRID)|0)-2, (j%GRID)+2, ((j/GRID)|0)+2); }
-  const give = material[i] === MAT.STONE ? "stone" : material[i] === MAT.GRAVEL ? "gravel" : material[i] === MAT.SAND ? "sand" : material[i] === MAT.MUD ? "mud" : "dirt";
-  Inv.add(give, 1); if (onDig) onDig("mine"); spawnSand(x, surfaceAt(x,z).h + 0.2, z, 6, [0.5,0.5,0.52]);
+  if (material[i] === MAT.STONE) Inv.add("stone", 1);   // §matrm only stone is still an item; other earth materials were removed
+  if (onDig) onDig("mine"); spawnSand(x, surfaceAt(x,z).h + 0.2, z, 6, [0.5,0.5,0.52]);
   saveWorld(); return true;
 }
 /* ===================================================================== *
@@ -11129,12 +11152,12 @@ function updateErosion(gdt) {
   if (any) { rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz); }
 }
 // The material item a strike here yields (grass gives dirt).
-function digMaterialItem(x, z) {
+function digMaterialMat(x, z) {   // §matrm the MAT enum of the exposed hole floor (was digMaterialItem, which also gave an item)
   const m = Terrain.materialAt(x, z);
-  if (m === MAT.SAND) return "sand";
-  if (m === MAT.GRAVEL || m === MAT.STONE) return "gravel";
-  if (m === MAT.MUD) return "mud";
-  return "dirt";                                             // grass, dirt and anything else diggable → dirt
+  if (m === MAT.SAND) return MAT.SAND;
+  if (m === MAT.GRAVEL || m === MAT.STONE) return MAT.GRAVEL;
+  if (m === MAT.MUD) return MAT.MUD;
+  return MAT.DIRT;                                           // grass, dirt and anything else diggable → dirt
 }
 // Per-material walking multiplier (§C walking feel): mud is slow, reef/cobble a touch slower.
 function matSpeedMul(m) { return m === MAT.MUD ? 0.6 : m === MAT.STONE ? 0.85 : m === MAT.GRAVEL ? 0.92 : 1.0; }
@@ -11266,19 +11289,7 @@ function drawDigCellDebug(view) {
   if (n) { propUniforms(view); digCellDbgDyn.draw(a, n); }
 }
 // Ghost preview of where a material would land: a disc on the ground, green = ok, red = blocked.
-const ghostDyn = makeDynamic((function () { const m = discMesh(0, 0.5, 14, 0.02, [1, 1, 1]); return m; })(), 1);
-function drawPlaceGhost(view) {
-  if (mode !== "walk") return;
-  const tool = selectedTool(); if (MAT_ITEM[tool] === undefined) return;
-  const pt = rayGround(0, 0); if (!pt) return;
-  const ok = canPlaceAt(pt[0], pt[1]);
-  const base = MAT_COL_JS[MAT_ITEM[tool]] || [0.7,0.6,0.5];
-  const col = ok ? [base[0]*0.6+0.25, base[1]*0.6+0.4, base[2]*0.6+0.2] : [0.85, 0.3, 0.25];
-  const y = surfaceAt(pt[0], pt[1]).h + 0.08, o = 0, a = ghostScratch;
-  a[o]=pt[0]; a[o+1]=y; a[o+2]=pt[1]; a[o+3]=PLACE_R*2.1; a[o+4]=0; a[o+5]=0; a[o+6]=0; a[o+7]=col[0]; a[o+8]=col[1]; a[o+9]=col[2];
-  propUniforms(view); ghostDyn.draw(a, 1);
-}
-const ghostScratch = new Float32Array(10);
+// §matrm the material-placement ghost (drawPlaceGhost + ghostDyn + ghostScratch) was removed with the feature
 
 /* ---- first-person tool (shovel / axe / pickaxe, built in world space each frame) ---- */
 const TOOL_FP = {};
@@ -11328,12 +11339,12 @@ function drawShovel(view) {
   const swap = toolSwapT*toolSwapT;                                                       // swap dip
   let ox, oy, oz, roll, pitch, scale, toolYaw = 0, flipEnd = false;
   if (eatId) {                                                                            // §P2 EATING: the food lifts up toward the mouth with a quick munch wobble
-    const prog = eatProgress(), raise = Math.min(1, prog * 3);                            // raised in the first third, then held at the mouth
-    const munch = Math.sin(t * 20) * 0.028 * raise;                                       // fast chew wobble
+    const prog = eatProgress(), raise = Math.min(1, prog * 3);                            // raised in the first third, then held low-centre
+    const munch = Math.sin(t * 20) * 0.026 * raise;                                       // fast chew wobble
     scale = 0.5;
-    ox = 0.12 + sway * 0.5;
-    oy = -0.36 + raise * 0.32 + munch + bob * 0.3;                                        // up to the mouth
-    oz = 0.6 - raise * 0.14;                                                              // and in toward the face
+    ox = 0.04 + sway * 0.5;                                                               // §look held more centred on screen
+    oy = -0.5 + raise * 0.24 + munch + bob * 0.3;                                         // §look held lower (doesn't rise all the way up to the mouth)
+    oz = 0.62 - raise * 0.12;                                                             // and in toward the face
     roll = 0.1 + Math.sin(t * 9) * 0.05; pitch = -0.1 - raise * 0.2;
   } else if (isRod) {                                                                     // §fishpolish rod: smaller, gripped low-right, blank pointing FORWARD (away from the player), not leaning across
     const chg = (rod && rod.state === "charging") ? rod.charge : 0, bend = (rod ? rod.bend : 0) || 0;
@@ -13927,7 +13938,6 @@ function frame(now) {
   drawGeodes(view);   // §40 geodes on the cobble & rocky shores
   drawEventTraces(view);   // §B5 crab trails left in the sand after an event
   drawDigCellDebug(view);   // §urgent3 dig-cell state overlay (debug)
-  drawPlaceGhost(view);
   drawParticles(view);
   drawRain(view);       // §20 rain streaks, rings on water, dug-hole puddles
   drawGlints(view);     // §18 shiny finds wink in lantern light at night
