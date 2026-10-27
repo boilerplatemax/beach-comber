@@ -1089,7 +1089,7 @@ let CAUSEWAY = causewayOf(subStream());
 // here because MAT is declared further down; keep in sync with the MAT block.
 const COAST_BIOMES = {
   sandy:   { mat: 3, feet: "sand",  speed: 1.0, tell: 1.0, crit: ["crab"],
-             finds: ["shell","seaglass","sanddollar","moonsnail","cockle","nautilus"], label: "Sandy beach" },
+             finds: ["shell","seaglass","sanddollar","moonsnail","cockle","scallop","nautilus"], label: "Sandy beach" },
   cobble:  { mat: 4, feet: "gravel", speed: 0.92, tell: 0.5, crit: ["crab","hopper"],
              finds: ["seaglass","stone","shell","driftwood","barnacle"], label: "Cobble beach", flip: true },
   reef:    { mat: 5, feet: "rock",  speed: 0.85, tell: 0.4, crit: ["star","anemone","urchin"],
@@ -4988,6 +4988,17 @@ function domePlate(halfW, h, thick, col) { const d=Mesh(); const S=6; let F=[], 
   return d; }
 // §models scale a built mesh's vertices in place (to squash a sphere into an oval dome, etc.).
 function scaleMeshXYZ(mesh, sx, sy, sz) { const P=mesh.pos; for (let i=0;i<P.length;i+=3){ P[i]*=sx; P[i+1]*=sy; P[i+2]*=sz; } return mesh; }
+function rotMeshZ(mesh, a){ const c=Math.cos(a), s=Math.sin(a), P=mesh.pos; for (let i=0;i<P.length;i+=3){ const x=P[i],y=P[i+1]; P[i]=x*c-y*s; P[i+1]=x*s+y*c; } return mesh; }
+function rotMeshX(mesh, a){ const c=Math.cos(a), s=Math.sin(a), P=mesh.pos; for (let i=0;i<P.length;i+=3){ const y=P[i+1],z=P[i+2]; P[i+1]=y*c-z*s; P[i+2]=y*s+z*c; } return mesh; }
+// §shells a parametric spiral shell: a tapering spire (base radius R, height H, profile power pw) wound by a raised
+// ridge over `turns`. High pw + low H = a squat globose snail (moon snail); low pw + tall H = a whelk/turret.
+function spireShell(H, R, pw, turns, c, c2, ridge) {
+  const m=Mesh(); const prof=(t)=>R*Math.pow(1-t, pw); const N=12;
+  for (let i=0;i<N;i++){ const t0=i/N, t1=(i+1)/N; mCyl(m, t0*H, t1*H, prof(t0), prof(t1), 10, i%2?c:c2); }
+  if (ridge){ const pts=[], M=56; for (let i=0;i<=M;i++){ const t=i/M, ang=t*turns*6.2832, rr=prof(t)*1.04; pts.push([Math.cos(ang)*rr, t*H, Math.sin(ang)*rr, ridge*(1-t*0.6)+0.004]); } mPathTube(m, pts, 5, c2); }
+  mergeMesh(m, discMesh(0.0, R, 10, -0.03, c2));   // round the base / aperture
+  return m;
+}
 
 // Base prop meshes (object space, ~1 unit tall; instance scale sets real size).
 const BROWN = [0.34, 0.24, 0.16], BARK = [0.30, 0.22, 0.16];
@@ -5886,12 +5897,13 @@ function urchinMesh(col) { const m = discMesh(0.1,0.3,6,0.15,col); const sp=[col
 // with two big black stalk-eyes, splayed legs and a pair of front claws.
 function hermitMesh(col) { const m = Mesh(); col = col || [0.88,0.78,0.5];
   const shell2=[col[0]*0.86,col[1]*0.86,col[2]*0.84], body=[0.92,0.42,0.14], body2=[0.8,0.34,0.11], eye=[0.06,0.06,0.09], dark=[0.14,0.1,0.1];
-  // --- shell: a proper coiled spire, whorls spiralling up and back and shrinking ---
-  const whorls=[[-0.06,0.3,0.02,0.32],[0.05,0.4,-0.07,0.25],[0.14,0.48,-0.13,0.19],[0.2,0.55,-0.17,0.14],[0.24,0.6,-0.2,0.1],[0.26,0.63,-0.21,0.06]];
-  for (let i=0;i<whorls.length;i++){ const [x,y,z,r]=whorls[i]; mergeAt(m, sphM(r, i%2?shell2:col, 9, 5), x, y, z); }
-  mergeAt(m, sphM(0.12, dark, 7, 3), 0.05, 0.18, 0.18);        // dark aperture (the shell's mouth), facing the body
+  // --- shell: a borrowed whelk, tilted so the spire leans up-and-back and the mouth faces the body ---
+  const whelk = spireShell(0.62, 0.26, 0.82, 3.2, col, shell2, 0.02);
+  rotMeshZ(whelk, 0.95); rotMeshX(whelk, 0.35);                // lean the spire back and a little to the side
+  mergeAt(m, whelk, -0.02, 0.26, -0.02);
+  mergeAt(m, sphM(0.13, dark, 7, 3), 0.12, 0.18, 0.12);        // dark aperture (the shell's mouth), facing the body
   // --- body: orange head poking out of the shell mouth, front-bottom ---
-  mergeAt(m, sphM(0.16, body, 8, 4), 0.26, 0.15, 0.12);
+  mergeAt(m, sphM(0.16, body, 8, 4), 0.28, 0.15, 0.12);
   // --- eyes on short stalks, forward ---
   for (const s of [-1,1]) { mBox(m, 0.32, 0.24, s*0.07, 0.016, 0.07, 0.016, body2); mBox(m, 0.35, 0.31, s*0.08, 0.04, 0.04, 0.04, eye); }
   // --- walking legs, three per side, angular (thigh out, foot down) ---
@@ -5965,14 +5977,7 @@ function sealMesh() { const m = Mesh(); const c=[0.4,0.4,0.42]; for(let i=0;i<7;
 function jellyMesh() { const m = discMesh(0.3,0.4,8,0.25,[0.75,0.7,0.85]); for(let i=0;i<6;i++){const a=i/6*6.283; mTri(m,[Math.cos(a)*0.3,0.3,Math.sin(a)*0.3],[Math.cos(a)*0.3,-0.3,Math.sin(a)*0.3],[Math.cos(a+0.25)*0.3,0.1,Math.sin(a+0.25)*0.3],[0.7,0.65,0.8]);} return m; }
 // finds
 // §shells a spiral whelk: a coiled horn swept along a shrinking helix, big body-whorl at the base, pointed spire on top.
-function shellMesh() { const m = Mesh(); const c=[0.93,0.86,0.75], c2=[0.82,0.72,0.6]; const H=0.64, N=12;
-  const prof = (t) => 0.2*Math.pow(1-t, 0.72);                           // fat base → point, gently convex sides (whelk/turret)
-  for (let i=0;i<N;i++){ const t0=i/N, t1=(i+1)/N; mCyl(m, t0*H, t1*H, prof(t0), prof(t1), 10, i%2?c:c2); }   // the smooth tapering spire
-  const pts=[], turns=4.2, M=56;
-  for (let i=0;i<=M;i++){ const t=i/M, ang=t*turns*6.2832, rr=prof(t)*1.04; pts.push([Math.cos(ang)*rr, t*H, Math.sin(ang)*rr, 0.021*(1-t*0.65)+0.004]); }
-  mPathTube(m, pts, 5, c2);                                              // a raised ridge spiralling up the surface
-  mergeMesh(m, discMesh(0.0, 0.2, 10, -0.03, c2));                       // round the base / aperture
-  return m; }
+function shellMesh() { return spireShell(0.64, 0.2, 0.72, 4.2, [0.93,0.86,0.75], [0.82,0.72,0.6], 0.021); }   // §shells a tall whelk/turret
 // §shells a cockle / scallop: a domed fan of radiating ribs with a hinge umbo and two little ears.
 function cockleMesh() { const m = Mesh(); const c=[0.96,0.84,0.72], c2=[0.88,0.72,0.6], umbo=[0.82,0.68,0.56];
   const ribs=12, rsteps=3, span=2.7, R=0.34, lift=0.15;
@@ -5982,6 +5987,16 @@ function cockleMesh() { const m = Mesh(); const c=[0.96,0.84,0.72], c2=[0.88,0.7
   for (let ai=0; ai<ribs; ai++) for (let ri=0; ri<rsteps; ri++) mQuad(m, P(ai,ri), P(ai+1,ri), P(ai+1,ri+1), P(ai,ri+1), ai%2?c:c2);
   mergeAt(m, sphM(0.05, umbo, 6, 3), 0, 0.02, 0);                        // the hinge umbo
   for (const s of [-1,1]) { const a=s*span/2; mBox(m, Math.cos(a)*0.05, 0.02, Math.sin(a)*0.05, 0.05,0.02,0.035, umbo); }   // little ears
+  return m; }
+// §shells a scallop: a wider, flatter cockle with bolder ribs, a scalloped rim and big flat hinge ears.
+function scallopMesh() { const m = Mesh(); const c=[0.96,0.82,0.74], c2=[0.87,0.66,0.56], umbo=[0.8,0.62,0.52];
+  const ribs=16, rsteps=3, span=2.95, R=0.37, lift=0.1;
+  const P=(ai,ri)=>{ const a=-span/2 + span*ai/ribs, f=ri/rsteps, rr=R*f;
+    const y=lift*Math.sin(f*Math.PI)*(1-0.12*Math.abs(a)/(span/2)), sc=(ri===rsteps)?(1+0.055*((ai%2)?1:-1)):1;
+    return [Math.cos(a)*rr*sc, y, Math.sin(a)*rr*sc]; };
+  for (let ai=0; ai<ribs; ai++) for (let ri=0; ri<rsteps; ri++) mQuad(m, P(ai,ri), P(ai+1,ri), P(ai+1,ri+1), P(ai,ri+1), ai%2?c:c2);
+  for (const s of [-1,1]) { const a=s*span/2; mBox(m, Math.cos(a)*0.09, 0.015, Math.sin(a)*0.09, 0.09,0.012,0.045, umbo); }   // big flat wing-ears at the hinge
+  mergeAt(m, sphM(0.045, umbo, 6, 3), 0, 0.018, 0);                      // hinge umbo
   return m; }
 function glassMesh(col) { const m = Mesh(); mRock(m, mulberry32(7), col); return m; }
 function cuttleMesh() { return discMesh(0.05,0.4,6,0.05,[0.92,0.9,0.85]); }
@@ -6311,7 +6326,10 @@ function sanddollarMesh() { const base=[0.93,0.9,0.84], base2=[0.86,0.83,0.77], 
   }
   mergeAt(m, sphM(0.028, ctr, 6, 3), 0, 0.028, 0);            // the centre knob the petals radiate from
   return m; }
-function moonsnailMesh() { const m = Mesh(); mCyl(m,0,0.22,0.2,0.05,8,[0.6,0.56,0.62]); mergeMesh(m, discMesh(0,0.2,8,0.08,[0.68,0.62,0.66])); return m; }
+// §shells moon snail: a squat, globose spiral (fat round body-whorl, tiny spire) with a grey-mauve sheen.
+function moonsnailMesh() { const m = spireShell(0.3, 0.27, 1.7, 2.6, [0.66,0.6,0.66], [0.56,0.5,0.58], 0.015);
+  mergeMesh(m, discMesh(0.02, 0.2, 9, 0.12, [0.7,0.64,0.7]));           // a rounded cap to fatten the body whorl into a ball
+  return m; }
 // §pixui the mussel now uses the oyster shell shape, in a deep blue-black with a faint pearly facet.
 function musselMesh() { return oysterMesh([0.07,0.09,0.15], [0.13,0.16,0.26]); }
 function limpetMesh() { const m = Mesh(); mCyl(m,0,0.14,0.2,0.0,8,[0.7,0.64,0.5]); mergeMesh(m, discMesh(0,0.2,8,0,[0.6,0.55,0.44])); return m; }
@@ -6794,6 +6812,7 @@ const FINDS = {
   // --- buried finds (dug up with the shovel) ---
   clam:     { mesh: () => clamMesh(),               base: 0.5, max: 80, label: "Clam", desc: "A fat bivalve, hinged shut.", rare: 0 },
   cockle:   { mesh: () => cockleMesh(),             base: 0.42,max: 80, label: "Cockle", desc: "A ribbed little shell from the shallows.", rare: 0 },
+  scallop:  { mesh: () => scallopMesh(),            base: 0.46,max: 80, label: "Scallop Shell", desc: "A broad, boldly-ribbed fan with neat little wings at the hinge.", rare: 1 },
   ceramic:  { mesh: () => glassMesh([0.7,0.6,0.5]), base: 0.5, max: 60, label: "Pottery Shard", desc: "Glazed clay, worn at the edges. Who drank from this?", rare: 1 },
   coin:     { mesh: () => coinMesh(),               base: 0.4, max: 60, label: "Old Coin", desc: "Green with age, the face long gone.", rare: 1 },
   fossil:   { mesh: () => coinMesh(),               base: 0.55,max: 40, label: "Ammonite", desc: "A coiled creature turned to stone.", rare: 2 },
@@ -7452,7 +7471,7 @@ const ECO = {
 };
 const ECO_CRIT = { crab: 1, hopper: 1 };   // the shore critters the zone restock owns (kept off the census top-up)
 const ECO_FIND_BIOME = {   // loose finds the zone restock may wash up, per biome (driftwood & stones lean to the tideline)
-  sandy:   ["shell","seaglass","sanddollar","driftwood","cockle"],
+  sandy:   ["shell","seaglass","sanddollar","driftwood","cockle","scallop"],
   cobble:  ["seaglass","stone","driftwood","shell","barnacle"],
   reef:    ["mussel","limpet","seaglass","shell","barnacle"],
   mudflat: ["clam","cockle","wormcast","driftwood"],
@@ -7958,6 +7977,7 @@ digItem("stick", "Sticks", "material", "common", "Snapped twigs from a crown.", 
 function digItem(id, name, cat, rar, desc, meshFn, tint) { ITEMS[id] = { id, name, category: cat, rarity: rar, stackable: cat !== "relic", maxStack: cat === "relic" ? 1 : 99, desc, model: meshFn, tint: tint || [1,1,1] }; }
 digItem("clam", "Clam", "find", "common", "A plump clam, still closed.", () => clamMesh(), [0.85,0.8,0.72]);
 digItem("cockle", "Cockle", "find", "common", "A little ribbed cockle shell.", () => cockleMesh(), [0.9,0.85,0.78]);
+digItem("scallop", "Scallop Shell", "find", "uncommon", "A broad, boldly-ribbed scallop fan with little wings at the hinge.", () => scallopMesh(), [0.92,0.82,0.74]);
 digItem("coin", "Old Coin", "find", "uncommon", "A corroded coin, its face long gone.", () => coinMesh(), [0.7,0.6,0.3]);
 digItem("ceramic", "Ceramic Shard", "find", "uncommon", "A piece of painted pottery.", () => glassMesh([0.7,0.6,0.5]), [0.8,0.7,0.6]);
 digItem("fossil", "Fossil", "find", "rare", "An ammonite turned to stone.", () => coinMesh(), [0.55,0.52,0.48]);
