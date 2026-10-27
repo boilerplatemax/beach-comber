@@ -5071,6 +5071,23 @@ function spireShell(H, R, pw, turns, c, c2, ridge) {
   mergeMesh(m, discMesh(0.0, R, 10, -0.03, c2));   // round the base / aperture
   return m;
 }
+// §models a coiled snail/hermit shell: a tube swept along a log-spiral IN THE XY PLANE (so the swirl faces
+// sideways, down the Z axis) that fattens toward the opening. Whorls overlap into a rounded globose shell.
+// Returned centred at the origin, coil axis = +Z; the aperture (fat outer end) is dark-capped.
+function coilShellMesh(R, turns, tube0, tube1, c, c2) {
+  const m = Mesh(), pts = [], N = Math.round(turns*16);
+  c2 = c2 || [c[0]*0.82, c[1]*0.82, c[2]*0.82];
+  for (let i=0;i<=N;i++){ const t=i/N, th=t*turns*6.2832, r=R*(0.08 + 0.92*t), tr=tube0 + (tube1-tube0)*t;
+    pts.push([Math.cos(th)*r, Math.sin(th)*r, 0, tr]); }
+  mPathTube(m, pts, 8, c);
+  // dark aperture cap at the fat outer end
+  const e = pts[N], th = turns*6.2832, nx = Math.cos(th), ny = Math.sin(th);
+  mergeAt(m, sphM(tube1*0.92, [0.16,0.12,0.12], 7, 4), e[0], e[1], 0);
+  // a faint lighter spiral seam ridge following the coil
+  const rp=[]; for (let i=0;i<=N;i+=2){ const t=i/N, th2=t*turns*6.2832, r=R*(0.08+0.92*t); rp.push([Math.cos(th2)*r, Math.sin(th2)*r, (tube0+(tube1-tube0)*t)*0.9, 0.006]); }
+  mPathTube(m, rp, 4, c2);
+  return m;
+}
 
 // Base prop meshes (object space, ~1 unit tall; instance scale sets real size).
 const BROWN = [0.34, 0.24, 0.16], BARK = [0.30, 0.22, 0.16];
@@ -6001,25 +6018,22 @@ function starMesh(col) { const m = Mesh(); for(let i=0;i<5;i++){const a0=i/5*6.2
 function urchinMesh(col) { const m = discMesh(0.1,0.3,6,0.15,col); const sp=[col[0]*1.3,col[1]*1.3,col[2]*1.3]; for(let i=0;i<10;i++){const a=i/10*6.283; mTri(m,[Math.cos(a)*0.25,0.1,Math.sin(a)*0.25],[Math.cos(a)*0.5,0.45,Math.sin(a)*0.5],[Math.cos(a+0.25)*0.25,0.1,Math.sin(a+0.25)*0.25],sp);} return m; }
 // §models a chunky low-poly hermit crab: a big rounded shell at the back, an orange body peeking out the front
 // with two big black stalk-eyes, splayed legs and a pair of front claws.
-function hermitMesh(col) { const m = Mesh(); col = col || [0.88,0.78,0.5];
-  const shell2=[col[0]*0.86,col[1]*0.86,col[2]*0.84], body=[0.92,0.42,0.14], body2=[0.8,0.34,0.11], eye=[0.06,0.06,0.09], dark=[0.14,0.1,0.1];
-  // --- shell: a borrowed whelk, seated low on the back so it rests against the body (no floating gap) ---
-  const whelk = spireShell(0.62, 0.27, 0.82, 3.2, col, shell2, 0.02);
-  rotMeshZ(whelk, 0.82); rotMeshX(whelk, 0.32);               // lean the spire back and a little to the side
-  mergeAt(m, whelk, 0.05, 0.19, -0.01);                       // pulled forward + down so the mouth meets the body
-  // dark aperture + a short collar bridging the shell mouth to the body so there is no gap between them
-  mergeAt(m, sphM(0.15, dark, 7, 3), 0.16, 0.16, 0.06);       // enlarged dark aperture (the shell's mouth)
-  mergeAt(m, scaleMeshXYZ(sphM(0.12, body2, 7, 4), 1.2, 1.0, 1.0), 0.22, 0.15, 0.08);   // neck/collar filling the junction
-  // --- body: orange head poking out of the shell mouth, front-bottom (seated back into the aperture) ---
-  mergeAt(m, sphM(0.16, body, 8, 4), 0.3, 0.14, 0.1);
-  // --- eyes on short stalks, forward ---
-  for (const s of [-1,1]) { mBox(m, 0.32, 0.24, s*0.07, 0.016, 0.07, 0.016, body2); mBox(m, 0.35, 0.31, s*0.08, 0.04, 0.04, 0.04, eye); }
-  // --- walking legs, three per side, angular (thigh out, foot down) ---
-  for (const s of [-1,1]) for (let i=0;i<3;i++){ const fx=0.08+i*0.09;
-    mBox(m, fx+0.02, 0.09, s*(0.14+i*0.02), 0.07, 0.022, 0.022, body);
-    mBox(m, fx+0.08, 0.035, s*(0.2+i*0.03), 0.035, 0.035, 0.02, body2); }
+function hermitMesh(col) { const m = Mesh(); col = col || [0.82,0.72,0.52];
+  const body=[0.92,0.42,0.14], body2=[0.8,0.34,0.11], eye=[0.05,0.05,0.07], claw=[0.95,0.5,0.2];
+  // --- borrowed coiled shell at the back: the swirl faces the side, the opening turned toward the body ---
+  const shell = coilShellMesh(0.3, 2.4, 0.06, 0.24, col);
+  rotMeshZ(shell, 2.3);                                        // turn the opening forward toward the emerging body
+  mergeAt(m, shell, -0.06, 0.3, 0);
+  // --- orange body emerging from the shell opening at the front ---
+  mergeAt(m, scaleMeshXYZ(sphM(0.14, body, 8, 4), 1.1, 0.9, 1.0), 0.22, 0.12, 0);
+  // --- small eyes on short stalks, forward ---
+  for (const s of [-1,1]) { mBox(m, 0.3, 0.16, s*0.06, 0.014, 0.05, 0.014, body2); mergeAt(m, sphM(0.028, eye, 6, 3), 0.33, 0.2, s*0.06); }
+  // --- walking legs, three per side (femur out, foot down) ---
+  for (const s of [-1,1]) for (let i=0;i<3;i++){ const fx=0.12+i*0.08;
+    mBox(m, fx, 0.08, s*(0.11+i*0.02), 0.05, 0.02, 0.02, body);
+    mBox(m, fx+0.04, 0.03, s*(0.16+i*0.03), 0.02, 0.055, 0.02, body2); }
   // --- two front claws ---
-  for (const s of [-1,1]) { mBox(m, 0.33, 0.1, s*0.15, 0.055, 0.02, 0.025, body); mergeAt(m, sphM(0.075, body2, 7, 4), 0.42, 0.1, s*0.16); }
+  for (const s of [-1,1]) { mBox(m, 0.3, 0.09, s*0.12, 0.06, 0.025, 0.03, body); mergeAt(m, scaleMeshXYZ(sphM(0.06, claw, 7, 4), 1.2, 0.8, 0.9), 0.4, 0.09, s*0.13); }
   return m; }
 // §14C huntable fish, distinct silhouettes so each reads at a glance
 function flounderMesh(col) { const m = Mesh(); col = col||[0.62,0.56,0.42];   // flat oval, camouflaged on sand
@@ -6850,33 +6864,41 @@ function beetleMesh() { const m = Mesh(), sh=[0.16,0.18,0.21], sh2=[0.24,0.27,0.
   mergeAt(m, scaleMeshXYZ(sphM(0.1, sh2, 8, 4), 1.0, 0.6, 1.05), 0.16, 0.1, 0);        // pronotum collar
   mergeAt(m, scaleMeshXYZ(sphM(0.07, hd, 7, 4), 1.0, 0.7, 1.0), 0.27, 0.09, 0);        // head
   for (const s of [-1,1]) mBox(m, 0.35, 0.11, s*0.035, 0.055,0.009,0.009, hd);          // antennae
-  for (const s of [-1,1]) for (let i=0;i<3;i++){ const lx=-0.06+i*0.12; mBox(m, lx, 0.05, s*0.15, 0.06,0.013,0.013, leg); mBox(m, lx+0.045, 0.0, s*0.21, 0.013,0.05,0.013, leg); }   // six legs (femur out, tibia down)
+  // six legs, tucked under: femur reaches out from beneath the body, tibia drops to a foot on the ground (joined, not floating)
+  for (const s of [-1,1]) for (let i=0;i<3;i++){ const lx=-0.06+i*0.12;
+    mBox(m, lx, 0.07, s*0.09, 0.05, 0.012, 0.055, leg);      // femur out to the side, under the shell
+    mBox(m, lx, 0.035, s*0.13, 0.016, 0.05, 0.016, leg); }   // tibia down to the ground at the femur tip
   return m; }
 // §models shared gastropod base (foot + mantle hump + head + two eye-stalks), head at +X. Snail adds a coiled
 // shell on top; the nudibranch adds a crest of vivid cerata. Slug is just the base.
-function slugBody(col, col2) {
+function slugBody(col, col2, noEyes) {
   const m = Mesh(); col2 = col2 || [col[0]*0.82, col[1]*0.82, col[2]*0.82];
   mergeAt(m, scaleMeshXYZ(sphM(0.12, col, 9, 5), 1.9, 0.6, 0.85), 0, 0.06, 0);        // elongated foot/body
   mergeAt(m, scaleMeshXYZ(sphM(0.085, col2, 8, 4), 1.3, 0.75, 1.0), 0.05, 0.095, 0);   // raised mantle hump
   mergeAt(m, scaleMeshXYZ(sphM(0.06, col, 7, 4), 1.15, 0.9, 1.0), 0.2, 0.07, 0);        // lifted head at +X
-  for (const s of [-1,1]) { mBox(m, 0.24, 0.1, s*0.035, 0.012, 0.06, 0.012, col2); mergeAt(m, sphM(0.018, [0.08,0.07,0.09], 5, 3), 0.25, 0.14, s*0.04); }   // eye-stalks
+  if (!noEyes) for (const s of [-1,1]) {   // two clearly-separated eye-stalks, each with a ball eye at the tip
+    mBox(m, 0.23, 0.115, s*0.05, 0.016, 0.09, 0.016, col2);
+    mergeAt(m, sphM(0.024, [0.06,0.05,0.07], 6, 3), 0.25, 0.17, s*0.05);
+  }
   return m;
 }
 function slugMesh() { return slugBody([0.57,0.46,0.3]); }
-// §models a snail: the slug base with a coiled spiral shell laid over its back.
-function snailMesh(col) { col = col || [0.62,0.5,0.34];
-  const m = slugBody([0.76,0.66,0.52], [0.68,0.58,0.44]);
-  const shell = spireShell(0.34, 0.26, 1.4, 2.8, col, [col[0]*0.82,col[1]*0.82,col[2]*0.82], 0.016);
-  rotMeshZ(shell, 1.35); rotMeshX(shell, -0.2);                                         // lay the coil on its side over the back
-  mergeAt(m, shell, -0.02, 0.15, 0);
+// §models a snail: a cream foot with eye-stalks and a rounded coiled shell standing upright on the back,
+// its spiral facing sideways (the classic look). The coil is in a vertical plane with its axis across the body.
+function snailMesh(col) { col = col || [0.55,0.4,0.26];
+  const m = slugBody([0.9,0.86,0.78], [0.82,0.78,0.7]);
+  const shell = coilShellMesh(0.17, 2.35, 0.035, 0.125, col);
+  rotMeshZ(shell, -1.1);                                  // turn the opening to face down-and-back toward the body
+  mergeAt(m, shell, -0.03, 0.19, 0);
   return m;
 }
-// §models a nudibranch (sea slug): a vivid body with a crest of colourful cerata down the back + two rhinophores.
+// §models a nudibranch (sea slug): a clean vivid body (no eye-stalks) with a crest of colourful cerata down
+// the back and two small rhinophores. Kept simple up front so the face doesn't read as busy.
 function nudibranchMesh(col) { col = col || [0.96,0.42,0.14];
-  const tip = [0.22,0.52,0.96], white = [0.98,0.98,1.0];
-  const m = slugBody(col, [Math.min(1,col[0]*0.9),col[1]*0.7,col[2]*0.6]);
+  const tip = [0.22,0.52,0.96];
+  const m = slugBody(col, [Math.min(1,col[0]*0.9),col[1]*0.7,col[2]*0.6], true);
   for (let i=0;i<6;i++){ const x=(i/5-0.5)*0.26; for (const s of [-1,1]){ const d=Mesh(); mCyl(d,0,0.085,0.02,0.0,5,tip); mergeAt(m, d, x, 0.1, s*0.03); } }   // cerata crest
-  for (const s of [-1,1]) { mBox(m, 0.2, 0.12, s*0.03, 0.012,0.07,0.012, white); mergeAt(m, sphM(0.02, tip, 5, 3), 0.21, 0.17, s*0.03); }   // rhinophores
+  for (const s of [-1,1]) { const d=Mesh(); mCyl(d,0,0.06,0.016,0.004,5,tip); mergeAt(m, d, 0.22, 0.1, s*0.03); }   // two simple rhinophores
   return m;
 }
 function salamanderMesh() { const m = Mesh(), body = [0.14,0.14,0.16], spot = [0.9,0.78,0.22];
