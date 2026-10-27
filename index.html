@@ -7910,6 +7910,7 @@ function rightClickWorld() {
   const tool = selectedTool();
   // §bugfix (releasing a held critter/fish is handled in the mousedown handler, before eating)
   if (tool !== "lantern" && tool !== "bucket") return;
+  if (tool === "bucket") { syncBucket(); if (bucket && !bucket.water) { const w = aimWater(); if (w) { fillBucketAt(w[0], w[1]); return; } } }   // §fill right-click water → fill (else set the bucket down)
   const pt = rayGround(0, 0); if (!pt) return;
   if (Math.hypot(pt[0] - player.x, pt[1] - player.z) > REACH + 1.4) return;   // too far
   if (tool === "lantern") placeLantern(pt[0], pt[1]);
@@ -9059,7 +9060,7 @@ const TUNE = {
   APEX_GRAV_MUL: 0.55,             // §P2 gravity multiplier inside the apex-float window (floatier hang time).
   JUMP_BUFFER: 0.11,                // §P2 pressing Space this long before landing still fires the jump on touchdown.
   EAT_TIME: 1.2,                    // §P2 hold-to-eat duration (s): hold right-click on food this long to finish the meal.
-  FISH_DRAIN_MUL: 2.2,              // §fishfix how fast the reel-gauge needle falls when you stop reeling (bigger = faster).
+  FISH_DRAIN_MUL: 1.6,              // §fishfix how fast the reel-gauge needle falls when you stop reeling (bigger = faster).
   FISH_REEL_MUL: 0.8,               // §fishfix how strongly reeling raises the needle (smaller = gentler / less twitchy).
   FISH_MAX_RISE: 1.1,               // §fishfix cap on the needle's climb rate (tension/s) so one eager click can't fling it way off.
 };
@@ -9789,6 +9790,28 @@ function waterKindAt(x, z) {
 }
 // §P2 left-click with a bucket: aiming at water → fill; else → open the bucket's own screen.
 // (Aiming at a creature is handled earlier in useToolOnTarget as a scoop.)
+// §fill Find a fillable water spot the player is aiming at (or standing beside). The old test took the
+// single seabed point under the crosshair; on a shallow / sloped bottom that point can land out of reach
+// even though the water's edge is right there, so left-click "did nothing but open the menu". This marches
+// the aim ray and takes the first in-reach point whose cell actually holds water, with a short forward
+// fallback for when the aim sits a touch above the surface. Returns [x, z, kind] or null.
+function aimWater() {
+  const r = rayFromNDC(0, 0);
+  if (r) {
+    for (let tt = 0.4; tt < REACH + 3.0; tt += 0.35) {
+      const x = r.o[0] + r.d[0]*tt, y = r.o[1] + r.d[1]*tt, z = r.o[2] + r.d[2]*tt;
+      const k = waterKindAt(x, z);
+      if (k && y <= waterSurfaceAt(x, z) + 0.12 && Math.hypot(x - player.x, z - player.z) <= REACH + 1.4) return [x, z, k];
+      if (y <= surfaceAt(x, z).h - 0.05) break;   // ray went into dry seabed / ground → stop
+    }
+  }
+  const fx = Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);   // fallback: step forward from the player
+  for (let d = 1.0; d <= REACH + 1.2; d += 0.7) {
+    const x = player.x + fx*d, z = player.z + fz*d, k = waterKindAt(x, z);
+    if (k) return [x, z, k];
+  }
+  return null;
+}
 // §bugfix fill the held bucket from a real water surface (only called once the target is confirmed to be water).
 function fillBucketAt(x, z) {
   const kind = waterKindAt(x, z); if (!kind || bucket.water) return false;
@@ -9803,10 +9826,7 @@ function fillBucketAt(x, z) {
 // It never fills from land, and never falls through to a dig / punch.
 function bucketLeftClick() {
   syncBucket(); if (!bucket) return;
-  const pt = rayGround(0, 0);
-  if (pt && !bucket.water && Math.hypot(pt[0] - player.x, pt[1] - player.z) <= REACH + 1.4 && waterKindAt(pt[0], pt[1])) {
-    fillBucketAt(pt[0], pt[1]); return;
-  }
+  if (!bucket.water) { const w = aimWater(); if (w) { fillBucketAt(w[0], w[1]); return; } }   // §fill aim at water → scoop it up
   openBucketMenu(bucket);   // the bucket's own screen (pour / release live there)
 }
 // Pour water into a dug hole → a little standing pond (crop-watering hook: onWaterGround).
