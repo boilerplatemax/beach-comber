@@ -1423,13 +1423,13 @@ const DAY_PERIOD = 600;              // seconds per full day (~10 min)
 let dayNightEnabled = true;   // §P1 on by default now (debug panel can still pause/scrub time)
 try { const v = localStorage.getItem("bc_daynight"); if (v !== null) dayNightEnabled = v === "1"; } catch (e) {}
 function setDayNight(on) { dayNightEnabled = on; if (!on) { timeOfDay = MORNING_TIME; updateSun(); } try { localStorage.setItem("bc_daynight", on ? "1" : "0"); } catch (e) {} }
-const BASE_FOG_DENSITY = 0.0016, BASE_FOG_NEAR = 50.0;   // §13.6 base; graphics settings scale these live
+const BASE_FOG_DENSITY = 0.0012, BASE_FOG_NEAR = 58.0;   // §13.6 base; graphics settings scale these live · §VIB lighter + pushed back so the foreground stays vibrant
 let FOG_DENSITY = BASE_FOG_DENSITY;   // see far across the big landscape, still hazy
 let FOG_NEAR = BASE_FOG_NEAR;         // clear band before fog ramps in
 let baseFogDensity = BASE_FOG_DENSITY, baseFogNear = BASE_FOG_NEAR;   // §20 GFX-scaled base; weather adds fog on top each frame
 
 // Day & night palettes; SKY is the blended current state (uploaded each frame).
-const SKY_DAY = { zenith: [0.42, 0.54, 0.63], horizon: [0.78, 0.77, 0.72], warm: [1.00, 0.92, 0.78] };
+const SKY_DAY = { zenith: [0.38, 0.56, 0.72], horizon: [0.84, 0.82, 0.76], warm: [1.10, 0.97, 0.76] };   // §VIB more saturated sky blue, warmer/brighter sun, warm-cream horizon (less grey)
 // §18 a deep moonlit blue, never black, brighter toward the horizon so silhouettes stay readable
 const SKY_NIGHT = { zenith: [0.06, 0.09, 0.19], horizon: [0.15, 0.19, 0.31], warm: [0.42, 0.48, 0.64] };
 const SKY = { zenith: [0,0,0], horizon: [0,0,0], warm: [0,0,0], sun: [0,0,0], moon: [0,0,0] };
@@ -2508,12 +2508,13 @@ void main() {
   float h = vWorld.y;
   float slope = 1.0 - clamp(n.y, 0.0, 1.0);
 
-  vec3 cSeafloor = vec3(0.42, 0.46, 0.40);
-  vec3 cSandWet  = vec3(0.74, 0.67, 0.51);
-  vec3 cSandDry  = vec3(0.87, 0.79, 0.60);
-  vec3 cGrass    = vec3(0.44, 0.53, 0.31);
-  vec3 cForest   = vec3(0.23, 0.35, 0.21);
-  vec3 cRock     = vec3(0.46, 0.43, 0.40);
+  // §VIB richer, warmer base colours (tuned to read right after lighting + tone-map + grade)
+  vec3 cSeafloor = vec3(0.40, 0.52, 0.44);
+  vec3 cSandWet  = vec3(0.66, 0.50, 0.32);   // rich tan (a touch deeper so lit wet sand doesn't wash out)
+  vec3 cSandDry  = vec3(0.90, 0.76, 0.47);   // saturated warm gold (deeper than #f0d9a0 so bright sun keeps it golden, not white)
+  vec3 cGrass    = vec3(0.49, 0.70, 0.27);   // lush ~#7cb342
+  vec3 cForest   = vec3(0.30, 0.52, 0.24);   // deep lush green ~#5e9e3a-ish
+  vec3 cRock     = vec3(0.49, 0.45, 0.41);
 
   // Bands rescaled for the big world: a wide sand beach before the dunes.
   vec3 col = cSeafloor;
@@ -2528,9 +2529,9 @@ void main() {
   float m = texture(uMaterial, muv).r;
   if (m > 0.5) {
     vec3 mc = cGrass;
-    if      (m < 1.5) mc = vec3(0.44, 0.53, 0.31);   // grass
-    else if (m < 2.5) mc = vec3(0.40, 0.30, 0.20);   // dirt
-    else if (m < 3.5) mc = vec3(0.86, 0.78, 0.59);   // sand
+    if      (m < 1.5) mc = vec3(0.49, 0.70, 0.27);   // grass (matches the lush band)
+    else if (m < 2.5) mc = vec3(0.42, 0.31, 0.20);   // dirt
+    else if (m < 3.5) mc = vec3(0.90, 0.76, 0.47);   // sand (matches the golden band)
     else if (m < 4.5) mc = vec3(0.56, 0.55, 0.51);   // gravel
     else if (m < 5.5) mc = vec3(0.47, 0.44, 0.41);   // stone
     else              mc = vec3(0.34, 0.28, 0.20);   // mud
@@ -2559,10 +2560,10 @@ void main() {
   float diff = max(dot(n, normalize(uSunDir)), 0.0);
   if (uHemi == 1) {
     float up = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
-    vec3 sky = mix(uHorizon, uZenith, up);               // cool dome fill
-    vec3 gnd = mix(uWarm * 0.9, col * 1.25, 0.5);         // warm bounce, tinted by the ground colour
-    vec3 amb = mix(gnd, sky, up) * 0.72;                  // hemisphere blend
-    col *= amb + uWarm * (diff * 0.72) + 0.04;            // + warm sun, tiny floor so nothing is pure black
+    vec3 sky = mix(uHorizon, uZenith, up);               // sky-blue dome fill (zenith is a saturated blue, never grey)
+    vec3 gnd = mix(uWarm * 0.95, col * 1.3, 0.5);         // warm bounce, tinted by the ground colour
+    vec3 amb = mix(gnd, sky, up) * 0.70;                  // §VIB hemisphere ambient
+    col *= amb + uWarm * (diff * 0.82 + 0.18);            // §VIB warm sun + a warm ambient floor so shadowed ground stays warm, never near-black
   } else {
     col *= (0.55 + 0.55 * diff);
     col *= mix(vec3(0.88, 0.91, 0.99), uWarm, diff);
@@ -2592,7 +2593,7 @@ void main() {
   col = mix(col, fogCol, fog);
   // §ATMO #5 thin low-lying sea mist: distant ground near the waterline hazes out into the horizon haze.
   if (uFogSun == 1) {
-    float mist = exp(-max(h - uWaterLevel, 0.0) * 0.22) * smoothstep(12.0, 55.0, dist) * 0.3;
+    float mist = exp(-max(h - uWaterLevel, 0.0) * 0.22) * smoothstep(16.0, 60.0, dist) * 0.18;   // §VIB thinner sea mist so the foreground stays vibrant
     col = mix(col, fogCol, mist);
   }
 
@@ -2756,14 +2757,14 @@ void main() {
 
   if (vPool > 0.5) {
     // still, clear tide pool: see the bottom, slight green tint
-    vec3 pdeep = vec3(0.12, 0.28, 0.28), pshallow = vec3(0.34, 0.47, 0.42);
+    vec3 pdeep = vec3(0.14, 0.44, 0.46), pshallow = vec3(0.34, 0.72, 0.70);   // §VIB brighter turquoise tide pool
     float dm = smoothstep(0.0, 1.6, depth);
     col = mix(pshallow, pdeep, dm);
     vec3 refl = reflect(-v, n);
     col = mix(col, skyColor(refl, uSunDir, uZenith, uHorizon, uWarm), pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.3);
     alpha = clamp(0.3 + depth * 0.25, 0.25, 0.72);
   } else {
-    vec3 deep = vec3(0.05, 0.20, 0.26), shallow = vec3(0.30, 0.52, 0.52);
+    vec3 deep = vec3(0.12, 0.44, 0.55), shallow = vec3(0.25, 0.76, 0.79);   // §VIB bright turquoise ~#3fc1c9 → deep ~#1f6f8b
     float dmix = smoothstep(0.0, 6.0, depth);
     col = mix(shallow, deep, dmix);
     vec3 refl = reflect(-v, n);
@@ -2907,6 +2908,8 @@ uniform float uBrightness;                      // §18 gamma lift, see into the
 uniform int uTonemap;                           // §ATMO #3 ACES filmic tone-map on/off
 uniform float uExposure;                        // §ATMO #3 pre-tonemap exposure
 uniform float uVigAmt;                          // §ATMO #9 base atmospheric vignette strength (0 = off)
+uniform int uGrade;                             // §VIB colour grade on/off
+uniform float uVibrance, uSaturation, uContrast, uWarmth;   // §VIB grade controls
 const float bayer[16] = float[16](
   0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
   3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
@@ -2917,6 +2920,16 @@ void main() {
   vec3 c = texture(uScene, vUv).rgb;                                              // read unclamped so the tone-map can roll off >1 highlights
   if (uTonemap == 1) c = aces(max(c, 0.0) * uExposure);                           // §ATMO #3 filmic curve + exposure, BEFORE dither/quantize
   c = clamp(c, 0.0, 1.0);
+  // §VIB colour grade (after tone-map, before quantize): warmth, contrast, saturation, vibrance. Puts the
+  // colour the tone-map + palette quantization drained back in, boosting muted tones more so nothing goes neon.
+  if (uGrade == 1) {
+    c.r *= (1.0 + uWarmth); c.b *= (1.0 - uWarmth);                               // warm / cool tint
+    c = clamp((c - 0.5) * uContrast + 0.5, 0.0, 1.0);                             // contrast about mid-grey
+    float lum = dot(c, vec3(0.299, 0.587, 0.114));
+    c = mix(vec3(lum), c, uSaturation);                                          // global saturation
+    float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
+    c = clamp(mix(vec3(lum), c, 1.0 + uVibrance * (1.0 - (mx - mn))), 0.0, 1.0);  // vibrance: lift muted colours more than already-saturated ones
+  }
   if (uBrightness != 1.0) c = clamp(pow(c, vec3(1.0 / uBrightness)), 0.0, 1.0);   // §18 brightness/gamma
   if (uHungerFx > 0.001) { float g = dot(c, vec3(0.299, 0.587, 0.114)); c = mix(c, vec3(g), uHungerFx * 0.7); }  // desaturate when starving
   float levels = 8.0;
@@ -4033,20 +4046,22 @@ function saveGFX() { try { const o = { preset: GFX.preset }; for (const k of GFX
  *     #9 vignette  a subtle focus darkening at the frame edge.
  * ===================================================================== */
 const ATMO = {
-  tonemap: true, exposure: 1.06,
+  tonemap: true, exposure: 1.1,
   hemi: true,
   fogsun: true,
   groundnoise: true,
   vignette: true, vigAmt: 0.42,
+  // §VIB post colour grade: vibrance lifts muted colours most, saturation is global, contrast + warmth finish it.
+  grade: true, vibrance: 0.33, saturation: 1.18, contrast: 1.07, warmth: 0.05,
 };
 // Which atmosphere effects each graphics preset turns on. They are all nearly
 // free, so only the very lowest preset trims the extra ground-noise octaves;
 // the cost-tiering that matters lands with the heavier later installment.
 const ATMO_PRESETS = {
-  low:    { tonemap: true, hemi: true, fogsun: true, groundnoise: false, vignette: true },
-  medium: { tonemap: true, hemi: true, fogsun: true, groundnoise: true,  vignette: true },
-  high:   { tonemap: true, hemi: true, fogsun: true, groundnoise: true,  vignette: true },
-  ultra:  { tonemap: true, hemi: true, fogsun: true, groundnoise: true,  vignette: true },
+  low:    { tonemap: true, hemi: true, fogsun: true, groundnoise: false, vignette: true, grade: true },
+  medium: { tonemap: true, hemi: true, fogsun: true, groundnoise: true,  vignette: true, grade: true },
+  high:   { tonemap: true, hemi: true, fogsun: true, groundnoise: true,  vignette: true, grade: true },
+  ultra:  { tonemap: true, hemi: true, fogsun: true, groundnoise: true,  vignette: true, grade: true },
 };
 function applyAtmoPreset(name) { const a = ATMO_PRESETS[name]; if (a) for (const k in a) ATMO[k] = a[k]; }
 // §UI "Pixelated UI text": renders UI text aliased (crisp, retro pixels) instead of anti-aliased, and
@@ -5325,9 +5340,9 @@ void main() {
   if (uHemi == 1) {   // §ATMO #2 hemisphere ambient, matching the terrain (cool sky above, warm bounce below)
     float up = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
     vec3 sky = mix(uHorizon, uZenith, up);
-    vec3 gnd = mix(uWarm * 0.9, vCol * 1.25, 0.5);
-    vec3 amb = mix(gnd, sky, up) * 0.72;
-    col = vCol * (amb + uWarm * (diff * 0.72) + 0.04);
+    vec3 gnd = mix(uWarm * 0.95, vCol * 1.3, 0.5);
+    vec3 amb = mix(gnd, sky, up) * 0.70;
+    col = vCol * (amb + uWarm * (diff * 0.82 + 0.18));   // §VIB warm sun + warm ambient floor on foliage/props too
   } else {
     col = vCol * (0.5 + 0.6 * diff);
     col *= mix(vec3(0.85, 0.89, 0.99), uWarm, diff);
@@ -8943,8 +8958,14 @@ function syncDebugPanel() {
     </div>
     <div class="dbgrow">
       <button class="dbgatmo${ATMO.vignette?' on':''}" data-at="vignette" style="${ATMO.vignette?'background:#5a8f6a':''}">Vignette: ${ATMO.vignette?"ON":"off"}</button>
+      <button class="dbgatmo${ATMO.grade?' on':''}" data-at="grade" style="${ATMO.grade?'background:#5a8f6a':''}">Colour grade: ${ATMO.grade?"ON":"off"}</button>
     </div>
-    <label>Exposure <b id="dbgExpV">${ATMO.exposure.toFixed(2)}</b> <input id="dbgExp" type="range" min="0.6" max="1.6" step="0.02" value="${ATMO.exposure}"></label>
+    <div class="jhint" style="margin:4px 0">§VIB colour grade (send these back to me):</div>
+    <label>Exposure <b class="atv" data-ak="exposure">${ATMO.exposure.toFixed(2)}</b> <input class="dbgatv" data-ak="exposure" type="range" min="0.6" max="1.6" step="0.02" value="${ATMO.exposure}"></label>
+    <label>Vibrance <b class="atv" data-ak="vibrance">${ATMO.vibrance.toFixed(2)}</b> <input class="dbgatv" data-ak="vibrance" type="range" min="0" max="1" step="0.02" value="${ATMO.vibrance}"></label>
+    <label>Saturation <b class="atv" data-ak="saturation">${ATMO.saturation.toFixed(2)}</b> <input class="dbgatv" data-ak="saturation" type="range" min="0.5" max="1.8" step="0.02" value="${ATMO.saturation}"></label>
+    <label>Contrast <b class="atv" data-ak="contrast">${ATMO.contrast.toFixed(2)}</b> <input class="dbgatv" data-ak="contrast" type="range" min="0.8" max="1.4" step="0.01" value="${ATMO.contrast}"></label>
+    <label>Warmth <b class="atv" data-ak="warmth">${ATMO.warmth.toFixed(2)}</b> <input class="dbgatv" data-ak="warmth" type="range" min="-0.2" max="0.3" step="0.01" value="${ATMO.warmth}"></label>
     <h3>Weather, ${weather ? (weather.forced ? "forced " : "") + WEATHER_LABEL[weather.state] : ", "}</h3>
     <div class="dbgrow"><button data-wx="clear">Clear</button><button data-wx="overcast">Overcast</button><button data-wx="fog">Fog</button><button data-wx="rain">Rain</button><button data-wx="storm">Storm</button><button data-wx="">Auto</button></div>
     <div class="dbgrow"><button id="dbgStormMorn">Skip to post-storm morning</button></div>
@@ -9022,7 +9043,8 @@ function syncDebugPanel() {
   p.querySelector("#dbgDeep").onclick = () => teleportToDeepWater();
   p.querySelector("#dbgAlert").onclick = () => { showAlert = !showAlert; syncDebugPanel(); };   // §14C
   p.querySelectorAll(".dbgatmo").forEach(b => b.onclick = () => { const k = b.dataset.at; ATMO[k] = !ATMO[k]; syncDebugPanel(); });   // §ATMO per-effect A/B toggles
-  { const ex = p.querySelector("#dbgExp"); if (ex) ex.oninput = (e) => { ATMO.exposure = +e.target.value; const v = p.querySelector("#dbgExpV"); if (v) v.textContent = ATMO.exposure.toFixed(2); }; }
+  p.querySelectorAll(".dbgatv").forEach(el => el.oninput = (e) => { const k = el.dataset.ak, v = +e.target.value; ATMO[k] = v;   // §VIB grade sliders
+    const b = p.querySelector(`.atv[data-ak="${k}"]`); if (b) b.textContent = v.toFixed(2); });
   p.querySelectorAll(".dbgtune").forEach((el) => el.oninput = (e) => {
     const k = el.dataset.k, v = +e.target.value; DBG_SET(k, v);
     const b = p.querySelector(`.tv[data-k="${k}"]`); if (b) b.textContent = v.toFixed(v < 0.01 ? 3 : 2);
@@ -13838,6 +13860,9 @@ function frame(now) {
   gl.uniform1i(postU.uTonemap, ATMO.tonemap ? 1 : 0);        // §ATMO #3
   gl.uniform1f(postU.uExposure, ATMO.exposure);
   gl.uniform1f(postU.uVigAmt, ATMO.vignette ? ATMO.vigAmt : 0.0);   // §ATMO #9 (0 keeps only the gameplay hunger/air vignettes)
+  gl.uniform1i(postU.uGrade, ATMO.grade ? 1 : 0);                   // §VIB colour grade
+  gl.uniform1f(postU.uVibrance, ATMO.vibrance); gl.uniform1f(postU.uSaturation, ATMO.saturation);
+  gl.uniform1f(postU.uContrast, ATMO.contrast); gl.uniform1f(postU.uWarmth, ATMO.warmth);
   gl.bindVertexArray(fsTri);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   countDraw(1);
@@ -13990,8 +14015,8 @@ function frame(now) {
       `tris  ${(frameTris / 1000).toFixed(0)}k\n` +
       `res   ${fbo.w}x${fbo.h}\n` +
       `gpu   ${_gpuExt ? _gpuMs.toFixed(2) + " ms (scene+post)" : "n/a (SwiftShader)"}\n` +
-      `atmo  ${ATMO.tonemap ? "tone " : ""}${ATMO.hemi ? "hemi " : ""}${ATMO.fogsun ? "mist " : ""}${ATMO.groundnoise ? "gnoise " : ""}${ATMO.vignette ? "vig" : ""}\n` +
-      `      (toggle in debug panel → Atmosphere; watch gpu ms for cost)\n` +
+      `atmo  ${ATMO.tonemap ? "tone " : ""}${ATMO.hemi ? "hemi " : ""}${ATMO.fogsun ? "mist " : ""}${ATMO.groundnoise ? "gnoise " : ""}${ATMO.vignette ? "vig " : ""}${ATMO.grade ? "grade" : ""}\n` +
+      `grade exp ${ATMO.exposure.toFixed(2)}  vib ${ATMO.vibrance.toFixed(2)}  sat ${ATMO.saturation.toFixed(2)}  con ${ATMO.contrast.toFixed(2)}  warm ${ATMO.warmth.toFixed(2)}\n` +
       `pos   ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}\n` +
       `slope ${_curSlopeDeg.toFixed(0)}°  spd ×${_curSpeedMul.toFixed(2)}${player.sprinting ? " sprint" : ""}  steps ${stepsPerSec()}/s\n` +
       `audio ${SND.ctx ? SND.ctx.state : "not started"}${SND.muted ? " muted" : ""}  vox ${SND.ctx ? SND.activeVoices() : 0}\n` +
