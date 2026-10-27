@@ -5071,21 +5071,27 @@ function spireShell(H, R, pw, turns, c, c2, ridge) {
   mergeMesh(m, discMesh(0.0, R, 10, -0.03, c2));   // round the base / aperture
   return m;
 }
-// §models a coiled snail/hermit shell: a tube swept along a log-spiral IN THE XY PLANE (so the swirl faces
-// sideways, down the Z axis) that fattens toward the opening. Whorls overlap into a rounded globose shell.
-// Returned centred at the origin, coil axis = +Z; the aperture (fat outer end) is dark-capped.
-function coilShellMesh(R, turns, tube0, tube1, c, c2) {
-  const m = Mesh(), pts = [], N = Math.round(turns*16);
-  c2 = c2 || [c[0]*0.82, c[1]*0.82, c[2]*0.82];
-  for (let i=0;i<=N;i++){ const t=i/N, th=t*turns*6.2832, r=R*(0.08 + 0.92*t), tr=tube0 + (tube1-tube0)*t;
-    pts.push([Math.cos(th)*r, Math.sin(th)*r, 0, tr]); }
-  mPathTube(m, pts, 8, c);
-  // dark aperture cap at the fat outer end
-  const e = pts[N], th = turns*6.2832, nx = Math.cos(th), ny = Math.sin(th);
-  mergeAt(m, sphM(tube1*0.92, [0.16,0.12,0.12], 7, 4), e[0], e[1], 0);
-  // a faint lighter spiral seam ridge following the coil
-  const rp=[]; for (let i=0;i<=N;i+=2){ const t=i/N, th2=t*turns*6.2832, r=R*(0.08+0.92*t); rp.push([Math.cos(th2)*r, Math.sin(th2)*r, (tube0+(tube1-tube0)*t)*0.9, 0.006]); }
-  mPathTube(m, rp, 4, c2);
+// §models a solid coiled shell (the nautilus construction): a fattening circular cross-section swept along a
+// log-spiral in the XY plane, so the swirl faces sideways (down +Z). With generous overlap (low growth, fat
+// tube) the whorls merge into a smooth solid spiral with no gaps/cracks. A dark aperture caps the open end.
+// Centred on the origin by default. Used (tuned) for the snail, hermit and moon-snail shells.
+function spiralShellMesh(opts) {
+  opts = opts || {}; const m = Mesh();
+  const sides = opts.sides || 8, turns = opts.turns || 2.5, steps = opts.steps || Math.round(turns*18);
+  const r0 = opts.r0 || 0.05, growth = opts.growth || 1.72, tubeF = opts.tubeF || 0.72;
+  const c1 = opts.c1 || [0.9,0.84,0.66], c2 = opts.c2 || [0.78,0.64,0.46];
+  let prev = null, lastC = [0,0], lastTube = 0;
+  for (let i=0;i<=steps;i++){ const t=i/steps*turns, th=t*6.2832;
+    const R=r0*Math.pow(growth,t), tube=R*tubeF, radx=Math.cos(th), rady=Math.sin(th), cx=radx*R, cy=rady*R;
+    const ring=[]; for (let s=0;s<sides;s++){ const a=s/sides*6.2832, ca=Math.cos(a)*tube, sa=Math.sin(a)*tube; ring.push([cx+radx*ca, cy+rady*ca, sa]); }
+    if (prev){ const col = (Math.floor(t*6)%2===0) ? c1 : c2;   // subtle two-tone bands around the coil
+      for (let s=0;s<sides;s++){ const s2=(s+1)%sides; mQuad(m, prev[s], prev[s2], ring[s2], ring[s], col); } }
+    prev=ring; lastC=[cx,cy]; lastTube=tube;
+  }
+  if (opts.aperture !== false) mergeAt(m, sphM(lastTube*0.8, [0.14,0.1,0.11], 7, 4), lastC[0], lastC[1], 0);   // dark opening
+  if (opts.center !== false) { const P=m.pos; let a=1e9,b=-1e9,c=1e9,d=-1e9;   // centre the coil on the origin (x,y)
+    for (let i=0;i<P.length;i+=3){ if(P[i]<a)a=P[i]; if(P[i]>b)b=P[i]; if(P[i+1]<c)c=P[i+1]; if(P[i+1]>d)d=P[i+1]; }
+    const ox=(a+b)/2, oy=(c+d)/2; for (let i=0;i<P.length;i+=3){ P[i]-=ox; P[i+1]-=oy; } }
   return m;
 }
 
@@ -6020,10 +6026,10 @@ function urchinMesh(col) { const m = discMesh(0.1,0.3,6,0.15,col); const sp=[col
 // with two big black stalk-eyes, splayed legs and a pair of front claws.
 function hermitMesh(col) { const m = Mesh(); col = col || [0.82,0.72,0.52];
   const body=[0.92,0.42,0.14], body2=[0.8,0.34,0.11], eye=[0.05,0.05,0.07], claw=[0.95,0.5,0.2];
-  // --- borrowed coiled shell at the back: the swirl faces the side, the opening turned toward the body ---
-  const shell = coilShellMesh(0.3, 2.4, 0.06, 0.24, col);
-  rotMeshZ(shell, 2.3);                                        // turn the opening forward toward the emerging body
-  mergeAt(m, shell, -0.06, 0.3, 0);
+  // --- borrowed coiled shell at the back: a solid spiral (no cracks), swirl to the side, opening toward the body ---
+  const shell = spiralShellMesh({ turns:2.7, r0:0.06, growth:1.72, tubeF:0.74, c1:[0.92,0.86,0.68], c2:[0.8,0.64,0.46] });
+  rotMeshZ(shell, 2.5);                                        // turn the opening forward toward the emerging body
+  mergeAt(m, shell, -0.05, 0.3, 0);
   // --- orange body emerging from the shell opening at the front ---
   mergeAt(m, scaleMeshXYZ(sphM(0.14, body, 8, 4), 1.1, 0.9, 1.0), 0.22, 0.12, 0);
   // --- small eyes on short stalks, forward ---
@@ -6121,6 +6127,14 @@ function scallopMesh() { const m = Mesh(); const c=[0.96,0.82,0.74], c2=[0.87,0.
   mergeAt(m, sphM(0.045, umbo, 6, 3), 0, 0.018, 0);                      // hinge umbo
   return m; }
 function glassMesh(col) { const m = Mesh(); mRock(m, mulberry32(7), col); return m; }
+// §models sea glass: a rounded, wave-tumbled pebble (not a jagged shard) with a brighter inner facet to fake
+// the frosted shine / translucency. Vibrant by default; variants pass their own colour (red, end-of-day).
+function seaGlassMesh(col) { col = col || [0.3,0.84,0.5]; const m = Mesh();
+  const hi = [Math.min(1,col[0]*0.5+0.5), Math.min(1,col[1]*0.5+0.5), Math.min(1,col[2]*0.5+0.5)];   // lighter, toward white: the frosted highlight
+  mergeAt(m, scaleMeshXYZ(sphM(0.22, col, 9, 5), 1.15, 0.66, 0.92), 0, 0.1, 0);        // rounded tumbled pebble
+  mergeAt(m, scaleMeshXYZ(sphM(0.12, hi, 7, 4), 1.0, 0.5, 0.85), 0.03, 0.17, 0.03);     // bright top facet = shine
+  return m;
+}
 function cuttleMesh() { return discMesh(0.05,0.4,6,0.05,[0.92,0.9,0.85]); }
 // §13.3 a small curled, drab dried husk, the sun-dried remains of a soft shore creature
 function huskMesh() { const m = discMesh(0.0,0.26,6,0.17,[0.56,0.5,0.42]); mergeMesh(m, discMesh(0.0,0.24,6,-0.08,[0.47,0.42,0.35])); return m; }
@@ -6449,8 +6463,10 @@ function sanddollarMesh() { const base=[0.93,0.9,0.84], base2=[0.86,0.83,0.77], 
   mergeAt(m, sphM(0.028, ctr, 6, 3), 0, 0.028, 0);            // the centre knob the petals radiate from
   return m; }
 // §shells moon snail: a squat, globose spiral (fat round body-whorl, tiny spire) with a grey-mauve sheen.
-function moonsnailMesh() { const m = spireShell(0.3, 0.27, 1.7, 2.6, [0.66,0.6,0.66], [0.56,0.5,0.58], 0.015);
-  mergeMesh(m, discMesh(0.02, 0.2, 9, 0.12, [0.7,0.64,0.7]));           // a rounded cap to fatten the body whorl into a ball
+// §models moon snail: a squat globose spiral (fat overlapping whorls, small spire), grey-mauve, built from the
+// shared spiral-shell builder so it reads as a real smooth whorl rather than a lump.
+function moonsnailMesh() {
+  const m = spiralShellMesh({ turns:2.2, r0:0.075, growth:2.0, tubeF:0.82, c1:[0.7,0.64,0.7], c2:[0.6,0.54,0.62] });
   return m; }
 // §pixui the mussel now uses the oyster shell shape, in a deep blue-black with a faint pearly facet.
 function musselMesh() { return oysterMesh([0.07,0.09,0.15], [0.13,0.16,0.26]); }
@@ -6887,9 +6903,9 @@ function slugMesh() { return slugBody([0.57,0.46,0.3]); }
 // its spiral facing sideways (the classic look). The coil is in a vertical plane with its axis across the body.
 function snailMesh(col) { col = col || [0.55,0.4,0.26];
   const m = slugBody([0.9,0.86,0.78], [0.82,0.78,0.7]);
-  const shell = coilShellMesh(0.17, 2.35, 0.035, 0.125, col);
-  rotMeshZ(shell, -1.1);                                  // turn the opening to face down-and-back toward the body
-  mergeAt(m, shell, -0.03, 0.19, 0);
+  const shell = spiralShellMesh({ turns:2.4, r0:0.05, growth:1.7, tubeF:0.74, c1:[Math.min(1,col[0]*1.1),col[1]*1.05,col[2]*1.05], c2:[col[0]*0.82,col[1]*0.82,col[2]*0.82] });
+  rotMeshZ(shell, -0.5);                                  // turn the opening to face down-and-back toward the body
+  mergeAt(m, shell, -0.04, 0.2, 0);
   return m;
 }
 // §models a nudibranch (sea slug): a clean vivid body (no eye-stalks) with a crest of colourful cerata down
@@ -6966,7 +6982,7 @@ const BUCKETABLE_TYPES = { crab:1, hermit:1, fish:1, minnow:1, flounder:1, rockf
 for (const k in CREATURES) CREATURES[k].bucketable = !!BUCKETABLE_TYPES[k];
 const FINDS = {
   shell:    { mesh: () => shellMesh(),              base: 0.5, max: 200, label: "Spiral Shell", desc: "An empty whelk, worn smooth.", rare: 0 },
-  seaglass: { mesh: () => glassMesh([0.4,0.7,0.6]), base: 0.35,max: 200, label: "Sea Glass", desc: "A frosted shard, tumbled by the waves.", rare: 0 },
+  seaglass: { mesh: () => seaGlassMesh([0.3,0.85,0.5]), base: 0.35,max: 200, label: "Sea Glass", desc: "A frosted pebble of green glass, tumbled smooth by the waves.", rare: 0 },
   molt:     { mesh: () => crabMesh([0.8,0.72,0.62]), base: 0.55,max: 120, label: "Crab Molt", desc: "A hollow shell a crab outgrew.", rare: 0 },
   cuttle:   { mesh: () => cuttleMesh(),             base: 0.5, max: 140, label: "Cuttlebone", desc: "Chalky white, light as air.", rare: 0 },
   egg:      { mesh: () => eggMesh(),                base: 0.5, max: 110, label: "Mermaid's Purse", desc: "The egg case of a skate.", rare: 1 },
@@ -7048,8 +7064,8 @@ const FINDS = {
   crabmeat: { mesh: () => crabMeatMesh(),           base: 0.45,max: 80, label: "Crab Meat", desc: "Pale, sweet meat picked from a crab. Good food, better cooked.", rare: 0 },
   // §40 rare natural finds, the heart-quickening ones, salted in at long odds
   whelk:    { mesh: () => whelkMesh(),              base: 0.5, max: 30, label: "Left-handed Whelk", desc: "A sinistral whelk, its spiral coils the wrong way. One shell in thousands.", rare: 2 },
-  redglass: { mesh: () => glassMesh([0.82,0.14,0.16]),base: 0.35,max: 40, label: "Red Sea Glass", desc: "The rarest colour of all, old ship's lanterns and ruby glassware, tumbled soft.", rare: 2 },
-  duskglass:{ mesh: () => glassMesh([0.62,0.4,0.72]), base: 0.38,max: 30, label: "End-of-day Glass", desc: "A swirl of colours fused in one shard, a glassworks' last melt of the day. Only turns up near dusk.", rare: 2 },
+  redglass: { mesh: () => seaGlassMesh([0.85,0.16,0.18]),base: 0.35,max: 40, label: "Red Sea Glass", desc: "The rarest colour of all, old ship's lanterns and ruby glassware, tumbled soft.", rare: 2 },
+  duskglass:{ mesh: () => seaGlassMesh([0.64,0.4,0.78]), base: 0.38,max: 30, label: "End-of-day Glass", desc: "A swirl of colours fused in one shard, a glassworks' last melt of the day. Only turns up near dusk.", rare: 2 },
   marble:   { mesh: () => marbleMesh(),             base: 0.34,max: 40, label: "Old Marble", desc: "A child's glass marble with a ribbon of colour at its heart. How long has it rolled with the tide?", rare: 2 },
   sharktooth:{ mesh: () => sharkToothMesh(false),   base: 0.4, max: 40, label: "Shark Tooth", desc: "A fossil tooth, black with age and still needle-sharp.", rare: 2 },
   megalodon:{ mesh: () => sharkToothMesh(true),     base: 0.5, max: 20, label: "Megalodon Tooth", desc: "A palm-sized tooth from a shark long extinct. The find of a lifetime.", rare: 2 },
