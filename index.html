@@ -3268,7 +3268,7 @@ function startleNear(x, z) {
   }
 }
 // §R4 weapons can strike any creature. Small per-species HP; a hit hurts and scatters it, enough hits kill it.
-const CREATURE_HP = { crab:2, hermit:2, hopper:1, seal:6, seaduck:2, snail:1, shrimp:1, star:1, urchin:1, anemone:1, jelly:1 };
+const CREATURE_HP = { crab:2, hermit:2, hopper:1, seal:6, seaduck:2, snail:1, nudibranch:1, shrimp:1, star:1, urchin:1, anemone:1, jelly:1 };
 const CREATURE_DROP = { crab:"crabmeat", hermit:"crabmeat", lobster:"crabmeat" };
 function creatureHP(t) { return CREATURE_HP[t] || 2; }
 const DEATH_FLASH = 0.28;      // §B1 seconds of red flash before a creature dissolves (tunable)
@@ -5204,10 +5204,21 @@ function cloverMesh() {
 }
 // §veg5 a harvestable tall-grass clump (strip it for Plant Fiber). "cut" = the short stubble left behind.
 function tallGrassMesh(cut) {
-  const m = Mesh(), base = [0.6, 0.58, 0.32], tip = [0.8, 0.74, 0.42], n = cut ? 6 : 16, H = cut ? 0.26 : 1.5, w = cut ? 0.035 : 0.05;
-  for (let k = 0; k < n; k++) { const a = (k / n) * 6.2832 + 0.7, r = 0.06 + (k % 3) * 0.045, dx = Math.cos(a)*r, dz = Math.sin(a)*r;
-    const hh = H * (0.68 + ((k * 7) % 5) / 5 * 0.5), lean = (((k * 13) % 7) / 7 - 0.5) * 0.5;
-    mTri(m, [-dz*w, 0, dx*w], [dz*w, 0, -dx*w], [dx*1.8 + lean, hh, dz*1.8], k % 2 ? base : tip);
+  // §veg5 a fuller tuft: more blades, each a wider creased blade (two triangles folded along a centre ridge)
+  // so it keeps its body from any angle instead of reading as a single thin sliver.
+  const m = Mesh(), base = [0.6, 0.58, 0.32], tip = [0.82, 0.76, 0.44];
+  const n = cut ? 10 : 22, H = cut ? 0.26 : 1.5, w = cut ? 0.05 : 0.085;
+  for (let k = 0; k < n; k++) {
+    const a = (k / n) * 6.2832 + 0.7, r = 0.05 + (k % 4) * 0.04, cx = Math.cos(a)*r, cz = Math.sin(a)*r;
+    const dirx = Math.cos(a), dirz = Math.sin(a), perpx = -dirz, perpz = dirx;   // blade splays outward; width along perp
+    const hh = H * (0.6 + ((k * 7) % 5) / 5 * 0.55), lean = (((k * 13) % 7) / 7 - 0.5) * 0.6;
+    const bw = w * (0.8 + (k % 3) * 0.25);
+    const bL = [cx - perpx*bw, 0, cz - perpz*bw], bR = [cx + perpx*bw, 0, cz + perpz*bw];
+    const ridge = [cx + dirx*0.02, bw*0.9, cz + dirz*0.02];                      // creased base centre, lifted a touch
+    const tipP = [cx + dirx*(hh*0.5 + lean), hh, cz + dirz*(hh*0.5 + lean)];      // leaned tip
+    const c0 = k % 2 ? base : tip;
+    mTri(m, bL, ridge, tipP, c0);                 // left half of the blade
+    mTri(m, ridge, bR, tipP, [tip[0], tip[1], tip[2]]);   // right half (tip lighter)
   }
   return m;
 }
@@ -5890,11 +5901,23 @@ function makeDynamic(mesh, maxN) {
 
 // --- tiny creature & find meshes (object space, ~1 unit) ---
 function discMesh(y, r, sides, dome, col) { const m = Mesh(); for (let i=0;i<sides;i++){ const a0=i/sides*6.283,a1=(i+1)/sides*6.283; mTri(m,[0,y+dome,0],[Math.cos(a0)*r,y,Math.sin(a0)*r],[Math.cos(a1)*r,y,Math.sin(a1)*r],col);} return m; }
+// §models a rounder crab: a domed carapace wider side-to-side than front-back, two raised front claws, stalk eyes,
+// and four walking legs per side. Faces +X (eyes/claws forward); the AI yaws it 90° so it scuttles sideways.
 function crabMesh(col) {
-  const m = discMesh(0.12, 0.5, 6, 0.1, col);
-  mBox(m, 0.48, 0.12, 0.22, 0.12, 0.07, 0.07, col); mBox(m, 0.48, 0.12, -0.22, 0.12, 0.07, 0.07, col);
-  for (const s of [-1, 1]) for (let k = -1; k <= 1; k++)
-    mTri(m, [0.0, 0.1, s*0.4], [0.3 + k*0.2, 0.0, s*0.72], [0.1 + k*0.2, 0.1, s*0.45], col);
+  const m = Mesh(); col = col || [0.78,0.4,0.3];
+  const dk = [col[0]*0.8,col[1]*0.8,col[2]*0.82], cl = [Math.min(1,col[0]*1.1),col[1],col[2]], leg = [col[0]*0.9,col[1]*0.85,col[2]*0.85], eye = [0.06,0.06,0.08];
+  mergeAt(m, scaleMeshXYZ(sphM(0.34, col, 11, 6), 0.82, 0.5, 1.2), 0.0, 0.2, 0);          // rounded carapace, wide across
+  for (const s of [-1,1]) { mBox(m, 0.25, 0.24, s*0.12, 0.03, 0.08, 0.03, dk); mergeAt(m, sphM(0.04, eye, 6, 3), 0.27, 0.32, s*0.12); }   // eye stalks + dark eyes at the front
+  for (const s of [-1,1]) {                                                               // two claws reaching forward-and-out
+    mBox(m, 0.3, 0.14, s*0.26, 0.14, 0.05, 0.05, leg);                                     // upper arm
+    mBox(m, 0.46, 0.12, s*0.34, 0.1, 0.05, 0.05, leg);                                     // forearm
+    mergeAt(m, scaleMeshXYZ(sphM(0.1, cl, 8, 4), 1.35, 0.9, 0.8), 0.6, 0.12, s*0.34);      // heavy claw
+    mBox(m, 0.73, 0.15, s*0.34, 0.08, 0.025, 0.035, cl); mBox(m, 0.73, 0.08, s*0.34, 0.08, 0.025, 0.035, cl);   // pincer tips
+  }
+  for (const s of [-1,1]) for (let i=0;i<4;i++){ const lx = 0.12 - i*0.12;                 // four walking legs per side
+    mBox(m, lx+0.02, 0.12, s*0.33, 0.028, 0.028, 0.15, leg);                               // femur out to the side
+    mBox(m, lx+0.02, 0.04, s*0.46, 0.028, 0.1, 0.028, dk);                                 // lower leg + foot down
+  }
   return m;
 }
 // §lob5 low-poly lobster, built PALE so the entity tint sets the hue (brick-red by default, electric-blue for the rare morph).
@@ -5980,13 +6003,15 @@ function urchinMesh(col) { const m = discMesh(0.1,0.3,6,0.15,col); const sp=[col
 // with two big black stalk-eyes, splayed legs and a pair of front claws.
 function hermitMesh(col) { const m = Mesh(); col = col || [0.88,0.78,0.5];
   const shell2=[col[0]*0.86,col[1]*0.86,col[2]*0.84], body=[0.92,0.42,0.14], body2=[0.8,0.34,0.11], eye=[0.06,0.06,0.09], dark=[0.14,0.1,0.1];
-  // --- shell: a borrowed whelk, tilted so the spire leans up-and-back and the mouth faces the body ---
-  const whelk = spireShell(0.62, 0.26, 0.82, 3.2, col, shell2, 0.02);
-  rotMeshZ(whelk, 0.95); rotMeshX(whelk, 0.35);                // lean the spire back and a little to the side
-  mergeAt(m, whelk, -0.02, 0.26, -0.02);
-  mergeAt(m, sphM(0.13, dark, 7, 3), 0.12, 0.18, 0.12);        // dark aperture (the shell's mouth), facing the body
-  // --- body: orange head poking out of the shell mouth, front-bottom ---
-  mergeAt(m, sphM(0.16, body, 8, 4), 0.28, 0.15, 0.12);
+  // --- shell: a borrowed whelk, seated low on the back so it rests against the body (no floating gap) ---
+  const whelk = spireShell(0.62, 0.27, 0.82, 3.2, col, shell2, 0.02);
+  rotMeshZ(whelk, 0.82); rotMeshX(whelk, 0.32);               // lean the spire back and a little to the side
+  mergeAt(m, whelk, 0.05, 0.19, -0.01);                       // pulled forward + down so the mouth meets the body
+  // dark aperture + a short collar bridging the shell mouth to the body so there is no gap between them
+  mergeAt(m, sphM(0.15, dark, 7, 3), 0.16, 0.16, 0.06);       // enlarged dark aperture (the shell's mouth)
+  mergeAt(m, scaleMeshXYZ(sphM(0.12, body2, 7, 4), 1.2, 1.0, 1.0), 0.22, 0.15, 0.08);   // neck/collar filling the junction
+  // --- body: orange head poking out of the shell mouth, front-bottom (seated back into the aperture) ---
+  mergeAt(m, sphM(0.16, body, 8, 4), 0.3, 0.14, 0.1);
   // --- eyes on short stalks, forward ---
   for (const s of [-1,1]) { mBox(m, 0.32, 0.24, s*0.07, 0.016, 0.07, 0.016, body2); mBox(m, 0.35, 0.31, s*0.08, 0.04, 0.04, 0.04, eye); }
   // --- walking legs, three per side, angular (thigh out, foot down) ---
@@ -6415,7 +6440,19 @@ function moonsnailMesh() { const m = spireShell(0.3, 0.27, 1.7, 2.6, [0.66,0.6,0
   return m; }
 // §pixui the mussel now uses the oyster shell shape, in a deep blue-black with a faint pearly facet.
 function musselMesh() { return oysterMesh([0.07,0.09,0.15], [0.13,0.16,0.26]); }
-function limpetMesh() { const m = Mesh(); mCyl(m,0,0.14,0.2,0.0,8,[0.7,0.64,0.5]); mergeMesh(m, discMesh(0,0.2,8,0,[0.6,0.55,0.44])); return m; }
+function limpetMesh() {
+  // §models a limpet "china-hat": a rounded (convex-profile) cone with many sides and gentle radial ribs, not a sharp pyramid.
+  const m = Mesh(), c=[0.74,0.68,0.54], c2=[0.62,0.57,0.46];
+  const sides=14, ribs=14, prof=[[0,0.22],[0.045,0.205],[0.09,0.165],[0.13,0.105],[0.165,0.04],[0.188,0]];
+  const rr = (ph)=> 1 + 0.055*Math.cos(ph*ribs);   // gentle radial ribs around the shell
+  for (let i=0;i<prof.length-1;i++){ const y0=prof[i][0], r0=prof[i][1], y1=prof[i+1][0], r1=prof[i+1][1];
+    for (let s=0;s<sides;s++){ const a0=s/sides*6.283, a1=(s+1)/sides*6.283, m0=rr(a0), m1=rr(a1), col=(s%2)?c:c2;
+      const p0=[Math.cos(a0)*r0*m0, y0, Math.sin(a0)*r0*m0], p1=[Math.cos(a1)*r0*m1, y0, Math.sin(a1)*r0*m1];
+      if (r1<0.001) { mTri(m, p0, p1, [0,y1,0], col); }
+      else { const p2=[Math.cos(a1)*r1*m1, y1, Math.sin(a1)*r1*m1], p3=[Math.cos(a0)*r1*m0, y1, Math.sin(a0)*r1*m0]; mQuad(m, p0, p1, p2, p3, col); } }
+  }
+  mergeMesh(m, discMesh(0, 0.22, sides, 0, c2));   // underside rim, closed
+  return m; }
 function wormcastMesh() { const m = Mesh(); for (let i=0;i<5;i++){ const a=i*0.9; mCyl(m, 0.02*i, 0.06+0.02*i, 0.06-0.008*i, 0.055-0.008*i, 6, [0.4,0.33,0.24]); } return m; }
 function pickleweedMesh() { const m = Mesh(); const g=[0.42,0.56,0.33]; for (let i=0;i<4;i++){ const a=i/4*6.283, r=0.06; for(let s=0;s<3;s++) mCyl(m, 0.1+s*0.12, 0.2+s*0.12, 0.04, 0.035, 5, [g[0],g[1]-s*0.03,g[2]]); } return m; }
 // §P3 dropped bull-kelp item: a small coiled stipe with its float bulb + a couple of blades, item-sized (~0.3 tall) like the other finds
@@ -6557,27 +6594,19 @@ function pineappleCrown(m, cx, cy, cz, crown, tip) {
 function cropMesh(type, stage) {
   const m = Mesh(), sp = stage === "sprout", gr = stage === "grow", rp = stage === "ripe";
   if (type === "cassava") {
-    // §Crop polish, thin, knobby reddish canes; frond-like palmate leaves spaced UP each cane on reddish petioles; tubers on harvest
-    const cane=[0.5,0.32,0.26], caneHi=[0.58,0.38,0.3], petiole=[0.56,0.3,0.26], lf=[0.3,0.52,0.3], lf2=[0.4,0.62,0.34];
-    const canes = sp?1:3, H = sp?0.4:(gr?1.05:1.35);
-    for (let i=0;i<canes;i++){ const a=i/Math.max(1,canes)*6.283+0.5, lean=(gr||rp)?0.12:0.05;
-      const tx=Math.cos(a)*lean*H, tz=Math.sin(a)*lean*H, segs=5;
-      // a thin cane in knobby segments (radius bumps at each node)
-      for (let s=0;s<segs;s++){ const t0=s/segs, t1=(s+1)/segs, y0=t0*H, y1=t1*H;
-        const r0=(0.034-0.016*t0)*(1+(s%2)*0.22), r1=(0.034-0.016*t1)*(1+((s+1)%2)*0.22);   // bulge at nodes = knobby
-        mergeAt(m, cylM(0,y1-y0,r0,r1,(s%2?cane:caneHi)), tx*t0, y0, tz*t0);
-      }
-      if (sp) { for (let f=0;f<3;f++){ const fa=f/3*6.283; bladeLeaf(m, tx*0.5, tz*0.5, fa, 0.2, 0.025, 0.05, lf, lf2, 0); } }
-      else { // palmate hands spaced up the cane, each on a short reddish petiole
-        const hands = gr?3:4;
-        for (let h=0;h<hands;h++){ const hy=H*(0.42+h*(0.52/hands)), hx=tx*(hy/H), hz=tz*(hy/H), ha=a + h*2.2;
-          const px=Math.cos(ha)*0.1, pz=Math.sin(ha)*0.1;
-          mergeAt(m, cylM(0,0.1,0.016,0.01,petiole), hx+px*0.5, hy, hz+pz*0.5);    // the reddish leaf stalk
-          const leaflets = 5 + (h%2), cx=hx+px, cz=hz+pz;
-          for (let f=0;f<leaflets;f++){ const fa=(f/(leaflets-1)-0.5)*2.2 + ha; mergeAt(m, (()=>{const d=Mesh(); bladeLeaf(d, 0,0, fa, 0.2-0.02*(f%2), 0.028, 0.08, lf, lf2, 0.2); return d;})(), cx, hy+0.1, cz); }
-        }
-      }
-    }
+    // §models a single upright stem carrying two fern crowns stacked vertically (a medium one below, a small one up top).
+    const cane=[0.5,0.36,0.26], caneHi=[0.58,0.42,0.3], lf=[0.3,0.5,0.28], lf2=[0.42,0.64,0.36];
+    const H = sp?0.42:(gr?1.0:1.32), topR=0.02, botR=0.045;
+    // the stem: a few stacked segments so it reads as a real knobby stalk
+    const segs=5; for (let s=0;s<segs;s++){ const t0=s/segs, t1=(s+1)/segs; mergeAt(m, cylM(0, (t1-t0)*H, botR+(topR-botR)*t0, botR+(topR-botR)*t1, s%2?cane:caneHi), 0, t0*H, 0); }
+    // a fern crown = arching fronds springing from a point (reuses the world fern silhouette)
+    const fernAt = (y, scale, nf) => { const d=Mesh();
+      for (let k=0;k<nf;k++){ const a=k/nf*6.2832 + (y*3.0), dx=Math.cos(a), dz=Math.sin(a), c=k%2?lf:lf2;
+        mTri(d, [-dz*0.025,0,dx*0.025], [dz*0.025,0,-dx*0.025], [dx*0.5*scale, 0.52*scale, dz*0.5*scale], c);   // arching frond
+        mTri(d, [dx*0.5*scale,0.52*scale,dz*0.5*scale], [dx*0.9*scale,0.42*scale,dz*0.9*scale], [dx*0.56*scale,0.4*scale,dz*0.56*scale], c); }   // drooping tip
+      mergeAt(m, d, 0, y, 0); };
+    if (sp) { fernAt(H, 0.55, 5); }
+    else { fernAt(H*0.5, gr?0.72:0.88, 6); fernAt(H, gr?0.5:0.62, 6); }   // lower medium fern + upper small fern
     if (rp) { const tub=[0.56,0.4,0.3], tub2=[0.48,0.34,0.26]; for (let i=0;i<4;i++){ const a=i/4*6.283;   // knobby tubers swelling at the base
       const d=Mesh(); mergeMesh(d, discMesh(0,0.07,6,0.1,tub)); mergeMesh(d, discMesh(0,0.07,6,-0.1,tub2)); mergeAt(m, d, Math.cos(a)*0.1, 0.02, Math.sin(a)*0.1); } }
   } else if (type === "banana") {
@@ -6790,20 +6819,24 @@ function chitonMesh() { const m = Mesh();
   }
   return m; }
 // §models a pill bug / woodlouse: an oval armour of overlapping transverse plates, tiny legs and antennae (head at +X).
-function pillbugMesh() { const m = Mesh(), c=[0.47,0.48,0.52], c2=[0.39,0.4,0.44], dk=[0.3,0.31,0.35], ant=[0.34,0.35,0.39];
+function pillbugMesh() { const m = Mesh(), c=[0.47,0.48,0.52], c2=[0.39,0.4,0.44], dk=[0.3,0.31,0.35], ant=[0.34,0.35,0.39], eye=[0.05,0.05,0.07];
+  // closed rounded underbody so there's no hollow shell when seen low or tipped
+  mergeAt(m, scaleMeshXYZ(sphM(0.2, c2, 10, 5), 1.5, 0.46, 1.0), 0.02, 0.035, 0);
   const n=8;
   for (let i=0;i<n;i++){ const t=i/(n-1), x=(t-0.46)*0.6, w=0.17*Math.sin((0.16+t*0.78)*Math.PI), h=w*0.8+0.02;
-    mergeAt(m, domePlate(w, h, 0.055, i%2?c:c2), x, 0, 0); }   // shingled segment plates
+    mergeAt(m, domePlate(w, h, 0.055, i%2?c:c2), x, 0, 0); }   // shingled segment plates over the top
   // rounded head shield at the front
   mergeAt(m, scaleMeshXYZ(sphM(0.1, c, 8, 4), 1, 0.7, 1), 0.24, 0.05, 0);
-  for (const s of [-1,1]) mBox(m, 0.33, 0.045, s*0.03, 0.05,0.01,0.01, ant);   // antennae
+  for (const s of [-1,1]) mergeAt(m, sphM(0.025, eye, 6, 3), 0.3, 0.08, s*0.045);   // two little black eyes
+  // antennae, two segments each, swept forward and out so they read clearly
+  for (const s of [-1,1]) { mBox(m, 0.33, 0.055, s*0.04, 0.07,0.013,0.013, ant); mBox(m, 0.41, 0.085, s*0.08, 0.06,0.011,0.011, ant); }
   // little legs peeking out under the sides
   for (const s of [-1,1]) for (let i=0;i<6;i++){ const lx=(i-2.5)*0.085; mBox(m, lx, 0.015, s*(0.12+ (i%2)*0.01), 0.015,0.012,0.012, dk); }
   return m; }
 // §models a centipede: a smooth gently-curved segmented body with a pair of legs per segment, head + antennae (head at +X).
 function centipedeMesh() { const m = Mesh(), c=[0.62,0.33,0.24], c2=[0.5,0.26,0.19], leg=[0.44,0.24,0.18], ant=[0.4,0.22,0.16];
   const N=11, pts=[];
-  for (let i=0;i<=N;i++){ const t=i/N, x=(t-0.5)*0.74, z=Math.sin(t*Math.PI*1.3)*0.06, r=0.052*Math.sin((0.12+t*0.82)*Math.PI)+0.018;
+  for (let i=0;i<=N;i++){ const t=i/N, x=(t-0.5)*0.74, z=0, r=0.052*Math.sin((0.12+t*0.82)*Math.PI)+0.018;   // straight body (no side curve)
     pts.push([x, 0.05, z, r]); }
   mPathTube(m, pts, 7, c);
   for (let i=1;i<N;i++){ const P=pts[i], z=P[2]; for (const s of [-1,1]){   // a leg pair per segment: out then down
@@ -6813,16 +6846,39 @@ function centipedeMesh() { const m = Mesh(), c=[0.62,0.33,0.24], c2=[0.5,0.26,0.
   return m; }
 // §models a ground beetle: a domed oval elytra with a centre seam, a pronotum collar, a small head with antennae, six legs (head at +X).
 function beetleMesh() { const m = Mesh(), sh=[0.16,0.18,0.21], sh2=[0.24,0.27,0.31], hd=[0.11,0.12,0.15], leg=[0.1,0.1,0.13];
-  mergeAt(m, scaleMeshXYZ(sphM(0.16, sh, 10, 5), 1.45, 0.72, 1.0), -0.03, 0.12, 0);   // oval domed elytra
-  mBox(m, -0.04, 0.235, 0, 0.19, 0.004, 0.006, hd);                                    // the elytra seam down the middle
+  mergeAt(m, scaleMeshXYZ(sphM(0.16, sh, 10, 5), 1.45, 0.72, 1.0), -0.03, 0.12, 0);   // oval domed elytra (no raised centre seam, it read as a stick on the back)
   mergeAt(m, scaleMeshXYZ(sphM(0.1, sh2, 8, 4), 1.0, 0.6, 1.05), 0.16, 0.1, 0);        // pronotum collar
   mergeAt(m, scaleMeshXYZ(sphM(0.07, hd, 7, 4), 1.0, 0.7, 1.0), 0.27, 0.09, 0);        // head
   for (const s of [-1,1]) mBox(m, 0.35, 0.11, s*0.035, 0.055,0.009,0.009, hd);          // antennae
   for (const s of [-1,1]) for (let i=0;i<3;i++){ const lx=-0.06+i*0.12; mBox(m, lx, 0.05, s*0.15, 0.06,0.013,0.013, leg); mBox(m, lx+0.045, 0.0, s*0.21, 0.013,0.05,0.013, leg); }   // six legs (femur out, tibia down)
   return m; }
-function slugMesh() { const m = Mesh(), c = [0.57,0.42,0.26];
-  for (let i=0;i<5;i++){ const r=0.07*(1-Math.abs(i-2)/4)+0.028; mergeAt(m, discMesh(0, r, 6, r*0.9, c), (i-2)*0.1, 0.02, 0); }
-  mBox(m, 0.24, 0.09, 0.02, 0.008, 0.05, 0.008, [0.4,0.3,0.2]); mBox(m, 0.24, 0.09, -0.02, 0.008, 0.05, 0.008, [0.4,0.3,0.2]); return m; }
+// §models shared gastropod base (foot + mantle hump + head + two eye-stalks), head at +X. Snail adds a coiled
+// shell on top; the nudibranch adds a crest of vivid cerata. Slug is just the base.
+function slugBody(col, col2) {
+  const m = Mesh(); col2 = col2 || [col[0]*0.82, col[1]*0.82, col[2]*0.82];
+  mergeAt(m, scaleMeshXYZ(sphM(0.12, col, 9, 5), 1.9, 0.6, 0.85), 0, 0.06, 0);        // elongated foot/body
+  mergeAt(m, scaleMeshXYZ(sphM(0.085, col2, 8, 4), 1.3, 0.75, 1.0), 0.05, 0.095, 0);   // raised mantle hump
+  mergeAt(m, scaleMeshXYZ(sphM(0.06, col, 7, 4), 1.15, 0.9, 1.0), 0.2, 0.07, 0);        // lifted head at +X
+  for (const s of [-1,1]) { mBox(m, 0.24, 0.1, s*0.035, 0.012, 0.06, 0.012, col2); mergeAt(m, sphM(0.018, [0.08,0.07,0.09], 5, 3), 0.25, 0.14, s*0.04); }   // eye-stalks
+  return m;
+}
+function slugMesh() { return slugBody([0.57,0.46,0.3]); }
+// §models a snail: the slug base with a coiled spiral shell laid over its back.
+function snailMesh(col) { col = col || [0.62,0.5,0.34];
+  const m = slugBody([0.76,0.66,0.52], [0.68,0.58,0.44]);
+  const shell = spireShell(0.34, 0.26, 1.4, 2.8, col, [col[0]*0.82,col[1]*0.82,col[2]*0.82], 0.016);
+  rotMeshZ(shell, 1.35); rotMeshX(shell, -0.2);                                         // lay the coil on its side over the back
+  mergeAt(m, shell, -0.02, 0.15, 0);
+  return m;
+}
+// §models a nudibranch (sea slug): a vivid body with a crest of colourful cerata down the back + two rhinophores.
+function nudibranchMesh(col) { col = col || [0.96,0.42,0.14];
+  const tip = [0.22,0.52,0.96], white = [0.98,0.98,1.0];
+  const m = slugBody(col, [Math.min(1,col[0]*0.9),col[1]*0.7,col[2]*0.6]);
+  for (let i=0;i<6;i++){ const x=(i/5-0.5)*0.26; for (const s of [-1,1]){ const d=Mesh(); mCyl(d,0,0.085,0.02,0.0,5,tip); mergeAt(m, d, x, 0.1, s*0.03); } }   // cerata crest
+  for (const s of [-1,1]) { mBox(m, 0.2, 0.12, s*0.03, 0.012,0.07,0.012, white); mergeAt(m, sphM(0.02, tip, 5, 3), 0.21, 0.17, s*0.03); }   // rhinophores
+  return m;
+}
 function salamanderMesh() { const m = Mesh(), body = [0.14,0.14,0.16], spot = [0.9,0.78,0.22];
   mBox(m, 0, 0.045, 0, 0.14, 0.04, 0.05, body); mBox(m, -0.24, 0.035, 0, 0.11, 0.028, 0.03, body); mBox(m, 0.17, 0.05, 0, 0.05, 0.04, 0.045, body);
   for (const s of [-1,1]) { mBox(m, 0.08, 0.0, s*0.07, 0.013, 0.02, 0.035, body); mBox(m, -0.07, 0.0, s*0.07, 0.013, 0.02, 0.035, body); }
@@ -6865,7 +6921,8 @@ const CREATURES = {
   lingcod:  { mesh: () => lingcodMesh(),             base: 1.6, max: 30, label: "Lingcod", desc: "A big mottled ambush predator lurking on the reef drop-off. The prize catch.", fish: 1 },
   minnow:   { mesh: () => minnowMesh(),              base: 0.52,max: 200, label: "Silverside", desc: "A small fish that moves in flashing schools through the shallows.", fish: 1 },
   // §16.1 new tide-pool & nearshore life
-  snail:    { mesh: () => seaSnailMesh(),            base: 0.4, max: 120, label: "Sea Snail", desc: "A periwinkle grazing the pool floor, slow and unbothered." },
+  snail:    { mesh: () => snailMesh(),               base: 0.4, max: 120, label: "Sea Snail", desc: "A periwinkle grazing the pool floor, slow and unbothered." },
+  nudibranch:{ mesh: () => nudibranchMesh(),         base: 0.4, max: 80, label: "Nudibranch", desc: "A sea slug in electric colours, grazing the underside of a waterlogged stone.", aquatic: 1, bucketable: 1 },
   shrimp:   { mesh: () => shrimpMesh(),              base: 0.4, max: 160, label: "Shrimp", desc: "A near-clear shrimp flicking backwards through a tide pool." },
   seaduck:  { mesh: () => seaDuckMesh(),             base: 0.7, max: 70, label: "Little Sea Duck", desc: "A small diving duck riding the swell just off the shore." },
   // §21C life that hides under stones, scatters when a stone is lifted, then hides again
@@ -6883,7 +6940,7 @@ const CREATURES = {
 };
 // §R4 explicit per-creature bucketability, small aquatic & intertidal life only. Never birds (gull, piper,
 // heron, seaduck), mammals (seal, otter, raccoon, goat), or large/game fish (flounder, rockfish, lingcod).
-const BUCKETABLE_TYPES = { crab:1, hermit:1, fish:1, minnow:1, flounder:1, rockfish:1, lingcod:1, star:1, urchin:1, anemone:1, jelly:1, shrimp:1, snail:1, hopper:1, horseshoe:1, gunnel:1, chiton:1, lobster:1 };   // §6 the swimming fish are scoopable too; §21C gunnel/chiton are aquatic; §lob5 lobsters scoop in too; land stone-critters are inspect-only
+const BUCKETABLE_TYPES = { crab:1, hermit:1, fish:1, minnow:1, flounder:1, rockfish:1, lingcod:1, star:1, urchin:1, anemone:1, jelly:1, shrimp:1, snail:1, nudibranch:1, hopper:1, horseshoe:1, gunnel:1, chiton:1, lobster:1 };   // §6 the swimming fish are scoopable too; §21C gunnel/chiton are aquatic; §lob5 lobsters scoop in too; land stone-critters are inspect-only
 for (const k in CREATURES) CREATURES[k].bucketable = !!BUCKETABLE_TYPES[k];
 const FINDS = {
   shell:    { mesh: () => shellMesh(),              base: 0.5, max: 200, label: "Spiral Shell", desc: "An empty whelk, worn smooth.", rare: 0 },
@@ -7649,6 +7706,7 @@ function updateLife(dt, tSec) {
     // creature (hovering, reached home, flee ended) kept recomputing its desired yaw from a near-zero velocity,
     // so atan2 flipped and it spun/flickered. If it barely moved this frame, hold the previous heading.
     if (dt > 0 && _yawWas != null) { const sp = Math.hypot(e.x - _px0, e.z - _pz0) / dt; if (sp < CRIT_MIN_SPEED) e.yaw = _yawWas; }
+    if (WALKER[e.t]) e.legPhase = (e.legPhase || 0) + Math.hypot(e.x - _px0, e.z - _pz0) * 22;   // §models advance the walk cycle by distance moved (so a stationary bug doesn't wobble)
     smoothYaw(e, dt);                                    // §P3 slew the rendered heading toward the AI's desired yaw (max turn rate + hysteresis) so nothing snaps back and forth
     if (e.dead) life.splice(i, 1);                       // §13.3 dried out, removed, remains already dropped
   }
@@ -7838,7 +7896,7 @@ function behave(e, dt, d, dx, dz) {
   } else if (e.t === "hopper") {
     if (d < 5) { const a = rng()*6.283; e.x += Math.cos(a)*0.45; e.z += Math.sin(a)*0.45; return; }   // startle hop
     e.timer -= dt; if (e.timer < 0) { e.timer = 0.8 + rng()*1.6; const a = rng()*6.283; e.x += Math.cos(a)*0.3; e.z += Math.sin(a)*0.3; }
-  } else if (e.t === "snail") {                                   // §16.1 a very slow grazing crawl
+  } else if (e.t === "snail" || e.t === "nudibranch") {           // §16.1/§models a very slow grazing crawl (head-first)
     e.timer -= dt; if (e.timer < 0) { e.timer = 2 + rng()*3; e.vx = (rng()-0.5); e.vz = (rng()-0.5); }
     e.x += e.vx*dt*0.25; e.z += e.vz*dt*0.25; e.yaw = Math.atan2(e.vz, e.vx);
     if (Math.hypot(e.x-e.hx, e.z-e.hz) > (e.hr||3)) { e.vx = (e.hx-e.x)*0.1; e.vz = (e.hz-e.z)*0.1; }
@@ -7925,6 +7983,13 @@ function drawLife(view) {
       if (e.t === "horseshoe" && e.stranded) { lean = Math.PI - 0.1 + Math.sin(e.phase*7)*0.12; ld = ry; y = g + 0.4*sc; }   // §B2/§P3 flipped belly-up; lift by the (scaled) carapace-dome height so the back rests on the sand instead of sinking in
       if (e.t === "beetle" && e.onBack) { lean = Math.PI - 0.1 + Math.sin(e.legPhase||0)*0.22; ld = ry; y = g + 0.16*sc; }   // §weak7/§P3 flipped on its back, legs kicking; lift by the (scaled) shell-dome height so the shell rests on the ground
       if (e.t === "crab" && e.fromStone && (e.claws||0) > 0.05) { lean = -0.28*e.claws; ld = ry; }                         // §weak7 reared back with claws up
+      if (WALKER[e.t] && e.kind === "creature" && !e.digging && !(e.t === "beetle" && e.onBack)
+          && !(e.t === "crab" && ((e.burrow||0) > 0.02 || (e.claws||0) > 0.05))) {   // §models fake walk: a slight side-to-side waddle + heading wiggle + bob, keyed to the walk cycle (crabs skip it while burrowing/rearing)
+        const lp = e.legPhase || 0;
+        lean += Math.sin(lp) * 0.1; ld = ry + 1.5708;       // roll about the heading = waddle
+        yawOut = ry + Math.sin(lp * 0.5) * 0.06;            // slight serpentine heading wiggle
+        y += Math.abs(Math.sin(lp)) * 0.015 * sc;           // tiny bob with each step
+      }
       if (e.digging) y = g - Math.min(1, (e.burrow||0)) * 0.55;                                                                     // §weak7 sinks into the ground as it digs in
       e._sc = sc;                                          // §urgent5 remember the drawn scale so the fade pass matches it (no pop)
       const o = n*10;
@@ -8047,7 +8112,7 @@ function effectiveTarget() {
 }
 // materials & seeds (Phase 6; building comes later)
 digItem("log", "Log", "material", "common", "A length of trunk, fresh-cut.", () => logMesh(), [0.5,0.4,0.28]);
-digItem("stone", "Stone", "material", "common", "A heavy chunk of rock. Place it to build; only a pickaxe removes placed stone.", () => stoneMesh(), [0.52,0.5,0.47]);
+digItem("stone", "Stone", "material", "common", "A heavy chunk of rock. Place it to build; only a pickaxe removes placed stone.", () => weakStoneMesh(), [0.52,0.5,0.47]);   // §models icon matches the liftable dome stones in the world
 digItem("sand", "Sand", "material", "common", "A double handful of sand. Place it to raise the ground.", () => sandMatMesh(), [0.86,0.78,0.59]);
 digItem("dirt", "Dirt", "material", "common", "Dark earth. Place it to build up the ground.", () => dirtMatMesh(), [0.40,0.30,0.20]);
 digItem("gravel", "Gravel", "material", "common", "Loose pebbles. Place it to build up the ground.", () => gravelMatMesh(), [0.56,0.55,0.51]);
@@ -10269,10 +10334,13 @@ const bucketRingMesh = makeDynamic((function () { const m = Mesh(); const c = [0
     mTri(m, [Math.cos(a0)*ri,0,Math.sin(a0)*ri], [Math.cos(a0)*ro,0,Math.sin(a0)*ro], [Math.cos(a1)*ro,0,Math.sin(a1)*ro], c);
     mTri(m, [Math.cos(a0)*ri,0,Math.sin(a0)*ri], [Math.cos(a1)*ro,0,Math.sin(a1)*ro], [Math.cos(a1)*ri,0,Math.sin(a1)*ri], c); }
   return m; })(), 40);
-const CRAWLER = { crab:1, hermit:1, star:1, anemone:1, urchin:1, hopper:1, snail:1 };    // live on the floor, not mid-water
+const CRAWLER = { crab:1, hermit:1, star:1, anemone:1, urchin:1, hopper:1, snail:1, nudibranch:1 };    // live on the floor, not mid-water
+// §models land/floor crawlers that get a fake "walk" wobble (a slight roll + heading wiggle + bob keyed to
+// distance travelled) so they read as walking head-first instead of sliding. Advanced in updateLife, applied in drawLife.
+const WALKER = { pillbug:1, beetle:1, centipede:1, slug:1, snail:1, salamander:1, nudibranch:1, crab:1, hermit:1 };
 const BOTTOM = { star:1, anemone:1, urchin:1 };                                 // §13.3 mostly stay put on the bottom
 // §13.3 calmer motion: gentle, capped speeds, nothing darts or spins in a pail
-const BUCKET_SPEED = { fish:0.14, jelly:0.06, crab:0.10, hermit:0.07, star:0.015, hopper:0.11, anemone:0, urchin:0, minnow:0.16, shrimp:0.13, snail:0.03 };
+const BUCKET_SPEED = { fish:0.14, jelly:0.06, crab:0.10, hermit:0.07, star:0.015, hopper:0.11, anemone:0, urchin:0, minnow:0.16, shrimp:0.13, snail:0.03, nudibranch:0.03 };
 const BUCKET_WATER_COL = [0.16, 0.42, 0.52];
 const BUCKET_TURN = 1.1;                                                        // max heading change (rad/s), no spinning
 // §13.3 moisture → a drab, dried-out look as a creature dries. 1 = soaked (true colour), 0 = bone dry.
@@ -11741,6 +11809,15 @@ function seedWeakStones() {
 // a critter scurries out from under a broken stone — one of the three weak-stone critters, scaled up so it's easy to see
 // §stonebug reveal a bug hiding under a lifted stone, scaled up so it's easy to see / click as bait
 function revealBug(s) {
+  // §models a waterlogged (intertidal) stone can instead hide a vividly-coloured nudibranch; a dry stone hides a land bug.
+  const wet = (typeof waterDepthAt === "function") && (waterLevel - surfaceAt(s.x, s.z).h) > -0.35;
+  if (wet && CREATURES.nudibranch && rng() < 0.5) {
+    const e = spawnCreature("nudibranch", s.x+(rng()-0.5)*0.3, s.z+(rng()-0.5)*0.3, { hx: s.x, hz: s.z, hr: 4, timer: rng()*2 });
+    e.scale = CREATURES.nudibranch.base * WEAK_CRITTER_SCALE * (0.9 + rng()*0.2);
+    const pal = [[0.96,0.42,0.14],[0.95,0.2,0.55],[0.3,0.4,0.98],[0.98,0.86,0.2]]; e.tint = pal[(rng()*pal.length)|0];   // vivid colour morphs
+    if (typeof sparkle === "function") sparkle(s.x, surfaceAt(s.x,s.z).h+0.2, s.z, e.tint, 5);
+    return;
+  }
   const t = STONE_BUGS[(rng()*STONE_BUGS.length)|0]; if (!CREATURES[t]) return;
   const e = spawnCreature(t, s.x+(rng()-0.5)*0.3, s.z+(rng()-0.5)*0.3, { hx: s.x, hz: s.z, hr: 6, fromStone: true, scatterUntil: clock.t + 2.2, homeStone: s });
   e.scale = CREATURES[t].base * WEAK_CRITTER_SCALE * (0.9 + rng()*0.2);
