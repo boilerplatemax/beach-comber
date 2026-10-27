@@ -83,8 +83,8 @@
   .recitem.empty { justify-content: center; color: var(--ink-dim); cursor: default; }
   .recitem.empty:hover { filter: none; }
   #settingspanel { position: fixed; z-index: 14; display: none; left: 50%; top: 50%; transform: translate(-50%,-50%);
-    width: min(340px, 92vw); max-height: 85vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
-    touch-action: pan-y; overscroll-behavior: contain; background: var(--facet); padding: 20px 22px; box-shadow: 0 10px 40px rgba(0,0,0,.6);
+    width: min(640px, 95vw); max-height: 92vh; overflow-y: auto; -webkit-overflow-scrolling: touch;
+    touch-action: pan-y; overscroll-behavior: contain; background: var(--facet); padding: 20px 24px; box-shadow: 0 10px 40px rgba(0,0,0,.6);
     clip-path: polygon(14px 0,calc(100% - 14px) 0,100% 14px,100% calc(100% - 14px),calc(100% - 14px) 100%,14px 100%,0 calc(100% - 14px),0 14px); }
   #settingspanel h3 { font-size: 18px; letter-spacing: .04em; margin-bottom: 14px; }
   #settingspanel h4 { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; opacity: .6; margin: 16px 0 8px; font-weight: 600; }
@@ -93,7 +93,10 @@
     border: none; background: var(--panel-edge); color: var(--ink);
     clip-path: polygon(6px 0,calc(100% - 6px) 0,100% 6px,100% calc(100% - 6px),calc(100% - 6px) 100%,6px 100%,0 calc(100% - 6px),0 6px); }
   #settingspanel .spreset.on { opacity: 1; background: var(--facet); color: #ffe6b0; box-shadow: inset 0 0 0 1px rgba(255,220,150,.5); }
-  #settingspanel .srow { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 11px 0; font-size: 13px; }
+  /* §setgrid lay the options out in two columns so every category fits with no scrollbar */
+  #settingspanel .sgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 28px; align-items: start; }
+  #settingspanel .sgrid .spresets, #settingspanel .sgrid .sfull { grid-column: 1 / -1; }
+  #settingspanel .srow { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin: 8px 0; font-size: 13px; }
   #settingspanel .srow button { min-width: 64px; font-size: 12px; padding: 6px 12px; }
   #settingspanel label { font-size: 13px; letter-spacing: .02em; color: var(--ink); }
   #settingspanel input[type=range] { width: 130px; }
@@ -294,8 +297,12 @@
   .jcard.unk img { filter: brightness(0) saturate(0) opacity(.42); }   /* silhouette */
   .jcard.unk .jname { letter-spacing: .25em; }
   .jhint { margin-top: 12px; opacity: .5; font-size: 12px; }
-  .jstat { font-size: 13px; margin: -4px 0 12px; opacity: .85; letter-spacing: .02em; }
-  .jstat b { color: #9fdc83; font-weight: 700; }
+  /* §journal a clear stats panel, one stat per row (label + number), larger and high-contrast */
+  .jstats { display: flex; flex-direction: column; gap: 5px; margin: 2px 0 12px; }
+  .jsrow { display: flex; justify-content: space-between; align-items: center; padding: 7px 13px;
+    background: rgba(40,26,14,.55); border: 1px solid var(--wood-lo, #3a2614); }
+  .jslabel { font-size: 14.5px; color: #f0dca8; letter-spacing: .02em; }
+  .jsval { font-size: 19px; font-weight: 800; color: #ffe6b0; text-shadow: 0 1px 2px rgba(0,0,0,.7); }
   /* toasts (bottom-left, above hud) */
   #toasts { position: fixed; left: 12px; bottom: 60px; z-index: 8; pointer-events: none;
     display: flex; flex-direction: column; gap: 6px; }
@@ -4160,9 +4167,13 @@ try { showFps = localStorage.getItem("bc_showfps") === "1"; } catch (e) {}
 function setShowFps(v) { showFps = !!v; try { localStorage.setItem("bc_showfps", showFps ? "1" : "0"); } catch (e) {}
   const el = document.getElementById("fpscounter"); if (el && !showFps) el.style.display = "none"; }
 // §18 brightness / gamma, a standalone comfort setting (helps on dark, new-moon nights)
-let nightBrightness = 1.0;
-try { const b = parseFloat(localStorage.getItem("bc_bright")); if (!isNaN(b)) nightBrightness = Math.max(0.6, Math.min(1.8, b)); } catch (e) {}
-function setBrightness(v) { nightBrightness = Math.max(0.6, Math.min(1.8, v)); try { localStorage.setItem("bc_bright", nightBrightness.toFixed(2)); } catch (e) {} }
+// §brightremap the slider had too much effect, so its range is narrowed: the OLD middle (1.2) is the new
+// maximum and the new minimum (0.5) is a touch darker than the old minimum (0.6). The default stays 1.0,
+// which sits inside the new range so it looks like the old default.
+const BRIGHT_MIN = 0.5, BRIGHT_MAX = 1.2;
+let nightBrightness = Math.min(BRIGHT_MAX, 1.0);
+try { const b = parseFloat(localStorage.getItem("bc_bright")); if (!isNaN(b)) nightBrightness = Math.max(BRIGHT_MIN, Math.min(BRIGHT_MAX, b)); } catch (e) {}
+function setBrightness(v) { nightBrightness = Math.max(BRIGHT_MIN, Math.min(BRIGHT_MAX, v)); try { localStorage.setItem("bc_bright", nightBrightness.toFixed(2)); } catch (e) {} }
 // §R4 screen-shake amount (0..1), default low. Scales the one remaining (hard-landing) shake.
 let screenShake = 0.25;
 try { const s = parseFloat(localStorage.getItem("bc_shake")); if (!isNaN(s)) screenShake = Math.max(0, Math.min(1, s)); } catch (e) {}
@@ -4482,11 +4493,18 @@ const PAUSE_VOL_DUCK = 0.3;        // §playtest1 pause keeps 30% volume (ducks 
 let pauseWasClockPaused = false;   // remember the debug clock state so Resume restores it
 let settingsFromPause = false;     // Settings opened from the pause menu → closing returns to pause
 function controlsRows() {
+  // §controls audited against the real key handler: no Lantern key (it is a belt item), E opens the
+  // satchel+bucket (the Journal lives in the pause menu, not on a key), and Tab just re-toggles that same
+  // pack, so it is not listed as a separate "tab" control.
   const rows = [
-    ["Move", "W A S D"], ["Look", "Mouse"], ["Sprint", "Shift"],
-["Use · pick up · interact", "Left-click or F"],
-["Open menu (Satchel · Bucket · Journal)", "E"],
-    ["Switch menu tab", "Tab"], ["Hotbar slot", "1 – 8 · scroll"], ["Lantern", "L"], ["Pause", "Esc"],
+    ["Move", "W A S D"], ["Look", "Mouse"], ["Jump · swim up", "Space"], ["Sprint", "Shift"],
+    ["Use · dig · chop", "Left-click"],
+    ["Use held item · eat", "Right-click"],
+    ["Pick up · interact", "F"],
+    ["Open satchel & bucket", "E"],
+    ["Drop one", "Q"],
+    ["Hotbar slot", "1 – 8 · scroll"],
+    ["Pause", "Esc · P"],
   ];
   return rows.map(([d, k]) => `<div class="crow"><span class="cdesc">${d}</span><span class="ckey">${k}</span></div>`).join("");
 }
@@ -4562,7 +4580,7 @@ function openSettings() {
   const WATER_LBL = ["Off", "On"], FPS_LBL = { 0: "Uncapped", 30: "30", 60: "60", 120: "120" };
   const slider = (k, lbl, min, max, step, val) => `<div class="srow"><label>${lbl}</label><input data-gs="${k}" type="range" min="${min}" max="${max}" step="${step}" value="${val}"></div>`;
   const toggle = (k, lbl, v) => `<div class="srow"><label>${lbl}</label><button data-gt="${k}">${onoff(v)}</button></div>`;
-  const TABS = [["graphics","Graphics"],["audio","Audio"],["controls","Controls"],["gameplay","Gameplay"],["access","Access"]];
+  const TABS = [["graphics","Graphics"],["audio","Audio"],["gameplay","Gameplay"],["access","Access"]];   // §controls look sensitivity moved into Gameplay; the Controls tab is gone
   if (!TABS.some(t => t[0] === settingsTab)) settingsTab = "graphics";
   const sections = {
     graphics: `
@@ -4591,9 +4609,8 @@ function openSettings() {
       <div class="srow"><label>Audio status</label><span class="sstat">${SND.ctx ? (SND.ctx.state + (SND.muted ? " · muted" : "")) : "not started"}</span></div>
       <div class="srow"><label>Test sound</label><button data-snd="test">Play ▶</button></div>
       <div class="srow"><label>Music</label><button data-snd="testmusic">${(typeof MUSIC !== "undefined" && MUSIC.playing()) ? "On ■" : "Off ▶"}</button></div>`,
-    controls: `
-      <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>`,
     gameplay: `
+      <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
       <div class="srow"><label>Auto-pickup</label><button data-k="autopick">${onoff(autoPickup)}</button></div>
       <div class="srow"><label>Hunger</label><button data-k="hunger">${onoff(hungerEnabled)}</button></div>
       <div class="srow"><label>Day/night cycle</label><button data-k="daynight">${onoff(dayNightEnabled)}</button></div>
@@ -4601,7 +4618,7 @@ function openSettings() {
       <div class="srow"><label>Infinite worms</label><button data-k="infworms">${onoff(infiniteWorms)}</button></div>
       <div class="srow"><label>No starvation</label><button data-k="nostarve">${onoff(noStarvation)}</button></div>`,
     access: `
-      <div class="srow"><label>Brightness</label><input id="setBright" type="range" min="0.6" max="1.8" step="0.05" value="${nightBrightness}"></div>
+      <div class="srow"><label>Brightness</label><input id="setBright" type="range" min="${BRIGHT_MIN}" max="${BRIGHT_MAX}" step="0.05" value="${nightBrightness}"></div>
       <div class="srow"><label>Screen shake</label><input id="setShake" type="range" min="0" max="1" step="0.05" value="${screenShake}"></div>
       <div class="srow"><label>Pixelated UI text</label><button data-k="pixui">${onoff(pixUI)}</button></div>
       <div class="srow"><label>UI dither</label><input id="setUiDither" type="range" min="0" max="1" step="0.05" value="${uiDither}"></div>
@@ -4610,8 +4627,8 @@ function openSettings() {
   };
   p.innerHTML = `<h3>Settings</h3>
     <div class="stabs">${TABS.map(([id,lbl]) => `<button class="stab${settingsTab===id?" on":""}" data-stab="${id}">${lbl}</button>`).join("")}</div>
-    ${sections[settingsTab]}
-    <button class="closebtn primary">Close</button>`;
+    <div class="sgrid">${sections[settingsTab]}</div>
+    <button class="closebtn primary">${settingsFromPause ? "Back" : "Close"}</button>`;
   p.querySelectorAll("button[data-stab]").forEach(b => b.onclick = () => { settingsTab = b.dataset.stab; openSettings(); });
   p.querySelectorAll("button[data-k]").forEach(b => b.onclick = () => {
     const k = b.dataset.k;
@@ -6306,7 +6323,7 @@ function shovelMesh() { const m = Mesh();
 // §strip climbHandsMesh removed (climbing).
 // §R4 the stake/spear: a wooden shaft with a sharpened, fire-darkened point at the top
 // §strip spearMesh / spearIconMesh removed with the spear.
-function clamMesh() { const m = discMesh(0.1,0.4,7,0.18,[0.85,0.8,0.72]); const m2=discMesh(-0.1,0.4,7,-0.18,[0.8,0.75,0.68]); for(let i=0;i<m2.pos.length;i++){m.pos.push(m2.pos[i]);m.col.push(m2.col[i]);} return m; }
+// §shell2 clamMesh now lives next to the other shell builders (smoother, ring-built).
 function crabMeatMesh() { const m = Mesh(); const pink=[0.92,0.8,0.74], pink2=[0.86,0.7,0.64];   // §R4 pale lumps of crab meat
   const lumps=[[0,0,0.17],[0.13,0.06,0.12],[-0.1,0.09,0.11],[0.05,-0.12,0.1]];
   for (let i=0;i<lumps.length;i++){ const [x,z,r]=lumps[i]; const d=Mesh(); mergeMesh(d, discMesh(0, r, 6, r*0.9, i%2?pink:pink2)); mergeMesh(d, discMesh(0, r, 6, -r*0.5, i%2?pink:pink2)); mergeAt(m, d, x, 0.04, z); }
@@ -6725,24 +6742,56 @@ function nautilusMesh() { const m = Mesh();
     prev = ring;
   }
   return m; }
-function oysterMesh(c, c2) { const m = Mesh(); c = c || [0.62,0.62,0.57]; c2 = c2 || [0.74,0.72,0.66];   // §pixui optional colours so the mussel can reuse this shell shape in dark blue-black
-  mergeMesh(m, discMesh(0,0.27,7,0.11,c)); mergeMesh(m, discMesh(0.11,0.24,7,0.08,c2));
-  for (let i=0;i<5;i++){ const a=i/5*6.283; mergeAt(m, (()=>{const d=Mesh(); mBox(d,0,0,0,0.05,0.035,0.05,c); return d;})(), Math.cos(a)*0.13, 0.08, Math.sin(a)*0.13); }
-  return m; }   // §shell the SEALED (live) oyster, craggy and clamped shut
-// §shell the OPEN/empty oyster shell (the byproduct after eating): a single cupped half, hollow, pale pearly inside.
-function oysterShellMesh() { const m = Mesh(); const out=[0.6,0.6,0.55], outHi=[0.72,0.7,0.64], inner=[0.88,0.87,0.83];
-  mergeMesh(m, discMesh(0, 0.28, 8, -0.12, out));        // outer underside, domed down
-  mergeMesh(m, discMesh(0.03, 0.25, 8, 0.08, inner));    // the pale hollow interior, a shallow dish facing up
-  for (let i=0;i<4;i++){ const a=i/4*6.283+0.3; mergeAt(m, boxM(0.04,0.028,0.05,outHi), Math.cos(a)*0.22, 0.03, Math.sin(a)*0.22); }   // a craggy rim
-  return m; }
-// §shell the OPEN/empty clam shell (the byproduct after eating): the two halves hinged open like a butterfly.
-function clamShellMesh() { const m = Mesh(); const out=[0.84,0.79,0.71], inner=[0.93,0.89,0.83];
-  for (const s of [-1,1]) { const half = Mesh();
-    mergeMesh(half, discMesh(0, 0.34, 7, -0.14, out));    // outer dome
-    mergeMesh(half, discMesh(0.02, 0.31, 7, 0.1, inner)); // pale inside
-    rotMeshX(half, s*0.95);                               // tilt the half open
-    mergeAt(m, half, 0, 0.09, s*0.17);                    // and splay the two apart at the hinge
+// §shell2 SMOOTH low-poly shell parts, built from concentric rings so they read round, not faceted.
+// shellCap: one convex paraboloid valve (rim circle at y=0, apex at y=±h). up=false bulges DOWN.
+// `warp` gives a fixed (deterministic, no rng) craggy outline; `ridge` adds concentric ridges;
+// `rimDark` darkens the outer band so a sealed pair shows a clear seam where the two halves meet.
+function shellCap(m, r, h, sides, rings, col, warp, ridge, up, rimDark) {
+  const sgn = up ? 1 : -1;
+  const V = (ro, s) => { const rr = r*ro/rings, u = rr/r, k = 1 - u*u, a = s/sides*6.2832;
+    const w = warp ? 1 + warp*(Math.sin(a*3) + 0.5*Math.sin(a*5 + 1.3)) : 1;        // irregular, but fixed per angle
+    const rib = ridge ? Math.sin(u*16) * ridge * u : 0;                             // concentric growth ridges toward the rim
+    return [Math.cos(a)*rr*w, sgn*(h*k + rib), Math.sin(a)*rr*w]; };
+  for (let ro = 0; ro < rings; ro++) for (let s = 0; s < sides; s++) { const s2 = (s+1)%sides;
+    let c = ((ro+s)&1) ? col : [col[0]*0.9, col[1]*0.9, col[2]*0.9];
+    if (rimDark && ro === rings-1) c = [col[0]*0.74, col[1]*0.74, col[2]*0.72];      // a slightly darker seam band where the halves meet
+    if (ro === 0) { const apex = [0, sgn*h, 0]; if (up) mTri(m, apex, V(1,s), V(1,s2), c); else mTri(m, apex, V(1,s2), V(1,s), c); }
+    else { if (up) mQuad(m, V(ro,s), V(ro,s2), V(ro+1,s2), V(ro+1,s), c); else mQuad(m, V(ro,s), V(ro+1,s), V(ro+1,s2), V(ro,s2), c); }
   }
+}
+// shellBowl: the concave pale interior of an open half (rim at y=0, dips to -h, faces up). Shares the rim
+// with a shellCap(up=false) of the same r/warp, so an open half is watertight with a clean edge.
+function shellBowl(m, r, h, sides, rings, col, warp) {
+  const V = (ro, s) => { const rr = r*ro/rings, u = rr/r, k = 1 - u*u, a = s/sides*6.2832;
+    const w = warp ? 1 + warp*(Math.sin(a*3) + 0.5*Math.sin(a*5 + 1.3)) : 1;
+    return [Math.cos(a)*rr*w, -h*k, Math.sin(a)*rr*w]; };
+  for (let ro = 0; ro < rings; ro++) for (let s = 0; s < sides; s++) { const s2 = (s+1)%sides;
+    const c = ((ro+s)&1) ? col : [col[0]*0.96, col[1]*0.96, col[2]*0.96];
+    if (ro === 0) { const apex = [0, -h, 0]; mTri(m, apex, V(1,s), V(1,s2), c); }
+    else mQuad(m, V(ro,s), V(ro,s2), V(ro+1,s2), V(ro+1,s), c);
+  }
+}
+// §shell2 the SEALED (live) oyster: a closed, elongated, rough grey pair with a dark seam. Optional colours
+// let the mussel reuse the shape in dark blue-black.
+function oysterMesh(c, c2) { const m = Mesh(); c = c || [0.58,0.58,0.54]; c2 = c2 || [0.66,0.65,0.6];
+  shellCap(m, 0.26, 0.14, 16, 4, c,  0.11, 0.02, false, true);   // lower valve, bulges down, craggy
+  shellCap(m, 0.26, 0.14, 16, 4, c2, 0.11, 0.02, true,  true);   // upper valve, bulges up
+  scaleMeshXYZ(m, 0.78, 1, 1.3);                                  // elongated along one axis
+  return m; }
+// §shell2 the SEALED clam: a closed, rounded, smooth cream-to-tan pair with concentric ridges.
+function clamMesh() { const m = Mesh(); const c = [0.9,0.84,0.72], c2 = [0.86,0.8,0.68];
+  shellCap(m, 0.28, 0.18, 20, 6, c,  0, 0.02, false, true);    // rounded, plump lens with concentric ridges
+  shellCap(m, 0.28, 0.18, 20, 6, c2, 0, 0.02, true,  true);
+  return m; }
+// §shell2 the OPEN/empty oyster shell: a single cupped half, clean edge, pale pearly inside.
+function oysterShellMesh() { const m = Mesh(); const out = [0.6,0.6,0.55], inner = [0.9,0.89,0.86];
+  shellCap(m, 0.3, 0.12, 16, 4, out, 0.05, 0.012, false, false);  // cupped back
+  shellBowl(m, 0.3, 0.085, 16, 4, inner, 0.05);                    // pale hollow interior
+  return m; }
+// §shell2 the OPEN/empty clam shell: a single cupped half, ridges outside, smooth inside.
+function clamShellMesh() { const m = Mesh(); const out = [0.88,0.82,0.7], inner = [0.95,0.92,0.86];
+  shellCap(m, 0.32, 0.13, 18, 5, out, 0, 0.03, false, false);     // ridged back
+  shellBowl(m, 0.32, 0.09, 18, 5, inner, 0);                       // smooth interior
   return m; }
 // §clust8 BARNACLES: a flat crust of small WHITE acorn cones, each a squat volcano with a dark aperture.
 function barnacleMesh() { const m = Mesh(); const sh=[0.94,0.92,0.87], sh2=[0.86,0.84,0.8], ap=[0.3,0.3,0.33];
@@ -9436,12 +9485,17 @@ function renderJournal() {
   const tabs = [["creatures","Creatures"],["finds","Finds"],["angling","Angling"],["collections","Collections"],["events","Events"],["treasure","Treasure"]];   // §A6 Cookbook removed · §B5 Events added · §strip Pearls removed
   const tabHtml = tabs.map(([id,lbl]) => { const [n,t] = journalCount(id);
     return `<button class="jtab${journalTab===id?" on":""}" data-jtab="${id}">${tabHasNew(id)?`<span class="jtabnew pxspark"></span>`:""}${lbl}<span class="jtc">${n}/${t}</span></button>`; }).join("");
-  const cleanupLine = `<div class="jstat">Beach cleanup, <b>${beachCleanup}</b> ${beachCleanup === 1 ? "piece" : "pieces"} of litter cleared · Horseshoes turned over, <b>${horseshoesFlipped}</b></div>`;
+  // §journal a small, clear stats panel: one stat per row, a label and a number, larger and high-contrast.
+  const statPanel = `<div class="jstats">
+    <div class="jsrow"><span class="jslabel">Litter cleared</span><span class="jsval">${beachCleanup}</span></div>
+    <div class="jsrow"><span class="jslabel">Horseshoe crabs helped</span><span class="jsval">${horseshoesFlipped}</span></div>
+  </div>`;
   j.innerHTML = `<div id="journalbox"><h2>Field Journal</h2>
     <div class="jtabs">${tabHtml}</div>
-    ${cleanupLine}
+    ${statPanel}
     <div class="jbody"><div class="jgrid">${journalGrid(journalTab)}</div></div>
-    <div class="jhint">${IS_TOUCH ? "tap a card to inspect" : "click a card to inspect"} · Tab for tabs · E or Esc to close</div></div>`;
+    <button class="closebtn primary" data-jback="1">Back</button></div>`;
+  { const bb = j.querySelector("[data-jback]"); if (bb) bb.onclick = () => closeJournalToPause(); }   // §menu consistent Back button → pause menu
   j.querySelectorAll(".jtab").forEach(b => b.onclick = () => { markJournalCatSeen(journalTab); journalTab = b.dataset.jtab; renderJournal(); });   // §pixui leaving a tab marks it viewed
   j.querySelectorAll(".jcard[data-jk]").forEach(card => card.onclick = () => {
     const [kind, k] = card.dataset.jk.split(":");
@@ -13694,8 +13748,13 @@ function resize() {
 // §13.6 apply the current graphics settings to the live engine knobs (no reload needed).
 function applyGFX() {
   ditherOn = GFX.dither;
-  baseFogDensity = BASE_FOG_DENSITY / Math.max(0.3, GFX.fog);   // higher "fog distance" = thinner fog, see farther
-  baseFogNear = BASE_FOG_NEAR * GFX.fog;
+  // §fogfix the old mapping only scaled an already-near-zero density, so the slider did almost nothing.
+  // Map it to a real VISIBILITY distance instead: ~30m (fog right on the player) at the minimum up to
+  // ~2800m (the current far, effectively clear) at the maximum. Fog in the shaders is 1-exp(-fd*fd) with
+  // fd=(dist-near)*density, so fog is ~opaque where (dist-near)*density ~ 1.73. Weather still adds on top.
+  { const t = Math.max(0, Math.min(1, (GFX.fog - 0.5) / 1.1));
+    const V = 30 + 2770 * t;                                   // visibility distance
+    baseFogNear = V * 0.3; baseFogDensity = 1.73 / (V * 0.7); }
   FOG_DENSITY = baseFogDensity; FOG_NEAR = baseFogNear;
   DRAW_R = BASE_DRAW_R * GFX.propDist;
   UPDATE_R = BASE_UPDATE_R * GFX.simRadius;
