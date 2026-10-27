@@ -4980,6 +4980,15 @@ function sphM(r, col, lon, lat) {
   return d;
 }
 
+// §models a transverse domed plate (a half-cylinder arch across Z, thin in X) — an armadillo/woodlouse segment.
+function domePlate(halfW, h, thick, col) { const d=Mesh(); const S=6; let F=[], B=[];
+  for (let k=0;k<=S;k++){ const a=Math.PI*(k/S), z=Math.cos(a)*halfW, y=Math.sin(a)*h; F.push([thick,y,z]); B.push([-thick,y,z]); }
+  for (let k=0;k<S;k++) mQuad(d, B[k], F[k], F[k+1], B[k+1], k%2?col:[col[0]*0.9,col[1]*0.9,col[2]*0.9]);
+  mTri(d, F[0],B[0],[thick,0,0], col); mTri(d, B[S],F[S],[-thick,0,0], col);   // close the two X-facing ends a touch
+  return d; }
+// §models scale a built mesh's vertices in place (to squash a sphere into an oval dome, etc.).
+function scaleMeshXYZ(mesh, sx, sy, sz) { const P=mesh.pos; for (let i=0;i<P.length;i+=3){ P[i]*=sx; P[i+1]*=sy; P[i+2]*=sz; } return mesh; }
+
 // Base prop meshes (object space, ~1 unit tall; instance scale sets real size).
 const BROWN = [0.34, 0.24, 0.16], BARK = [0.30, 0.22, 0.16];
 function palmMesh() {
@@ -5956,11 +5965,13 @@ function sealMesh() { const m = Mesh(); const c=[0.4,0.4,0.42]; for(let i=0;i<7;
 function jellyMesh() { const m = discMesh(0.3,0.4,8,0.25,[0.75,0.7,0.85]); for(let i=0;i<6;i++){const a=i/6*6.283; mTri(m,[Math.cos(a)*0.3,0.3,Math.sin(a)*0.3],[Math.cos(a)*0.3,-0.3,Math.sin(a)*0.3],[Math.cos(a+0.25)*0.3,0.1,Math.sin(a+0.25)*0.3],[0.7,0.65,0.8]);} return m; }
 // finds
 // §shells a spiral whelk: a coiled horn swept along a shrinking helix, big body-whorl at the base, pointed spire on top.
-function shellMesh() { const m = Mesh(); const c=[0.93,0.86,0.75], c2=[0.83,0.73,0.6]; const pts=[], turns=2.3, N=28;
-  for (let i=0;i<=N;i++){ const t=i/N, ang=t*turns*6.2832, coil=0.26*(1-t*0.9), r=0.125*(1-t*0.82)+0.012;
-    pts.push([Math.cos(ang)*coil, t*0.33, Math.sin(ang)*coil, r]); }
-  mPathTube(m, pts, 7, c);
-  mergeAt(m, sphM(0.095, c2, 8, 4), pts[0][0], pts[0][1], pts[0][2]);    // round the open mouth at the base
+function shellMesh() { const m = Mesh(); const c=[0.93,0.86,0.75], c2=[0.82,0.72,0.6]; const H=0.64, N=12;
+  const prof = (t) => 0.2*Math.pow(1-t, 0.72);                           // fat base → point, gently convex sides (whelk/turret)
+  for (let i=0;i<N;i++){ const t0=i/N, t1=(i+1)/N; mCyl(m, t0*H, t1*H, prof(t0), prof(t1), 10, i%2?c:c2); }   // the smooth tapering spire
+  const pts=[], turns=4.2, M=56;
+  for (let i=0;i<=M;i++){ const t=i/M, ang=t*turns*6.2832, rr=prof(t)*1.04; pts.push([Math.cos(ang)*rr, t*H, Math.sin(ang)*rr, 0.021*(1-t*0.65)+0.004]); }
+  mPathTube(m, pts, 5, c2);                                              // a raised ridge spiralling up the surface
+  mergeMesh(m, discMesh(0.0, 0.2, 10, -0.03, c2));                       // round the base / aperture
   return m; }
 // §shells a cockle / scallop: a domed fan of radiating ribs with a hinge umbo and two little ears.
 function cockleMesh() { const m = Mesh(); const c=[0.96,0.84,0.72], c2=[0.88,0.72,0.6], umbo=[0.82,0.68,0.56];
@@ -6677,17 +6688,37 @@ function chitonMesh() { const m = Mesh();
     mergeAt(m, d, x, 0.0, 0);
   }
   return m; }
-function pillbugMesh() { const m = Mesh(), c = [0.43,0.44,0.47]; mergeMesh(m, discMesh(0.0, 0.14, 7, 0.13, c));
-  for (let i=0;i<5;i++) mBox(m, (i-2)*0.05, 0.08, 0, 0.012, 0.09, 0.14, [0.34,0.35,0.38]);
-  mBox(m, 0.14, 0.05, 0, 0.03, 0.04, 0.09, [0.38,0.39,0.42]); return m; }
-function centipedeMesh() { const m = Mesh(), c = [0.56,0.3,0.24], leg = [0.4,0.22,0.18];
-  for (let i=0;i<8;i++){ const x=(i-3.5)*0.09; mBox(m, x, 0.04, 0, 0.045, 0.035, 0.05, i%2?c:[c[0]*0.85,c[1]*0.85,c[2]*0.85]);
-    mBox(m, x, 0.02, 0.07, 0.008, 0.008, 0.05, leg); mBox(m, x, 0.02, -0.07, 0.008, 0.008, 0.05, leg); }
-  mBox(m, 0.41, 0.05, 0, 0.04, 0.04, 0.05, c); mBox(m, 0.46, 0.06, 0.02, 0.02,0.008,0.008,leg); mBox(m, 0.46, 0.06, -0.02, 0.02,0.008,0.008,leg); return m; }
-function beetleMesh() { const m = Mesh(), shell = [0.18,0.26,0.2], hi = [0.3,0.46,0.34];
-  mergeMesh(m, discMesh(0.04, 0.15, 7, 0.13, shell)); mergeMesh(m, discMesh(0.07, 0.11, 7, 0.08, hi));
-  mBox(m, 0.15, 0.05, 0, 0.04, 0.04, 0.05, [0.12,0.14,0.12]);
-  for (const s of [-1,1]) for (let i=0;i<3;i++) mBox(m, (i-1)*0.07, 0.0, s*0.13, 0.012, 0.012, 0.05, [0.1,0.1,0.1]); return m; }
+// §models a pill bug / woodlouse: an oval armour of overlapping transverse plates, tiny legs and antennae (head at +X).
+function pillbugMesh() { const m = Mesh(), c=[0.47,0.48,0.52], c2=[0.39,0.4,0.44], dk=[0.3,0.31,0.35], ant=[0.34,0.35,0.39];
+  const n=8;
+  for (let i=0;i<n;i++){ const t=i/(n-1), x=(t-0.46)*0.6, w=0.17*Math.sin((0.16+t*0.78)*Math.PI), h=w*0.8+0.02;
+    mergeAt(m, domePlate(w, h, 0.055, i%2?c:c2), x, 0, 0); }   // shingled segment plates
+  // rounded head shield at the front
+  mergeAt(m, scaleMeshXYZ(sphM(0.1, c, 8, 4), 1, 0.7, 1), 0.24, 0.05, 0);
+  for (const s of [-1,1]) mBox(m, 0.33, 0.045, s*0.03, 0.05,0.01,0.01, ant);   // antennae
+  // little legs peeking out under the sides
+  for (const s of [-1,1]) for (let i=0;i<6;i++){ const lx=(i-2.5)*0.085; mBox(m, lx, 0.015, s*(0.12+ (i%2)*0.01), 0.015,0.012,0.012, dk); }
+  return m; }
+// §models a centipede: a smooth gently-curved segmented body with a pair of legs per segment, head + antennae (head at +X).
+function centipedeMesh() { const m = Mesh(), c=[0.62,0.33,0.24], c2=[0.5,0.26,0.19], leg=[0.44,0.24,0.18], ant=[0.4,0.22,0.16];
+  const N=11, pts=[];
+  for (let i=0;i<=N;i++){ const t=i/N, x=(t-0.5)*0.74, z=Math.sin(t*Math.PI*1.3)*0.06, r=0.052*Math.sin((0.12+t*0.82)*Math.PI)+0.018;
+    pts.push([x, 0.05, z, r]); }
+  mPathTube(m, pts, 7, c);
+  for (let i=1;i<N;i++){ const P=pts[i], z=P[2]; for (const s of [-1,1]){   // a leg pair per segment: out then down
+    mBox(m, P[0], 0.055, z+s*0.055, 0.008,0.008,0.045, leg); mBox(m, P[0]+0.01, 0.02, z+s*0.1, 0.008,0.035,0.008, leg); } }
+  const H=pts[N]; mergeAt(m, sphM(0.055, c2, 8, 4), H[0], 0.05, H[2]);                 // head
+  for (const s of [-1,1]) mBox(m, H[0]+0.06, 0.07, H[2]+s*0.02, 0.05,0.008,0.008, ant);   // antennae
+  return m; }
+// §models a ground beetle: a domed oval elytra with a centre seam, a pronotum collar, a small head with antennae, six legs (head at +X).
+function beetleMesh() { const m = Mesh(), sh=[0.16,0.18,0.21], sh2=[0.24,0.27,0.31], hd=[0.11,0.12,0.15], leg=[0.1,0.1,0.13];
+  mergeAt(m, scaleMeshXYZ(sphM(0.16, sh, 10, 5), 1.45, 0.72, 1.0), -0.03, 0.12, 0);   // oval domed elytra
+  mBox(m, -0.04, 0.235, 0, 0.19, 0.004, 0.006, hd);                                    // the elytra seam down the middle
+  mergeAt(m, scaleMeshXYZ(sphM(0.1, sh2, 8, 4), 1.0, 0.6, 1.05), 0.16, 0.1, 0);        // pronotum collar
+  mergeAt(m, scaleMeshXYZ(sphM(0.07, hd, 7, 4), 1.0, 0.7, 1.0), 0.27, 0.09, 0);        // head
+  for (const s of [-1,1]) mBox(m, 0.35, 0.11, s*0.035, 0.055,0.009,0.009, hd);          // antennae
+  for (const s of [-1,1]) for (let i=0;i<3;i++){ const lx=-0.06+i*0.12; mBox(m, lx, 0.05, s*0.15, 0.06,0.013,0.013, leg); mBox(m, lx+0.045, 0.0, s*0.21, 0.013,0.05,0.013, leg); }   // six legs (femur out, tibia down)
+  return m; }
 function slugMesh() { const m = Mesh(), c = [0.57,0.42,0.26];
   for (let i=0;i<5;i++){ const r=0.07*(1-Math.abs(i-2)/4)+0.028; mergeAt(m, discMesh(0, r, 6, r*0.9, c), (i-2)*0.1, 0.02, 0); }
   mBox(m, 0.24, 0.09, 0.02, 0.008, 0.05, 0.008, [0.4,0.3,0.2]); mBox(m, 0.24, 0.09, -0.02, 0.008, 0.05, 0.008, [0.4,0.3,0.2]); return m; }
