@@ -117,15 +117,23 @@
   #pausemenu { position: fixed; inset: 0; z-index: 20; display: none; align-items: center; justify-content: center;
     background: radial-gradient(150% 130% at 50% 35%, rgba(14,26,32,0.32), rgba(8,12,16,0.78)); backdrop-filter: blur(2px); }
   #pausemenu.show { display: flex; }
-  #pausebox { width: min(320px, 90vw); background: var(--facet); padding: 22px 24px; text-align: center;
+  #pausebox { width: min(320px, 90vw); background: #16282a var(--ditherbg, var(--facet)); background-size: 100% 100%; image-rendering: pixelated; padding: 22px 24px; text-align: center;
     box-shadow: 0 12px 44px rgba(0,0,0,.6), inset 0 0 40px rgba(40,24,10,.4);
     clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); }
   #pausebox h2 { font-size: 22px; letter-spacing: .06em; margin: 0 0 4px; color: #fbeccd; }
   #pausebox .psub { font-size: 12px; opacity: .6; margin-bottom: 18px; letter-spacing: .04em; }
   #pausebox button { width: 100%; margin: 7px 0; font-size: 15px; padding: 12px 20px; }
   #pausebox button.danger { color: #e9b9a0; }
+  /* §look pixel-art buttons: a dithered palette face with a hard, chunky two-tone border (no soft radius) */
+  #pausebox button, #controlsbox button, #controlsbox .closebtn, #bucketlookbox button {
+    background: #2a4446 var(--ditherbtn, var(--facet)); background-size: 100% 100%; image-rendering: pixelated;
+    border: none; border-radius: 0; color: var(--ink);
+    box-shadow: 0 3px 0 #0c1718, inset 2px 2px 0 rgba(255,235,180,.16), inset -2px -2px 0 rgba(0,0,0,.42); }
+  #pausebox button:hover, #controlsbox button:hover, #bucketlookbox button:hover { filter: brightness(1.16); }
+  #pausebox button:active, #controlsbox button:active, #bucketlookbox button:active { transform: translateY(3px); box-shadow: inset 2px 2px 0 rgba(0,0,0,.42); }
+  #pausebox button.primary, #bucketlookbox button.primary { box-shadow: 0 3px 0 #0c1718, inset 2px 2px 0 rgba(255,235,180,.28), inset -2px -2px 0 rgba(0,0,0,.4); }
   /* §2 controls cheat-sheet (inside the pause flow) */
-  #controlsbox { width: min(400px, 92vw); max-height: 82vh; overflow-y: auto; background: var(--facet); padding: 20px 24px; text-align: left;
+  #controlsbox { width: min(400px, 92vw); max-height: 82vh; overflow-y: auto; background: #16282a var(--ditherbg, var(--facet)); background-size: 100% 100%; image-rendering: pixelated; padding: 20px 24px; text-align: left;
     box-shadow: 0 12px 44px rgba(0,0,0,.6);
     clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); }
   #controlsbox h2 { font-size: 20px; letter-spacing: .05em; margin: 0 0 14px; text-align: center; color: #fbeccd; }
@@ -302,8 +310,8 @@
   /* tool belt (hotbar): leather loops along the bottom */
   #hotbar { position: fixed; left: 50%; bottom: 12px; transform: translateX(-50%);
     z-index: 8; display: flex; gap: 6px; pointer-events: auto; padding: 7px 10px 9px;
-    background: linear-gradient(#5a3c23, #3f2817); border: 1px solid #2a1a0e;
-    border-radius: 10px; box-shadow: 0 3px 10px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,220,170,.15); }
+    background: #4a311d var(--ditherwood, linear-gradient(#5a3c23, #3f2817)); background-size: 100% 100%; image-rendering: pixelated;   /* §look dithered wood-palette belt */
+    border: 2px solid #2a1a0e; border-radius: 10px; box-shadow: 0 3px 10px rgba(0,0,0,.45), inset 0 1px 0 rgba(255,220,170,.15); }
   .hslot { position: relative; width: 50px; height: 50px; border-radius: 7px;
     border: 2px solid #6e4a2a; background: rgba(28,18,10,.6); cursor: pointer;
     box-shadow: inset 0 0 6px rgba(0,0,0,.5); }
@@ -486,7 +494,7 @@
   .irar.uncommon,.r.uncommon { color: #6fc; } .irar.rare,.r.rare { color: #fc6; } .irar.tool,.r.tool { color: #9bd; } .irar.legendary,.r.legendary{color:#f9a;}
   #invpanel button, #debugpanel button {
     font: inherit; font-size: 13px; font-weight: 600; letter-spacing: .03em; padding: 7px 14px; cursor: pointer;
-    border: none; background: var(--facet); color: var(--ink); text-shadow: 0 1px 1px var(--ink-shadow);
+    border: none; background: #2a4446 var(--ditherbtn, var(--facet)); background-size: 100% 100%; image-rendering: pixelated; color: var(--ink); text-shadow: 0 1px 1px var(--ink-shadow);
     clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 7px, 100% calc(100% - 7px), calc(100% - 7px) 100%, 7px 100%, 0 calc(100% - 7px), 0 7px); }
   #invpanel button:hover, #debugpanel button:hover { filter: brightness(1.22); }
   #debugpanel { right: 12px; top: 12px; width: 220px; font-size: 13px; }
@@ -543,7 +551,7 @@
   #bucketlook { position: fixed; inset: 0; z-index: 24; display: none; align-items: center; justify-content: center;
     background: var(--dim); }
   #bucketlookbox .bl-btns { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-  #bucketlookbox { background: var(--facet); padding: 18px; box-shadow: 0 12px 40px rgba(0,0,0,.55); text-align: center;
+  #bucketlookbox { background: #16282a var(--ditherbg, var(--facet)); background-size: 100% 100%; image-rendering: pixelated; padding: 18px; box-shadow: 0 12px 40px rgba(0,0,0,.55); text-align: center;
     clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); }
   #bucketlookbox h2 { font-size: 20px; margin: 0 0 4px; letter-spacing: .03em; }
   #bucketlookbox .bl-sub { font-size: 12px; opacity: .7; margin-bottom: 12px; }
@@ -582,7 +590,7 @@
   #pausebox, #controlsbox, #settingspanel, #invpanel, #stashpanel, #tradepanel,
   #journalbox, #bucketlookbox, #inspectbox, #debugpanel, #itip, #ctxmenu, #card,
   #combined #invpanel, #combined #bucketlookbox {
-    background-color: var(--parch); background-image: var(--grain); background-blend-mode: multiply;
+    background-color: var(--parch); background-image: var(--ditherparch, var(--grain)); background-size: 100% 100%; background-blend-mode: normal; image-rendering: pixelated;   /* §look dithered parchment fill */
     color: var(--pink); text-shadow: 0 1px 0 var(--parch-hi);
     border: 3px solid var(--wood-lo); clip-path: none !important;
     box-shadow: inset 0 0 0 3px var(--wood), inset 0 0 0 5px var(--parch-lo),
@@ -603,7 +611,7 @@
   /* ---- beveled stone buttons (gold reserved for primary + hover) ---- */
   button, #invpanel button, #debugpanel button, #inspectview button, #bucketlookbox button,
   #settingspanel button, .recipe .mk, .trow .tbtn {
-    background: linear-gradient(#c8a86a,#a9884f) !important; color: #311f0c !important;
+    background: #b89a5c var(--ditherbtn, linear-gradient(#c8a86a,#a9884f)) !important; background-size: 100% 100% !important; image-rendering: pixelated; color: #311f0c !important;
     text-shadow: 0 1px 0 var(--parch-hi); border: 0; clip-path: none !important; border-radius: 0 !important;
     box-shadow: inset 2px 2px 0 var(--parch-hi), inset -2px -2px 0 #6e4f2b, 0 2px 0 #4a3317;
   }
@@ -613,7 +621,7 @@
   }
   button:active { transform: translateY(1px); box-shadow: inset -2px -2px 0 var(--parch-hi), inset 2px 2px 0 #6e4f2b; }
   button.primary, .cc-keep, #inspRelease, #fishrevealbox .frkeep, #startBtn.primary, .closebtn.primary {
-    background: linear-gradient(#e7b84e,#c7922f) !important; color: #2a1708 !important;
+    background: #d4a23c var(--dithergold, linear-gradient(#e7b84e,#c7922f)) !important; background-size: 100% 100% !important; image-rendering: pixelated; color: #2a1708 !important;
     box-shadow: inset 2px 2px 0 var(--gold-hi), inset -2px -2px 0 #90631c, 0 2px 0 #5a3d10 !important;
   }
   button.primary:hover, .cc-keep:hover { background: linear-gradient(#f4ca5e,#d8a238) !important; filter: none; }
@@ -639,7 +647,7 @@
     box-shadow: inset 1px 1px 0 var(--parch-hi), inset -1px -1px 0 var(--parch-lo), 0 2px 0 #00000022 !important; }
   .jcard.unk { color: #8a714a !important; }
   #inspectcanvas, #bucketlookcanvas { clip-path: none !important; }
-  #hotbar { background: linear-gradient(#5a3c23,#3a2413) !important; border: 2px solid var(--wood-lo) !important;
+  #hotbar { background: #4a311d var(--ditherwood, linear-gradient(#5a3c23,#3a2413)) !important; background-size: 100% 100% !important; image-rendering: pixelated; border: 2px solid var(--wood-lo) !important;
     border-radius: 0 !important; box-shadow: inset 1px 1px 0 var(--wood-hi), inset -1px -1px 0 var(--wood-lo), 0 4px 10px rgba(0,0,0,.5) !important; }
   .hslot { border-radius: 0 !important; }
   /* ---- sliders (settings / debug) ---- */
@@ -8665,8 +8673,32 @@ function buildMeshIcon(mesh, tint) {
   gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, _iconPx);
   const img = iconCtx.createImageData(64, 64);
   for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) { const s = ((63 - y) * 64 + x) * 4, d = (y * 64 + x) * 4; img.data[d]=_iconPx[s]; img.data[d+1]=_iconPx[s+1]; img.data[d+2]=_iconPx[s+2]; img.data[d+3]=_iconPx[s+3]; }
+  ditherIconData(img);   // §look run each icon through the same Bayer dither + palette quantize as the world, so it belongs in the dithered UI
   iconCtx.putImageData(img, 0, 0); return iconCanvas.toDataURL();
 }
+const _BAYER16 = [0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];   // §look the same 4x4 ordered-dither matrix the world post pass uses
+// §look apply ordered Bayer dither + 8-level palette quantization to an ImageData (matches postFS), leaving transparent pixels alone.
+function ditherIconData(img) { const d = img.data, W = img.width, H = img.height, L = 8.0;
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) { const i = (y*W+x)*4; if (d[i+3] < 8) continue;
+    const b = _BAYER16[(y&3)*4 + (x&3)] / 16.0;
+    for (let k = 0; k < 3; k++) { const c = d[i+k] / 255; d[i+k] = Math.max(0, Math.min(255, Math.floor(c*L + b) / L * 255)); } } }
+// §look a tileable Bayer-dithered vertical gradient between two palette colours, as a pixel-art data URL for UI panels/buttons.
+function paletteDitherURL(w, h, top, bot, levels) { levels = levels || 6;
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d");
+  const img = g.createImageData(w, h), d = img.data;
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const t = y/(h-1), b = _BAYER16[(y&3)*4 + (x&3)] / 16.0, i = (y*w+x)*4;
+    for (let k = 0; k < 3; k++) { const v = (top[k] + (bot[k]-top[k])*t) / 255; d[i+k] = Math.floor(v*levels + b) / levels * 255 | 0; }
+    d[i+3] = 255; }
+  g.putImageData(img, 0, 0); return c.toDataURL();
+}
+function applyDitherTheme() { try {
+  const root = document.documentElement.style;   // §look dithered palette fills for the TIDEWORN (parchment/oak/brass) skin, so the UI shares the world's dithered look
+  root.setProperty("--ditherparch", "url(" + paletteDitherURL(64, 120, [214,186,142], [150,119,72], 6) + ")");  // parchment panel
+  root.setProperty("--ditherbtn",   "url(" + paletteDitherURL(44, 30, [205,174,110], [160,128,74], 5) + ")");   // brass button face
+  root.setProperty("--dithergold",  "url(" + paletteDitherURL(44, 30, [236,190,86], [196,142,46], 5) + ")");    // gold primary button
+  root.setProperty("--ditherwood",  "url(" + paletteDitherURL(48, 40, [92,62,36], [52,34,20], 5) + ")");        // oak tool belt
+} catch (e) {} }
+applyDitherTheme();   // §look build the dithered palette backgrounds now (after _BAYER16 is defined, so it can't hit the temporal dead zone)
 function buildOneIcon(it) {               // §12C render one item model → its icon (also for items added after init)
   if (!iconFBO) return;
   it.icon = buildMeshIcon(it.model(), it.tint || [1,1,1]);
@@ -8704,12 +8736,16 @@ function buildPanels() {
 }
 // procedural canvas-bag texture (noise weave + dashed stitched seam), matching the palette
 function applyBagTexture() {
-  const N = 220, cv = document.createElement("canvas"); cv.width = N; cv.height = N; const c = cv.getContext("2d");
-  c.fillStyle = "#7a5a38"; c.fillRect(0, 0, N, N);
-  for (let i = 0; i < 7000; i++) { const x = Math.random()*N|0, y = Math.random()*N|0, dark = Math.random() < 0.5;
-    c.fillStyle = "rgba(" + (dark ? "54,38,20" : "158,126,84") + "," + (0.04 + Math.random()*0.07).toFixed(2) + ")"; c.fillRect(x, y, 1, 1 + (Math.random()*2|0)); }
-  c.strokeStyle = "rgba(42,26,12,.55)"; c.setLineDash([5, 4]); c.lineWidth = 2; c.strokeRect(10, 10, N-20, N-20);
-  document.getElementById("invpanel").style.backgroundImage = "url(" + cv.toDataURL() + ")";
+  // §look an ordered Bayer-dithered leather gradient (palette-limited, pixel-art) so the satchel matches the world's dithered look; keep the stitched border.
+  const N = 96, cv = document.createElement("canvas"); cv.width = N; cv.height = N; const c = cv.getContext("2d");
+  const img = c.createImageData(N, N), d = img.data, top = [134,102,64], bot = [70,48,27];
+  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const t = y/(N-1), b = _BAYER16[(y&3)*4 + (x&3)] / 16.0, i = (y*N+x)*4;
+    for (let k = 0; k < 3; k++) { const v = (top[k] + (bot[k]-top[k])*t) / 255; d[i+k] = Math.floor(v*6 + b) / 6 * 255 | 0; }
+    d[i+3] = 255; }
+  c.putImageData(img, 0, 0);
+  c.strokeStyle = "rgba(40,24,10,.6)"; c.setLineDash([5, 4]); c.lineWidth = 2; c.strokeRect(6, 6, N-12, N-12);
+  const el = document.getElementById("invpanel");
+  el.style.backgroundImage = "url(" + cv.toDataURL() + ")"; el.style.backgroundSize = "100% 100%"; el.style.imageRendering = "pixelated";
 }
 function renderHotbar() {
   const el = document.getElementById("hotbar");
