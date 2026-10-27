@@ -469,7 +469,10 @@
     background-size: 250% 250%; animation: shim 2.6s linear infinite; }
   @keyframes shim { 0%{background-position: 120% 0} 100%{background-position: -40% 0} }
   #invpanel.shake { animation: bagshake .35s ease; }
-  @keyframes bagshake { 0%,100%{transform:translate(-50%,-50%)} 25%{transform:translate(-52%,-50%)} 75%{transform:translate(-48%,-50%)} }
+  /* §satchelbug the panel is a static, flex-centred child of #combined now, so the shake must be a
+     centre-relative translateX (resting at 0), NOT translate(-50%,-50%) (which, on a static box, hurls
+     it a half-width/height into the top-left and sticks there if the .shake class lingers). */
+  @keyframes bagshake { 0%,100%{transform:translateX(0)} 20%{transform:translateX(-7px)} 45%{transform:translateX(6px)} 70%{transform:translateX(-4px)} 90%{transform:translateX(2px)} }
   #invpanel .ihint { font-size: 11px; opacity: .6; margin-top: 8px; }
   #ctxmenu { position: fixed; z-index: 32; display: none; min-width: 110px; padding: 5px;
     background: rgba(18,12,6,.97); border: 1px solid #6e4a2a; box-shadow: 0 4px 14px rgba(0,0,0,.6);
@@ -3707,19 +3710,21 @@ function startCatchCine() {
 function giveCatch(f, isJunk) {
   const itemId = isJunk ? f.junkId : (FISH_SPECIES[f.species] && FISH_SPECIES[f.species].item);
   const added = itemId ? Inv.add(itemId, 1) : 0;
-  if (catchCine) { catchCine.itemId = itemId; catchCine.added = added > 0; }
+  let dropped = false;
+  if (itemId && added <= 0 && FINDS[itemId]) { dropItemWorld(itemId, 1); dropped = true; }   // §dropfly pack full → the catch drops on the ground in front of you (falls from hand), not lost
+  if (catchCine) { catchCine.itemId = itemId; catchCine.added = added > 0; catchCine.dropped = dropped; }
   if (added > 0 && typeof notify === "function") notify(itemId, 1, false);
 }
 let catchPop = null, catchPopT = 0;
 const CATCH_DISMISS_DELAY = 0.5;   // §catchcard ignore input for this long so the mini-game's last click doesn't dismiss the card instantly
-function showCatchPop(f, isJunk, itemId, added) {
+function showCatchPop(f, isJunk, itemId, added, dropped) {
   const el = document.getElementById("catchpop"); if (!el) return;
   const icon = (typeof buildMeshIcon === "function") ? buildMeshIcon(isJunk ? junkCatchMesh(f.junkId) : catchSpeciesMesh(f.species), [1,1,1]) : null;
   const label = isJunk ? (ITEMS[f.junkId] ? ITEMS[f.junkId].name : "Junk") : (FISH_SPECIES[f.species] ? FISH_SPECIES[f.species].label : "Fish");
   const sub = isJunk ? `<div class="cp-wt">off the seabed</div>`
     : `<div class="cp-wt"><b>${f.weight.toFixed(2)}</b> kg${f.record ? ` <span class="cp-rec">RECORD</span>` : ""}</div>`;
   // §catchcard a single modal card: everything caught is kept (junk included). No button; a click or a key dismisses it.
-  const sfull = added ? "" : `<div class="cp-hint">satchel full, not kept</div>`;
+  const sfull = added ? "" : `<div class="cp-hint">${dropped ? "satchel full, dropped at your feet" : "satchel full, not kept"}</div>`;
   const cont = `<div class="cp-hint cp-pulse">${IS_TOUCH ? "Tap to continue" : "Click to continue"}</div>`;
   el.innerHTML = `${icon ? `<img class="cp-big" src="${icon}" alt="">` : ""}<div class="cp-name">${label}</div>${sub}${sfull}${cont}`;
   el.style.display = "block"; requestAnimationFrame(() => el.classList.add("show"));
@@ -3779,7 +3784,7 @@ function updateCatchCine(dt) {
     cc.yaw = Math.atan2(fwd[0], fwd[2]);                     // turn broadside to the camera
     cc.lean = Math.sin(cc.mt * 17) * 0.5 * Math.max(0.3, 1 - cc.mt*0.5);   // flapping, easing a touch
     cc.leanDir = Math.PI/2;
-    if (!cc.popped) { cc.popped = true; showCatchPop(cc.f, cc.isJunk, cc.itemId, cc.added); }   // §catch5 the small, non-blocking card
+    if (!cc.popped) { cc.popped = true; showCatchPop(cc.f, cc.isJunk, cc.itemId, cc.added, cc.dropped); }   // §catch5 the small, non-blocking card
     if (cc.mt >= 0.55) { catchCine = null; endCast(0.5); }   // §fish5 quicker hand-off; the card lingers ~4s on its own
   }
 }
@@ -3839,27 +3844,35 @@ function drawFishHUD() {
   const realG = cv.getContext("2d"); realG.setTransform(1, 0, 0, 1, 0, 0); realG.imageSmoothingEnabled = false;
   realG.clearRect(0, 0, cv.width, cv.height); realG.drawImage(_fishLo, 0, 0, lw, lh, 0, 0, cv.width, cv.height);
 }
+// §fishui the fishing HUD wears the same oak / parchment / brass RPG skin as the menus
+const FHUD = { oak: "rgba(42,28,16,0.92)", rim: "rgba(150,110,60,0.95)", groove: "rgba(26,17,9,0.95)",
+  parch: "rgba(240,217,176,0.95)", brass: [150,110,60], amber: [196,150,70], gold: [236,190,86], safe: [120,190,104] };
 function drawCastMeter(g) {
   const w = 240, h = 14, x = (innerWidth - w) / 2, y = innerHeight - 150, c = rod.charge;
   g.save();
-  g.fillStyle = "rgba(12,16,20,0.62)"; hudChamfer(g, x - 10, y - 22, w + 20, h + 34, 7); g.fill();   // chamfered panel
-  g.fillStyle = "rgba(38,48,54,0.92)"; hudChamfer(g, x, y, w, h, 3); g.fill();                         // track
-  const col = c < 0.5 ? [120,200,210] : c < 0.85 ? [150,220,120] : [255,210,90];                      // cool → green → gold as it winds up
+  g.fillStyle = FHUD.oak; hudChamfer(g, x - 10, y - 22, w + 20, h + 34, 7); g.fill();                   // oak panel
+  g.strokeStyle = FHUD.rim; g.lineWidth = 2; hudChamfer(g, x - 10, y - 22, w + 20, h + 34, 7); g.stroke();   // brass rim
+  g.fillStyle = FHUD.groove; hudChamfer(g, x, y, w, h, 3); g.fill();                                    // sunken groove track
+  const col = c < 0.5 ? FHUD.brass : c < 0.85 ? FHUD.amber : FHUD.gold;                                 // brass → amber → bright gold as it winds up
   g.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`; g.fillRect(x, y, w * c, h);
-  if (c > 0.85) { g.save(); g.shadowColor = "rgba(255,210,90,0.9)"; g.shadowBlur = 10; g.fillRect(x + w*0.85, y, w*(c-0.85), h); g.restore(); }   // glow near full power
-  g.strokeStyle = "rgba(255,255,255,0.25)"; g.lineWidth = 1; hudChamfer(g, x, y, w, h, 3); g.stroke();
-  g.fillStyle = "rgba(230,240,245,0.92)"; g.font = "700 12px system-ui,sans-serif"; g.textAlign = "center"; g.fillText("CAST POWER", innerWidth / 2, y - 8);
+  if (c > 0.85) { g.save(); g.shadowColor = "rgba(236,190,86,0.9)"; g.shadowBlur = 10; g.fillRect(x + w*0.85, y, w*(c-0.85), h); g.restore(); }   // glow near full power
+  g.strokeStyle = "rgba(240,217,176,0.3)"; g.lineWidth = 1; hudChamfer(g, x, y, w, h, 3); g.stroke();
+  g.fillStyle = FHUD.parch; g.font = "700 12px system-ui,sans-serif"; g.textAlign = "center"; g.fillText("CAST POWER", innerWidth / 2, y - 8);
   g.restore();
 }
 const SPECIES_HUD_COL = { surfperch: [0.75,0.77,0.64], rockfish: [0.86,0.32,0.2], lingcod: [0.42,0.46,0.35], ratfish: [0.6,0.63,0.7],
   eel: [0.4,0.6,0.4], puffer: [0.9,0.8,0.42], flyingfish: [0.6,0.72,0.9], sunfish: [0.68,0.72,0.78], ghostfish: [0.66,0.9,0.95], junk: [0.55,0.57,0.6] };
 function hudChamfer(g, x, y, w, h, c) { g.beginPath(); g.moveTo(x+c,y); g.lineTo(x+w-c,y); g.lineTo(x+w,y+c); g.lineTo(x+w,y+h-c); g.lineTo(x+w-c,y+h); g.lineTo(x+c,y+h); g.lineTo(x,y+h-c); g.lineTo(x,y+c); g.closePath(); }
-function hudFishToken(g, cx, cy, col, s) {   // a tiny side-on fish facing the hook (right)
-  s = s || 1; const C = `rgb(${col[0]*255|0},${col[1]*255|0},${col[2]*255|0})`;
-  g.save(); g.fillStyle = C;
-  g.beginPath(); g.ellipse(cx, cy, 9*s, 5.2*s, 0, 0, 6.283); g.fill();                 // body
-  g.beginPath(); g.moveTo(cx-8*s, cy); g.lineTo(cx-14*s, cy-5*s); g.lineTo(cx-14*s, cy+5*s); g.closePath(); g.fill();   // tail
-  g.fillStyle = "#12161a"; g.beginPath(); g.arc(cx+5*s, cy-1*s, 1.4*s, 0, 6.283); g.fill();   // eye
+function hudFishToken(g, cx, cy, col, s) {   // §fishui a small side-on fish token (forked tail + dorsal fin + pale belly), distinct from the hunger-bar pixel fish
+  s = s || 1; const C = `rgb(${col[0]*255|0},${col[1]*255|0},${col[2]*255|0})`, dk = `rgb(${col[0]*160|0},${col[1]*160|0},${col[2]*160|0})`;
+  g.save();
+  g.fillStyle = dk;                                                                  // forked tail
+  g.beginPath(); g.moveTo(cx-8*s, cy); g.lineTo(cx-15*s, cy-6*s); g.lineTo(cx-12*s, cy); g.lineTo(cx-15*s, cy+6*s); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(cx-2*s, cy-5*s); g.lineTo(cx+3*s, cy-9*s); g.lineTo(cx+5*s, cy-4*s); g.closePath(); g.fill();   // dorsal fin
+  g.fillStyle = C; g.beginPath(); g.ellipse(cx, cy, 9*s, 5.4*s, 0, 0, 6.283); g.fill();                                  // body
+  g.fillStyle = "rgba(255,255,255,0.22)"; g.beginPath(); g.ellipse(cx, cy+2*s, 7*s, 2.3*s, 0, 0, 6.283); g.fill();       // pale belly
+  g.fillStyle = "#12100c"; g.beginPath(); g.arc(cx+5*s, cy-1*s, 1.5*s, 0, 6.283); g.fill();                              // eye
+  g.fillStyle = "rgba(255,255,255,0.85)"; g.beginPath(); g.arc(cx+5.5*s, cy-1.5*s, 0.5*s, 0, 6.283); g.fill();           // catch-light
   g.restore();
 }
 function hudHook(g, x, y) {
@@ -3871,25 +3884,26 @@ function drawReelGauge(g) {
   const fg = rod.fight; const w = 400, cx = innerWidth / 2, x = cx - w / 2;   // §fishbig a bigger mini-game on screen
   const yT = innerHeight - 220, yL = innerHeight - 164, h = 24;
   g.save();
-  g.fillStyle = "rgba(12,16,20,0.62)"; hudChamfer(g, x - 22, yT - 18, w + 44, 104, 11); g.fill();
-  g.strokeStyle = "rgba(180,200,210,0.18)"; g.lineWidth = 1; g.stroke();
+  g.fillStyle = FHUD.oak; hudChamfer(g, x - 22, yT - 18, w + 44, 104, 11); g.fill();              // oak panel
+  g.strokeStyle = FHUD.rim; g.lineWidth = 2; hudChamfer(g, x - 22, yT - 18, w + 44, 104, 11); g.stroke();   // brass rim
   // --- tension track with a zone that GLOWS inside and flashes red on a strain ---
   const strainF = fg.snapFlash > 0 ? 1 : (fg.tension > fg.hi ? Math.min(1, (fg.tension - fg.hi) * 4) : 0), glow = fg.zoneGlow;
-  g.fillStyle = "rgba(38,48,54,0.92)"; hudChamfer(g, x, yT, w, h, 4); g.fill();
+  g.fillStyle = FHUD.groove; hudChamfer(g, x, yT, w, h, 4); g.fill();                              // sunken groove track
   const zx = x + fg.lo * w, zw = (fg.hi - fg.lo) * w;
-  if (strainF > 0) { g.fillStyle = `rgba(230,${90-70*strainF|0},${75-55*strainF|0},${0.55+0.35*strainF})`; g.fillRect(zx, yT, zw, h); }
-  else { const zv = fg.zoneVis == null ? 1 : fg.zoneVis; g.fillStyle = `rgba(95,205,125,${(0.4+0.5*glow)*zv})`; g.fillRect(zx, yT, zw, h);   // §fish5 ghostfish: the safe zone flickers (zoneVis)
-    if (glow > 0.25) { g.save(); g.shadowColor = "rgba(130,235,160,0.95)"; g.shadowBlur = 12 * glow; g.fillStyle = `rgba(150,245,180,${0.35*glow*zv})`; g.fillRect(zx, yT, zw, h); g.restore(); } }
-  const nx = x + Math.max(0, Math.min(1, fg.tension)) * w;      // needle
-  g.fillStyle = strainF > 0 ? "#ff6a52" : (fg.tension > fg.hi || fg.tension < fg.lo ? "#ffd06a" : "#f0f5f8");
+  if (strainF > 0) { g.fillStyle = `rgba(210,${80-60*strainF|0},${60-45*strainF|0},${0.6+0.3*strainF})`; g.fillRect(zx, yT, zw, h); }
+  else { const zv = fg.zoneVis == null ? 1 : fg.zoneVis; g.fillStyle = `rgba(${FHUD.safe[0]},${FHUD.safe[1]},${FHUD.safe[2]},${(0.42+0.5*glow)*zv})`; g.fillRect(zx, yT, zw, h);   // §fish5 ghostfish: the safe zone flickers (zoneVis)
+    if (glow > 0.25) { g.save(); g.shadowColor = "rgba(150,220,130,0.9)"; g.shadowBlur = 12 * glow; g.fillStyle = `rgba(170,230,150,${0.33*glow*zv})`; g.fillRect(zx, yT, zw, h); g.restore(); } }
+  const nx = x + Math.max(0, Math.min(1, fg.tension)) * w;      // needle (ivory in the safe zone, gold at the edges, red on a strain)
+  g.fillStyle = strainF > 0 ? "#e2503a" : (fg.tension > fg.hi || fg.tension < fg.lo ? "#ecbe56" : "#f3e6c4");
   g.fillRect(nx - 3, yT - 7, 6, h + 14);
+  g.strokeStyle = "rgba(60,40,20,0.7)"; g.lineWidth = 1; g.strokeRect(nx - 3, yT - 7, 6, h + 14);
   // --- progress line: the fish slides toward the hook with each good hit, slips back when it pulls ---
-  g.strokeStyle = "rgba(225,235,242,0.5)"; g.lineWidth = 2; g.beginPath(); g.moveTo(x, yL); g.lineTo(x + w, yL); g.stroke();
+  g.strokeStyle = "rgba(214,194,152,0.55)"; g.lineWidth = 2; g.beginPath(); g.moveTo(x, yL); g.lineTo(x + w, yL); g.stroke();
   hudHook(g, x + w, yL);
   for (let i = 0; i < 3; i++) {                                 // three knots; snapped ones broken & dark, the next one flashes red while straining
     const kx = x + w * (0.34 + i * 0.2), snapped = i < fg.snaps, straining = (i === fg.snaps) && strainF > 0;
     if (snapped) { g.fillStyle = "rgba(150,40,32,0.85)"; g.fillRect(kx - 7, yL - 4, 5, 8); g.fillRect(kx + 2, yL - 4, 5, 8); }
-    else { g.fillStyle = straining ? "#ff5a44" : "rgba(214,194,152,0.95)"; g.beginPath(); g.arc(kx, yL, 5.6, 0, 6.283); g.fill(); g.strokeStyle = "rgba(90,70,40,0.7)"; g.lineWidth = 1; g.stroke(); }
+    else { g.fillStyle = straining ? "#e2503a" : "rgba(214,194,152,0.95)"; g.beginPath(); g.arc(kx, yL, 5.6, 0, 6.283); g.fill(); g.strokeStyle = "rgba(90,70,40,0.7)"; g.lineWidth = 1; g.stroke(); }
   }
   hudFishToken(g, x + Math.max(0.02, Math.min(1, fg.progress)) * w, yL, SPECIES_HUD_COL[rod.fish.species] || [0.7,0.75,0.8], 1.35);
   g.restore(); g.textAlign = "left";
@@ -4590,6 +4604,7 @@ function openSettings() {
       <div class="srow"><label>Brightness</label><input id="setBright" type="range" min="0.6" max="1.8" step="0.05" value="${nightBrightness}"></div>
       <div class="srow"><label>Screen shake</label><input id="setShake" type="range" min="0" max="1" step="0.05" value="${screenShake}"></div>
       <div class="srow"><label>Pixelated UI text</label><button data-k="pixui">${onoff(pixUI)}</button></div>
+      <div class="srow"><label>UI dither</label><input id="setUiDither" type="range" min="0" max="1" step="0.05" value="${uiDither}"></div>
       <div class="srow"><label>First-run hints</label><button data-k="hints">${onoff(hintsOn)}</button></div>
       <div class="srow"><label>Relaxed fishing</label><button data-k="relaxfish">${onoff(relaxedFishing)}</button></div>`,
   };
@@ -4617,6 +4632,7 @@ function openSettings() {
   p.querySelectorAll("input[data-gs]").forEach(inp => inp.onchange = () => openSettings());
   { const sb = p.querySelector("#setBright"); if (sb) sb.oninput = (e) => setBrightness(+e.target.value); }   // §18 brightness
   { const ss = p.querySelector("#setShake"); if (ss) ss.oninput = (e) => setScreenShake(+e.target.value); }   // §R4 screen shake
+  { const ud = p.querySelector("#setUiDither"); if (ud) ud.oninput = (e) => setUiDither(+e.target.value); }   // §uidither UI dither strength (0 = solid fills)
   p.querySelectorAll("input[data-sv]").forEach(inp => inp.oninput = (e) => SND.setVol(inp.dataset.sv, +e.target.value));   // §Sound bus volumes
   { const mb = p.querySelector("button[data-snd=mute]"); if (mb) mb.onclick = () => { SND.setMute(!SND.muted); openSettings(); }; }   // §music8 the MUSIC manager follows mute on its own
   { const tb = p.querySelector("button[data-snd=test]"); if (tb) tb.onclick = () => {   // §urgent6 unlock if needed, then play a clearly-audible test sound
@@ -4742,7 +4758,7 @@ function feedPlayer(id) {
   hunger = Math.min(1, hunger + val);
   applyFoodBoost(id, false);                        // §R4 stamina-regen boost (works regardless of hunger setting)
   if (typeof hungerFx !== "undefined") hungerFx.pulse = 1;   // §polish the hunger row pulses when you eat
-  chewT = 0.5; camNudge = Math.max(camNudge, 0.03);
+  chewT = 0.5;   // §eatcalm no camera nudge on eating (no screen shake)
   if (typeof SND !== "undefined") { const slurp = {clam:1,cockle:1,mussel:1,oyster:1,crabmeat:1}, chew = {rawfish:1,kelp:1,seaweed:1}; SND.play(slurp[id] ? "eat_slurp" : chew[id] ? "eat_chew" : "eat_crunch", { volume: 0.45 }); }   // §pixui softer munch
   else if (onDig) onDig("eat");
   showCard("Ate " + ITEMS[id].name, "Hunger " + Math.round(hunger * 100) + "%");
@@ -4767,12 +4783,28 @@ function giveOrDrop(id, qty) {   // §P2 to the pack, or to the ground in front 
   const added = Inv.add(id, qty); const rem = qty - added;
   if (rem > 0 && FINDS[id]) dropItemWorld(id, rem);
 }
+// §eatcalm crumbs take the colours of the food being eaten, sampled from the food model's OWN vertex
+// colours (not just a single item tint), so a banana sheds pale-yellow bits, a mussel blue-black ones.
+const _crumbColCache = {};
+function foodCrumbCols(id) {
+  if (_crumbColCache[id]) return _crumbColCache[id];
+  let cols = [];
+  try {
+    const it = ITEMS[id], m = it && it.model && it.model(), tint = (it && it.tint) || [1,1,1];
+    if (m && m.col && m.col.length >= 3) {
+      const n = (m.col.length / 3) | 0, step = Math.max(1, Math.floor(n / 10));
+      for (let i = 0; i < n; i += step) cols.push([m.col[i*3]*tint[0], m.col[i*3+1]*tint[1], m.col[i*3+2]*tint[2]]);
+    }
+  } catch (e) {}
+  if (!cols.length) cols = [ (ITEMS[id] && ITEMS[id].tint) || [0.8,0.7,0.5] ];
+  _crumbColCache[id] = cols; return cols;
+}
 function munchFx(id) {
   if (typeof SND !== "undefined") { const slurp = {clam:1,cockle:1,mussel:1,oyster:1,crabmeat:1}, chew = {rawfish:1,kelp:1,seaweed:1}; SND.play(slurp[id] ? "eat_slurp" : chew[id] ? "eat_chew" : "eat_crunch", { volume: 0.42 }); }   // §pixui softer munch
   else if (onDig) onDig("eat");
-  const col = (ITEMS[id] && ITEMS[id].tint) || [0.8,0.7,0.5];                         // crumbs in the food's own colour
+  const cols = foodCrumbCols(id), col = cols[(Math.random()*cols.length)|0];           // a crumb in one of the food's own colours
   const f = camForward(), mx = cam.pos[0] + f[0]*0.5, my = cam.pos[1] - 0.25, mz = cam.pos[2] + f[2]*0.5;
-  if (Math.random() < 0.6) spawnSand(mx, my - 0.18, mz, 1, col); chewT = 0.5; camNudge = Math.max(camNudge, 0.025);   // §look even fewer crumbs (one, only some bites) and a touch lower
+  if (Math.random() < 0.6) spawnSand(mx, my - 0.18, mz, 1, col); chewT = 0.5;           // §eatcalm one crumb, only some bites, and NO camera nudge (no screen shake)
 }
 function updateEat(dt) {
   if (!eating) return;
@@ -5522,7 +5554,7 @@ function makeInstanced(mesh, inst) {
  * --------------------------------------------------------------------- */
 
 let POIS = [];
-const POI_R = { tidepools: 9, seacave: 7, cairn: 3, hut: 4, pier: 5 };
+const POI_R = { tidepools: 9, seacave: 7, cairn: 3, pier: 5 };
 
 function marchToShore(ang) {                 // find the waterline along a bearing
   const dx = Math.sin(ang), dz = -Math.cos(ang);
@@ -5542,7 +5574,7 @@ function placePOIs() {
   // archetype-weighted pool
   const pool = [];
   const add = (t, n) => { for (let i = 0; i < n; i++) pool.push(t); };
-  add("cairn", 2); add("hut", 1);
+  add("cairn", 2);   // §worldbug the "hut" / abandoned-shack landmark was removed from generation entirely
   if (CHARACTER === "lowlands" || CHARACTER === "atoll") { add("tidepools", 4); }   // §4 pier/plank-deck POI removed (read as "wooden grates")
   if (CHARACTER === "highlands") { add("tidepools", 3); add("seacave", 2); }
   if (CHARACTER === "peaks") { add("seacave", 3); add("tidepools", 2); add("cairn", 2); }
@@ -5557,12 +5589,6 @@ function placePOIs() {
       // a high point, jittered
       pos = { x: HIGH.x + (rng() - 0.5) * 120, z: HIGH.z + (rng() - 0.5) * 120 };
       if (heightAt(pos.x, pos.z) < HIGH.h * 0.45) continue;
-    } else if (type === "hut") {
-      for (let k = 0; k < 10 && !pos; k++) {
-        const a = rng() * 6.2832, r = rng() * HALF * 0.6;
-        const x = Math.sin(a) * r, z = -Math.cos(a) * r, h = heightAt(x, z);
-        if (h > 12 && h < 40 && surfaceAt(x, z).slope < 0.4) pos = { x, z };
-      }
     } else {
       const sh = marchToShore(rng() * 6.2832);
       if (!sh) continue;
@@ -5591,17 +5617,10 @@ function emitPOI(m, poi) {
     }
   };
   // §worldbug cairn, tide-pool and sea-cave rocks are now emitted as breakable dynamic rocks in
-  // seedLandmarkRocks(), not baked into this static mesh, so they can be mined. Only the hut and pier
-  // (non-rock landmarks) stay in the POI mesh.
+  // seedLandmarkRocks(), not baked into this static mesh, so they can be mined. The "hut" landmark
+  // was removed from generation entirely. Only the pier (non-rock landmark) stays in the POI mesh.
   if (poi.type === "cairn") {
     return;   // the cairn's stacked stones are spawned as breakable rocks instead
-  } else if (poi.type === "hut") {
-    const lm = Mesh(), wood = [0.35,0.28,0.2], roof = [0.25,0.22,0.2];
-    mBox(lm, 0, 1.4, 0, 2.2, 1.4, 1.8, wood);
-    mTri(lm, [-2.4,2.8,-2],[2.4,2.8,-2],[0,4.2,0], roof);
-    mTri(lm, [-2.4,2.8,2],[2.4,2.8,2],[0,4.2,0], roof);
-    mQuad(lm, [-2.4,2.8,-2],[0,4.2,0],[0,4.2,0],[-2.4,2.8,2], roof);
-    put(lm, x, g, z, rng() * 6.28);
   } else if (poi.type === "pier") {
     const lm = Mesh(), wood = [0.34,0.27,0.2];
     for (let i = 0; i < 6; i++) { const zz = i * 3; mBox(lm, -1.4, 1.2, zz, 0.18, 1.2, 0.18, wood); mBox(lm, 1.4, 1.2, zz, 0.18, 1.2, 0.18, wood); }
@@ -7301,9 +7320,22 @@ function spawnFind(t, x, z) {
   life.push({ kind: "find", t, x, z, yaw: rng()*6.283, scale: FINDS[t].base*(0.85+rng()*0.3),
               phase: rng()*6.283, name: FINDS[t].label, tint: [1,1,1], pickAt: clock.t });
 }
-// §pixui spawn a find that scatters out from a point with a short tumbling arc (used for tree drops).
-function tossFind(id, fromX, fromZ) {
-  const a = rng()*6.283, r = 1.2 + rng()*2.6, x = fromX + Math.cos(a)*r, z = fromZ + Math.sin(a)*r;
+// §pixui/§treedrop spawn a find that pops out at a RANDOM angle around an impact point, flies a short
+// tumbling arc (toss.h) with a spin and settles onto the terrain (the render loop reads heightAt at its
+// resting x,z). It keeps a minimum spacing from other dropped finds, so a batch (e.g. the logs from a
+// felled tree) scatters into a loose ring instead of lining up along one axis. Runtime only, so its
+// rng() draws do not touch world-gen determinism.
+const DROP_MIN_SEP = 0.85;
+function tossFind(id, fromX, fromZ, spread) {
+  const sp = spread || 2.6;
+  let x = fromX + (rng()-0.5), z = fromZ + (rng()-0.5);
+  for (let k = 0; k < 8; k++) {                                   // try a few angles, pick one clear of other drops
+    const a = rng()*6.283, r = 0.9 + rng()*sp;
+    x = fromX + Math.cos(a)*r; z = fromZ + Math.sin(a)*r;
+    let clear = true;
+    for (const o of life) { if (o.kind !== "find") continue; const dx = o.x-x, dz = o.z-z; if (dx*dx+dz*dz < DROP_MIN_SEP*DROP_MIN_SEP) { clear = false; break; } }
+    if (clear) break;
+  }
   spawnFind(id, x, z);
   const e = life[life.length - 1];
   if (e) e.toss = { t0: performance.now()*0.001, dur: 0.45 + rng()*0.35, h: 1.1 + rng()*1.4, spin: (rng()-0.5)*14 };
@@ -8195,7 +8227,7 @@ function drawLife(view) {
       if (n >= reg.max) break;
       const g = heightAt(e.x, e.z);
       const ry = (e.yawR != null ? e.yawR : (e.yaw || 0));   // §P3 smoothed heading (max turn rate + hysteresis), used for all facing/lean so nothing snaps
-      let y = g, sc = e.scale, lean = 0, ld = 0, yawOut = ry, glint = 0;
+      let y = g, sc = e.scale, lean = 0, ld = 0, yawOut = ry, glint = 0, ox = 0, oz = 0;
       if (e.kind === "creature") {
         if (FISH[e.t]) { y = (e.y !== undefined) ? e.y : g + 1.0;   // §14C huntable fish hover in the water column
           // §1e flounder lies FLAT on the sand (its mesh is a flat oval, so no tilt) with a gentle edge-to-edge ripple; others sway upright
@@ -8213,7 +8245,15 @@ function drawLife(view) {
         yawOut = e.phase + animT*FIND_SPIN; lean = 0;
         glint = Math.pow(Math.max(0, Math.sin(animT*0.8 + e.phase*5)), 60);   // a rare, faint sparkle of light across it
         if (e.toss) { const age = animT - e.toss.t0; if (age >= e.toss.dur) e.toss = null;   // §pixui a freshly-tossed drop (e.g. from a felled tree) arcs up and tumbles, then settles
-          else { const u = age/e.toss.dur; y += e.toss.h*4*u*(1-u); yawOut += e.toss.spin*(1-u); lean = e.toss.spin*0.12*(1-u); ld = yawOut; } }
+          else { const u = age/e.toss.dur;
+            if (e.toss.fly) {   // §dropfly an item dropped/let-go from the player: leaves at hand height, tosses forward in a small arc, bounces once, then settles
+              const he = 1 - (1-u)*(1-u);                                  // ease-out horizontal travel from the hand to the landing spot
+              ox = e.toss.fx * (1 - he); oz = e.toss.fz * (1 - he);
+              const hand = e.toss.hand || 1.1;
+              let yo; if (u < 0.6) { const p = u / 0.6; yo = hand*(1-p) + hand*0.45*4*p*(1-p); }  // hand height down to the ground along a gentle forward arc
+              else { const p = (u - 0.6) / 0.4; yo = 0.26*4*p*(1-p); }                            // one small bounce
+              y = g + yo; yawOut += e.toss.spin*(1-u); lean = e.toss.spin*0.1*(1-u); ld = yawOut;
+            } else { y += e.toss.h*4*u*(1-u); yawOut += e.toss.spin*(1-u); lean = e.toss.spin*0.12*(1-u); ld = yawOut; } } }
       }
       // §B1 death: NO topple/rotation (flat creatures like sea stars stay flat), it stays put; the red flash + dissolve do the work
       if (e.dying !== undefined) { lean = 0; y = g + 0.02; }
@@ -8231,7 +8271,7 @@ function drawLife(view) {
       if (e.digging) y = g - Math.min(1, (e.burrow||0)) * 0.55;                                                                     // §weak7 sinks into the ground as it digs in
       e._sc = sc;                                          // §urgent5 remember the drawn scale so the fade pass matches it (no pop)
       const o = n*10;
-      lifeScratch[o]=e.x; lifeScratch[o+1]=y; lifeScratch[o+2]=e.z;
+      lifeScratch[o]=e.x+ox; lifeScratch[o+1]=y; lifeScratch[o+2]=e.z+oz;
       lifeScratch[o+3]=sc; lifeScratch[o+4]=yawOut; lifeScratch[o+5]=lean; lifeScratch[o+6]=ld;
       lifeScratch[o+7]=e.tint[0]; lifeScratch[o+8]=e.tint[1]; lifeScratch[o+9]=e.tint[2];
       if (glint > 0.001) { const gg = glint*0.55; lifeScratch[o+7]=e.tint[0]*(1-gg)+gg; lifeScratch[o+8]=e.tint[1]*(1-gg)+gg; lifeScratch[o+9]=e.tint[2]*(1-gg)+gg; }   // §A2 faint glint
@@ -8656,14 +8696,22 @@ function dropItemWorld(id, qty) {
   for (let k = 0; k < qty && k < 30; k++) {
     const a = rng() * 6.283, r = 0.6 + rng() * 1.1;
     const x = player.x + fx * 2 + Math.cos(a) * r, z = player.z + fz * 2 + Math.sin(a) * r;
-    const d = { id, x, z }; worldDrops.push(d); spawnDropEntity(d);
+    const d = { id, x, z }; worldDrops.push(d); spawnDropEntity(d, true);   // §dropfly animate the fall for fresh drops
   }
   saveDrops();
 }
-function spawnDropEntity(d) {
+function spawnDropEntity(d, animate) {
   if (!FINDS[d.id]) return;
   spawnFind(d.id, d.x, d.z);
-  const e = life[life.length - 1]; if (e) { e.drop = d; e.pickAt = clock.t + AUTO_PICK_GRACE; }   // no instant re-grab
+  const e = life[life.length - 1]; if (e) { e.drop = d; e.pickAt = clock.t + AUTO_PICK_GRACE;   // no instant re-grab
+    // §dropfly a fresh drop (not one restored from a save) visibly falls from the player: it starts at
+    // hand position and arcs to its landing spot d.x,d.z, bouncing once on the way down.
+    if (animate) {
+      const fwd = (typeof camForward === "function") ? camForward() : [Math.sin(cam.yaw), 0, -Math.cos(cam.yaw)];
+      const handX = player.x + fwd[0]*0.5, handZ = player.z + fwd[2]*0.5;
+      e.toss = { t0: performance.now()*0.001, dur: 0.6 + rng()*0.12, h: 0, spin: (rng()-0.5)*9, fly: true, hand: 1.15, fx: handX - d.x, fz: handZ - d.z };
+    }
+  }
 }
 function saveDrops() { try { localStorage.setItem("bcd_" + SEED_STR, JSON.stringify(worldDrops.map(d => [d.id, +d.x.toFixed(1), +d.z.toFixed(1)]))); } catch (e) {} }
 function loadDrops() {
@@ -8755,7 +8803,7 @@ function buildMeshIcon(mesh, tint) {
   gl.readPixels(0, 0, 64, 64, gl.RGBA, gl.UNSIGNED_BYTE, _iconPx);
   const img = iconCtx.createImageData(64, 64);
   for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) { const s = ((63 - y) * 64 + x) * 4, d = (y * 64 + x) * 4; img.data[d]=_iconPx[s]; img.data[d+1]=_iconPx[s+1]; img.data[d+2]=_iconPx[s+2]; img.data[d+3]=_iconPx[s+3]; }
-  ditherIconData(img);   // §look run each icon through the same Bayer dither + palette quantize as the world, so it belongs in the dithered UI
+  // §uidither icons render CLEAN now (no Bayer dither) so item art stays crisp in the tidied-up UI
   iconCtx.putImageData(img, 0, 0); return iconCanvas.toDataURL();
 }
 const _BAYER16 = [0,8,2,10, 12,4,14,6, 3,11,1,9, 15,7,13,5];   // §look the same 4x4 ordered-dither matrix the world post pass uses
@@ -8773,12 +8821,36 @@ function paletteDitherURL(w, h, top, bot, levels) { levels = levels || 6;
     d[i+3] = 255; }
   g.putImageData(img, 0, 0); return c.toDataURL();
 }
+// §uidither a TRANSPARENT Bayer stipple to lay over a SOLID fill colour: a light speckle up top fading to a
+// dark speckle at the bottom, nothing through the middle. The solid fill shows between the dots, so text sits
+// on a flat colour and only the gradient reads as dithered. `amp` is the peak stipple opacity; strength scales it.
+function ditherOverlayURL(w, h, amp) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; const g = c.getContext("2d");
+  const img = g.createImageData(w, h), d = img.data, A = Math.max(0, Math.min(1, amp));
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) { const t = y/(h-1), off = (0.5 - t) * 2;   // +1 light (top) .. -1 dark (bottom)
+    const b = _BAYER16[(y&3)*4 + (x&3)] / 16.0, mag = Math.abs(off), i = (y*w+x)*4;
+    const on = b < mag * 0.82, lum = off > 0 ? 255 : 0;                                               // a dot only where the Bayer threshold is under the gradient magnitude
+    d[i] = lum; d[i+1] = lum; d[i+2] = lum; d[i+3] = on ? Math.round(A * 255) : 0; }
+  g.putImageData(img, 0, 0); return c.toDataURL();
+}
+// §uidither how strongly the UI is dithered: 0 = flat solid fills, 1 = strong. Subtle by default. The
+// settings slider drives it. Only the gentle gradient between two CLOSE shades is dithered, so the fill
+// behind text reads essentially solid; icons are never dithered (they render clean, see buildMeshIcon).
+let uiDither = 0.35;
+try { const v = parseFloat(localStorage.getItem("bc_uidither")); if (!isNaN(v)) uiDither = Math.max(0, Math.min(1, v)); } catch (e) {}
+function setUiDither(v) { uiDither = Math.max(0, Math.min(1, v)); try { localStorage.setItem("bc_uidither", uiDither.toFixed(2)); } catch (e) {} applyDitherTheme(); if (typeof applyBagTexture === "function") applyBagTexture(); }
 function applyDitherTheme() { try {
-  const root = document.documentElement.style;   // §look dithered palette fills for the TIDEWORN (parchment/oak/brass) skin, so the UI shares the world's dithered look
-  root.setProperty("--ditherparch", "url(" + paletteDitherURL(64, 120, [214,186,142], [150,119,72], 6) + ")");  // parchment panel
-  root.setProperty("--ditherbtn",   "url(" + paletteDitherURL(44, 30, [205,174,110], [160,128,74], 5) + ")");   // brass button face
-  root.setProperty("--dithergold",  "url(" + paletteDitherURL(44, 30, [236,190,86], [196,142,46], 5) + ")");    // gold primary button
-  root.setProperty("--ditherwood",  "url(" + paletteDitherURL(48, 40, [92,62,36], [52,34,20], 5) + ")");        // oak tool belt
+  const root = document.documentElement.style, s = uiDither;   // §look dither OVERLAYS over the TIDEWORN solid fills (parchment/oak/brass)
+  // each surface lays a faint light/dark stipple over its existing solid background-color; the slider scales
+  // the peak opacity, and ~0 drops the image entirely so the panel is a flat solid fill.
+  const surf = (name, w, h, amp) => {
+    if (s <= 0.02) { root.setProperty(name, "none"); return; }
+    root.setProperty(name, "url(" + ditherOverlayURL(w, h, amp * s) + ")");
+  };
+  surf("--ditherparch", 120, 200, 0.34);   // parchment panel
+  surf("--ditherbtn",   64, 40,   0.30);    // brass button face
+  surf("--dithergold",  64, 40,   0.32);    // gold primary button
+  surf("--ditherwood",  72, 52,   0.40);    // oak tool belt
 } catch (e) {} }
 applyDitherTheme();   // §look build the dithered palette backgrounds now (after _BAYER16 is defined, so it can't hit the temporal dead zone)
 function buildOneIcon(it) {               // §12C render one item model → its icon (also for items added after init)
@@ -8818,13 +8890,18 @@ function buildPanels() {
 }
 // procedural canvas-bag texture (noise weave + dashed stitched seam), matching the palette
 function applyBagTexture() {
-  // §look an ordered Bayer-dithered leather gradient (palette-limited, pixel-art) so the satchel matches the world's dithered look; keep the stitched border.
+  // §uidither a SOLID leather fill behind the slots, with only a faint Bayer stipple near the top/bottom
+  // edges (scaled by the UI-dither slider), plus the stitched border. No more heavy all-over checkerboard.
   const N = 96, cv = document.createElement("canvas"); cv.width = N; cv.height = N; const c = cv.getContext("2d");
-  const img = c.createImageData(N, N), d = img.data, top = [134,102,64], bot = [70,48,27];
-  for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const t = y/(N-1), b = _BAYER16[(y&3)*4 + (x&3)] / 16.0, i = (y*N+x)*4;
-    for (let k = 0; k < 3; k++) { const v = (top[k] + (bot[k]-top[k])*t) / 255; d[i+k] = Math.floor(v*6 + b) / 6 * 255 | 0; }
-    d[i+3] = 255; }
-  c.putImageData(img, 0, 0);
+  const base = [96, 68, 40];                                   // solid leather
+  c.fillStyle = `rgb(${base[0]},${base[1]},${base[2]})`; c.fillRect(0, 0, N, N);
+  const A = 0.34 * (typeof uiDither === "number" ? uiDither : 0.35);
+  if (A > 0.004) {
+    const img = c.getImageData(0, 0, N, N), d = img.data;
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) { const t = y/(N-1), off = (0.5 - t) * 2, b = _BAYER16[(y&3)*4 + (x&3)] / 16.0, i = (y*N+x)*4;
+      if (b < Math.abs(off) * 0.82) { const lum = off > 0 ? 255 : 0; for (let k = 0; k < 3; k++) d[i+k] = Math.round(d[i+k]*(1-A) + lum*A); } }
+    c.putImageData(img, 0, 0);
+  }
   c.strokeStyle = "rgba(40,24,10,.6)"; c.setLineDash([5, 4]); c.lineWidth = 2; c.strokeRect(6, 6, N-12, N-12);
   const el = document.getElementById("invpanel");
   el.style.backgroundImage = "url(" + cv.toDataURL() + ")"; el.style.backgroundSize = "100% 100%"; el.style.imageRendering = "pixelated";
@@ -9009,7 +9086,8 @@ function showContextMenu(idx, x, y) {
   m.style.display = "block"; m.style.left = Math.min(innerWidth - 124, x) + "px"; m.style.top = Math.min(innerHeight - 8 - opts.length*34, y) + "px";
 }
 function hideContextMenu() { document.getElementById("ctxmenu").style.display = "none"; }
-function bagShake() { const p = document.getElementById("invpanel"); if (!invOpen) return; p.classList.remove("shake"); void p.offsetWidth; p.classList.add("shake"); }
+function bagShake() { const p = document.getElementById("invpanel"); if (!invOpen) return; p.classList.remove("shake"); void p.offsetWidth; p.classList.add("shake");
+  clearTimeout(p._shakeT); p._shakeT = setTimeout(() => p.classList.remove("shake"), 420); }   // §satchelbug always strip .shake when the anim ends so no transform lingers to offset the panel
 /* pointer drag / tooltip */
 let drag = null;
 function showGhost(cell, x, y) { const g = document.getElementById("dragGhost"), it = ITEMS[cell.id];
@@ -9258,6 +9336,7 @@ const TUNABLES = [
   { k: "DIG_COST", min: 0.04, max: 0.6, step: 0.01 }, { k: "DIRT_COST", min: 0.1, max: 0.8, step: 0.01 },
   { k: "GRAVEL_COST", min: 0.08, max: 0.7, step: 0.01 }, { k: "MINE_COST", min: 0.08, max: 0.9, step: 0.01 },
   { k: "CHOP_COST", min: 0.08, max: 0.8, step: 0.01 }, { k: "SIFT_COST", min: 0.02, max: 0.15, step: 0.005 },
+  { k: "DIG_WATER_MAX", min: 0.0, max: 1.5, step: 0.05 },
   { k: "COMMIT_TIME", min: 0.1, max: 1.0, step: 0.05 }, { k: "EXHAUST_RECOVER", min: 0.1, max: 0.8, step: 0.02 },
   { k: "REGEN_IDLE", min: 0.02, max: 0.4, step: 0.01 }, { k: "REGEN_REST", min: 0.05, max: 0.6, step: 0.02 },
   { k: "SPRINT_DRAIN", min: 0.0, max: 0.3, step: 0.01 }, { k: "SCRAMBLE_DRAIN", min: 0.0, max: 0.4, step: 0.01 },
@@ -9688,6 +9767,7 @@ let stamina = STAMINA_MAX, resting = false, exhausted = false, digCommit = 0;
 const TUNE = {
   // §P3 chop/mine/dig stamina costs, ~40% lighter than before (were 0.2/0.4/0.3/0.4/0.6/0.06).
   DIG_COST: 0.12, DIRT_COST: 0.24, GRAVEL_COST: 0.18, CHOP_COST: 0.24, MINE_COST: 0.36, SIFT_COST: 0.036,
+  DIG_WATER_MAX: 0.5,               // §water dig (reshape) in water up to this depth (m), like wet sand; deeper water sifts instead
   SPRINT_DRAIN: 0.08, SCRAMBLE_DRAIN: 0.13, REGEN_ACTIVE: 0.05, REGEN_IDLE: 0.11, REGEN_REST: 0.26,
   EXHAUST_RECOVER: 0.33, COMMIT_TIME: 0.5,
   BLIND_FIND_CHANCE: 0.05,          // blind digging (no tell) rarely turns up a find; mostly raw material
@@ -9699,7 +9779,7 @@ const TUNE = {
   APEX_SPEED: 3.2,                  // §P2 near the top of the arc (|vy| below this) gravity eases → a brief, lighter float.
   APEX_GRAV_MUL: 0.55,             // §P2 gravity multiplier inside the apex-float window (floatier hang time).
   JUMP_BUFFER: 0.11,                // §P2 pressing Space this long before landing still fires the jump on touchdown.
-  EAT_TIME: 1.2,                    // §P2 hold-to-eat duration (s): hold right-click on food this long to finish the meal.
+  EAT_TIME: 1.0,                    // §P2 hold-to-eat duration (s): hold right-click on food this long to finish the meal.
   FISH_DRAIN_MUL: 1.6,              // §fishfix how fast the reel-gauge needle falls when you stop reeling (bigger = faster).
   FISH_REEL_MUL: 0.8,               // §fishfix how strongly reeling raises the needle (smaller = gentler / less twitchy).
   FISH_MAX_RISE: 1.1,               // §fishfix cap on the needle's climb rate (tension/s) so one eager click can't fling it way off.
@@ -10249,15 +10329,15 @@ function digAt(x, z) {
   // a stump in reach? the shovel can also lever it out (several strikes)
   const stp = nearestStump(x, z, REACH + 1.0);
   if (stp && Math.hypot(stp.x - player.x, stp.z - player.z) <= REACH + 1.2) { stumpStrike(stp); return; }
-  const ci0 = cellIndex(x, z);
-  const inBasin = ci0 >= 0 && filled[ci0] > heightmap[ci0] + 0.1;   // a tide pool / basin cell
   const sy = surfaceAt(x, z).h, depth = waterSurfaceAt(x, z) - sy;
   shovelSwing = 1; camNudge = 0.05; rootPlayer();            // every strike commits: short wind-up, rooted
 
-  // §water underwater (a tide pool, or any open water past ankle depth): the shovel SIFTS at ANY depth
-  // within reach. No terrain change (the depth limit only blocks reshaping the ground), just a cloudy sand
-  // plume that reveals top-layer finds and exposes any buried chest, which rises out of the sand onto the seabed.
-  if (inBasin || depth > ANKLE) {
+  // §water shallow water (a tide pool or pond up to DIG_WATER_MAX deep) digs exactly like wet sand below:
+  // the ground reshapes, the hole fills with water and finds are revealed. Only DEEPER water SIFTS, a
+  // cloudy sand plume that reveals top-layer finds and raises a buried chest onto the seabed with no
+  // terrain change. (The targeting ray already passes through the water surface, so submerged ground is
+  // aimable: rayGround tests against the terrain height, not the water.)
+  if (depth > TUNE.DIG_WATER_MAX) {
     camNudge = 0.04; spendStamina(TUNE.SIFT_COST, true); if (onDig) onDig("sift");
     spawnSand(x, sy + 0.05, z, 16, [0.72, 0.68, 0.6]);
     revealSpot(x, z, true);
@@ -11387,12 +11467,12 @@ function drawShovel(view) {
   let ox, oy, oz, roll, pitch, scale, toolYaw = 0, flipEnd = false;
   if (eatId) {                                                                            // §P2 EATING: the food lifts up toward the mouth with a quick munch wobble
     const prog = eatProgress(), raise = Math.min(1, prog * 3);                            // raised in the first third, then held low-centre
-    const munch = Math.sin(t * 20) * 0.026 * raise;                                       // fast chew wobble
+    const munch = Math.sin(t * 11) * 0.015 * raise;                                       // §eatcalm gentler, slower chew wobble
     scale = 0.5;
     ox = 0.04 + sway * 0.5;                                                               // §look held more centred on screen
     oy = -0.5 + raise * 0.24 + munch + bob * 0.3;                                         // §look held lower (doesn't rise all the way up to the mouth)
     oz = 0.62 - raise * 0.12;                                                             // and in toward the face
-    roll = 0.1 + Math.sin(t * 9) * 0.05; pitch = -0.1 - raise * 0.2;
+    roll = 0.1 + Math.sin(t * 6) * 0.03; pitch = -0.1 - raise * 0.2;                      // §eatcalm softer roll sway
   } else if (isRod) {                                                                     // §fishpolish rod: smaller, gripped low-right, blank pointing FORWARD (away from the player), not leaning across
     const chg = (rod && rod.state === "charging") ? rod.charge : 0, bend = (rod ? rod.bend : 0) || 0;
     scale = 0.3;
@@ -11684,7 +11764,7 @@ function chopFallen(o) {
   if (o.crownChops > 0) {                                      // crown end first → Sticks (leaf bits fly as particles only)
     o.crownChops--; spawnLeaves(cx, cz, top, leafCol(o.species));
     if (o.crownChops === 0) {
-      for (let i = 0; i < 2; i++) spawnFind("stick", cx + (rng()-0.5), cz + (rng()-0.5));
+      for (let i = 0; i < 2; i++) tossFind("stick", cx, cz, 1.8);   // §treedrop scatter + arc, not a line
     }
     return;
   }
@@ -11695,10 +11775,11 @@ function chopFallen(o) {
   const nx = o.x + Math.cos(o.ang)*rel, nz = o.z + Math.sin(o.ang)*rel, ny = surfaceAt(nx, nz).h + Math.max(0, 0.5 - (o.sink||0));
   spawnSand(nx, ny, nz, 8, [0.56,0.43,0.28]);                  // flying wood chips
   if (o.trunkChops <= 0) {
-    // §A4 the final hit splits the whole trunk into Logs at once, with a satisfying break
+    // §A4/§treedrop the final hit splits the whole trunk into Logs at once, with a satisfying break.
+    // The logs pop out around the trunk's midpoint (not strung along its axis) each on its own arc.
     const total = o.trunkChopsMax || 3, logs = 2 + total;
-    for (let i = 0; i < logs; i++) { const t = (i+0.5)/logs; const lx = o.x + Math.cos(o.ang)*o.treeScale*0.7*t, lz = o.z + Math.sin(o.ang)*o.treeScale*0.7*t;
-      spawnFind("log", lx + (rng()-0.5)*0.5, lz + (rng()-0.5)*0.5); }
+    const mx = o.x + Math.cos(o.ang)*o.treeScale*0.35, mz = o.z + Math.sin(o.ang)*o.treeScale*0.35;
+    for (let i = 0; i < logs; i++) tossFind("log", mx, mz, 3.2);
     spawnSand(o.x + Math.cos(o.ang)*o.treeScale*0.35, surfaceAt(o.x,o.z).h+0.5, o.z + Math.sin(o.ang)*o.treeScale*0.35, 18, [0.56,0.43,0.28]);
     if (onDig) onDig("crack"); camNudge = 0.07;
     removeFallen(o); stumps.push({ x: o.x, z: o.z, species: o.species, hp: 4, sproutAt: clock.t + SPROUT_DAYS*DAY_PERIOD }); saveWorld();
@@ -11733,7 +11814,7 @@ function stumpStrike(st) {
   spawnSand(st.x, surfaceAt(st.x, st.z).h + 0.3, st.z, right ? 5 : 3, [0.5, 0.4, 0.28]);   // §P2 woody chips (fewer with the wrong tool)
   st.hp -= jobEffortMul() * toolMul("stump") * TUNE.HARVEST_SPEED;   // §P2/§P3 shovel/axe fast; anything else ~3x; §P3 ~25% fewer hits
   if (st.hp <= 0.001) {
-    for (let i = 0, n = 1 + (rng()*2|0); i < n; i++) spawnFind("log", st.x + (rng()-0.5), st.z + (rng()-0.5));
+    for (let i = 0, n = 1 + (rng()*2|0); i < n; i++) tossFind("log", st.x, st.z, 1.6);   // §treedrop scatter + arc, not a line
     const i = stumps.indexOf(st); if (i >= 0) stumps.splice(i, 1);
     // §bugfix breaking a stump no longer digs the ground (the old "healing hole" was the dig the player kept
     // seeing). It just pops out; objectBroke() then swallows terrain hits until the button is released.
