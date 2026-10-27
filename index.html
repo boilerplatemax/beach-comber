@@ -6477,7 +6477,7 @@ function sanddollarMesh() { const base=[0.93,0.9,0.84], base2=[0.86,0.83,0.77], 
 // §models moon snail: a squat globose spiral (fat overlapping whorls, small spire), grey-mauve, built from the
 // shared spiral-shell builder so it reads as a real smooth whorl rather than a lump.
 function moonsnailMesh() {
-  const m = spiralShellMesh({ turns:2.2, r0:0.075, growth:2.0, tubeF:0.82, c1:[0.7,0.64,0.7], c2:[0.6,0.54,0.62] });
+  const m = spiralShellMesh({ turns:2.2, r0:0.075, growth:2.0, tubeF:0.82, aperture:false, c1:[0.7,0.64,0.7], c2:[0.6,0.54,0.62] });
   return m; }
 // §pixui the mussel now uses the oyster shell shape, in a deep blue-black with a faint pearly facet.
 function musselMesh() { return oysterMesh([0.07,0.09,0.15], [0.13,0.16,0.26]); }
