@@ -4965,6 +4965,20 @@ function mPathTube(m, pts, sides, col) {
 }
 // §models a faceted ball (two domed caps) centred on the origin, equator at y=0.
 function ballM(r, col, sides) { const d=Mesh(); sides=sides||8; mergeMesh(d, discMesh(0,r,sides,r*0.92,col)); mergeMesh(d, discMesh(0,r,sides,-r*0.92,col)); return d; }
+// §models a rounded low-poly sphere built from latitude rings (puffier & smoother than ballM's two cones), two-toned per facet.
+function sphM(r, col, lon, lat) {
+  const d = Mesh(); lon = lon||9; lat = lat||5;
+  for (let j=0;j<lat;j++){ const p0=j/lat*Math.PI, p1=(j+1)/lat*Math.PI;
+    const y0=Math.cos(p0)*r, y1=Math.cos(p1)*r, r0=Math.sin(p0)*r, r1=Math.sin(p1)*r;
+    for (let i=0;i<lon;i++){ const a0=i/lon*6.2832, a1=(i+1)/lon*6.2832;
+      const A=[Math.cos(a0)*r0,y0,Math.sin(a0)*r0], B=[Math.cos(a1)*r0,y0,Math.sin(a1)*r0];
+      const C=[Math.cos(a1)*r1,y1,Math.sin(a1)*r1], E=[Math.cos(a0)*r1,y1,Math.sin(a0)*r1];
+      const c=((i+j)%2)?col:[col[0]*0.9,col[1]*0.9,col[2]*0.9];
+      if (j===0) mTri(d,A,C,E,c); else if (j===lat-1) mTri(d,A,B,C,c); else mQuad(d,A,B,C,E,c);
+    }
+  }
+  return d;
+}
 
 // Base prop meshes (object space, ~1 unit tall; instance scale sets real size).
 const BROWN = [0.34, 0.24, 0.16], BARK = [0.30, 0.22, 0.16];
@@ -5862,13 +5876,13 @@ function urchinMesh(col) { const m = discMesh(0.1,0.3,6,0.15,col); const sp=[col
 // §models a chunky low-poly hermit crab: a big rounded shell at the back, an orange body peeking out the front
 // with two big black stalk-eyes, splayed legs and a pair of front claws.
 function hermitMesh(col) { const m = Mesh(); col = col || [0.88,0.78,0.5];
-  const shell2=[col[0]*0.88,col[1]*0.88,col[2]*0.86], body=[0.92,0.42,0.14], body2=[0.8,0.34,0.11], eye=[0.06,0.06,0.09];
-  // --- shell: one big rounded lump at the back with a small whorl bump for a coiled hint ---
-  mergeAt(m, ballM(0.37, col), -0.04, 0.33, -0.02);
-  mergeAt(m, ballM(0.19, shell2), -0.02, 0.48, -0.16);
-  mergeAt(m, ballM(0.1, col), 0.1, 0.56, -0.24);
-  // --- body: orange head poking out the front-bottom ---
-  mergeAt(m, ballM(0.17, body), 0.24, 0.15, 0.1);
+  const shell2=[col[0]*0.86,col[1]*0.86,col[2]*0.84], body=[0.92,0.42,0.14], body2=[0.8,0.34,0.11], eye=[0.06,0.06,0.09], dark=[0.14,0.1,0.1];
+  // --- shell: a proper coiled spire, whorls spiralling up and back and shrinking ---
+  const whorls=[[-0.06,0.3,0.02,0.32],[0.05,0.4,-0.07,0.25],[0.14,0.48,-0.13,0.19],[0.2,0.55,-0.17,0.14],[0.24,0.6,-0.2,0.1],[0.26,0.63,-0.21,0.06]];
+  for (let i=0;i<whorls.length;i++){ const [x,y,z,r]=whorls[i]; mergeAt(m, sphM(r, i%2?shell2:col, 9, 5), x, y, z); }
+  mergeAt(m, sphM(0.12, dark, 7, 3), 0.05, 0.18, 0.18);        // dark aperture (the shell's mouth), facing the body
+  // --- body: orange head poking out of the shell mouth, front-bottom ---
+  mergeAt(m, sphM(0.16, body, 8, 4), 0.26, 0.15, 0.12);
   // --- eyes on short stalks, forward ---
   for (const s of [-1,1]) { mBox(m, 0.32, 0.24, s*0.07, 0.016, 0.07, 0.016, body2); mBox(m, 0.35, 0.31, s*0.08, 0.04, 0.04, 0.04, eye); }
   // --- walking legs, three per side, angular (thigh out, foot down) ---
@@ -5876,7 +5890,7 @@ function hermitMesh(col) { const m = Mesh(); col = col || [0.88,0.78,0.5];
     mBox(m, fx+0.02, 0.09, s*(0.14+i*0.02), 0.07, 0.022, 0.022, body);
     mBox(m, fx+0.08, 0.035, s*(0.2+i*0.03), 0.035, 0.035, 0.02, body2); }
   // --- two front claws ---
-  for (const s of [-1,1]) { mBox(m, 0.33, 0.1, s*0.15, 0.055, 0.02, 0.025, body); mergeAt(m, ballM(0.075, body2), 0.42, 0.1, s*0.16); }
+  for (const s of [-1,1]) { mBox(m, 0.33, 0.1, s*0.15, 0.055, 0.02, 0.025, body); mergeAt(m, sphM(0.075, body2, 7, 4), 0.42, 0.1, s*0.16); }
   return m; }
 // §14C huntable fish, distinct silhouettes so each reads at a glance
 function flounderMesh(col) { const m = Mesh(); col = col||[0.62,0.56,0.42];   // flat oval, camouflaged on sand
@@ -6458,17 +6472,21 @@ function cropMesh(type, stage) {
       diamondOvoid(m, 0, 0.34, 0, 0.23, 0.15, fr, fr2);                               // closed football fruit, diamond crosshatch, fully capped
       pineappleCrown(m, 0, 0.5, 0, crown, lf2);                                        // a leafy tuft springing from the TOP of the fruit
     }
-  } else { // taro, big heart-shaped leaves on long stalks
-    const stalk=[0.42,0.52,0.3], stalk2=[0.5,0.58,0.34], lf=[0.3,0.54,0.3], lf2=[0.38,0.62,0.36];
-    const n = sp?1:(gr?3:4), H = sp?0.3:(gr?0.85:1.05);
-    for (let i=0;i<n;i++){ const a=i/Math.max(1,n)*6.283+0.4, r=sp?0:0.07, bx=Math.cos(a)*r, bz=Math.sin(a)*r, lean=0.12;
-      const tx=bx+Math.cos(a)*lean*H, tz=bz+Math.sin(a)*lean*H;
-      mCyl(m,0,H,0.03,0.024,5,(i%2?stalk:stalk2)); mergeAt(m, cylM(0,H,0.026,0.02,stalk2), (tx-bx)*0.5,0,(tz-bz)*0.5);
-      if (sp) mergeAt(m, boxM(0.08,0.015,0.06,lf), tx*0.6,H,tz*0.6);
-      else { // a broad heart leaf: two drooping lobes meeting at the stalk, pointing outward
-        const d=Mesh(); wavyRibbon(d,{h:0.32,w0:0.19,w1:0.02,seg:5,dir:a,amp:0.05,freq:0.7,droop:0.16,c0:lf,c1:lf2});
-        wavyRibbon(d,{h:0.14,w0:0.12,w1:0.02,seg:3,dir:a+3.14,amp:0.03,droop:0.05,c0:lf,c1:lf2});   // the back heart-lobes
-        mergeAt(m, d, tx, H-0.02, tz); }
+  } else { // taro: a fern-like clump of big broad leaves on arching stalks springing from the base
+    const stalk=[0.4,0.5,0.28], stalk2=[0.48,0.56,0.32], lf=[0.3,0.55,0.3], lf2=[0.4,0.64,0.38], lf3=[0.46,0.7,0.42];
+    const n = sp?2:(gr?4:6), H = sp?0.28:(gr?0.82:1.05), W = sp?0.14:(gr?0.3:0.38);
+    for (let i=0;i<n;i++){ const a=i/n*6.283 + (i%2)*0.5 + 0.3, sx=Math.cos(a), sz=Math.sin(a), lean=0.34;
+      // an arching stalk rising from the clump and leaning outward (tube follows the arc)
+      const sp2=[]; for (let s=0;s<=4;s++){ const t=s/4; sp2.push([sx*lean*H*t*t, H*t, sz*lean*H*t*t, 0.032-0.014*t]); }
+      mPathTube(m, sp2, 5, i%2?stalk:stalk2);
+      const tx=sx*lean*H, tz=sz*lean*H;
+      if (sp) { const d=Mesh(); wavyRibbon(d,{h:0.2,w0:W,w1:0.03,seg:4,dir:a,amp:0.04,droop:0.07,c0:lf,c1:lf2}); mergeAt(m, d, tx, H-0.02, tz); }
+      else { // a broad, wide elephant-ear / heart leaf drooping gently outward from the stalk tip
+        const d=Mesh();
+        wavyRibbon(d,{h:0.46,w0:W,w1:0.03,seg:5,dir:a,amp:0.05,freq:0.7,droop:0.22,c0:lf,c1:lf3});       // broad forward blade
+        wavyRibbon(d,{h:0.2,w0:W*0.7,w1:0.03,seg:3,dir:a+3.14,amp:0.03,droop:0.09,c0:lf2,c1:lf});          // the back heart-lobes
+        mergeAt(m, d, tx, H-0.02, tz);
+      }
     }
   }
   return m;
@@ -6486,13 +6504,14 @@ function bananaIconMesh(){ const m=Mesh(); const y=[0.98,0.82,0.16], stem=[0.36,
   return m; }
 // §P2 an open banana peel (eating leftover): a few splayed brown-yellow strips drooping from the stem
 // §models an opened banana peel: four strips drooping down and out from a top stem hub.
-function bananaPeelMesh(){ const m=Mesh(); const pe=[0.96,0.86,0.2], pe2=[0.82,0.74,0.22], stem=[0.5,0.52,0.2]; const n=4;
-  for (let i=0;i<n;i++){ const a=i/n*6.283, dx=Math.cos(a), dz=Math.sin(a); const pts=[], seg=6;
-    for (let j=0;j<=seg;j++){ const t=j/seg;
-      pts.push([dx*(0.05+t*0.32), 0.5-t*t*0.5, dz*(0.05+t*0.32), 0.05*(1-t*0.6)*(j===seg?0.3:1)+0.012]); }
-    mPathTube(m, pts, 4, i%2?pe:pe2);
+// §models an opened banana peel: four strips that bow convexly OUT from a top stem hub and droop to the ground.
+function bananaPeelMesh(){ const m=Mesh(); const pe=[0.97,0.86,0.2], pe2=[0.86,0.76,0.22], stem=[0.5,0.52,0.2]; const n=4;
+  for (let i=0;i<n;i++){ const a=i/n*6.283, dx=Math.cos(a), dz=Math.sin(a); const pts=[], seg=7;
+    for (let j=0;j<=seg;j++){ const t=j/seg, th=t*1.75, out=0.37*Math.sin(th), y=0.52-0.49*(1-Math.cos(th));   // a quarter-ellipse arc: up & out, then down to the ground → convex belly
+      pts.push([dx*(0.045+out), Math.max(0.03,y), dz*(0.045+out), 0.055*(1-0.55*t)+0.013]); }
+    mPathTube(m, pts, 5, i%2?pe:pe2);
   }
-  mBox(m, 0, 0.5, 0, 0.04, 0.06, 0.04, stem);                 // the stem they all peel back from
+  mBox(m, 0, 0.52, 0, 0.045, 0.06, 0.045, stem);              // the stem they all peel back from
   return m; }
    // the stem crown they hang from
 function pineappleFoodMesh(){ const m=Mesh(); const f=[0.9,0.72,0.28], f2=[0.74,0.54,0.2], g=[0.32,0.55,0.3], g2=[0.42,0.64,0.36];
@@ -6648,8 +6667,8 @@ function berryDotMesh(s, col) { const d = Mesh(); mergeMesh(d, discMesh(0, s, 6,
 function berryBushMesh(state) { const m = Mesh();
   const g = [0.33,0.63,0.3], g2 = [0.27,0.54,0.26], g3 = [0.41,0.71,0.37], twig = [0.4,0.32,0.22];
   mergeAt(m, cylM(0, 0.14, 0.04, 0.03, twig), 0, 0, 0);     // a short woody stub to sit it on the ground
-  const puffs = [[0,0.34,0,0.28,g],[0.2,0.3,0.06,0.2,g2],[-0.19,0.31,-0.05,0.21,g2],[0.04,0.47,-0.03,0.19,g3],[-0.05,0.32,0.2,0.18,g],[0.16,0.33,-0.18,0.17,g2],[0.1,0.43,0.12,0.15,g3]];
-  for (const [x,y,z,r,c] of puffs) mergeAt(m, ballM(r, c, 8), x, y, z);   // round, overlapping lobes
+  const puffs = [[0,0.32,0,0.27,g],[0.21,0.28,0.07,0.21,g2],[-0.2,0.29,-0.05,0.22,g2],[0.05,0.45,-0.02,0.2,g3],[-0.06,0.3,0.21,0.19,g],[0.17,0.31,-0.19,0.18,g2],[0.11,0.42,0.13,0.17,g3],[-0.12,0.42,-0.13,0.15,g]];
+  for (const [x,y,z,r,c] of puffs) mergeAt(m, sphM(r, c, 9, 5), x, y, z);   // round, overlapping cloud lobes
   if (state === "ripe" || state === "green") {
     const ripe = state === "ripe", col = ripe ? [0.86,0.16,0.2] : [0.55,0.66,0.37], sz = ripe ? 0.05 : 0.038;
     for (let i = 0; i < 13; i++) { const a = i*2.399, rr = 0.12 + ((i*7)%10)/10*0.24, x = Math.cos(a)*rr, y = 0.24 + ((i*5)%9)/9*0.3, z = Math.sin(a)*rr;
