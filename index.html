@@ -6038,19 +6038,19 @@ function urchinMesh(col) { const m = discMesh(0.1,0.3,6,0.15,col); const sp=[col
 function hermitMesh(col) { const m = Mesh(); col = col || [0.82,0.72,0.52];
   const body=[0.92,0.42,0.14], body2=[0.8,0.34,0.11], eye=[0.05,0.05,0.07], claw=[0.95,0.5,0.2];
   // --- borrowed coiled shell: a solid spiral (no cracks/holes), swirl to the side, dark opening facing forward ---
-  const shell = spiralShellMesh({ turns:2.7, r0:0.06, growth:1.72, tubeF:0.78, c1:[0.92,0.86,0.68], c2:[0.8,0.64,0.46], apertureAtOrigin:true });
-  rotMeshZ(shell, 1.57);                                       // aperture faces forward so the crab emerges from it
-  mergeAt(m, shell, 0.0, 0.12, 0);
-  // --- orange body emerging FROM the shell opening at the front ---
-  mergeAt(m, scaleMeshXYZ(sphM(0.13, body, 8, 4), 1.1, 0.9, 1.0), 0.17, 0.1, 0);
+  const shell = spiralShellMesh({ turns:2.5, r0:0.055, growth:1.72, tubeF:0.82, aperture:false, c1:[0.92,0.86,0.68], c2:[0.8,0.64,0.46], apertureAtOrigin:true });
+  rotMeshZ(shell, 1.9);                                        // aperture faces forward-down so the crab emerges from it and the shell sits up/back
+  mergeAt(m, shell, 0.04, 0.18, 0);                            // raised so the shell bottom is flush with the body, not hanging past the feet
+  // --- orange body tucked INTO the shell opening at the front ---
+  mergeAt(m, scaleMeshXYZ(sphM(0.12, body, 8, 4), 1.1, 0.9, 1.0), 0.14, 0.09, 0);
   // --- small eyes on short stalks, forward ---
-  for (const s of [-1,1]) { mBox(m, 0.26, 0.15, s*0.055, 0.014, 0.05, 0.014, body2); mergeAt(m, sphM(0.026, eye, 6, 3), 0.29, 0.19, s*0.055); }
+  for (const s of [-1,1]) { mBox(m, 0.23, 0.14, s*0.05, 0.014, 0.05, 0.014, body2); mergeAt(m, sphM(0.025, eye, 6, 3), 0.26, 0.18, s*0.05); }
   // --- walking legs, three per side (femur out, foot down) ---
-  for (const s of [-1,1]) for (let i=0;i<3;i++){ const fx=0.1+i*0.075;
-    mBox(m, fx, 0.07, s*(0.1+i*0.02), 0.05, 0.02, 0.02, body);
-    mBox(m, fx+0.04, 0.03, s*(0.15+i*0.03), 0.02, 0.055, 0.02, body2); }
+  for (const s of [-1,1]) for (let i=0;i<3;i++){ const fx=0.08+i*0.072;
+    mBox(m, fx, 0.065, s*(0.09+i*0.02), 0.05, 0.02, 0.02, body);
+    mBox(m, fx+0.04, 0.028, s*(0.14+i*0.03), 0.02, 0.055, 0.02, body2); }
   // --- two front claws ---
-  for (const s of [-1,1]) { mBox(m, 0.27, 0.085, s*0.11, 0.06, 0.025, 0.03, body); mergeAt(m, scaleMeshXYZ(sphM(0.058, claw, 7, 4), 1.2, 0.8, 0.9), 0.37, 0.085, s*0.12); }
+  for (const s of [-1,1]) { mBox(m, 0.24, 0.08, s*0.1, 0.06, 0.025, 0.03, body); mergeAt(m, scaleMeshXYZ(sphM(0.055, claw, 7, 4), 1.2, 0.8, 0.9), 0.34, 0.08, s*0.11); }
   return m; }
 // §14C huntable fish, distinct silhouettes so each reads at a glance
 function flounderMesh(col) { const m = Mesh(); col = col||[0.62,0.56,0.42];   // flat oval, camouflaged on sand
@@ -6914,9 +6914,9 @@ function slugMesh() { return slugBody([0.57,0.46,0.3]); }
 // its spiral facing sideways (the classic look). The coil is in a vertical plane with its axis across the body.
 function snailMesh(col) { col = col || [0.55,0.4,0.26];
   const m = slugBody([0.9,0.86,0.78], [0.82,0.78,0.7]);
-  const shell = spiralShellMesh({ turns:2.4, r0:0.05, growth:1.7, tubeF:0.78, c1:[Math.min(1,col[0]*1.15),col[1]*1.1,col[2]*1.1], c2:[col[0]*0.82,col[1]*0.82,col[2]*0.82], apertureAtOrigin:true });
+  const shell = spiralShellMesh({ turns:2.4, r0:0.05, growth:1.7, tubeF:0.78, aperture:false, c1:[Math.min(1,col[0]*1.15),col[1]*1.1,col[2]*1.1], c2:[col[0]*0.82,col[1]*0.82,col[2]*0.82], apertureAtOrigin:true });
   rotMeshZ(shell, 2.3);                                   // aperture faces down-forward so the body emerges from it
-  mergeAt(m, shell, 0.07, 0.11, 0);                       // seat the opening just over the foot, behind the head
+  mergeAt(m, shell, 0.07, 0.13, 0);                       // seat the opening just over the foot, behind the head
   return m;
 }
 // §models a nudibranch (sea slug): a clean vivid body (no eye-stalks) with a crest of colourful cerata down
