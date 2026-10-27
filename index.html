@@ -2489,9 +2489,18 @@ uniform float uFogDensity, uFogNear, uWaterLevel, uWetLevel;
 uniform float uTime; uniform int uUnderwater;        // §14B animated seabed caustics
 uniform float uGroundWet;                            // §20 rain darkens & slightly cools the ground (0 = dry)
 uniform vec3 uLanternPos; uniform float uLanternI;   // §18 lantern light pool
+uniform int uHemi, uGroundNoise, uFogSun;            // §ATMO per-effect toggles
 uniform sampler2D uFresh;
 uniform sampler2D uMaterial;
 ${SKY_GLSL}
+float vnoise(vec2 p) {   // §ATMO #7 cheap value noise (smoothed), for low-freq ground tint
+  vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
+  float a = fract(sin(dot(i, vec2(12.9898, 78.233))) * 43758.5453);
+  float b = fract(sin(dot(i + vec2(1.0, 0.0), vec2(12.9898, 78.233))) * 43758.5453);
+  float c = fract(sin(dot(i + vec2(0.0, 1.0), vec2(12.9898, 78.233))) * 43758.5453);
+  float d = fract(sin(dot(i + vec2(1.0, 1.0), vec2(12.9898, 78.233))) * 43758.5453);
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
 void main() {
   // Flat shading: face normal from screen-space derivatives of world pos.
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
@@ -2539,10 +2548,25 @@ void main() {
   float fresh = texture(uFresh, fuv).r;
   col = mix(col, col * vec3(0.52, 0.42, 0.33), clamp(fresh, 0.0, 1.0) * 0.6);
 
-  // Directional light: warm in the sun, gently cool in shadow.
+  // §ATMO #7 low-frequency ground colour variation so the wide sand/grass bands aren't one dead tone.
+  if (uGroundNoise == 1) {
+    float gn = vnoise(vWorld.xz * 0.045) * 0.6 + vnoise(vWorld.xz * 0.15) * 0.3 - 0.45;   // ~-0.45..+0.45, mostly low-freq
+    col *= 1.0 + gn * 0.18;
+  }
+
+  // Directional light. §ATMO #2 hemisphere ambient: cool sky fill from above, warm
+  // ground bounce from below that takes on the surface's own hue (warm sand, green grass).
   float diff = max(dot(n, normalize(uSunDir)), 0.0);
-  col *= (0.55 + 0.55 * diff);
-  col *= mix(vec3(0.88, 0.91, 0.99), uWarm, diff);
+  if (uHemi == 1) {
+    float up = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 sky = mix(uHorizon, uZenith, up);               // cool dome fill
+    vec3 gnd = mix(uWarm * 0.9, col * 1.25, 0.5);         // warm bounce, tinted by the ground colour
+    vec3 amb = mix(gnd, sky, up) * 0.72;                  // hemisphere blend
+    col *= amb + uWarm * (diff * 0.72) + 0.04;            // + warm sun, tiny floor so nothing is pure black
+  } else {
+    col *= (0.55 + 0.55 * diff);
+    col *= mix(vec3(0.88, 0.91, 0.99), uWarm, diff);
+  }
 
   // §14B animated caustics on the seabed (strongest in the shallows)
   if (uUnderwater == 1 && h < uWaterLevel - 0.1) {
@@ -2564,8 +2588,13 @@ void main() {
   float dist = length(viewVec);
   float fd = max(dist - uFogNear, 0.0) * uFogDensity;
   float fog = 1.0 - exp(-fd * fd);
-  vec3 fogCol = skyColor(viewVec, uSunDir, uZenith, uHorizon, uWarm);
+  vec3 fogCol = skyColor(viewVec, uSunDir, uZenith, uHorizon, uWarm);   // already warms toward the sun (sun glow in skyColor)
   col = mix(col, fogCol, fog);
+  // §ATMO #5 thin low-lying sea mist: distant ground near the waterline hazes out into the horizon haze.
+  if (uFogSun == 1) {
+    float mist = exp(-max(h - uWaterLevel, 0.0) * 0.22) * smoothstep(12.0, 55.0, dist) * 0.3;
+    col = mix(col, fogCol, mist);
+  }
 
   frag = vec4(col, 1.0);
 }`;
@@ -2875,11 +2904,19 @@ uniform float uHungerFx;                        // 0..1 starving: desaturate + d
 uniform float uUnderwater;                      // §14A 0..1 submerged: blue-green tint + vignette
 uniform float uBreathLow;                       // §14A 0..1 running out of air: darker vignette
 uniform float uBrightness;                      // §18 gamma lift, see into the shadows at night
+uniform int uTonemap;                           // §ATMO #3 ACES filmic tone-map on/off
+uniform float uExposure;                        // §ATMO #3 pre-tonemap exposure
+uniform float uVigAmt;                          // §ATMO #9 base atmospheric vignette strength (0 = off)
 const float bayer[16] = float[16](
   0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
   3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+vec3 aces(vec3 x) {   // §ATMO #3 Narkowicz ACES filmic approximation
+  return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0);
+}
 void main() {
-  vec3 c = clamp(texture(uScene, vUv).rgb, 0.0, 1.0);
+  vec3 c = texture(uScene, vUv).rgb;                                              // read unclamped so the tone-map can roll off >1 highlights
+  if (uTonemap == 1) c = aces(max(c, 0.0) * uExposure);                           // §ATMO #3 filmic curve + exposure, BEFORE dither/quantize
+  c = clamp(c, 0.0, 1.0);
   if (uBrightness != 1.0) c = clamp(pow(c, vec3(1.0 / uBrightness)), 0.0, 1.0);   // §18 brightness/gamma
   if (uHungerFx > 0.001) { float g = dot(c, vec3(0.299, 0.587, 0.114)); c = mix(c, vec3(g), uHungerFx * 0.7); }  // desaturate when starving
   float levels = 8.0;
@@ -2893,7 +2930,7 @@ void main() {
   if (uUnderwater > 0.001) q = mix(q, q * vec3(0.42, 0.72, 0.86), uUnderwater * 0.6);
   // soft vignette for a little focus and moodiness (stronger when starving or low on air)
   vec2 d = vUv - 0.5;
-  q *= 1.0 - dot(d, d) * (0.5 + uHungerFx * 1.3 + uUnderwater * 0.6 + uBreathLow * 2.4);
+  q *= 1.0 - dot(d, d) * (uVigAmt + uHungerFx * 1.3 + uUnderwater * 0.6 + uBreathLow * 2.4);   // §ATMO #9 uVigAmt = base atmospheric vignette (hunger/underwater cues always add on top)
   frag = vec4(q, 1.0);
 }`;
 
@@ -3977,6 +4014,41 @@ try { const s = JSON.parse(localStorage.getItem("bc_gfx") || "null");
   if (s && s.preset) { GFX.preset = s.preset; if (s.preset === "custom") for (const k of GFX_CUSTOM_KEYS) { if (s[k] !== undefined) GFX[k] = s[k]; }
     else Object.assign(GFX, GFX_PRESETS[s.preset] || {}); } } catch (e) {}
 function saveGFX() { try { const o = { preset: GFX.preset }; for (const k of GFX_CUSTOM_KEYS) o[k] = GFX[k]; localStorage.setItem("bc_gfx", JSON.stringify(o)); } catch (e) {} }
+/* ===================================================================== *
+ * § ATMOSPHERE  lighting/atmosphere effects, each individually toggleable
+ *   so you can A/B the same view (debug panel + keys). All of these are
+ *   cheap fragment-shader work (no extra render passes); the heavier items
+ *   from the phase (player-follow shadow map, baked vertex AO, SSAO, grass
+ *   wind field, floating motes) are a separate later installment.
+ *     #2 hemi  hemisphere ambient: sky-blue fill from above, warm ground
+ *              bounce from below (the bounce picks up the surface's own hue,
+ *              so it reads warm on sand, green on grass). Terrain + props.
+ *     #3 tonemap  ACES filmic curve + exposure in post, applied BEFORE the
+ *              dither/quantize so the >1 sun-disc / lantern highlights roll
+ *              off to colour instead of clipping to flat white.
+ *     #5 fogsun  thin low-lying sea mist near the waterline + the existing
+ *              sun-warm fog (skyColor already tints fog warm toward the sun).
+ *     #7 groundnoise  low-frequency colour variation on the ground so the
+ *              big flat sand/grass bands aren't a single dead tone.
+ *     #9 vignette  a subtle focus darkening at the frame edge.
+ * ===================================================================== */
+const ATMO = {
+  tonemap: true, exposure: 1.06,
+  hemi: true,
+  fogsun: true,
+  groundnoise: true,
+  vignette: true, vigAmt: 0.42,
+};
+// Which atmosphere effects each graphics preset turns on. They are all nearly
+// free, so only the very lowest preset trims the extra ground-noise octaves;
+// the cost-tiering that matters lands with the heavier later installment.
+const ATMO_PRESETS = {
+  low:    { tonemap: true, hemi: true, fogsun: true, groundnoise: false, vignette: true },
+  medium: { tonemap: true, hemi: true, fogsun: true, groundnoise: true,  vignette: true },
+  high:   { tonemap: true, hemi: true, fogsun: true, groundnoise: true,  vignette: true },
+  ultra:  { tonemap: true, hemi: true, fogsun: true, groundnoise: true,  vignette: true },
+};
+function applyAtmoPreset(name) { const a = ATMO_PRESETS[name]; if (a) for (const k in a) ATMO[k] = a[k]; }
 // §UI "Pixelated UI text": renders UI text aliased (crisp, retro pixels) instead of anti-aliased, and
 // follows the graphics quality — High/Ultra keep smooth text (the readability floor), Medium/Low go
 // pixelated. A toggle turns it off entirely. True sub-pixel downscaling isn't possible for live DOM
@@ -5194,6 +5266,7 @@ uniform int uWetBand;                               // 1 only for the world prop
 uniform float uGhost; uniform vec3 uGhostCol;       // §16B building-placement ghost
 uniform vec3 uLanternPos; uniform float uLanternI;  // §18 lantern light pool
 uniform float uDissolve;                            // §urgent5 0 = solid; >0 = dithered dissolve (dying creatures)
+uniform int uHemi;                                  // §ATMO #2 hemisphere ambient on/off (0 = flat, for icon/inspect renders)
 ${SKY_GLSL}
 void main() {
   if (uDissolve > 0.0) {                              // §urgent5 ordered Bayer-4x4 dither dissolve, no shrink
@@ -5203,8 +5276,17 @@ void main() {
   }
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
   float diff = abs(dot(n, normalize(uSunDir)));      // abs → foliage lit both sides
-  vec3 col = vCol * (0.5 + 0.6 * diff);
-  col *= mix(vec3(0.85, 0.89, 0.99), uWarm, diff);
+  vec3 col;
+  if (uHemi == 1) {   // §ATMO #2 hemisphere ambient, matching the terrain (cool sky above, warm bounce below)
+    float up = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
+    vec3 sky = mix(uHorizon, uZenith, up);
+    vec3 gnd = mix(uWarm * 0.9, vCol * 1.25, 0.5);
+    vec3 amb = mix(gnd, sky, up) * 0.72;
+    col = vCol * (amb + uWarm * (diff * 0.72) + 0.04);
+  } else {
+    col = vCol * (0.5 + 0.6 * diff);
+    col *= mix(vec3(0.85, 0.89, 0.99), uWarm, diff);
+  }
   if (uWetBand == 1) {
     float wetb = 1.0 - smoothstep(uWaterLevel, uWetLevel + 1.2, vWorld.y);     // darker below the high-water mark
     col = mix(col, col * 0.58, clamp(wetb, 0.0, 1.0) * 0.8);
@@ -5676,6 +5758,7 @@ function bigPropBlocking(x, z, r) {
 
 function drawProps(view) {
   gl.useProgram(propProg);
+  gl.uniform1i(propU.uHemi, ATMO.hemi ? 1 : 0);   // §ATMO #2
   gl.uniformMatrix4fv(propU.uProj, false, proj);
   gl.uniformMatrix4fv(propU.uView, false, view);
   setLanternUniform(propU);   // §18
@@ -7791,6 +7874,7 @@ function onScreenPoint(x, z) {
    // §weak7 curled pill bugs drawn with the ball mesh in their own pass
 function drawLife(view) {
   gl.useProgram(propProg);
+  gl.uniform1i(propU.uHemi, ATMO.hemi ? 1 : 0);   // §ATMO #2
   gl.uniformMatrix4fv(propU.uProj, false, proj);
   gl.uniformMatrix4fv(propU.uView, false, view);
   setLanternUniform(propU);   // §18 lantern lights creatures/finds too
@@ -8360,6 +8444,7 @@ function buildMeshIcon(mesh, tint) {
   gl.viewport(0, 0, 64, 64); gl.clearColor(0, 0, 0, 0); gl.enable(gl.DEPTH_TEST); gl.depthMask(true);
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   gl.useProgram(propProg);
+  gl.uniform1i(propU.uHemi, 0);   // §ATMO #2 icon renders stay flat-lit (even, readable thumbnails)
   gl.uniformMatrix4fv(propU.uProj, false, _iconProj); gl.uniformMatrix4fv(propU.uView, false, _iconView);
   gl.uniform3fv(propU.uSunDir, [0.5, 0.8, 0.4]); gl.uniform3fv(propU.uCamPos, [2.2, 1.9, 2.4]);
   gl.uniform3fv(propU.uZenith, [1,1,1]); gl.uniform3fv(propU.uHorizon, [1,1,1]); gl.uniform3fv(propU.uWarm, [1,1,0.95]);
@@ -8731,6 +8816,20 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgAutoPick">${autoPickup ? "Auto-pickup: on" : "Auto-pickup: off"}</button></div>
     <div class="dbgrow"><button id="dbgHunger">${hungerEnabled ? "Hunger: on" : "Hunger: off"}</button><button id="dbgBreath">${infiniteBreath ? "Breath: ∞" : "Breath: norm"}</button></div>
     <div class="dbgrow"><button id="dbgDeep">To deep water</button><button id="dbgAlert">${showAlert ? "Alertness: on" : "Alertness: off"}</button></div>
+    <h3>Atmosphere (§ATMO)</h3>
+    <div class="jhint" style="margin-bottom:4px">Toggle each on/off on the same view to compare. Cost shows as "gpu … ms" in the perf overlay (\`) on a real GPU.</div>
+    <div class="dbgrow">
+      <button class="dbgatmo${ATMO.tonemap?' on':''}" data-at="tonemap" style="${ATMO.tonemap?'background:#5a8f6a':''}">Tone-map: ${ATMO.tonemap?"ON":"off"}</button>
+      <button class="dbgatmo${ATMO.hemi?' on':''}" data-at="hemi" style="${ATMO.hemi?'background:#5a8f6a':''}">Hemisphere: ${ATMO.hemi?"ON":"off"}</button>
+    </div>
+    <div class="dbgrow">
+      <button class="dbgatmo${ATMO.fogsun?' on':''}" data-at="fogsun" style="${ATMO.fogsun?'background:#5a8f6a':''}">Sea mist: ${ATMO.fogsun?"ON":"off"}</button>
+      <button class="dbgatmo${ATMO.groundnoise?' on':''}" data-at="groundnoise" style="${ATMO.groundnoise?'background:#5a8f6a':''}">Ground noise: ${ATMO.groundnoise?"ON":"off"}</button>
+    </div>
+    <div class="dbgrow">
+      <button class="dbgatmo${ATMO.vignette?' on':''}" data-at="vignette" style="${ATMO.vignette?'background:#5a8f6a':''}">Vignette: ${ATMO.vignette?"ON":"off"}</button>
+    </div>
+    <label>Exposure <b id="dbgExpV">${ATMO.exposure.toFixed(2)}</b> <input id="dbgExp" type="range" min="0.6" max="1.6" step="0.02" value="${ATMO.exposure}"></label>
     <h3>Weather, ${weather ? (weather.forced ? "forced " : "") + WEATHER_LABEL[weather.state] : ", "}</h3>
     <div class="dbgrow"><button data-wx="clear">Clear</button><button data-wx="overcast">Overcast</button><button data-wx="fog">Fog</button><button data-wx="rain">Rain</button><button data-wx="storm">Storm</button><button data-wx="">Auto</button></div>
     <div class="dbgrow"><button id="dbgStormMorn">Skip to post-storm morning</button></div>
@@ -8807,6 +8906,8 @@ function syncDebugPanel() {
   p.querySelector("#dbgCamLand").onclick = () => { camFx.landDip = !camFx.landDip; syncDebugPanel(); };
   p.querySelector("#dbgDeep").onclick = () => teleportToDeepWater();
   p.querySelector("#dbgAlert").onclick = () => { showAlert = !showAlert; syncDebugPanel(); };   // §14C
+  p.querySelectorAll(".dbgatmo").forEach(b => b.onclick = () => { const k = b.dataset.at; ATMO[k] = !ATMO[k]; syncDebugPanel(); });   // §ATMO per-effect A/B toggles
+  { const ex = p.querySelector("#dbgExp"); if (ex) ex.oninput = (e) => { ATMO.exposure = +e.target.value; const v = p.querySelector("#dbgExpV"); if (v) v.textContent = ATMO.exposure.toFixed(2); }; }
   p.querySelectorAll(".dbgtune").forEach((el) => el.oninput = (e) => {
     const k = el.dataset.k, v = +e.target.value; DBG_SET(k, v);
     const b = p.querySelector(`.tv[data-k="${k}"]`); if (b) b.textContent = v.toFixed(v < 0.01 ? 3 : 2);
@@ -9204,6 +9305,7 @@ function updateStarRescue() {
 
 function propUniforms(view) {
   gl.useProgram(propProg);
+  gl.uniform1i(propU.uHemi, ATMO.hemi ? 1 : 0);   // §ATMO #2 held tool / world props share the world lighting
   gl.uniformMatrix4fv(propU.uProj, false, proj); gl.uniformMatrix4fv(propU.uView, false, view);
   setLanternUniform(propU);   // §18
   gl.uniform3fv(propU.uSunDir, SKY.sun); gl.uniform3fv(propU.uCamPos, cam.pos);
@@ -10121,6 +10223,7 @@ function renderMini(fbo, eye, target, fovY, waterY, waterR, waterCol, drawScene,
   gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   const proj = M4.perspective(fovY, fbo.W / fbo.H, 0.05, 50), view = M4.lookAt(eye, target, [0, 1, 0]);
   gl.useProgram(propProg);
+  gl.uniform1i(propU.uHemi, 0);   // §ATMO #2 inspect render stays flat-lit
   gl.uniformMatrix4fv(propU.uProj, false, proj); gl.uniformMatrix4fv(propU.uView, false, view);
   gl.uniform3fv(propU.uSunDir, [0.4, 0.85, 0.35]); gl.uniform3fv(propU.uCamPos, eye);
   gl.uniform3fv(propU.uZenith, [0.7,0.78,0.86]); gl.uniform3fv(propU.uHorizon, [0.82,0.82,0.8]); gl.uniform3fv(propU.uWarm, [1,0.95,0.85]);
@@ -13182,6 +13285,7 @@ function applyGFX() {
   UPDATE_R = BASE_UPDATE_R * GFX.simRadius;
   resize();                                                  // picks up dprCap; forces the FBO to the new resolution/filter
   if (typeof applyPixText === "function") applyPixText();     // §UI pixelated UI text follows the quality preset
+  if (typeof ATMO_PRESETS !== "undefined" && ATMO_PRESETS[GFX.preset]) applyAtmoPreset(GFX.preset);   // §ATMO sync effects to the preset (custom keeps the debug toggles)
 }
 addEventListener("resize", resize);
 resize();
@@ -13193,6 +13297,22 @@ let fpsSmooth = 60, washedThisLow = false;
 const dbgEl = document.getElementById("dbg");
 const fpsEl = document.getElementById("fpscounter");   // §fps standalone readout, toggled in Settings
 let _fpsGate = 0;
+// §ATMO GPU frame-time probe (real GPUs only). SwiftShader has no timer-query
+// extension, so _gpuMs stays 0 and the overlay prints "n/a (SwiftShader)". On a
+// real GPU this gives the whole scene+post pass time in ms; toggle an atmosphere
+// effect off and watch the number to read its cost on the same view.
+const _gpuExt = (function () { try { return gl.getExtension("EXT_disjoint_timer_query_webgl2"); } catch (e) { return null; } })();
+let _gpuQuery = null, _gpuProbing = false, _gpuMs = 0;
+function gpuProbeBegin() {
+  if (!_gpuExt) return;
+  if (_gpuQuery) {
+    const avail = gl.getQueryParameter(_gpuQuery, gl.QUERY_RESULT_AVAILABLE);
+    const disjoint = gl.getParameter(_gpuExt.GPU_DISJOINT_EXT);
+    if (avail) { if (!disjoint) _gpuMs = gl.getQueryParameter(_gpuQuery, gl.QUERY_RESULT) / 1e6; gl.deleteQuery(_gpuQuery); _gpuQuery = null; }
+  }
+  if (!_gpuQuery) { _gpuQuery = gl.createQuery(); gl.beginQuery(_gpuExt.TIME_ELAPSED_EXT, _gpuQuery); _gpuProbing = true; }
+}
+function gpuProbeEnd() { if (_gpuExt && _gpuProbing) { gl.endQuery(_gpuExt.TIME_ELAPSED_EXT); _gpuProbing = false; } }
 // The main loop. Phase order (markers below): FPS-gate + dt → MUSIC → world
 // sim in capped fixed substeps (tide/hunger/life/weather/tools/…) → movement
 // + camera → matrices → PASS 1 scene into the low-res FBO (sky, terrain,
@@ -13442,6 +13562,7 @@ function frame(now) {
   }
 
   // ============ PASS 1: scene → low-res FBO ============
+  gpuProbeBegin();   // §ATMO GPU timer around the scene + post passes (real GPUs only)
   ensureFBO();
   gl.bindFramebuffer(gl.FRAMEBUFFER, fbo.fb);
   gl.viewport(0, 0, fbo.w, fbo.h);
@@ -13484,6 +13605,9 @@ function frame(now) {
   gl.uniform1f(terrainU.uWaterLevel, waterLevel);
   gl.uniform1f(terrainU.uWetLevel, wetLevel);
   gl.uniform1f(terrainU.uTime, t); gl.uniform1i(terrainU.uUnderwater, camUnderwater ? 1 : 0);   // §14B caustics
+  gl.uniform1i(terrainU.uHemi, ATMO.hemi ? 1 : 0);                 // §ATMO #2
+  gl.uniform1i(terrainU.uGroundNoise, ATMO.groundnoise ? 1 : 0);   // §ATMO #7
+  gl.uniform1i(terrainU.uFogSun, (ATMO.fogsun && !camUnderwater) ? 1 : 0);   // §ATMO #5 (no sea mist while submerged)
   if (terrainU.uGroundWet !== undefined) gl.uniform1f(terrainU.uGroundWet, weather ? weather.rain * 0.85 : 0);   // §20 wet ground in rain
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_2D, freshTex);
@@ -13584,11 +13708,15 @@ function frame(now) {
   gl.uniform1f(postU.uUnderwater, camUnderwater ? 1 : 0);   // §14A/B
   gl.uniform1f(postU.uBreathLow, camUnderwater ? breathLow : 0);
   gl.uniform1f(postU.uBrightness, nightBrightness);          // §18
+  gl.uniform1i(postU.uTonemap, ATMO.tonemap ? 1 : 0);        // §ATMO #3
+  gl.uniform1f(postU.uExposure, ATMO.exposure);
+  gl.uniform1f(postU.uVigAmt, ATMO.vignette ? ATMO.vigAmt : 0.0);   // §ATMO #9 (0 keeps only the gameplay hunger/air vignettes)
   gl.bindVertexArray(fsTri);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   countDraw(1);
 
   gl.bindVertexArray(null);
+  gpuProbeEnd();   // §ATMO end GPU timer
   if (camUnderwater) { FOG_DENSITY = _uwFogD; FOG_NEAR = _uwFogN; SKY.zenith = _uwSky.z; SKY.horizon = _uwSky.h; SKY.warm = _uwSky.w; }   // §14B restore
 
   // ---- hud ----
@@ -13734,6 +13862,9 @@ function frame(now) {
       `draws ${frameDraws}\n` +
       `tris  ${(frameTris / 1000).toFixed(0)}k\n` +
       `res   ${fbo.w}x${fbo.h}\n` +
+      `gpu   ${_gpuExt ? _gpuMs.toFixed(2) + " ms (scene+post)" : "n/a (SwiftShader)"}\n` +
+      `atmo  ${ATMO.tonemap ? "tone " : ""}${ATMO.hemi ? "hemi " : ""}${ATMO.fogsun ? "mist " : ""}${ATMO.groundnoise ? "gnoise " : ""}${ATMO.vignette ? "vig" : ""}\n` +
+      `      (toggle in debug panel → Atmosphere; watch gpu ms for cost)\n` +
       `pos   ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}\n` +
       `slope ${_curSlopeDeg.toFixed(0)}°  spd ×${_curSpeedMul.toFixed(2)}${player.sprinting ? " sprint" : ""}  steps ${stepsPerSec()}/s\n` +
       `audio ${SND.ctx ? SND.ctx.state : "not started"}${SND.muted ? " muted" : ""}  vox ${SND.ctx ? SND.activeVoices() : 0}\n` +
