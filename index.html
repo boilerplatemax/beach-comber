@@ -172,6 +172,10 @@
     position: fixed; left: 12px; bottom: 76px; z-index: 5; pointer-events: none;
     opacity: .82; filter: drop-shadow(0 1px 2px rgba(0,0,0,.6));
   }
+  /* §cortisol the Cortisol dial: a small RuneScape-style semicircular gauge, bottom-left, clear of the toolbelt.
+     Drawn at a low internal resolution and scaled up crisply (pixelated). */
+  #cortdial { position: fixed; left: 14px; bottom: 12px; z-index: 9; width: 176px; height: 132px;
+    image-rendering: pixelated; pointer-events: auto; display: none; }
   /* §Cooking hunger, five faceted scallop shells, drained left-to-right */
   /* §pixui hunger row: 10 little pixel fish, centred just above the toolbelt (low-res canvas upscaled for crisp pixels) */
   #hungershells {
@@ -501,6 +505,7 @@
     clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px); }
   #itip b { font-size: 14px; } #itip .r { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; opacity: .75; }
   #itip p { font-size: 12px; opacity: .82; margin-top: 4px; }
+  #itip .tipcort { color: #9fd97e; opacity: .95; font-weight: 600; }   /* §cortisol food tooltip: cortisol it lowers */
   .irar.uncommon,.r.uncommon { color: #6fc; } .irar.rare,.r.rare { color: #fc6; } .irar.tool,.r.tool { color: #9bd; } .irar.legendary,.r.legendary{color:#f9a;}
   #invpanel button, #debugpanel button {
     font: inherit; font-size: 13px; font-weight: 600; letter-spacing: .03em; padding: 7px 14px; cursor: pointer;
@@ -811,6 +816,7 @@
 <div id="fpscounter"></div>
 <div id="stamina"></div>
 <div id="hungerArc"></div>
+<canvas id="cortdial" width="128" height="96"></canvas>
 <div id="breathArc"></div>
 <div id="crosshair"></div>
 <div id="fadeblack"></div>
@@ -1639,8 +1645,10 @@ function drawFishIcon(g, cx, cy, s, warm, frac, starving) {
   fishBody(g, cx, cy, s); g.strokeStyle = frac > 0.45 ? "rgba(90,45,20,0.55)" : "rgba(120,130,140,0.5)"; g.lineWidth = 1.1; g.stroke();
   g.beginPath(); g.arc(cx + 7*s, cy - 1.2*s, 1.4*s, 0, 6.283); g.fillStyle = frac > 0.45 ? "#3a2416" : "#1d2228"; g.fill();   // eye near the head
 }
-function drawHungerShells() {   // (name kept; now draws the fish row)
-  const cv = document.getElementById("hungershells"); if (!cv) return;
+function drawHungerShells() {   // §cortisol the hunger meter is retired; keep the element hidden
+  const cv = document.getElementById("hungershells"); if (cv && cv.style.display !== "none") cv.style.display = "none";
+  return;
+  // eslint-disable-next-line no-unreachable
   if (!hungerEnabled || mode !== "walk") { if (cv.style.display !== "none") cv.style.display = "none"; return; }
   cv.style.display = "block";
   const g = hungerCtx || (hungerCtx = cv.getContext("2d"));
@@ -3255,7 +3263,7 @@ function swimStep(dt, right) {
   if (keys["ControlLeft"] || keys["KeyC"] || mobileSwimDown) { wy -= 1; moving = true; }
   const diving = !outOfAir && (keys["ControlLeft"] || keys["KeyC"] || mobileSwimDown || (moving && wy < -0.05));   // §nodeath out of air: can't dive, you float up
   const wl = Math.hypot(wx, wy, wz);
-  const tired = exhausted || stamina < 0.02;
+  const tired = cortTier() === "high";   // §cortisol High cortisol: no sprinting, a sluggish swim
   player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01 && !tired && !isPanelOpen();
   if (isPanelOpen()) { moving = false; }
   let spd = SWIM_SPEED * (player.sprinting ? SWIM_SPRINT : 1) * (tired ? 0.45 : 1);
@@ -3591,7 +3599,9 @@ function updateFight(dt) {
   else if (fg.tension < lo) { fg.slack  += (lo - fg.tension) * (relaxed ? 1.2 : 2.2) * dt; fg.strain = Math.max(0, fg.strain - 0.8 * dt); fg.progress = Math.max(0, fg.progress - dt * 0.12); }   // fish pulls line → the icon slips back
   else                      { fg.progress += dt / fg.land; fg.strain = Math.max(0, fg.strain - 1.3 * dt); fg.slack = Math.max(0, fg.slack - 1.0 * dt); }
   // §fishpolish a full strain snaps one knot (not an instant loss); three snapped knots breaks the line
-  if (fg.strain >= 1) { fg.strain = 0; if (!relaxed) { fg.snaps++; fg.snapFlash = 0.5; if (typeof SND !== "undefined") SND.play("crack", { volume: 0.6 }); if (fg.snaps >= 3) return lineSnap(); } }
+  if (fg.strain >= 1) { fg.strain = 0; if (!relaxed) { fg.snaps++; fg.snapFlash = 0.5; if (typeof SND !== "undefined") SND.play("crack", { volume: 0.6 });
+    const snapLimit = cortTier() === "high" ? 2 : 3;   // §cortisol High: the line snaps one strain sooner
+    if (fg.snaps >= snapLimit) return lineSnap(); } }
   if (relaxed) fg.slack = Math.min(fg.slack, 0.9);                               // relaxed: can't lose
   fg.lo = lo; fg.hi = hi;
   rod.bend = 0.4 + fg.tension * 0.5 + fg.run * 0.3;
@@ -3617,7 +3627,7 @@ function landFish() {
   startCatchCine();   // §catch5 free-camera arc → the catch drops straight into the satchel → a small non-blocking card
 }
 // §playtest1 result messages draw on the top crosshair-prompt layer (above everything, outside the mini-game) and fade; no "fish runs" subtitle
-function lineSnap() { hintText = "The line snapped!"; hintT = 2.0; loseBaitMaybe(); if (typeof SND !== "undefined") SND.play("crack"); endCast(0.9); }
+function lineSnap() { hintText = "The line snapped!"; hintT = 2.0; loseBaitMaybe(); if (typeof SND !== "undefined") SND.play("crack"); endCast(0.9); raiseCortisol(CORT.LINE_SNAP, "line snapped"); }
 function fishEscape() { hintText = "It threw the hook"; hintT = 2.0; loseBaitMaybe(); endCast(0.8); }
 function reelInEmpty() { if (rod.baitTaken && rod.baitId) { Inv.add(rod.baitId, 1); rod.baitTaken = false; }   // §fishpolish reeled in before a nibble → full worm refund
   endCast(0.3); if (typeof SND !== "undefined") SND.play("plop"); }
@@ -3675,7 +3685,7 @@ function keepFish() {
   else showCard("Satchel full", "No room, the fish was released.");
   closeFishReveal();
 }
-function releaseFish() { const sp = FISH_SPECIES[rod.fish.species]; showCard("Released", `The ${sp.label} slipped back into the water.`); closeFishReveal(); }
+function releaseFish() { const sp = FISH_SPECIES[rod.fish.species]; showCard("Released", `The ${sp.label} slipped back into the water.`); lowerCortisol(CORT.RELEASE, "released a fish"); closeFishReveal(); }
 
 // ===== §fishpolish the EPIC catch: rod jerks → fish arcs out of the water → slow-mo apex → lands in hand flapping → catch card =====
 const CATCH_RARITY = {
@@ -3750,7 +3760,7 @@ function keepCatch() {   // §catchcard dismiss the card (the catch is already i
 function hideCatchPop() { const el = document.getElementById("catchpop"); if (el) { el.classList.remove("show"); el.onclick = null; const was = el; setTimeout(() => { if (!catchPop) was.style.display = "none"; }, 400); } catchPop = null; }
 function releaseCatch() {
   if (!catchPop) return;
-  if (catchPop.releasable && catchPop.itemId) { Inv.remove(catchPop.itemId, 1); hintText = catchPop.isJunk ? "Tossed it back" : `Released the ${catchPop.label.toLowerCase()}`; hintT = 1.6; if (typeof SND !== "undefined") SND.play("plop", { volume: 0.5 }); }
+  if (catchPop.releasable && catchPop.itemId) { Inv.remove(catchPop.itemId, 1); hintText = catchPop.isJunk ? "Tossed it back" : `Released the ${catchPop.label.toLowerCase()}`; hintT = 1.6; if (typeof SND !== "undefined") SND.play("plop", { volume: 0.5 }); if (!catchPop.isJunk) lowerCortisol(CORT.RELEASE, "released a creature"); }
   hideCatchPop();
 }
 function catchWaterBurst(x, y, z) {                          // a big upward spray as the fish breaks the surface
@@ -4612,11 +4622,9 @@ function openSettings() {
     gameplay: `
       <div class="srow"><label>Look sensitivity</label><input id="setSens" type="range" min="0.002" max="0.009" step="0.0005" value="${lookSensMobile}"></div>
       <div class="srow"><label>Auto-pickup</label><button data-k="autopick">${onoff(autoPickup)}</button></div>
-      <div class="srow"><label>Hunger</label><button data-k="hunger">${onoff(hungerEnabled)}</button></div>
       <div class="srow"><label>Day/night cycle</label><button data-k="daynight">${onoff(dayNightEnabled)}</button></div>
       <div class="srow"><label>Relaxed fishing</label><button data-k="relaxfish">${onoff(relaxedFishing)}</button></div>
-      <div class="srow"><label>Infinite worms</label><button data-k="infworms">${onoff(infiniteWorms)}</button></div>
-      <div class="srow"><label>No starvation</label><button data-k="nostarve">${onoff(noStarvation)}</button></div>`,
+      <div class="srow"><label>Infinite worms</label><button data-k="infworms">${onoff(infiniteWorms)}</button></div>`,
     access: `
       <div class="srow"><label>Brightness</label><input id="setBright" type="range" min="${BRIGHT_MIN}" max="${BRIGHT_MAX}" step="0.05" value="${nightBrightness}"></div>
       <div class="srow"><label>Screen shake</label><input id="setShake" type="range" min="0" max="1" step="0.05" value="${screenShake}"></div>
@@ -4634,11 +4642,9 @@ function openSettings() {
     const k = b.dataset.k;
     if (k === "hints") { hintsOn = !hintsOn; saveHints(); }
     else if (k === "autopick") { autoPickup = !autoPickup; saveAutoPick(); }
-    else if (k === "hunger") { setHungerEnabled(!hungerEnabled); }   // §13.8
     else if (k === "daynight") { setDayNight(!dayNightEnabled); }     // §13.9
     else if (k === "relaxfish") { setRelaxedFishing(!relaxedFishing); }   // §Fishing forgiving reel mini-game
     else if (k === "infworms") { infiniteWorms = !infiniteWorms; try { localStorage.setItem("bc_infworms", infiniteWorms ? "1" : "0"); } catch (e) {} }   // §climb never run out of bait
-    else if (k === "nostarve") { noStarvation = !noStarvation; try { localStorage.setItem("bc_nostarve", noStarvation ? "1" : "0"); } catch (e) {} }   // §climb hunger never reaches starving
     else if (k === "showfps") { setShowFps(!showFps); }   // §fps toggle the on-screen FPS readout
     else if (k === "pixui") { pixUI = !pixUI; try { localStorage.setItem("bc_pixui", pixUI ? "1" : "0"); } catch (e) {} applyPixText(); }   // §UI pixelated (aliased) UI text
     openSettings();
@@ -4771,14 +4777,12 @@ function applyFoodBoost(id, cooked) {
 function isFood(id) { return EDIBLE[id] !== undefined; }
 // §strip Eat a food item raw: restore hunger, with a chew + sound. (Cooking removed.)
 function feedPlayer(id) {
-  let val = EDIBLE[id] || 0;
-  hunger = Math.min(1, hunger + val);
-  applyFoodBoost(id, false);                        // §R4 stamina-regen boost (works regardless of hunger setting)
-  if (typeof hungerFx !== "undefined") hungerFx.pulse = 1;   // §polish the hunger row pulses when you eat
+  const drop = foodCortDrop(id);                    // §cortisol eating lowers cortisol (better food lowers more)
+  lowerCortisol(drop, "eat");
   chewT = 0.5;   // §eatcalm no camera nudge on eating (no screen shake)
   if (typeof SND !== "undefined") { const slurp = {clam:1,cockle:1,mussel:1,oyster:1,crabmeat:1}, chew = {rawfish:1,kelp:1,seaweed:1}; SND.play(slurp[id] ? "eat_slurp" : chew[id] ? "eat_chew" : "eat_crunch", { volume: 0.45 }); }   // §pixui softer munch
   else if (onDig) onDig("eat");
-  showCard("Ate " + ITEMS[id].name, "Hunger " + Math.round(hunger * 100) + "%");
+  showCard("Ate " + ITEMS[id].name, "Cortisol -" + Math.round(drop));
   saveState();
 }
 let chewT = 0;
@@ -8419,10 +8423,7 @@ let lastEntityHitT = -99, useHeld = false;
 // §13.2 "Too tired": a gentle refusal when stamina is too low, no swing, no screen shake.
 // A short message by the crosshair + a stamina-ring flash + a heavy-breath sound, throttled so it never nags.
 let tooTiredT = 0, lastTooTiredShown = -99, staminaFlash = 0;
-function tooTired() {
-  if (clock.t - lastTooTiredShown > 2.6) { lastTooTiredShown = clock.t; tooTiredT = 1.1; if (onBreath) onBreath(); }
-  staminaFlash = Math.max(staminaFlash, 0.9);   // flash the ring on every blocked attempt, even inside the throttle window
-}
+function tooTired() { /* §cortisol retired: actions are never blocked by fatigue, so there is no "Too tired" message */ }
 // §bugfix "Can't dig here": a short crosshair message (same style as "Too tired") whenever a dig does nothing
 // (solid rock, roots/boulder blocking, water too deep to reshape). Throttled so a held click doesn't spam it.
 let cantDigT = 0, lastCantDigShown = -99;
@@ -8673,7 +8674,7 @@ function migrateInvV2(s) {
 }
 function purgeSeedSaves() { for (const suf of ["bc_","bcw_","bcd_","bcs_","bcc_","bcg_","bcsets_"]) { try { localStorage.removeItem(suf + SEED_STR); } catch (e) {} } }
 function saveState() {
-  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ v: SAVE_VERSION, main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, cleanup: beachCleanup, variants: variantsSeen,
+  try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ v: SAVE_VERSION, main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, cort: +cortisol.toFixed(1), cleanup: beachCleanup, variants: variantsSeen,
     junseen: [...jUnseen],   // §UI journal entries not yet viewed (red !)
     heaves: heaveBoulders.map((b,i)=>b.flipped?[i,+b.refillAt.toFixed(2),+b.flippedAt.toFixed(2)]:0).filter(e=>e),  // §21D heaved boulders (index, refillAt, flippedAt)
     oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)]),  // §23 oyster-bed stock
@@ -8702,7 +8703,7 @@ function loadState() {
       if (Array.isArray(s.geodes)) _savedGeodes = s.geodes;   // §40 cracked geodes (applied in seedGeodes)
       if (typeof s.hsFlipped === "number") horseshoesFlipped = s.hsFlipped;   // §41 horseshoe crabs turned back over
       if (Array.isArray(s.events)) seenEvents = s.events;   // §B5
-      if (typeof s.hunger === "number") hunger = s.hunger;
+      if (typeof s.cort === "number") cortisol = Math.max(0, Math.min(100, s.cort));   // §cortisol restore the saved level
     }
   } catch (e) {}
 }
@@ -8778,6 +8779,10 @@ function notify(itemId, qty, special) {
   else { toasts.push({ id: itemId, name, qty, t: 3.2, special: !!special }); while (toasts.length > 3) toasts.shift(); }
   if (typeof SND !== "undefined") { SND.play("pickup"); if (special) SND.play("discover"); }   // §Sound pickup pop + new-find chime
   if (special && typeof recordFind === "function") recordFind(itemId);   // §19C log where & when a find was first discovered
+  // §cortisol turning up something uncommon or rare is a quiet thrill
+  const r = it && it.rarity;
+  if (r === "rare" || r === "legendary") lowerCortisol(CORT.FIND_RARE, "found something rare");
+  else if (r === "uncommon") lowerCortisol(CORT.FIND_UNCOMMON, "found something uncommon");
   renderToasts();
 }
 function updateToasts(dt) {
@@ -9108,6 +9113,7 @@ function releaseAtAim(idx, atAim) {
     if (DUMP_CRAWL[t]) e.returning = true; else { e.beached = true; e.flop = !DUMP_STAY[t]; }
   }
   c.qty--; if (c.qty <= 0) Inv.setCell(idx, null); Inv.emit();
+  lowerCortisol(CORT.RELEASE, "let a creature go");   // §cortisol a cozy moment
   if (onDig) onDig("pickup"); showCard("Released", land ? "It scurries off to cover." : (waterDepthAt(x,z) > 0.12 ? "It slips into the water." : "It makes for the water."));
 }
 function placeHeldFromMenu(idx) {   // set a lantern/bucket down in front of the player
@@ -9145,7 +9151,8 @@ function showGhost(cell, x, y) { const g = document.getElementById("dragGhost"),
 function hideGhost() { document.getElementById("dragGhost").style.display = "none"; }
 function showTip(idx, x, y) { const c = Inv.cell(idx); if (!c) { hideTip(); return; } const it = ITEMS[c.id], t = document.getElementById("itip");
   const foodTag = (typeof isFood === "function" && isFood(it.id)) ? `<span class="tiptag food">Food</span>` : "";   // §pixui "Food" lives here now, not as a corner icon
-  t.innerHTML = `<b>${it.name}</b>${c.qty > 1 ? " ×" + c.qty : ""}<div class="r ${it.rarity}">${it.rarity}${foodTag}</div>${it.desc ? `<p>${it.desc}</p>` : ""}`;
+  const cortLine = (typeof isFood === "function" && isFood(it.id)) ? `<p class="tipcort">Lowers cortisol by ${Math.round(foodCortDrop(it.id))}</p>` : "";   // §cortisol food tooltip
+  t.innerHTML = `<b>${it.name}</b>${c.qty > 1 ? " ×" + c.qty : ""}<div class="r ${it.rarity}">${it.rarity}${foodTag}</div>${it.desc ? `<p>${it.desc}</p>` : ""}${cortLine}`;
   t.style.display = "block"; t.style.left = Math.min(innerWidth - 210, x + 16) + "px"; t.style.top = (y + 16) + "px"; }
 function hideTip() { document.getElementById("itip").style.display = "none"; }
 function invPointerDown(e) {
@@ -9270,7 +9277,9 @@ function syncDebugPanel() {
     <div class="dbgrow"><button id="dbgBounds">${showBounds ? "Hide hitboxes" : "Show hitboxes"}</button><button id="dbgAudit">Run audit</button></div>
     <div class="dbgrow"><button id="dbgHints">${hintsOn ? "Hints: on" : "Hints: off"}</button><button id="dbgResetHints">Reset hints</button></div>
     <div class="dbgrow"><button id="dbgAutoPick">${autoPickup ? "Auto-pickup: on" : "Auto-pickup: off"}</button></div>
-    <div class="dbgrow"><button id="dbgHunger">${hungerEnabled ? "Hunger: on" : "Hunger: off"}</button><button id="dbgBreath">${infiniteBreath ? "Breath: ∞" : "Breath: norm"}</button></div>
+    <div class="dbgrow"><button id="dbgBreath">${infiniteBreath ? "Breath: ∞" : "Breath: norm"}</button></div>
+    <div class="dbgrow"><label style="flex:1">Cortisol <b id="dbgCortVal">${Math.round(cortisol)}</b> <input id="dbgCort" type="range" min="0" max="100" step="1" value="${Math.round(cortisol)}"></label></div>
+    <div class="dbgrow"><button id="dbgCortFreeze">${cortFrozen ? "Cortisol: FROZEN" : "Cortisol: live"}</button><button id="dbgCortLog">${cortDbg ? "Cort log: ON" : "Cort log: off"}</button></div>
     <div class="dbgrow"><button id="dbgDeep">To deep water</button><button id="dbgAlert">${showAlert ? "Alertness: on" : "Alertness: off"}</button></div>
     <h3>Atmosphere (§ATMO)</h3>
     <div class="jhint" style="margin-bottom:4px">Toggle each on/off on the same view to compare. Cost shows as "gpu … ms" in the perf overlay (\`) on a real GPU.</div>
@@ -9359,8 +9368,10 @@ function syncDebugPanel() {
   p.querySelector("#dbgHints").onclick = () => { hintsOn = !hintsOn; saveHints(); syncDebugPanel(); };
   p.querySelector("#dbgResetHints").onclick = () => { resetHints(); syncDebugPanel(); };
   p.querySelector("#dbgAutoPick").onclick = () => { autoPickup = !autoPickup; saveAutoPick(); syncDebugPanel(); };
-  p.querySelector("#dbgHunger").onclick = () => { setHungerEnabled(!hungerEnabled); syncDebugPanel(); };   // §13.8
   p.querySelector("#dbgBreath").onclick = () => { infiniteBreath = !infiniteBreath; syncDebugPanel(); };   // §14A
+  { const cs = p.querySelector("#dbgCort"); if (cs) cs.oninput = (e) => { setCortisol(+e.target.value); const v = p.querySelector("#dbgCortVal"); if (v) v.textContent = Math.round(cortisol); }; }   // §cortisol debug set
+  { const cf = p.querySelector("#dbgCortFreeze"); if (cf) cf.onclick = () => { cortFrozen = !cortFrozen; syncDebugPanel(); }; }   // §cortisol debug freeze
+  { const cl = p.querySelector("#dbgCortLog"); if (cl) cl.onclick = () => { cortDbg = !cortDbg; if (!cortDbg) cortLog.length = 0; syncDebugPanel(); }; }   // §cortisol debug live log
   p.querySelectorAll("[data-wx]").forEach(btn => btn.onclick = () => { forceWeather(btn.dataset.wx || null); syncDebugPanel(); showCard("Weather", btn.dataset.wx ? "Forced: " + WEATHER_LABEL[btn.dataset.wx] : "Weather resumed (rolls per day)."); });   // §20 debug force weather
   p.querySelector("#dbgStormMorn").onclick = () => { debugStormMorning(); };   // §20 jump to the morning after a storm (best wash-up)
   // §urgent7 camera-effect toggles for the jump-snap hunt
@@ -9771,6 +9782,7 @@ function updateStarRescue() {
     starsRescued += carryingStars;
     sparkle(player.x, surfaceAt(player.x, player.z).h + 0.3, player.z, [0.9, 0.6, 0.4], 10);
     showCard("Released", `${carryingStars} sea star${carryingStars>1?"s":""} back in the sea. Rescued so far: ${starsRescued}.`);
+    lowerCortisol(CORT.RELEASE * Math.min(3, carryingStars), "returned sea stars");   // §cortisol a cozy moment
     carryingStars = 0; saveState();
   }
 }
@@ -9845,47 +9857,130 @@ function digCostFor(x, z) {
   if (m === MAT.GRAVEL || m === MAT.MUD) return TUNE.GRAVEL_COST;
   return TUNE.DIG_COST;                                       // wet / dry sand (and anything else)
 }
-/* ---- hunger (§10.5): drains slowly, worse tiers pinch stamina & speed; never fatal ---- */
-let hunger = 1, growlT = 0;
-// §Cooking hunger is ON by default now. Its ONLY effect is scaling your maximum stamina, no slower swings,
-// no costlier actions, no extra drain from working. Eat to top it back up; cooked food fills more.
-let hungerEnabled = true;
-try { const hv = localStorage.getItem("bc_hunger"); if (hv !== null) hungerEnabled = hv === "1"; } catch (e) {}
-function setHungerEnabled(on) { hungerEnabled = on; if (!on) hunger = 1; try { localStorage.setItem("bc_hunger", on ? "1" : "0"); } catch (e) {} }
-const HUNGER_DRAIN = (1 / (2.6 * DAY_PERIOD)) * HUNGER_DRAIN_MUL;   // full → empty at rest, a slow gentle drain (§tune -25%)
-const H_FULL = 0.7, H_PECKISH = 0.4, H_HUNGRY = 0.18;   // tier thresholds
-function hungerTier() { return hunger > H_FULL ? "full" : hunger > H_PECKISH ? "peckish" : hunger > H_HUNGRY ? "hungry" : "starving"; }
-// §Cooking the one and only hunger penalty: a softer max-stamina cap when hungry (you tire sooner, never slower)
-function maxStamina() { if (!hungerEnabled) return STAMINA_MAX; const t = hungerTier(); return (t === "starving" ? 0.55 : t === "hungry" ? 0.8 : 1) * STAMINA_MAX; }   // §tune +30% headroom
-    // §Cooking no extra cost when hungry
-function swingRateMul() { return 1; }    // §Cooking no slower swings when hungry
-// §tools effort & hunger: labour burns hunger (∝ stamina spent), recovery scales with fullness, and being fed makes heavy jobs land harder
-let EFFORT_HUNGER = 0.03;                 // §A5 hunger burned per unit of stamina spent on work, reduced ~40% (was 0.05); walking spends ~none
-function hungerRegenMul() { return hungerEnabled ? 0.55 + 0.75 * Math.max(0, Math.min(1, hunger)) : 1; }   // fuller = faster stamina recovery (0.55×…1.3×)
-function jobEffortMul() { if (!hungerEnabled) return 1; const t = hungerTier();   // fed = a few fewer hits to fell/break; hungry = slightly more (never punishing)
-  return t === "full" ? 1.5 : t === "peckish" ? 1.0 : 0.85; }
-function spendStamina(a, heavy) { stamina = Math.max(0, stamina - a); if (stamina <= 0.001) exhausted = true;
-  if (hungerEnabled) hunger = Math.max(0, hunger - a * EFFORT_HUNGER); }   // §tools labour makes you hungrier
-function canHeavyAction() { return !exhausted && stamina > 0.02 && digCommit <= 0; }
-function rootPlayer() { digCommit = TUNE.COMMIT_TIME; }              // short wind-up: rooted ~0.5s per strike
-function updateHunger(gdt) { if (!hungerEnabled) { hunger = 1; return; }
-  hunger = Math.max(0, hunger - HUNGER_DRAIN * gdt);                       // slow passive drain (game-time)
-  if (noStarvation && hunger < H_HUNGRY + 0.03) hunger = H_HUNGRY + 0.03;  // §climb no-starvation mode: never drops into the starving tier
-  if (hungerTier() === "starving") { growlT -= gdt; if (growlT <= 0) { growlT = 11 + rng()*7; if (onDig) onDig("growl"); } } }
-function updateStamina(dt) {
-  if (mode !== "walk") { stamina = STAMINA_MAX; resting = false; exhausted = false; digCommit = 0; return; }
+/* ---- §cortisol THE single resource: 0..100, and LOW is good (inspired by the "low cortisol" meme).
+   It replaces hunger and stamina. Heavy work and frustration raise it; eating and calm, cozy moments
+   lower it, plus a slow passive rise so eating stays relevant. No action is ever blocked; never fatal. ---- */
+let cortisol = 15;                     // start comfortably Low
+let cortFrozen = false;                // §debug hold it steady
+let cortDisplay = 15, cortVel = 0;     // dial needle spring (eases to the value, with a little overshoot)
+let cortRiseRate = 0;                  // recent upward movement, drives the needle tremble
+let cortDipT = 0;                      // brief after a cozy drop, for the sparkle on the dial
+let cortDbg = false, cortLog = [];     // §debug live log of what raised / lowered it
+const CORT = {
+  MAX: 100,
+  PASSIVE: 42 / (1.7 * DAY_PERIOD),   // slow drift up: ~0→42 over ~1.7 game-days of nothing, so eating stays relevant (game-seconds)
+  WORK_MUL: 7.5,          // cortisol per unit of the old per-strike effort cost: dig .12→~.9, chop .24→~1.8, MINE .36→~2.7 (mining most)
+  SPRINT: 1.4,            // per real second sprinting (more up an incline)
+  SWIM: 0.7,              // per real second swimming
+  WRONG_TOOL: 2.5,        // extra on a wrong-tool hit (on top of the work cost)
+  LINE_SNAP: 7,           // a snapped fishing line
+  EAT_MUL: 95,            // eating: the food's old nourishment value ×this = cortisol removed (better food drops more; ~8..25)
+  CALM: 2.2,              // per real second standing still, looking out at the sea
+  FISH_WAIT: 1.3,         // per real second waiting with a line in the water
+  GOLDEN: 3.0,            // per real second watching a sunrise or a sunset
+  RELEASE: 5,             // letting a creature go back to the sea
+  FLOWER: 2.5,            // picking a flower
+  FIND_UNCOMMON: 3, FIND_RARE: 6,   // turning up something uncommon / rare
+  LOW: 40, HIGH: 70,      // zone edges: Low 0-40, Medium 40-70, High 70-100
+};
+function cortTier() { return cortisol < CORT.LOW ? "low" : cortisol < CORT.HIGH ? "med" : "high"; }
+function cortLogPush(amt, reason) { if (!cortDbg) return; cortLog.push({ t: clock.t, amt: +amt.toFixed(1), reason }); if (cortLog.length > 48) cortLog.shift(); try { console.log(`[cortisol] ${amt>0?"+":""}${amt.toFixed(1)} ${reason} -> ${cortisol.toFixed(0)}`); } catch (e) {} }
+function raiseCortisol(amt, reason) { if (cortFrozen || !(amt > 0)) return; cortisol = Math.min(CORT.MAX, cortisol + amt); cortRiseRate = Math.min(1.5, cortRiseRate + amt * 0.1); cortLogPush(amt, reason || "work"); }
+function lowerCortisol(amt, reason) { if (cortFrozen || !(amt > 0)) return; const b = cortisol; cortisol = Math.max(0, cortisol - amt); if (cortisol < b) { cortDipT = 0.8; cortLogPush(-(b - cortisol), reason || "calm"); } }
+function setCortisol(v) { cortisol = Math.max(0, Math.min(CORT.MAX, v)); }
+// cortisol-lowering value of a food (for eating + tooltips): better food lowers more.
+function foodCortDrop(id) { return (EDIBLE[id] || 0) * CORT.EAT_MUL; }
+
+// §cortisol the old stamina/hunger API now drives cortisol, so every existing call site keeps working.
+function spendStamina(a, heavy) { raiseCortisol(a * CORT.WORK_MUL, "work"); }   // "spending" effort raises cortisol
+function canHeavyAction() { return digCommit <= 0; }                            // only the per-strike wind-up gates; never fatigue-blocked
+function rootPlayer() { digCommit = TUNE.COMMIT_TIME; }                          // short wind-up: rooted ~0.5s per strike
+function jobEffortMul() { const t = cortTier(); return t === "high" ? 0.65 : t === "med" ? 0.8 : 1.0; }   // high cortisol → heavy jobs take a few more hits
+function swingRateMul() { return cortTier() === "high" ? 0.72 : 1; }             // high → slower swings
+// retired hunger/stamina helpers, kept as harmless stubs so stray call sites still resolve
+function hungerTier() { return "full"; }
+function updateHunger(gdt) { raiseCortisol(CORT.PASSIVE * gdt, "time"); }         // the slow passive rise (game-time, where the old hunger drain was)
+let _cortBreathT = 0;
+function updateCortisol(dt) {
+  if (mode !== "walk") { digCommit = 0; return; }
   if (digCommit > 0) digCommit = Math.max(0, digCommit - dt);
-  const moving = Math.abs(analog.x) + Math.abs(analog.y) > 0.01 || keys["KeyW"] || keys["KeyA"] || keys["KeyS"] || keys["KeyD"];
-  if (moving) resting = false;
-  const tier = hungerTier();
-  // §13.1 sprinting drains fast, and much faster up any incline
-  if (player.sprinting) spendStamina(TUNE.SPRINT_DRAIN * dt * (1 + Math.max(0, player.incline || 0) * 4) * (tier === "hungry" ? 2 : 1));
-  // §playtest1 don't regen while actively sprinting, otherwise regen cancels the drain and sprint is effectively infinite
-  const regen = player.sprinting ? 0 : (resting ? TUNE.REGEN_REST : (moving ? TUNE.REGEN_ACTIVE : TUNE.REGEN_IDLE)) * hungerRegenMul() * staminaBoostMult() * STAMINA_REGEN_MUL;   // §tune +15% regen
-  const cap = maxStamina();
-  stamina = Math.min(cap, stamina + regen * dt);
-  if (stamina > cap) stamina = cap;
-  if (exhausted && stamina >= Math.min(TUNE.EXHAUST_RECOVER, cap - 0.02)) exhausted = false;
+  cortRiseRate = Math.max(0, cortRiseRate - dt * 1.6);
+  if (cortDipT > 0) cortDipT = Math.max(0, cortDipT - dt);
+  if (player.sprinting) raiseCortisol(CORT.SPRINT * dt * (1 + Math.max(0, player.incline || 0) * 2), "sprint");
+  const movingKeys = Math.abs(analog.x) + Math.abs(analog.y) > 0.01 || keys["KeyW"] || keys["KeyA"] || keys["KeyS"] || keys["KeyD"];
+  if (player.swimming && !player.sprinting && movingKeys) raiseCortisol(CORT.SWIM * dt, "swim");
+  updateCozy(dt, movingKeys);
+  // §cortisol High: an occasional soft heavy breath (no text warning)
+  if (cortTier() === "high") { _cortBreathT -= dt; if (_cortBreathT <= 0) { _cortBreathT = 6 + Math.random()*5; if (onBreath) onBreath(); } }
+  else _cortBreathT = 2;
+}
+// cozy / calm moments bring it down: standing still looking at the sea, waiting with a line out, the golden hour.
+function updateCozy(dt, movingKeys) {
+  if (typeof rod !== "undefined" && rod && (rod.state === "waiting" || rod.state === "casting")) { lowerCortisol(CORT.FISH_WAIT * dt, "fishing"); return; }
+  const working = digCommit > 0 || shovelSwing > 0.05;
+  if (movingKeys || working || player.airborne) return;
+  if (!gazeOverWater()) return;                                                   // idle, looking out over the water
+  if (typeof isDuskNow === "function" && isDuskNow()) lowerCortisol(CORT.GOLDEN * dt, "sunset");
+  else lowerCortisol(CORT.CALM * dt, "sea");
+}
+function gazeOverWater() {
+  if (cam.pitch > 0.35) return false;                                             // not staring down at the ground
+  const f = camForward(), d = 24, x = cam.pos[0] + f[0]*d, z = cam.pos[2] + f[2]*d;
+  return waterDepthAt(x, z) > 0.3 || heightAt(x, z) < waterLevel + 0.2;
+}
+// §cortisol the dial: an early-2000s-RPG semicircular gauge, drawn small and scaled up crisp (pixelated).
+let _cortCtx = null;
+function _cortRRect(g, x, y, w, h, r) { g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); }
+function _cortSeg(g, cx, cy, rI, rO, th0, th1, steps) { g.beginPath();
+  for (let i=0;i<=steps;i++){ const t=th0+(th1-th0)*i/steps; g.lineTo(cx+Math.cos(t)*rO, cy-Math.sin(t)*rO); }
+  for (let i=steps;i>=0;i--){ const t=th0+(th1-th0)*i/steps; g.lineTo(cx+Math.cos(t)*rI, cy-Math.sin(t)*rI); } g.closePath(); }
+function drawCortDial(dt) {
+  const cv = document.getElementById("cortdial"); if (!cv) return;
+  if (mode !== "walk") { if (cv.style.display !== "none") cv.style.display = "none"; return; }
+  if (cv.style.display === "none") cv.style.display = "block";
+  if (!cv.title) cv.title = "Cortisol. Keep it low.";
+  const g = _cortCtx || (_cortCtx = cv.getContext("2d")); const W = cv.width, H = cv.height;
+  g.clearRect(0, 0, W, H); g.imageSmoothingEnabled = false;
+  // needle spring: ease toward the value with a little overshoot
+  cortVel += ((cortisol - cortDisplay) * 110 - cortVel * 15) * dt; cortVel = Math.max(-500, Math.min(500, cortVel));
+  cortDisplay += cortVel * dt; cortDisplay = Math.max(-2, Math.min(102, cortDisplay));
+  const cx = 64, cy = 72, rI = 28, rO = 53;
+  // bevelled oak frame with a dark outline
+  g.fillStyle = "#17100a"; _cortRRect(g, 1, 4, W-2, H-8, 8); g.fill();
+  g.fillStyle = "#6b4a28"; _cortRRect(g, 4, 7, W-8, H-14, 6); g.fill();
+  g.fillStyle = "rgba(255,232,186,.20)"; _cortRRect(g, 6, 9, W-12, 5, 3); g.fill();
+  g.fillStyle = "rgba(0,0,0,.30)"; _cortRRect(g, 6, H-12, W-12, 4, 2); g.fill();
+  // the 5 segments, LOW(green) → HIGH(red), with a faint stipple inside each
+  const segCols = [[74,150,74],[150,170,60],[214,190,62],[222,140,50],[200,60,50]];
+  for (let s=0;s<5;s++){ const th0 = Math.PI*(1 - s/5), th1 = Math.PI*(1 - (s+1)/5);
+    let c = segCols[s].slice();
+    if (s===4 && cortTier()==="high") { const p = 0.5+0.5*Math.sin(clock.t*6); c = [200+p*55, 44+p*30, 44+p*20]; }   // red pulses in the High zone
+    _cortSeg(g, cx, cy, rI, rO, th0, th1, 10); g.fillStyle = `rgb(${c[0]|0},${c[1]|0},${c[2]|0})`; g.fill();
+    g.fillStyle = "rgba(0,0,0,.13)"; for (let i=0;i<9;i++){ const tt=th0+(th1-th0)*((i*0.37)%1), rr=rI+(rO-rI)*((i*0.61+0.1)%1); g.fillRect(cx+Math.cos(tt)*rr-0.6, cy-Math.sin(tt)*rr-0.6, 1.4, 1.4); }
+  }
+  // dark outline on the ring edges + segment seams
+  g.strokeStyle = "#20140a"; g.lineWidth = 1.4;
+  g.beginPath(); for (let i=0;i<=40;i++){ const t=Math.PI*(1-i/40); g.lineTo(cx+Math.cos(t)*rO, cy-Math.sin(t)*rO); } g.stroke();
+  g.beginPath(); for (let i=0;i<=40;i++){ const t=Math.PI*(1-i/40); g.lineTo(cx+Math.cos(t)*rI, cy-Math.sin(t)*rI); } g.stroke();
+  for (let s=0;s<=5;s++){ const t=Math.PI*(1-s/5); g.beginPath(); g.moveTo(cx+Math.cos(t)*rI, cy-Math.sin(t)*rI); g.lineTo(cx+Math.cos(t)*rO, cy-Math.sin(t)*rO); g.stroke(); }
+  // tiny pixel labels around the arc
+  g.fillStyle = "#2a1708"; g.textAlign = "center"; g.textBaseline = "alphabetic";
+  g.font = "bold 8px monospace"; g.fillText("LOW", 13, 69); g.fillText("MED", 64, 13); g.fillText("HIGH", 115, 69);
+  // needle: eased value, trembling on a fast rise
+  let ang = Math.PI*(1 - Math.max(0,Math.min(100,cortDisplay))/100);
+  if (cortRiseRate > 0.05) ang += (Math.random()-0.5) * cortRiseRate * 0.05;
+  const nx = cx + Math.cos(ang)*(rO-7), ny = cy - Math.sin(ang)*(rO-7);
+  g.strokeStyle = "#140d07"; g.lineWidth = 3.2; g.beginPath(); g.moveTo(cx, cy-1); g.lineTo(nx, ny); g.stroke();
+  g.strokeStyle = "#4a3320"; g.lineWidth = 1.1; g.beginPath(); g.moveTo(cx, cy-1); g.lineTo(nx, ny); g.stroke();
+  // hub
+  g.fillStyle = "#140d07"; g.beginPath(); g.arc(cx, cy, 6, 0, 6.283); g.fill();
+  g.fillStyle = "#8a5f33"; g.beginPath(); g.arc(cx, cy, 3.2, 0, 6.283); g.fill();
+  // a small sparkle when a cozy moment just lowered it
+  if (cortDipT > 0) { const a = cortDipT/0.8; g.strokeStyle = `rgba(170,240,185,${a})`; g.lineWidth = 1.3;
+    const sx = nx, sy = ny, rr = 3 + (1-a)*5;
+    g.beginPath(); g.moveTo(sx-rr,sy); g.lineTo(sx+rr,sy); g.moveTo(sx,sy-rr); g.lineTo(sx,sy+rr); g.stroke(); }
+  // the chunky label underneath
+  g.fillStyle = "#2a1708"; g.font = "bold 11px monospace"; g.fillText("CORTISOL", cx, H-4);
 }
 
 /* ---- water flowing into a fresh hole: a quick foam swirl ---- */
@@ -11070,6 +11165,7 @@ function harvestPlant(p) {
   const def = PLANT[p.type], id = def.item, first = !discovered.has("f_" + id);
   Inv.add(id, 1); discovered.add("f_" + id); if (typeof notify === "function") notify(id, 1, first);
   p.cut = true; p.regrowAt = clock.t + def.regrowD * DAY_PERIOD;
+  if (p.type === "flower") lowerCortisol(CORT.FLOWER, "picked a flower");   // §cortisol a small cozy moment
   const gy = surfaceAt(p.x, p.z).h; if (typeof spawnSand === "function") spawnSand(p.x, gy+0.2, p.z, 4, p.type==="flower" ? [0.9,0.8,0.5] : [0.4,0.5,0.3]);
   if (onDig) onDig("pluck"); saveWorld();
 }
@@ -11639,7 +11735,7 @@ function updateDigging(dt) {
   if (toolRecoilT > 0) toolRecoilT = Math.max(0, toolRecoilT - dt * 4.5);     // quick recoil settle
   if (camShake > 0) camShake = Math.max(0, camShake - dt * 3.5);              // jolt decays fast
   updateParticles(dt);
-  updateStamina(dt);
+  updateCortisol(dt);
   updateRegrow();
 }
 
@@ -11716,6 +11812,7 @@ function chopStanding(o) {                                     // one axe strike
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.CHOP_COST, true); rootPlayer();
   const right = toolMul("tree") === 1;                        // §P2 axe = right tool; anything else lands a dull thunk
+  if (!right) raiseCortisol(CORT.WRONG_TOOL, "wrong tool");    // §cortisol a frustrating wrong-tool hit
   if (onDig) onDig(right ? "chop" : "thud");
   o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species));
   spawnSand(o.x, surfaceAt(o.x, o.z).h + 1.0, o.z, right ? 6 : 3, barkCol(o.species));   // §P2 bark/wood chips at the trunk (fewer with the wrong tool)
@@ -11864,6 +11961,7 @@ function stumpStrike(st) {
   if (st.hp === undefined) st.hp = 4;
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.CHOP_COST, true); rootPlayer();
   const right = toolMul("stump") === 1;                        // §P2 shovel/axe = right tool; anything else lands a dull thunk
+  if (!right) raiseCortisol(CORT.WRONG_TOOL, "wrong tool");     // §cortisol a frustrating wrong-tool hit
   if (onDig) onDig(right ? "chop" : "thud");
   spawnSand(st.x, surfaceAt(st.x, st.z).h + 0.3, st.z, right ? 5 : 3, [0.5, 0.4, 0.28]);   // §P2 woody chips (fewer with the wrong tool)
   st.hp -= jobEffortMul() * toolMul("stump") * TUNE.HARVEST_SPEED;   // §P2/§P3 shovel/axe fast; anything else ~3x; §P3 ~25% fewer hits
@@ -11927,6 +12025,7 @@ function mineObj(o) {                                           // one pickaxe s
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §13.2 too tired: gentle refusal, no swing
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.MINE_COST, true); rootPlayer();
   const right = toolMul("rock") === 1;                        // §P2 pickaxe = right tool; anything else lands a dull thunk
+  if (!right) raiseCortisol(CORT.WRONG_TOOL, "wrong tool");    // §cortisol a frustrating wrong-tool hit
   if (onDig) onDig(right ? "mine" : "thud");
   o.hp -= jobEffortMul() * toolMul("rock") * TUNE.HARVEST_SPEED;   // §P2/§P3 pickaxe fast; anything else ~3x; §P3 ~25% fewer hits
   const sy = surfaceAt(o.x, o.z).h + o.sc*0.3;
@@ -13914,8 +14013,7 @@ function frame(now) {
     if (wl > 0.01) { const u = -((wx/wl)*gg.dx + (wz/wl)*gg.dz); fwdGrade = gg.slope * u; }
     const uphillGrade = Math.max(0, fwdGrade);
     player.incline = uphillGrade;
-    player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01 && hungerTier() !== "starving"
-                       && !exhausted && stamina > 0.02;  // §playtest1 sprint needs stamina; §strip sprint allowed on any slope now
+    player.sprinting = (keys["ShiftLeft"] || mobileSprint) && wl > 0.01 && cortTier() !== "high";  // §cortisol no sprinting in the High zone (never hard-blocked otherwise)
     let scrambleTarget = 0;
     _curSpeedMul = 1; _curSlopeDeg = gg.slope * 180 / Math.PI;
 
@@ -14182,7 +14280,7 @@ function frame(now) {
   gl.uniform2f(postU.uSceneSize, fbo.w, fbo.h);
   gl.uniform1i(postU.uDither, ditherOn ? 1 : 0);
   gl.uniform1i(postU.uQuantize, GFX.quantize ? 1 : 0);   // §13.6 palette quantization toggle
-  gl.uniform1f(postU.uHungerFx, mode === "walk" && hunger < H_HUNGRY ? Math.min(1, (H_HUNGRY - hunger) / H_HUNGRY) : 0);
+  gl.uniform1f(postU.uHungerFx, 0);   // §cortisol the hunger vignette is retired
   gl.uniform1f(postU.uUnderwater, camUnderwater ? 1 : 0);   // §14A/B
   gl.uniform1f(postU.uBreathLow, camUnderwater ? breathLow : 0);
   gl.uniform1f(postU.uBrightness, nightBrightness);          // §18
@@ -14208,21 +14306,11 @@ function frame(now) {
   if (camUnderwater) { FOG_DENSITY = _uwFogD; FOG_NEAR = _uwFogN; SKY.zenith = _uwSky.z; SKY.horizon = _uwSky.h; SKY.warm = _uwSky.w; }   // §14B restore
 
   // ---- hud ----
-  // stamina ring near the crosshair, only visible while it isn't full (or flashing a "too tired" refusal, §13.2)
-  if (staminaFlash > 0) staminaFlash = Math.max(0, staminaFlash - dt * 2.4);
-  const staFrac = Math.max(0, Math.min(1, stamina / STAMINA_MAX));   // §tune ring is relative to the (raised) max
-  if (mode === "walk" && (staFrac < 0.995 || staminaFlash > 0)) {
-    const deg = staFrac * 360;
-    let col = staFrac < 0.25 ? "#d9694e" : staminaBoostActive() ? "#e3b36a" : resting ? "#8fd0a0" : "#79bcc6";   // §R4 warm tint while a food boost is active
-    if (staminaFlash > 0) col = "#ff8a6b";
-    staminaEl.style.display = "block";
-    staminaEl.style.background = `conic-gradient(${col} ${deg}deg, rgba(255,255,255,.1) ${deg}deg 360deg)`;
-    staminaEl.style.transform = staminaFlash > 0 ? `scale(${(1 + staminaFlash * 0.45).toFixed(3)})` : "";
-    staminaEl.style.opacity = staminaFlash > 0 ? "1" : "";
-  } else { staminaEl.style.display = "none"; staminaEl.style.transform = ""; staminaEl.style.opacity = ""; }
-  // §Cooking hunger now shows as five scallop shells (bottom-left); the old crosshair arc is retired
-  const hArc = document.getElementById("hungerArc"); if (hArc.style.display !== "none") hArc.style.display = "none";
+  // §cortisol the stamina ring + hunger meter are retired; the Cortisol dial (bottom-left) replaces both.
+  if (staminaEl.style.display !== "none") { staminaEl.style.display = "none"; staminaEl.style.transform = ""; staminaEl.style.opacity = ""; }
+  const hArc = document.getElementById("hungerArc"); if (hArc && hArc.style.display !== "none") hArc.style.display = "none";
   drawHungerShells();
+  drawCortDial(dt);
   // §14A breath arc, outside the stamina ring, only while submerged
   const bArc = document.getElementById("breathArc");
   if (mode === "walk" && player.underwater) {
