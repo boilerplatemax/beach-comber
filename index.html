@@ -1423,13 +1423,13 @@ const DAY_PERIOD = 600;              // seconds per full day (~10 min)
 let dayNightEnabled = true;   // §P1 on by default now (debug panel can still pause/scrub time)
 try { const v = localStorage.getItem("bc_daynight"); if (v !== null) dayNightEnabled = v === "1"; } catch (e) {}
 function setDayNight(on) { dayNightEnabled = on; if (!on) { timeOfDay = MORNING_TIME; updateSun(); } try { localStorage.setItem("bc_daynight", on ? "1" : "0"); } catch (e) {} }
-const BASE_FOG_DENSITY = 0.0012, BASE_FOG_NEAR = 58.0;   // §13.6 base; graphics settings scale these live · §VIB lighter + pushed back so the foreground stays vibrant
+const BASE_FOG_DENSITY = 0.0009, BASE_FOG_NEAR = 66.0;   // §13.6 base; graphics settings scale these live · §VIB thinner + pushed back so it's less hazy/pastel and colour holds to the horizon
 let FOG_DENSITY = BASE_FOG_DENSITY;   // see far across the big landscape, still hazy
 let FOG_NEAR = BASE_FOG_NEAR;         // clear band before fog ramps in
 let baseFogDensity = BASE_FOG_DENSITY, baseFogNear = BASE_FOG_NEAR;   // §20 GFX-scaled base; weather adds fog on top each frame
 
 // Day & night palettes; SKY is the blended current state (uploaded each frame).
-const SKY_DAY = { zenith: [0.38, 0.56, 0.72], horizon: [0.84, 0.82, 0.76], warm: [1.10, 0.97, 0.76] };   // §VIB more saturated sky blue, warmer/brighter sun, warm-cream horizon (less grey)
+const SKY_DAY = { zenith: [0.30, 0.52, 0.80], horizon: [0.72, 0.81, 0.92], warm: [1.10, 0.96, 0.75] };   // §VIB a bluer sky (saturated zenith, clean light-blue horizon instead of cream-grey), warm sun
 // §18 a deep moonlit blue, never black, brighter toward the horizon so silhouettes stay readable
 const SKY_NIGHT = { zenith: [0.06, 0.09, 0.19], horizon: [0.15, 0.19, 0.31], warm: [0.42, 0.48, 0.64] };
 const SKY = { zenith: [0,0,0], horizon: [0,0,0], warm: [0,0,0], sun: [0,0,0], moon: [0,0,0] };
@@ -2510,10 +2510,10 @@ void main() {
 
   // §VIB richer, warmer base colours (tuned to read right after lighting + tone-map + grade)
   vec3 cSeafloor = vec3(0.40, 0.52, 0.44);
-  vec3 cSandWet  = vec3(0.66, 0.50, 0.32);   // rich tan (a touch deeper so lit wet sand doesn't wash out)
-  vec3 cSandDry  = vec3(0.90, 0.76, 0.47);   // saturated warm gold (deeper than #f0d9a0 so bright sun keeps it golden, not white)
-  vec3 cGrass    = vec3(0.49, 0.70, 0.27);   // lush ~#7cb342
-  vec3 cForest   = vec3(0.30, 0.52, 0.24);   // deep lush green ~#5e9e3a-ish
+  vec3 cSandWet  = vec3(0.70, 0.54, 0.35);   // rich tan (a touch brighter so wet patches aren't dull)
+  vec3 cSandDry  = vec3(0.91, 0.77, 0.47);   // saturated warm gold
+  vec3 cGrass    = vec3(0.43, 0.61, 0.26);   // lush but natural green (pulled back from neon)
+  vec3 cForest   = vec3(0.26, 0.45, 0.22);   // deep natural green
   vec3 cRock     = vec3(0.49, 0.45, 0.41);
 
   // Bands rescaled for the big world: a wide sand beach before the dunes.
@@ -2529,9 +2529,9 @@ void main() {
   float m = texture(uMaterial, muv).r;
   if (m > 0.5) {
     vec3 mc = cGrass;
-    if      (m < 1.5) mc = vec3(0.49, 0.70, 0.27);   // grass (matches the lush band)
+    if      (m < 1.5) mc = vec3(0.43, 0.61, 0.26);   // grass (matches the lush band)
     else if (m < 2.5) mc = vec3(0.42, 0.31, 0.20);   // dirt
-    else if (m < 3.5) mc = vec3(0.90, 0.76, 0.47);   // sand (matches the golden band)
+    else if (m < 3.5) mc = vec3(0.91, 0.77, 0.47);   // sand (matches the golden band)
     else if (m < 4.5) mc = vec3(0.56, 0.55, 0.51);   // gravel
     else if (m < 5.5) mc = vec3(0.47, 0.44, 0.41);   // stone
     else              mc = vec3(0.34, 0.28, 0.20);   // mud
@@ -2552,7 +2552,7 @@ void main() {
   // §ATMO #7 low-frequency ground colour variation so the wide sand/grass bands aren't one dead tone.
   if (uGroundNoise == 1) {
     float gn = vnoise(vWorld.xz * 0.045) * 0.6 + vnoise(vWorld.xz * 0.15) * 0.3 - 0.45;   // ~-0.45..+0.45, mostly low-freq
-    col *= 1.0 + gn * 0.18;
+    col *= 1.0 + gn * 0.10;   // §VIB gentler variation so no patch reads dull
   }
 
   // Directional light. §ATMO #2 hemisphere ambient: cool sky fill from above, warm
@@ -2563,7 +2563,7 @@ void main() {
     vec3 sky = mix(uHorizon, uZenith, up);               // sky-blue dome fill (zenith is a saturated blue, never grey)
     vec3 gnd = mix(uWarm * 0.95, col * 1.3, 0.5);         // warm bounce, tinted by the ground colour
     vec3 amb = mix(gnd, sky, up) * 0.70;                  // §VIB hemisphere ambient
-    col *= amb + uWarm * (diff * 0.82 + 0.18);            // §VIB warm sun + a warm ambient floor so shadowed ground stays warm, never near-black
+    col *= amb + uWarm * (diff * 0.82 + 0.13);            // §VIB warm sun + a warm ambient floor so shadowed ground stays warm, never near-black
   } else {
     col *= (0.55 + 0.55 * diff);
     col *= mix(vec3(0.88, 0.91, 0.99), uWarm, diff);
@@ -2593,7 +2593,7 @@ void main() {
   col = mix(col, fogCol, fog);
   // §ATMO #5 thin low-lying sea mist: distant ground near the waterline hazes out into the horizon haze.
   if (uFogSun == 1) {
-    float mist = exp(-max(h - uWaterLevel, 0.0) * 0.22) * smoothstep(16.0, 60.0, dist) * 0.18;   // §VIB thinner sea mist so the foreground stays vibrant
+    float mist = exp(-max(h - uWaterLevel, 0.0) * 0.26) * smoothstep(20.0, 65.0, dist) * 0.09;   // §VIB much thinner sea mist (less hazy/pastel distance)
     col = mix(col, fogCol, mist);
   }
 
@@ -4052,7 +4052,7 @@ const ATMO = {
   groundnoise: true,
   vignette: true, vigAmt: 0.42,
   // §VIB post colour grade: vibrance lifts muted colours most, saturation is global, contrast + warmth finish it.
-  grade: true, vibrance: 0.33, saturation: 1.18, contrast: 1.07, warmth: 0.05,
+  grade: true, vibrance: 0.26, saturation: 1.12, contrast: 1.12, warmth: 0.04,
 };
 // Which atmosphere effects each graphics preset turns on. They are all nearly
 // free, so only the very lowest preset trims the extra ground-noise octaves;
@@ -5342,7 +5342,7 @@ void main() {
     vec3 sky = mix(uHorizon, uZenith, up);
     vec3 gnd = mix(uWarm * 0.95, vCol * 1.3, 0.5);
     vec3 amb = mix(gnd, sky, up) * 0.70;
-    col = vCol * (amb + uWarm * (diff * 0.82 + 0.18));   // §VIB warm sun + warm ambient floor on foliage/props too
+    col = vCol * (amb + uWarm * (diff * 0.82 + 0.13));   // §VIB warm sun + warm ambient floor on foliage/props too
   } else {
     col = vCol * (0.5 + 0.6 * diff);
     col *= mix(vec3(0.85, 0.89, 0.99), uWarm, diff);
