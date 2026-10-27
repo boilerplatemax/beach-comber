@@ -6365,7 +6365,14 @@ function bucketWaterFPMesh() { const m = Mesh(); const edge = [0.13,0.36,0.46], 
   return m; }
 function stumpMesh() { const m = Mesh(); mCyl(m,0,0.4,0.32,0.28,7,BARK); mergeMesh(m, discMesh(0.4,0.28,7,0.03,[0.72,0.6,0.42])); return m; }
 function logMesh() { const m = Mesh(); mCyl(m,-0.45,0.45,0.15,0.15,7,BROWN); mergeMesh(m, discMesh(0.45,0.15,7,0.02,[0.66,0.56,0.42])); mergeMesh(m, discMesh(-0.45,0.15,7,-0.02,[0.66,0.56,0.42])); return m; }
-function coconutMesh() { const m = Mesh(); mCyl(m,-0.17,0.17,0.2,0.2,7,[0.5,0.38,0.26]); mergeMesh(m, discMesh(0.17,0.2,7,0.07,[0.52,0.4,0.28])); mergeMesh(m, discMesh(-0.17,0.2,7,-0.07,[0.46,0.35,0.23])); return m; }
+// §models a whole coconut: a smooth, slightly oval husk-brown nut (many faces, no seams) with the three small dark
+// germination "eyes" clustered at one end.
+function coconutMesh() { const m = Mesh(); const husk=[0.46,0.33,0.22], eye=[0.16,0.1,0.06];
+  const RX=0.21, RY=0.244;
+  mergeMesh(m, scaleMeshXYZ(sphM(0.21, husk, 11, 7), 1.0, 1.16, 1.0));                          // rounder & smoother than the old cylinder, gently oval
+  const th=0.55, hx=RX*Math.sin(th), hy=RY*Math.cos(th);                                        // three eyes clustered near the top end, sitting just proud of the surface
+  for (let i=0;i<3;i++){ const a=i/3*6.283+1.57; mergeAt(m, scaleMeshXYZ(ballM(0.034, eye, 6), 1, 0.5, 1), Math.cos(a)*hx, hy, Math.sin(a)*hx); }
+  return m; }
 function coneMesh2() { const m = Mesh(); mCyl(m,0,0.34,0.13,0,6,[0.44,0.32,0.2]); mCyl(m,0,0.12,0.15,0.1,6,[0.5,0.37,0.24]); return m; }
 function nutMesh() { const m = Mesh(); mCyl(m,-0.1,0.14,0.14,0.14,7,[0.5,0.36,0.22]); mCyl(m,0.14,0.26,0.13,0,6,[0.4,0.3,0.2]); mergeMesh(m, discMesh(-0.1,0.14,7,-0.05,[0.55,0.4,0.26])); return m; }
 function stoneMesh() { const m = Mesh(); mRock(m, mulberry32(0x51a3 ^ SEED_INT), [0.52, 0.5, 0.47]); return m; }
@@ -6759,7 +6766,30 @@ function taroFoodMesh(){ const m=Mesh(); const c=[0.78,0.62,0.42], eye=[0.3,0.22
   mergeAt(m, ballM(0.035, c, 6), -0.26,0.18,0); mergeAt(m, ballM(0.04, c, 6), 0.28,0.17,0);   // close the ends
   for (const [x,y,z] of [[-0.05,0.33,0.07],[0.12,0.3,-0.09],[0.0,0.07,0.12],[0.18,0.22,0.1]]) mergeAt(m, ballM(0.022, eye, 5), x,y,z);
   return m; }
-function cropSeedMesh(col){ const m=Mesh(); mCyl(m,0,0.14,0.02,0.015,4,[0.5,0.4,0.28]); for(const s of [-1,1]) mergeAt(m, boxM(0.015,0.006,0.07,col), 0,0.13,s*0.04); mBox(m,0,0.16,0,0.025,0.03,0.025,col); return m; }
+// §17 crop saplings: a shared little green sprout, with each crop's own starter part attached, so every seed item
+// (and its inventory icon) is recognizable at a glance.
+function sproutMesh(h){ const m=Mesh(); const stem=[0.46,0.56,0.32], lf=[0.4,0.62,0.3], lf2=[0.52,0.72,0.4]; h=h||0.22;
+  mCyl(m, 0, h, 0.013, 0.009, 5, stem);                                                        // a slender stem
+  for (const s of [-1,1]){ const d=Mesh(); wavyRibbon(d,{h:h*0.6,w0:0.05,w1:0.012,seg:4,dir:s>0?0.4:3.5,amp:0.05,droop:0.06,c0:lf,c1:lf2}); mergeAt(m, d, 0, h*0.5, 0); }   // two young leaves
+  const tip=Mesh(); wavyRibbon(tip,{h:h*0.5,w0:0.04,w1:0.01,seg:4,dir:1.6,amp:0.03,droop:0.0,twist:0.12,c0:lf2,c1:lf}); mergeAt(m, tip, 0, h*0.72, 0);   // an upright furled tip
+  return m; }
+function cassavaSaplingMesh(){ const m=Mesh(); const root=[0.74,0.56,0.36], root2=[0.66,0.48,0.3];   // a long, pale root-shaped tuber lying down (a different colour to taro)
+  mPathTube(m, [[-0.22,0.07,0,0.015],[-0.1,0.085,0.02,0.055],[0.02,0.09,-0.01,0.062],[0.14,0.082,0.02,0.045],[0.24,0.075,0,0.012]], 7, root);
+  mergeAt(m, ballM(0.022, root2, 5), -0.22,0.07,0); mergeAt(m, ballM(0.016, root2, 5), 0.24,0.075,0);   // capped ends
+  mergeAt(m, sproutMesh(0.2), 0.02, 0.09, 0);                                                   // the sprout rising from the tuber
+  return m; }
+function taroSaplingMesh(){ const m=Mesh(); const corm=[0.72,0.56,0.44], corm2=[0.6,0.46,0.36];       // a round earthy corm
+  mergeMesh(m, scaleMeshXYZ(sphM(0.12, corm, 9, 6), 1.0, 0.86, 1.0));
+  for (let i=0;i<5;i++){ const a=i/5*6.283; mergeAt(m, discMesh(0,0.013,5,-0.006,corm2), Math.cos(a)*0.07, 0.015+i*0.012, Math.sin(a)*0.07); }   // a few sunken rings
+  mergeAt(m, sproutMesh(0.22), 0, 0.09, 0);                                                     // the sprout from the top
+  return m; }
+function pineappleSaplingMesh(){ const m=Mesh(); const f=[0.9,0.72,0.28], f2=[0.74,0.54,0.2], g=[0.33,0.55,0.3], g2=[0.46,0.66,0.36];
+  diamondOvoid(m, 0, 0.1, 0, 0.09, 0.08, f, f2);                                                // a small pineapple top …
+  pineappleCrown(m, 0, 0.17, 0, g, g2);                                                         // … with its leafy crown sprouting up
+  return m; }
+function bananaSaplingMesh(){ const m=Mesh(); mergeMesh(m, sproutMesh(0.24));
+  bananaFinger(m, 0.03, 0.17, 0.05, 0.3, 0.2, [0.92,0.82,0.3]);                                 // a small banana hanging at its side
+  return m; }
 // §17.1 shoreline litter, common washed-up trash to collect and (eventually) hand back
 function plasticBottleMesh(){ const m=Mesh(); const c=[0.58,0.78,0.7]; mCyl(m,0,0.3,0.065,0.055,6,c); mCyl(m,0.3,0.4,0.03,0.025,5,[0.8,0.82,0.8]); mergeMesh(m, discMesh(0.4,0.025,5,0.01,[0.7,0.5,0.3])); mBox(m,0,0.14,0.06,0.055,0.07,0.004,[0.9,0.84,0.35]); return m; }
 // §models a faceted soda can: red body with a white band, a silver domed top with a pull-tab, inset base.
@@ -7097,8 +7127,8 @@ const FINDS = {
   sharktooth:{ mesh: () => sharkToothMesh(false),   base: 0.4, max: 40, label: "Shark Tooth", desc: "A fossil tooth, black with age and still needle-sharp.", rare: 2 },
   megalodon:{ mesh: () => sharkToothMesh(true),     base: 0.5, max: 20, label: "Megalodon Tooth", desc: "A palm-sized tooth from a shark long extinct. The find of a lifetime.", rare: 2 },
   hagstone: { mesh: () => hagStoneMesh(),           base: 0.5, max: 40, label: "Hag Stone", desc: "A beach stone worn clean through by the sea. Look through the hole for luck, they say.", rare: 2 },
-  quartz:   { mesh: () => crystalMesh([0.92,0.94,0.98]),base: 0.5, max: 30, label: "Quartz Crystal", desc: "A clear six-sided point, broken from a geode's heart.", rare: 2 },
-  amethyst: { mesh: () => crystalMesh([0.62,0.44,0.82]),base: 0.5, max: 20, label: "Amethyst", desc: "A cluster of violet crystal from inside a geode. Rare and lovely.", rare: 2 },
+  quartz:   { mesh: () => quartzMesh(),             base: 0.5, max: 30, label: "Quartz Crystal", desc: "A clear six-sided point, broken from a geode's heart.", rare: 2 },
+  amethyst: { mesh: () => amethystMesh(),           base: 0.5, max: 20, label: "Amethyst", desc: "A cluster of violet crystal from inside a geode. Rare and lovely.", rare: 2 },
   hcmolt:   { mesh: () => horseshoeMesh(),           base: 0.6, max: 40, label: "Horseshoe Molt", desc: "The cast-off shell a horseshoe crab climbed out of as it grew, split at the front, light as paper, perfectly intact.", rare: 1 },
   // §P2 eating leftovers: the empty shells / peel you're left holding after a meal
   oystershell: { mesh: () => oysterMesh(),           base: 0.5, max: 60, label: "Oyster Shell", desc: "An empty oyster shell, licked clean.", rare: 0, litter: 1 },
@@ -8202,10 +8232,10 @@ digItem("cassava", "Cassava", "consumable", "common", "A starchy root. Filling."
 digItem("banana", "Banana", "consumable", "common", "A sweet ripe banana.", () => bananaIconMesh(), [0.95,0.85,0.3]);   // §banana classic single crescent icon
 digItem("pineapple", "Pineapple", "consumable", "common", "Golden and sweet-sharp, under a spiky crown.", () => pineappleFoodMesh(), [0.9,0.75,0.3]);
 digItem("taro", "Taro", "consumable", "common", "An earthy corm.", () => taroFoodMesh(), [0.72,0.64,0.62]);
-digItem("seed_cassava", "Cassava Cutting", "seed", "common", "A stem cutting, plant it on dug soil to grow cassava.", () => cropSeedMesh([0.55,0.62,0.36]), [0.55,0.62,0.36]);
-digItem("seed_banana", "Banana Sucker", "seed", "common", "A young banana shoot to replant on soil.", () => cropSeedMesh([0.46,0.6,0.3]), [0.46,0.6,0.3]);
-digItem("seed_pineapple", "Pineapple Crown", "seed", "common", "The leafy crown, press it into soil or sand to root.", () => cropSeedMesh([0.42,0.6,0.35]), [0.42,0.6,0.35]);
-digItem("seed_taro", "Taro Top", "seed", "common", "A taro top to replant in damp soil.", () => cropSeedMesh([0.46,0.56,0.42]), [0.46,0.56,0.42]);
+digItem("seed_cassava", "Cassava Cutting", "seed", "common", "A sprouting root cutting, plant it on dug soil to grow cassava.", () => cassavaSaplingMesh(), [1,1,1]);
+digItem("seed_banana", "Banana Sucker", "seed", "common", "A young banana shoot with a little fruit, replant it on soil.", () => bananaSaplingMesh(), [1,1,1]);
+digItem("seed_pineapple", "Pineapple Crown", "seed", "common", "A leafy crown on a young fruit, press it into soil or sand to root.", () => pineappleSaplingMesh(), [1,1,1]);
+digItem("seed_taro", "Taro Top", "seed", "common", "A sprouting taro corm to replant in damp soil.", () => taroSaplingMesh(), [1,1,1]);
 EDIBLE.cassava = 0.22; EDIBLE.banana = 0.18; EDIBLE.pineapple = 0.2; EDIBLE.taro = 0.22;
 const CROP_SEED = { seed_cassava: "cassava", seed_banana: "banana", seed_pineapple: "pineapple", seed_taro: "taro" };
 const CROP_FOOD_SEED = { cassava: "seed_cassava", banana: "seed_banana", pineapple: "seed_pineapple", taro: "seed_taro" };
@@ -8417,8 +8447,7 @@ function saveState() {
     oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)]),  // §23 oyster-bed stock
     hsFlipped: horseshoesFlipped,  // §41 horseshoe crabs turned back over
     events: seenEvents.slice(0, 40),  // §B5 the journal's seen-events log
-    geodes: geodes.map((g,i)=>g.cracked?i:-1).filter(i=>i>=0),  // §40 which geodes are already cracked
-    geodesTaken: geodes.map((g,i)=>g.taken?i:-1).filter(i=>i>=0)   // §A3 which cracked geodes have had their halves taken
+    geodes: geodes.map((g,i)=>g.cracked?i:-1).filter(i=>i>=0)  // §40 which geodes are already cracked
     })); } catch (e) {}   // §P2 each bucket's water + creatures ride on its own Inv slot's .bk, saved with main/hotbar above
 }
 function loadState() {
@@ -8439,7 +8468,6 @@ function loadState() {
       if (Array.isArray(s.heaves)) _savedHeave = s.heaves;   // §21D heaved boulders (applied in seedHeaveBoulders)
       if (Array.isArray(s.oysters)) _savedOysters = s.oysters;   // §23 oyster-bed stock (applied in seedOysterBeds)
       if (Array.isArray(s.geodes)) _savedGeodes = s.geodes;   // §40 cracked geodes (applied in seedGeodes)
-      if (Array.isArray(s.geodesTaken)) _savedGeodesTaken = s.geodesTaken;   // §A3 geodes whose halves were taken
       if (typeof s.hsFlipped === "number") horseshoesFlipped = s.hsFlipped;   // §41 horseshoe crabs turned back over
       if (Array.isArray(s.events)) seenEvents = s.events;   // §B5
       if (typeof s.hunger === "number") hunger = s.hunger;
@@ -9292,7 +9320,7 @@ function targetAlongRay(r, sticky) {
   for (const s of weakStones) if (!s.picked) sphere(s, "weakstone", s.x, s.z, 0.4*s.sc, 0.55 + s.sc*0.4);   // §stonepick pick up a dome stone with any item (picked ones aren't targetable)
   // §heave-removed: heave boulders are no longer targetable
   if (typeof oysterBeds !== "undefined") for (const b of oysterBeds) sphere(b, "oysterbed", b.x, b.z, 0.5*b.sc, 0.75);   // §water oyster beds are workable at any depth within reach (no longer only when bared)
-  if (typeof geodes !== "undefined") for (const g of geodes) if (!g.taken) sphere(g, "geode", g.x, g.z, 0.4*g.sc, 0.5 + g.sc*0.4);   // §40 geodes to crack with a pickaxe (cracked ones stay targetable so the halves can be picked up, §A3)
+  if (typeof geodes !== "undefined") for (const g of geodes) if (!g.cracked) sphere(g, "geode", g.x, g.z, 0.4*g.sc, 0.5 + g.sc*0.4);   // §40 geodes to crack with a pickaxe (once cracked they are spent scenery)
   for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
   for (const c of colliders) if (c.kind === "fence" && c.r > 0) { const gy = surfaceAt(c.x, c.z).h; capsule(c, "fence", c.x, c.z, c.x, gy, c.z, c.x, gy+1.0, c.z, 0.32); }   // §13.1 choppable posts
@@ -12299,29 +12327,44 @@ function hagStoneMesh() { const m = Mesh(); mRock(m, mulberry32(0x4a19 ^ SEED_IN
   mergeMesh(m, discMesh(0.16, 0.1, 7, 0.0, [0.14,0.14,0.16]));                                 // the sea-bored hole (a dark disc through the middle)
   return m; }
 // §models a crystal cluster: chunky hexagonal points (prism + pyramid cap) of varied heights on a dark rocky base.
-// `col` sets the crystal hue (violet for amethyst, pale clear for quartz); the base stays dark grey.
-function crystalMesh(col) { const m = Mesh(); const base=[0.25,0.23,0.29], base2=[0.33,0.31,0.37], tip=[Math.min(1,col[0]*1.1),Math.min(1,col[1]*1.1),Math.min(1,col[2]*1.1)];
+// `col` sets the crystal hue; `opts.points` overrides the point layout and `opts.deepBase` darkens each shaft toward
+// its root (a richer gem). The base stays dark grey. Quartz and amethyst share this one builder (see below).
+function crystalMesh(col, opts) { opts = opts || {}; const m = Mesh();
+  const base=[0.25,0.23,0.29], base2=[0.33,0.31,0.37], tip=[Math.min(1,col[0]*1.12),Math.min(1,col[1]*1.12),Math.min(1,col[2]*1.12)];
+  const deep = opts.deepBase ? [col[0]*0.6,col[1]*0.58,col[2]*0.72] : col;                     // amethyst pools deeper colour at the base
   mergeAt(m, ballM(0.19, base, 7), 0, 0.05, 0);                                                // dark rocky mound
   mergeMesh(m, discMesh(0.0, 0.2, 7, 0.07, base2));
-  for (const [x,z,h,r] of [[0,0,0.52,0.1],[0.13,0.05,0.4,0.078],[-0.11,0.07,0.36,0.072],[0.06,-0.12,0.34,0.066],[-0.09,-0.09,0.3,0.06],[0.14,-0.04,0.27,0.055]]) {
-    const p = Mesh(); const body = h*0.7;
-    mCyl(p, 0.0, body, r, r*0.95, 6, col);                                                     // hexagonal shaft
+  const pts = opts.points || [[0,0,0.52,0.1],[0.13,0.05,0.4,0.078],[-0.11,0.07,0.36,0.072],[0.06,-0.12,0.34,0.066],[-0.09,-0.09,0.3,0.06],[0.14,-0.04,0.27,0.055]];
+  for (const [x,z,h,r] of pts) {
+    const p = Mesh(); const body = h*0.7, low = body*0.42;
+    mCyl(p, 0.0, low, r, r*0.98, 6, deep);                                                     // deep-coloured lower shaft
+    mCyl(p, low, body, r*0.98, r*0.95, 6, col);                                                // main shaft
     mCyl(p, body, h, r*0.95, 0, 6, tip);                                                        // pyramid cap, a touch brighter
     mergeAt(m, p, x, 0.08, z);
   }
   return m; }
-function geodeMesh() { const m = Mesh(); mRock(m, mulberry32(0x77c5 ^ SEED_INT), [0.56,0.54,0.5]); return m; }   // a dull, promising lump
+function quartzMesh() { return crystalMesh([0.9,0.93,0.98]); }                                  // the common gem: a clear pale cluster
+function amethystMesh() { return crystalMesh([0.58,0.38,0.82], { deepBase:true, points:[       // the uncommon gem: violet, more points, deeper at the base
+  [0,0,0.54,0.095],[0.12,0.04,0.44,0.075],[-0.1,0.06,0.4,0.07],[0.07,-0.11,0.36,0.064],
+  [-0.1,-0.08,0.33,0.06],[0.14,-0.03,0.3,0.056],[-0.02,0.13,0.28,0.05],[0.1,0.11,0.24,0.046]] }); }
+// §models the un-cracked geode: a smooth, slightly oval boulder (rounder than a plain rock) with a faint lighter
+// seam-band around the middle, the only tell that it is a geode once you know to look. Not obvious at a distance.
+function geodeMesh() { const m = Mesh(); const rnd = mulberry32(0x77c5 ^ SEED_INT);
+  const warm=[0.6,0.56,0.52], warm2=[0.55,0.5,0.46], band=[0.67,0.61,0.53];
+  const LON=11, LAT=8, R=0.34, mid=LAT/2;
+  const rad=[]; for (let la=0; la<=LAT; la++){ rad[la]=[]; for (let lo=0; lo<LON; lo++) rad[la][lo]=(la===0||la===LAT)?R:R*(0.9+rnd()*0.15); rad[la][LON]=rad[la][0]; }   // per-vertex jitter, seam column matched so there are no cracks
+  const vert=(la,lo)=>{ const ph=la/LAT*Math.PI, a=lo/LON*6.283, rr=rad[la][lo];
+    return [Math.cos(a)*Math.sin(ph)*rr, Math.cos(ph)*rr*0.9, Math.sin(a)*Math.sin(ph)*rr]; };   // *0.9 in Y = a slightly squat boulder
+  for (let la=0; la<LAT; la++) for (let lo=0; lo<LON; lo++){
+    const A=vert(la,lo), B=vert(la,lo+1), C=vert(la+1,lo+1), D=vert(la+1,lo);
+    const col = (la===mid-1||la===mid) ? band : ((lo+la)%2?warm:warm2);                         // lighter seam-band straddling the equator
+    mQuad(m, A, B, C, D, col);
+  }
+  return m; }
 function geodeCrackedMesh() { const m = Mesh(); const rock=[0.5,0.48,0.45], crys=[0.74,0.62,0.86];
   mergeMesh(m, discMesh(-0.05,0.42,8,0.08,rock));                                              // the split-open lower half
   for (const [x,z,h] of [[0,0,0.3],[0.12,0.05,0.22],[-0.1,0.08,0.2],[0.06,-0.1,0.24]]) { const cone=Mesh(); mCyl(cone,0.02,h,0.05,0.03,6,crys); mergeMesh(cone,discMesh(h,0.03,6,0.04,crys)); mergeAt(m, cone, x, 0.02, z); }
   return m; }
-// §A3 the opened geode registered as a collectible, displayable find (defined here, after its mesh exists)
-if (typeof FINDS !== "undefined" && !FINDS.geode) {
-  FINDS.geode = { mesh: () => geodeCrackedMesh(), base: 0.5, max: 20, label: "Geode", desc: "A geode cracked open, its two halves still lined with crystal.", rare: 2 };
-  FINDS.geode.dyn = makeDynamic(FINDS.geode.mesh(), FINDS.geode.max);
-  ITEMS.geode = { id: "geode", name: FINDS.geode.label, category: "find", rarity: RARITY[FINDS.geode.rare] || "common",
-                  stackable: true, maxStack: 99, desc: FINDS.geode.desc, model: FINDS.geode.mesh, tint: [1,1,1] };
-}
 
 // --- rare-find spawning ---
 const RARE_WASH = [["whelk",10],["redglass",8],["marble",8],["fossil",9],["sharktooth",7],["hagstone",9],["nautilus",8],["hcmolt",9],["jewelry",3],["megalodon",1]];
@@ -12345,8 +12388,9 @@ function stoneItemFind(s) {
 // --- geodes: dull cobble that cracks open under a pickaxe ---
 const GEODE_N = 8;                                 // geodes per island (tunable)
 const GEODE_HITS = 2;                              // pickaxe strikes to crack one open
-const GEODE_AMETHYST_P = 0.3;                      // else quartz (tunable)
-let geodes = [], geodeDyn = null, geodeCrackedDyn = null, _savedGeodes = null, _savedGeodesTaken = null;
+const GEODE_LOOT = [["quartz", 70], ["amethyst", 30]];   // §A3 weighted gem drop table, add more gems here (quartz common, amethyst uncommon)
+const GEM_SPARKLE = { quartz: [0.9,0.95,1], amethyst: [0.7,0.5,0.9] };   // the burst colour when each gem is revealed
+let geodes = [], geodeDyn = null, geodeCrackedDyn = null, _savedGeodes = null;
 const geodeScratch = new Float32Array(GEODE_N * 10), geodeCrackScratch = new Float32Array(GEODE_N * 10);
 function seedGeodes() {
   geodes = [];
@@ -12361,15 +12405,9 @@ function seedGeodes() {
     geodes.push({ x, z, yaw: rng()*6.283, sc: 0.7+rng()*0.4, hits: 0, cracked: false });
   }
   if (_savedGeodes) for (const i of _savedGeodes) { if (geodes[i]) { geodes[i].cracked = true; geodes[i].hits = GEODE_HITS; } }
-  if (_savedGeodesTaken) for (const i of _savedGeodesTaken) { if (geodes[i]) { geodes[i].cracked = true; geodes[i].hits = GEODE_HITS; geodes[i].taken = true; } }   // §A3
 }
 function crackGeode(g) {
-  if (g.cracked) {   // §A3 an opened geode is a collectible, pick up the two crystal-lined halves to keep or display
-    const first = !discovered.has("f_geode");
-    if (Inv.add("geode", 1) > 0) { g.taken = true; discovered.add("f_geode"); notify("geode", 1, first); if (onDig) onDig("pickup"); saveState(); }
-    else { showCard("Pack full", "No room for the geode halves."); bagShake(); }
-    return true;
-  }
+  if (g.cracked) return true;   // §A3 an opened geode is spent (its crystal-lined halves stay as scenery)
   if (selectedTool() !== "pickaxe") { showCard("Needs a pickaxe", "This dull nodule looks promising. Swing a pickaxe at it to crack it open."); return true; }
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.MINE_COST, true); rootPlayer(); if (onDig) onDig("mine");
@@ -12378,13 +12416,13 @@ function crackGeode(g) {
   if (g.hits >= GEODE_HITS) {
     g.cracked = true;
     if (onDig) onDig("crack");
-    const amethyst = rng() < GEODE_AMETHYST_P, t = amethyst ? "amethyst" : "quartz";
+    const t = weightedKey(GEODE_LOOT);                                           // §A3 one random gem from the loot table
     const first = !discovered.has("f_" + t);
-    if (Inv.add(t, 1) > 0) { discovered.add("f_" + t); notify(t, 1, first); }   // §A3 the crystal goes straight into the pack …
+    if (Inv.add(t, 1) > 0) { discovered.add("f_" + t); notify(t, 1, first); }   // the gem goes straight into the pack …
     else spawnFind(t, g.x+(rng()-0.5)*0.4, g.z+(rng()-0.5)*0.4);                 //    … or onto the ground if the pack is full
     if (typeof SND !== "undefined") { SND.play("discover"); setTimeout(()=>{ try{ SND.play("discover"); }catch(e){} }, 180); }
-    if (typeof sparkle === "function") sparkle(g.x, sy+0.3, g.z, amethyst ? [0.7,0.5,0.9] : [0.9,0.95,1], 18);
-    showCard("The geode cracks open!", "Hollow all along, and lined with " + (amethyst ? "violet amethyst" : "clear quartz") + " crystal (added to your pack). The halves are yours to pick up, too.");
+    if (typeof sparkle === "function") sparkle(g.x, sy+0.3, g.z, GEM_SPARKLE[t] || [0.9,0.95,1], 18);
+    showCard("The geode cracks open!", "Hollow all along, and lined with crystal. A " + ITEMS[t].name + " for your pack.");
     saveState();
   }
   return true;
@@ -12394,7 +12432,7 @@ function drawGeodes(view) {
   if (!geodeDyn) geodeDyn = makeDynamic(geodeMesh(), GEODE_N);
   if (!geodeCrackedDyn) geodeCrackedDyn = makeDynamic(geodeCrackedMesh(), GEODE_N);
   propUniforms(view); let n = 0, cn = 0;
-  for (const g of geodes) { if (g.taken) continue; const dx = g.x-cam.pos[0], dz = g.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+  for (const g of geodes) { const dx = g.x-cam.pos[0], dz = g.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
     const gy = surfaceAt(g.x, g.z).h + g.sc*0.08;
     if (g.cracked) { const o = cn*10; geodeCrackScratch[o]=g.x;geodeCrackScratch[o+1]=gy;geodeCrackScratch[o+2]=g.z;geodeCrackScratch[o+3]=g.sc;geodeCrackScratch[o+4]=g.yaw;geodeCrackScratch[o+5]=0;geodeCrackScratch[o+6]=0;geodeCrackScratch[o+7]=1;geodeCrackScratch[o+8]=1;geodeCrackScratch[o+9]=1; cn++; }
     else { const o = n*10; geodeScratch[o]=g.x;geodeScratch[o+1]=gy;geodeScratch[o+2]=g.z;geodeScratch[o+3]=g.sc;geodeScratch[o+4]=g.yaw;geodeScratch[o+5]=0;geodeScratch[o+6]=0;geodeScratch[o+7]=1;geodeScratch[o+8]=1;geodeScratch[o+9]=1; n++; }
@@ -12403,7 +12441,7 @@ function drawGeodes(view) {
   if (cn) geodeCrackedDyn.draw(geodeCrackScratch, cn);
 }
 function geodeAction(g) { return crackGeode(g); }
-function geodePrompt(g) { const has = selectedTool()==="pickaxe"; return g.cracked ? ((IS_TOUCH?"tap":"click/F") + " to pick up the geode halves") : (has ? (IS_TOUCH?"hold to crack it open":"crack it open") : "a dull nodule, try a pickaxe"); }
+function geodePrompt(g) { const has = selectedTool()==="pickaxe"; return has ? (IS_TOUCH?"hold to crack it open":"crack it open") : "a dull nodule, try a pickaxe"; }
 
 /* ===================================================================== *
  * § 41  HORSESHOE CRABS, a living fossil plowing the sandy shallows day and

@@ -67,10 +67,12 @@ Heart-quickening finds, salted into the wash-up at long odds (**5%** of wash-up 
 after a storm) and into what hides under stones and boulders: a **left-handed (sinistral)
 whelk**, **red sea glass**, an **old marble**, **fossil shark teeth** and a **megalodon
 tooth**, and a **hag stone**. **End-of-day** swirled glass turns up only near dusk (the real
-golden hour). **Geodes** (8/island) sit as dull nodules on cobble and rocky shores — crack
-one with a **pickaxe** (2 hits) for a chime, a burst of sparkle and a nest of **quartz** or
-(rarer, 30%) **amethyst** crystal. All new finds auto-register in the journal Finds page;
-geode cracked-state persists per seed.
+golden hour). **Geodes** (8/island) sit as rounded, smooth boulders (a faint seam-band is the
+only tell) on cobble and rocky shores — crack one with a **pickaxe** (2 hits) for a chime, a
+burst of sparkle and one gem rolled from the `GEODE_LOOT` table (**quartz** 70%, **amethyst**
+30%; extend the table for more gems). There is no "Geode" item: the cracked halves stay as
+scenery. All new finds auto-register in the journal Finds page; geode cracked-state persists
+per seed.
 
 ---
 
@@ -183,7 +185,7 @@ hagstone 10, sharktooth 9, whelk 8, redglass 7, tin 6 (near dusk: 20% chance →
 ### Rare finds & geodes (§40)
 - `RARE_WASH_P = 0.05` — chance a wash-up slot upgrades to a rare natural find (×1.8 in a storm)
 - `RARE_WASH` / `STONE_ITEM_POOL` — the weighted pools above
-- `GEODE_N = 8`, `GEODE_HITS = 2`, `GEODE_AMETHYST_P = 0.3`
+- `GEODE_N = 8`, `GEODE_HITS = 2`, `GEODE_LOOT = [["quartz",70],["amethyst",30]]` (weighted gem table; add gems here)
 - `isDuskNow()` window — `0.49–0.60` (sunset) or `0.02–0.10` (dawn)
 
 ### Horseshoe crabs (§41)
