@@ -12644,10 +12644,7 @@ function geodeMesh() { const m = Mesh(); const rnd = mulberry32(0x77c5 ^ SEED_IN
     mQuad(m, A, B, C, D, col);
   }
   return m; }
-function geodeCrackedMesh() { const m = Mesh(); const rock=[0.5,0.48,0.45], crys=[0.74,0.62,0.86];
-  mergeMesh(m, discMesh(-0.05,0.42,8,0.08,rock));                                              // the split-open lower half
-  for (const [x,z,h] of [[0,0,0.3],[0.12,0.05,0.22],[-0.1,0.08,0.2],[0.06,-0.1,0.24]]) { const cone=Mesh(); mCyl(cone,0.02,h,0.05,0.03,6,crys); mergeMesh(cone,discMesh(h,0.03,6,0.04,crys)); mergeAt(m, cone, x, 0.02, z); }
-  return m; }
+// §geodefix the cracked-geode "spent scenery" mesh was removed: a broken geode now leaves nothing behind.
 
 // --- rare-find spawning ---
 const RARE_WASH = [["whelk",10],["redglass",8],["marble",8],["fossil",9],["sharktooth",7],["hagstone",9],["nautilus",8],["hcmolt",9],["jewelry",3],["megalodon",1]];
@@ -12673,8 +12670,8 @@ const GEODE_N = 8;                                 // geodes per island (tunable
 const GEODE_HITS = 2;                              // pickaxe strikes to crack one open
 const GEODE_LOOT = [["quartz", 70], ["amethyst", 30]];   // §A3 weighted gem drop table, add more gems here (quartz common, amethyst uncommon)
 const GEM_SPARKLE = { quartz: [0.9,0.95,1], amethyst: [0.7,0.5,0.9] };   // the burst colour when each gem is revealed
-let geodes = [], geodeDyn = null, geodeCrackedDyn = null, _savedGeodes = null;
-const geodeScratch = new Float32Array(GEODE_N * 10), geodeCrackScratch = new Float32Array(GEODE_N * 10);
+let geodes = [], geodeDyn = null, _savedGeodes = null;   // §geodefix cracked geodes vanish, so no separate "cracked" dynamic mesh
+const geodeScratch = new Float32Array(GEODE_N * 10);
 function seedGeodes() {
   geodes = [];
   for (let k=0; k<4000 && geodes.length<GEODE_N; k++) {
@@ -12690,7 +12687,7 @@ function seedGeodes() {
   if (_savedGeodes) for (const i of _savedGeodes) { if (geodes[i]) { geodes[i].cracked = true; geodes[i].hits = GEODE_HITS; } }
 }
 function crackGeode(g) {
-  if (g.cracked) return true;   // §A3 an opened geode is spent (its crystal-lined halves stay as scenery)
+  if (g.cracked) return true;   // §geodefix an opened geode is gone (nothing left where it was); it never regrows there
   if (selectedTool() !== "pickaxe") { showCard("Needs a pickaxe", "This dull nodule looks promising. Swing a pickaxe at it to crack it open."); return true; }
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
   shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.MINE_COST, true); rootPlayer(); if (onDig) onDig("mine");
@@ -12713,15 +12710,13 @@ function crackGeode(g) {
 function drawGeodes(view) {
   if (!geodes.length) return;
   if (!geodeDyn) geodeDyn = makeDynamic(geodeMesh(), GEODE_N);
-  if (!geodeCrackedDyn) geodeCrackedDyn = makeDynamic(geodeCrackedMesh(), GEODE_N);
-  propUniforms(view); let n = 0, cn = 0;
-  for (const g of geodes) { const dx = g.x-cam.pos[0], dz = g.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+  propUniforms(view); let n = 0;
+  for (const g of geodes) { if (g.cracked) continue;   // §geodefix an opened geode is gone (no spent crystal husk left behind); it never regrows in that spot
+    const dx = g.x-cam.pos[0], dz = g.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
     const gy = surfaceAt(g.x, g.z).h + g.sc*0.08;
-    if (g.cracked) { const o = cn*10; geodeCrackScratch[o]=g.x;geodeCrackScratch[o+1]=gy;geodeCrackScratch[o+2]=g.z;geodeCrackScratch[o+3]=g.sc;geodeCrackScratch[o+4]=g.yaw;geodeCrackScratch[o+5]=0;geodeCrackScratch[o+6]=0;geodeCrackScratch[o+7]=1;geodeCrackScratch[o+8]=1;geodeCrackScratch[o+9]=1; cn++; }
-    else { const o = n*10; geodeScratch[o]=g.x;geodeScratch[o+1]=gy;geodeScratch[o+2]=g.z;geodeScratch[o+3]=g.sc;geodeScratch[o+4]=g.yaw;geodeScratch[o+5]=0;geodeScratch[o+6]=0;geodeScratch[o+7]=1;geodeScratch[o+8]=1;geodeScratch[o+9]=1; n++; }
+    const o = n*10; geodeScratch[o]=g.x;geodeScratch[o+1]=gy;geodeScratch[o+2]=g.z;geodeScratch[o+3]=g.sc;geodeScratch[o+4]=g.yaw;geodeScratch[o+5]=0;geodeScratch[o+6]=0;geodeScratch[o+7]=1;geodeScratch[o+8]=1;geodeScratch[o+9]=1; n++;
   }
   if (n) geodeDyn.draw(geodeScratch, n);
-  if (cn) geodeCrackedDyn.draw(geodeCrackScratch, cn);
 }
 function geodeAction(g) { return crackGeode(g); }
 function geodePrompt(g) { const has = selectedTool()==="pickaxe"; return has ? (IS_TOUCH?"hold to crack it open":"crack it open") : "a dull nodule, try a pickaxe"; }
