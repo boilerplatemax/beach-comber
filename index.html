@@ -714,7 +714,7 @@
   /* §catchcard bigger, and vertically centred on screen */
   #catchpop { top: 50% !important; left: 50%; transform: translate(-50%,-50%); width: 300px; min-width: 0; padding: 18px 22px 14px;
     text-align: center; pointer-events: auto; border-radius: 0 !important;
-    background-color: var(--parch) !important; background-image: var(--grain) !important; background-blend-mode: multiply;
+    background-color: var(--parch) !important; background-image: var(--ditherparch, var(--grain)) !important; background-size: 100% 100% !important; image-rendering: pixelated; background-blend-mode: normal;
     border: 3px solid var(--wood-lo) !important; color: var(--pink) !important;
     box-shadow: inset 0 0 0 3px var(--wood), inset 0 0 0 5px var(--parch-lo),
       inset 4px 4px 0 5px rgba(255,248,224,.35), inset -4px -4px 0 5px rgba(120,86,40,.35),
@@ -730,9 +730,9 @@
     padding: 2px 8px; vertical-align: middle; box-shadow: inset 1px 1px 0 var(--gold-hi); }
   #catchpop .cp-btns { display: flex; gap: 8px; justify-content: center; margin: 11px 0 5px; }
   #catchpop .cp-keep, #catchpop .cp-rel { font-family: var(--ui); font-weight: 700; font-size: 14px; padding: 9px 16px; cursor: pointer; border: 0; flex: 1; }
-  #catchpop .cp-keep { background: linear-gradient(#e7b84e,#c7922f); color: #2a1708;
+  #catchpop .cp-keep { background: #d4a23c var(--dithergold, linear-gradient(#e7b84e,#c7922f)); background-size: 100% 100%; image-rendering: pixelated; color: #2a1708;
     box-shadow: inset 2px 2px 0 var(--gold-hi), inset -2px -2px 0 #90631c, 0 2px 0 #5a3d10; }
-  #catchpop .cp-rel { background: linear-gradient(#c8a86a,#a9884f); color: #311f0c;
+  #catchpop .cp-rel { background: #b89a5c var(--ditherbtn, linear-gradient(#c8a86a,#a9884f)); background-size: 100% 100%; image-rendering: pixelated; color: #311f0c;
     box-shadow: inset 2px 2px 0 var(--parch-hi), inset -2px -2px 0 #6e4f2b, 0 2px 0 #4a3317; }
   #catchpop .cp-keep:active, #catchpop .cp-rel:active { transform: translateY(1px); }
   #catchpop .cp-hint { font-size: 11px; color: var(--pink-dim); opacity: .85; margin-top: 2px; letter-spacing: .02em; }
@@ -2508,6 +2508,8 @@ precision highp float;
 in vec3 vWorld;
 out vec4 frag;
 uniform vec3 uSunDir, uCamPos, uZenith, uHorizon, uWarm;
+uniform vec3 uMoonDir, uMoonCol, uNightAmb;          // §night cool moon key light, its colour*strength, and a dark-blue ambient floor
+uniform float uNightRim;                             // §night rim strength toward the moon
 uniform float uFogDensity, uFogNear, uWaterLevel, uWetLevel;
 uniform float uNight, uDusk;                         // §look night ground lift (uNight); sunrise/sunset strength (uDusk)
 uniform float uTime; uniform int uUnderwater;        // §14B animated seabed caustics
@@ -2592,7 +2594,16 @@ void main() {
     col *= (0.55 + 0.55 * diff);
     col *= mix(vec3(0.88, 0.91, 0.99), uWarm, diff);
   }
-  col *= 1.0 + uNight * 0.22;   // §look raise the ground's night ambient a little so terrain stays readable (it was too dark)
+  col *= 1.0 + uNight * 0.14;   // §look a small flat night lift; the moon key + ambient below do most of the night shaping
+  // §night fake GI: a cool directional moon key (lit side vs shaded side), a dark-blue ambient floor so shadows never
+  // go black, and a faint rim on edges facing the moon so silhouettes read against the sky.
+  if (uMoonCol.b > 0.0001 || uNightAmb.b > 0.0001) {
+    float md = max(dot(n, normalize(uMoonDir)), 0.0);
+    col += col * uMoonCol * md;                                  // moonlit side
+    col += uNightAmb * (0.55 + 0.45 * clamp(n.y*0.5+0.5, 0.0, 1.0));   // deep-blue up, slightly cooler bounce below
+    if (uNightRim > 0.0001) { vec3 vd = normalize(uCamPos - vWorld);
+      col += vec3(0.42, 0.56, 0.82) * pow(1.0 - max(dot(n, vd), 0.0), 3.0) * md * uNightRim; }
+  }
 
   // §14B animated caustics on the seabed (strongest in the shallows)
   if (uUnderwater == 1 && h < uWaterLevel - 0.1) {
@@ -2943,6 +2954,7 @@ uniform float uExposure;                        // §ATMO #3 pre-tonemap exposur
 uniform float uVigAmt;                          // §ATMO #9 base atmospheric vignette strength (0 = off)
 uniform int uGrade;                             // §VIB colour grade on/off
 uniform float uVibrance, uSaturation, uContrast, uWarmth;   // §VIB grade controls
+uniform float uNightGrade;                      // §night 0 day .. 1 deep night: lift blacks into dark blue + cool
 const float bayer[16] = float[16](
   0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
   3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
@@ -2962,6 +2974,11 @@ void main() {
     c = mix(vec3(lum), c, uSaturation);                                          // global saturation
     float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b));
     c = clamp(mix(vec3(lum), c, 1.0 + uVibrance * (1.0 - (mx - mn))), 0.0, 1.0);  // vibrance: lift muted colours more than already-saturated ones
+  }
+  if (uNightGrade > 0.001) {   // §night lift the blacks into dark blue and cool the whole frame so night is moody but readable, lit/shaded contrast kept
+    float lum = dot(c, vec3(0.299, 0.587, 0.114));
+    c += vec3(0.02, 0.035, 0.075) * (1.0 - lum) * uNightGrade;      // crushed blacks become dark blue
+    c = mix(c, c * vec3(0.92, 0.97, 1.08), uNightGrade * 0.5);      // a cool cast
   }
   if (uBrightness != 1.0) c = clamp(pow(c, vec3(1.0 / uBrightness)), 0.0, 1.0);   // §18 brightness/gamma
   if (uHungerFx > 0.001) { float g = dot(c, vec3(0.299, 0.587, 0.114)); c = mix(c, vec3(g), uHungerFx * 0.7); }  // desaturate when starving
@@ -3788,13 +3805,19 @@ function drawBobber(view) {
   a[0] = rod.bob.x; a[1] = rod.bob.y; a[2] = rod.bob.z; a[3] = 1.15; a[4] = 0; a[5] = 0; a[6] = 0; a[7] = 1; a[8] = 1; a[9] = 1;   // §fishpolish bigger, easier to see
   bobberDyn.draw(a, 1);
 }
+let _fishLo = null;   // §fishdither low-res offscreen buffer; the fishing HUD renders into it then blits up with no smoothing → chunky pixel art
 function drawFishHUD() {
   const cv = document.getElementById("fishcanvas"); if (!cv) return;
   const showing = mode === "walk" && ["charging","casting","waiting","nibble","bite","fighting"].includes(rod.state);   // §playtest2 show the cast-power meter while charging
   if (!showing) { if (cv.style.display !== "none") cv.style.display = "none"; return; }
   if (cv.width !== innerWidth || cv.height !== innerHeight) { cv.width = innerWidth; cv.height = innerHeight; }
   cv.style.display = "block";
-  const g = cv.getContext("2d"); g.clearRect(0, 0, cv.width, cv.height);
+  // §fishdither draw the whole HUD into a low-res buffer, then blit it up pixelated, matching the dithered inventory look (PX=2 keeps the short labels readable)
+  const PX = 2;
+  if (!_fishLo) _fishLo = document.createElement("canvas");
+  const lw = Math.max(1, Math.ceil(cv.width / PX)), lh = Math.max(1, Math.ceil(cv.height / PX));
+  if (_fishLo.width !== lw || _fishLo.height !== lh) { _fishLo.width = lw; _fishLo.height = lh; }
+  const g = _fishLo.getContext("2d"); g.setTransform(1/PX, 0, 0, 1/PX, 0, 0); g.imageSmoothingEnabled = false; g.clearRect(0, 0, cv.width, cv.height);
   // line + bobber + bite marker
   if (["casting","waiting","nibble","bite","fighting"].includes(rod.state)) {
     const bp = projectToScreen(rod.bob.x, rod.bob.y + 0.25, rod.bob.z);
@@ -3812,6 +3835,9 @@ function drawFishHUD() {
   if (rod.state === "fighting") drawReelGauge(g);
   else if (rod.state === "charging") drawCastMeter(g);
   g.textAlign = "left";
+  // §fishdither blit the low-res HUD up to the screen with no smoothing → chunky, palette-limited pixels
+  const realG = cv.getContext("2d"); realG.setTransform(1, 0, 0, 1, 0, 0); realG.imageSmoothingEnabled = false;
+  realG.clearRect(0, 0, cv.width, cv.height); realG.drawImage(_fishLo, 0, 0, lw, lh, 0, 0, cv.width, cv.height);
 }
 function drawCastMeter(g) {
   const w = 240, h = 14, x = (innerWidth - w) / 2, y = innerHeight - 150, c = rod.charge;
@@ -4086,6 +4112,9 @@ const ATMO = {
   vignette: true, vigAmt: 0.42,
   // §VIB post colour grade: vibrance lifts muted colours most, saturation is global, contrast + warmth finish it.
   grade: true, vibrance: 0.26, saturation: 1.12, contrast: 1.12, warmth: 0.04,
+  // §night fake-GI layers (each toggleable): a cool directional moon key light, a dark-blue night ambient floor,
+  // a rim toward the brightest sky, and a post grade that lifts the blacks into blue.
+  moonlight: true, nightamb: true, nightrim: true, nightgrade: true,
 };
 // Which atmosphere effects each graphics preset turns on. They are all nearly
 // free, so only the very lowest preset trims the extra ground-noise octaves;
@@ -5373,6 +5402,8 @@ uniform vec3 uLanternPos; uniform float uLanternI, uLanternR;  // §18 lantern l
 uniform float uDissolve;                            // §urgent5 0 = solid; >0 = dithered dissolve (dying creatures)
 uniform int uHemi;                                  // §ATMO #2 hemisphere ambient on/off (0 = flat, for icon/inspect renders)
 uniform float uDusk;                                // §sky sunrise/sunset strength (for fog colour)
+uniform vec3 uMoonDir, uMoonCol, uNightAmb;         // §night moon key light + dark-blue ambient floor
+uniform float uNightRim;                            // §night rim toward the moon
 ${SKY_GLSL}
 void main() {
   if (uDissolve > 0.0) {                              // §urgent5 ordered Bayer-4x4 dither dissolve, no shrink
@@ -5392,6 +5423,14 @@ void main() {
   } else {
     col = vCol * (0.5 + 0.6 * diff);
     col *= mix(vec3(0.85, 0.89, 0.99), uWarm, diff);
+  }
+  // §night fake GI on props/foliage: cool moon key + dark-blue ambient floor + rim toward the moon
+  if (uHemi == 1 && (uMoonCol.b > 0.0001 || uNightAmb.b > 0.0001)) {
+    float md = abs(dot(n, normalize(uMoonDir)));                 // abs so thin foliage catches moonlight from either side
+    col += col * uMoonCol * md;
+    col += uNightAmb * (0.55 + 0.45 * clamp(n.y*0.5+0.5, 0.0, 1.0));
+    if (uNightRim > 0.0001) { vec3 vd = normalize(uCamPos - vWorld);
+      col += vec3(0.42, 0.56, 0.82) * pow(1.0 - max(dot(n, vd), 0.0), 3.0) * md * uNightRim; }
   }
   if (uWetBand == 1) {
     float wetb = 1.0 - smoothstep(uWaterLevel, uWetLevel + 1.2, vWorld.y);     // darker below the high-water mark
@@ -9119,6 +9158,10 @@ function syncDebugPanel() {
     <div class="dbgrow">
       <button class="dbgatmo${ATMO.vignette?' on':''}" data-at="vignette" style="${ATMO.vignette?'background:#5a8f6a':''}">Vignette: ${ATMO.vignette?"ON":"off"}</button>
       <button class="dbgatmo${ATMO.grade?' on':''}" data-at="grade" style="${ATMO.grade?'background:#5a8f6a':''}">Colour grade: ${ATMO.grade?"ON":"off"}</button>
+      <button class="dbgatmo${ATMO.moonlight?' on':''}" data-at="moonlight" style="${ATMO.moonlight?'background:#4a6a8f':''}">Moonlight: ${ATMO.moonlight?"ON":"off"}</button>
+      <button class="dbgatmo${ATMO.nightamb?' on':''}" data-at="nightamb" style="${ATMO.nightamb?'background:#4a6a8f':''}">Night ambient: ${ATMO.nightamb?"ON":"off"}</button>
+      <button class="dbgatmo${ATMO.nightrim?' on':''}" data-at="nightrim" style="${ATMO.nightrim?'background:#4a6a8f':''}">Horizon rim: ${ATMO.nightrim?"ON":"off"}</button>
+      <button class="dbgatmo${ATMO.nightgrade?' on':''}" data-at="nightgrade" style="${ATMO.nightgrade?'background:#4a6a8f':''}">Night grade: ${ATMO.nightgrade?"ON":"off"}</button>
     </div>
     <div class="jhint" style="margin:4px 0">§VIB colour grade (send these back to me):</div>
     <label>Exposure <b class="atv" data-ak="exposure">${ATMO.exposure.toFixed(2)}</b> <input class="dbgatv" data-ak="exposure" type="range" min="0.6" max="1.6" step="0.02" value="${ATMO.exposure}"></label>
@@ -9608,6 +9651,10 @@ function propUniforms(view) {
   gl.uniform3fv(propU.uZenith, SKY.zenith); gl.uniform3fv(propU.uHorizon, SKY.horizon); gl.uniform3fv(propU.uWarm, SKY.warm);
   gl.uniform1f(propU.uFogDensity, FOG_DENSITY); gl.uniform1f(propU.uFogNear, FOG_NEAR);
   if (propU.uDusk !== undefined) gl.uniform1f(propU.uDusk, camUnderwaterNow ? 0 : SKY.dusk);   // §sky sunset fog tint on props
+  if (propU.uMoonCol !== undefined) { const nt = camUnderwaterNow ? 0 : (1 - dayFactor()), mph = 0.4 + 0.6*moonIllum(), ms = ATMO.moonlight ? nt*mph : 0;   // §night moon key + ambient + rim on props/foliage
+    gl.uniform3f(propU.uMoonCol, 0.40*ms, 0.50*ms, 0.74*ms); gl.uniform3fv(propU.uMoonDir, SKY.moon);
+    gl.uniform3f(propU.uNightAmb, ATMO.nightamb?nt*0.045:0, ATMO.nightamb?nt*0.065:0, ATMO.nightamb?nt*0.115:0);
+    gl.uniform1f(propU.uNightRim, ATMO.nightrim ? nt*0.85 : 0); }
   gl.uniform1f(propU.uDissolve, 0);   // §urgent5 default: solid
 }
 
@@ -13891,6 +13938,10 @@ function frame(now) {
   gl.uniform3fv(terrainU.uWarm, SKY.warm);
   gl.uniform1f(terrainU.uNight, camUnderwater ? 0 : (1 - dayFactor()));   // §look night ground lift
   gl.uniform1f(terrainU.uDusk, camUnderwater ? 0 : SKY.dusk);             // §sky sunrise/sunset fog tint
+  { const nt = camUnderwater ? 0 : (1 - dayFactor()), mph = 0.4 + 0.6*moonIllum(), ms = ATMO.moonlight ? nt*mph : 0;   // §night moon key + ambient + rim
+    gl.uniform3f(terrainU.uMoonCol, 0.40*ms, 0.50*ms, 0.74*ms); gl.uniform3fv(terrainU.uMoonDir, SKY.moon);
+    gl.uniform3f(terrainU.uNightAmb, ATMO.nightamb?nt*0.045:0, ATMO.nightamb?nt*0.065:0, ATMO.nightamb?nt*0.115:0);
+    gl.uniform1f(terrainU.uNightRim, ATMO.nightrim ? nt*0.85 : 0); }
   gl.uniform1f(terrainU.uFogDensity, FOG_DENSITY);
   gl.uniform1f(terrainU.uFogNear, FOG_NEAR);
   gl.uniform1f(terrainU.uWaterLevel, waterLevel);
@@ -14012,6 +14063,7 @@ function frame(now) {
   const gWarm = ATMO.warmth * dayN - 0.02 * (1 - dayN);                        // a touch cool after dark
   gl.uniform1f(postU.uVibrance, gVib); gl.uniform1f(postU.uSaturation, gSat);
   gl.uniform1f(postU.uContrast, ATMO.contrast); gl.uniform1f(postU.uWarmth, gWarm);
+  gl.uniform1f(postU.uNightGrade, (ATMO.nightgrade && !camUnderwater) ? (1 - dayN) : 0);   // §night lift blacks into blue + cool
   gl.bindVertexArray(fsTri);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
   countDraw(1);
