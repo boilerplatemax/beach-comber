@@ -2080,7 +2080,7 @@ function updateSurf() {
     SND.ambGain("swash", walk && !uw ? near * 0.14 * wv.spray * storm : 0);
     const high = walk ? Math.max(0, Math.min(1, (surfaceAt(player.x, player.z).h - 12) / 30)) : 0;
     SND.ambGain("wind", walk ? (0.02 + high * 0.1) + (weather ? weather.wind * 0.18 : 0) : 0);   // §20 wind gusts rise with the weather
-    SND.ambGain("rain", walk && weather ? weather.rain * (uw ? 0.1 : 0.38) : 0);                 // §20 rain on sand & water
+    SND.ambGain("rain", walk && weather ? weather.rain * (uw ? 0.06 : 0.2) : 0);                  // §20 rain on sand & water (quieter)
     const night = walk ? 1 - dayFactor() : 0, inland = walk ? Math.max(0, 1 - shore) : 0;
     SND.ambGain("crickets", walk && !uw ? night * inland * 0.05 : 0);
     SND.ambGain("rumble", uw ? 0.16 : 0);
@@ -2195,7 +2195,8 @@ function onThunder(delay) {   // §20 distant thunder follows the flash after a 
   setTimeout(() => { try { SND.play("thunder", { volume: 0.45 + Math.random()*0.4 }); } catch (e) {} }, Math.max(100, (delay || 1) * 1000));
 }
 function initWeather() {   // set day-0 weather with no transition (no visible blend on load)
-  const d = Math.floor(tideDay); weather.day = d; weather.state = weatherForDay(d); weather.windDir = weatherWindDir(d);
+  // §clearmorning a fresh island always opens on a calm, clear morning; the seed's weather resumes the next day.
+  const d = Math.floor(tideDay); weather.day = d; weather.state = (d === 0) ? "clear" : weatherForDay(d); weather.windDir = weatherWindDir(d);
   const P = WEATHER_PARAMS[weather.state];
   weather.wind = P.wind; weather.rain = P.rain; weather.dim = P.dim; weather.waveMul = P.wave;
   weather.fog = weather.state === "fog" ? P.fog * fogDaylightCurve() : P.fog;
@@ -7270,7 +7271,7 @@ const FINDS = {
   tin:      { mesh: () => tinMesh(),                base: 0.34,max: 30, label: "Sealed Tin", desc: "Rust-flecked and heavy. Something shifts inside.", rare: 2 },   // §pixui smaller in the world (was oversized)
   // --- materials & seeds (chopping / mining / planting) ---
   log:      { mesh: () => logMesh(),                base: 0.8, max: 60, label: "Log", desc: "A length of trunk, fresh-cut.", rare: 0 },
-  stone:    { mesh: () => stoneMesh(),              base: 0.3, max: 60, label: "Stone", desc: "A small, hand-sized stone.", rare: 0 },
+  stone:    { mesh: () => weakStoneMesh(),          base: 0.3, max: 60, label: "Stone", desc: "A small, hand-sized stone.", rare: 0 },   // §stonematch the world stone matches its inventory icon (the dome stone)
   coconut:  { mesh: () => coconutMesh(),            base: 0.5, max: 30, label: "Coconut", desc: "A palm seed, plant it on sand.", rare: 1 },
   pinecone: { mesh: () => coneMesh2(),              base: 0.4, max: 30, label: "Pine Cone", desc: "A conifer seed, plant it on soil or grass.", rare: 1 },
   nut:      { mesh: () => nutMesh(),                 base: 0.4, max: 30, label: "Nut", desc: "A broadleaf seed, plant it on soil or grass.", rare: 1 },
@@ -12218,7 +12219,7 @@ function drawTools(view) {
   if (nb) broadleafDyn.draw(broadleafScratch, nb);
   // loose rubble: the small pickable Stones. Drawn with the Stone ITEM mesh at
   // its registry scale (§stone1), not the big boulder prop that made them huge.
-  if (!rubbleDyn) rubbleDyn = makeDynamic(stoneMesh(), 200);
+  if (!rubbleDyn) rubbleDyn = makeDynamic(weakStoneMesh(), 200);   // §stonematch loose pickable stones use the same dome mesh as the Stone icon
   let nrub = 0;
   for (const lr of looseRocks) { if (nrub >= 200) break; const sc = lr.rsc || FINDS.stone.base, o = nrub*10, y = surfaceAt(lr.x,lr.z).h + sc*0.1;
     rubbleScratch[o]=lr.x;rubbleScratch[o+1]=y;rubbleScratch[o+2]=lr.z;rubbleScratch[o+3]=sc;rubbleScratch[o+4]=0;rubbleScratch[o+5]=0;rubbleScratch[o+6]=0;rubbleScratch[o+7]=0.95;rubbleScratch[o+8]=0.93;rubbleScratch[o+9]=0.9; nrub++; }
