@@ -3218,6 +3218,7 @@ function landJump(g, fall) {   // §strip jumping removed; this now only runs wh
 // Uses its OWN seeded stream so the spawn is deterministic per seed, independent
 // of how much live gameplay randomness (goats, particles) ran before you entered.
 function findSpawn() {
+  if (typeof kappaSpawnPoint === "function") { const ks = kappaSpawnPoint(); if (ks) return ks; }   // FEATURE: kappa  spawn at the village when one exists
   const ang = mulberry32(SEED_INT ^ 0x53504e31)() * Math.PI * 2;
   const dx = Math.sin(ang), dz = -Math.cos(ang);
   for (let rr = HALF * 0.98; rr > 0; rr -= 3) {
@@ -11532,50 +11533,69 @@ function kappaHutMesh() {   // a simple box house with a hip roof + round door (
 }
 
 // --- village: find fresh water, place huts + kappa around it ---
-let kappaVillage = null, kappaHuts = [], kappas = [];
+let kappaVillage = null, kappaHuts = [], kappas = [], kappaVillageSpawn = null;   // FEATURE: kappa  the village doubles as the player's spawn
 function placeKappaVillage() {
-  kappaVillage = null; kappaHuts = []; kappas = [];
+  kappaVillage = null; kappaHuts = []; kappas = []; kappaVillageSpawn = null;
   if (!KAPPA_ON) return;
   const R = mulberry32(((SEED_INT ^ 0x6b617070) >>> 0) || 1);   // own stream ("kapp"): zero draws from the shared rng
-  // prefer the biggest inland freshwater pool; else a sheltered shallow lagoon on the shore
-  let best = null; for (const p of pools) { if (p.n < 16) continue; if (!best || p.n > best.n) best = p; }
+  // Pick where the village sits. The restrictions are soft now, and a guaranteed shore fallback means EVERY seed
+  // gets a village: biggest inland freshwater pond → any sheltered shallows → the nearest calm dry shore.
+  let best = null; for (const p of pools) { if (p.n < 8) continue; if (!best || p.n > best.n) best = p; }
   let cx, cz, waterY, shoreR;
   if (best) { cx = best.x; cz = best.z; waterY = best.rim; shoreR = Math.sqrt(best.n / Math.PI) * CELL; }
   else {
-    // no inland freshwater: settle a sheltered shallow lagoon on the shore (gentle dry ground next to calm shallows)
+    // a sheltered shallow spot on the coast (gentle dry ground next to calm water)
     let found = null, bestScore = -1;
-    for (let i = 0; i < 900; i++) { const a = R()*6.283, r = HALF*(0.18 + R()*0.56), x = Math.sin(a)*r, z = -Math.cos(a)*r;
-      const s = surfaceAt(x, z); if (s.h < 0.5 || s.h > 9 || s.slope > 0.3) continue;
-      let water = 0; for (let k = 0; k < 8; k++) { const aa = k/8*6.283, d = waterDepthAt(x + Math.cos(aa)*6, z + Math.sin(aa)*6); if (d > 0.2 && d < 3.5) water++; }
-      if (!water) continue; const score = water - s.slope*2; if (score > bestScore) { bestScore = score; found = { x, z }; } }
-    if (!found) return;   // no freshwater and no sheltered lagoon on this seed → no village
-    cx = found.x; cz = found.z; waterY = waterLevel; shoreR = 9;
+    for (let i = 0; i < 1200; i++) { const a = R()*6.283, r = HALF*(0.14 + R()*0.62), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+      const s = surfaceAt(x, z); if (s.h < 0.3 || s.h > 12 || s.slope > 0.4) continue;
+      let water = 0; for (let k = 0; k < 8; k++) { const aa = k/8*6.283, d = waterDepthAt(x + Math.cos(aa)*7, z + Math.sin(aa)*7); if (d > 0.15 && d < 5) water++; }
+      const score = water*2 - s.slope*3 + (water ? 1 : 0); if (score > bestScore) { bestScore = score; found = { x, z }; } }
+    if (!found) {
+      // absolute guarantee: march in from the map edge along a seed-chosen bearing to the first dry land above the sea
+      for (let off = 0; off < 6.3 && !found; off += 0.4) { const a = R()*6.283 + off, dx = Math.sin(a), dz = -Math.cos(a);
+        for (let rr = HALF*0.92; rr > 10; rr -= 3) { const x = dx*rr, z = dz*rr, s = surfaceAt(x, z);
+          if (s.h > 1.2 && s.h < 16 && s.slope < 0.5 && waterDepthAt(x, z) <= 0.05) { found = { x: dx*(rr-6), z: dz*(rr-6) }; break; } } }
+    }
+    if (!found) found = { x: 0, z: 0 };   // last resort (never expected on an island)
+    cx = found.x; cz = found.z; waterY = waterLevel; shoreR = 10;
   }
   const centerWet = waterDepthAt(cx, cz) > 0.05;
-  // a point on the dry shore along a given bearing (march out past the water's edge for a pond; a ring for a lagoon)
+  // a point on the dry shore along a given bearing (march out past the water's edge for a pond; a ring for a lagoon/coast)
   const shorePoint = (a) => {
-    if (centerWet) { const lim = shoreR*2.4 + 40;
+    if (centerWet) { const lim = shoreR*2.6 + 50;
       for (let d = 2; d < lim; d += 1.5) if (waterDepthAt(cx + Math.cos(a)*d, cz + Math.sin(a)*d) <= 0.05) {
         const d2 = d + 2.2; return { x: cx + Math.cos(a)*d2, z: cz + Math.sin(a)*d2 }; }
       return null;
     }
-    const d = 5 + R()*7; return { x: cx + Math.cos(a)*d, z: cz + Math.sin(a)*d };
+    const d = 4 + R()*9; return { x: cx + Math.cos(a)*d, z: cz + Math.sin(a)*d };
   };
-  kappaVillage = { x: cx, z: cz, waterY, rad: Math.max(7, Math.min(shoreR + 6, 28)) };
   const want = Math.max(3, Math.min(4, (TUNE.KAPPA_COUNT | 0) || 4));
-  const baseA = R()*6.283;   // cluster the huts on ONE stretch of shore (a village, not a ring around the whole lake)
-  const tryHut = (ang) => {
-    const sp = shorePoint(ang); if (!sp) return;
-    const s = surfaceAt(sp.x, sp.z);
-    if (waterDepthAt(sp.x, sp.z) > 0.05 || s.slope > 0.33) return;                        // dry, gentle ground at the shore
-    if (typeof nearPOI === "function" && nearPOI(sp.x, sp.z, 3)) return;
-    if (typeof insideCottage === "function" && insideCottage(sp.x, sp.z)) return;
-    for (const h of kappaHuts) if (Math.hypot(h.x-sp.x, h.z-sp.z) < 3.4) return;
-    kappaHuts.push({ x: sp.x, z: sp.z, y: s.h, yaw: Math.atan2(cx - sp.x, cz - sp.z) });   // door faces the water
+  // Build a cluster of huts along ONE stretch of shore. Try several base bearings and keep the fullest cluster,
+  // so a village stays tight even when one stretch of the pond's shore is too steep or wet.
+  const CLUSTER_R = 15;   // keep every hut within this distance of the first one, so the village is tight on any pond size
+  const buildCluster = (ba, slopeMax, checkNice) => {
+    const tmp = []; let anchor = null;
+    for (let t = 0; t < 600 && tmp.length < want; t++) {
+      const sp = shorePoint(anchor ? R() * 6.283 : ba + (R() - 0.5) * 1.0); if (!sp) continue;   // first hut sets the anchor; the rest cluster near it
+      const s = surfaceAt(sp.x, sp.z);
+      if (waterDepthAt(sp.x, sp.z) > 0.08 || s.slope > slopeMax) continue;
+      if (checkNice && typeof insideCottage === "function" && insideCottage(sp.x, sp.z)) continue;
+      if (anchor && Math.hypot(sp.x - anchor.x, sp.z - anchor.z) > CLUSTER_R) continue;   // distance leash → tight cluster
+      let ok = true; for (const h of tmp) if (Math.hypot(h.x-sp.x, h.z-sp.z) < 3.2) { ok = false; break; }
+      if (!ok) continue;
+      tmp.push({ x: sp.x, z: sp.z, y: s.h, yaw: Math.atan2(cx - sp.x, cz - sp.z) });   // door faces the water
+      if (!anchor) anchor = sp;
+    }
+    return tmp;
   };
-  for (let t = 0; t < 500 && kappaHuts.length < want; t++) tryHut(baseA + (R() - 0.5) * 2.0);   // a ~60° arc first
-  for (let t = 0; t < 400 && kappaHuts.length < want; t++) tryHut(R() * 6.283);                 // then anywhere on the shore
-  if (!kappaHuts.length) { kappaVillage = null; return; }
+  for (let attempt = 0; attempt < 12 && kappaHuts.length < want; attempt++) {
+    const tmp = buildCluster(R() * 6.283, attempt < 8 ? 0.33 : 0.5, attempt < 8);   // later attempts relax slope + niceties
+    if (tmp.length > kappaHuts.length) kappaHuts = tmp;
+  }
+  if (!kappaHuts.length) {   // last resort: one hut at the nearest dry spot to the centre
+    let bx = cx, bz = cz; if (waterDepthAt(bx, bz) > 0.05) for (let d = 2; d < shoreR*2.6 + 50; d += 1.5) { if (waterDepthAt(cx + d, cz) <= 0.05) { bx = cx + d + 2; break; } }
+    const s = surfaceAt(bx, bz); kappaHuts.push({ x: bx, z: bz, y: s.h, yaw: Math.atan2(cx - bx, cz - bz) });
+  }
   // recentre the village on the huts so the kappa wander around their homes + the adjacent shallows (not the whole lake)
   let hcx = 0, hcz = 0; for (const h of kappaHuts) { hcx += h.x; hcz += h.z; } hcx /= kappaHuts.length; hcz /= kappaHuts.length;
   let maxd = 0; for (const h of kappaHuts) maxd = Math.max(maxd, Math.hypot(h.x - hcx, h.z - hcz));
@@ -11588,6 +11608,23 @@ function placeKappaVillage() {
     blink: 1, blinkT: 1 + R()*3, look: 0, lookTarget: 0, lookT: R()*4,
     stuckT: 0, lastx: h.x, lastz: h.z, swim: 0, renderY: h.y, stumble: 0,
   });
+  // the village IS the player's spawn: stand back on the land side so the whole cluster (and the water beyond) is in view
+  let sx = null, sz = null;
+  let lx = hcx - cx, lz = hcz - cz; const ll = Math.hypot(lx, lz) || 1; lx /= ll; lz /= ll;   // landward = from the water toward the huts
+  { let x = hcx + lx*(maxd + 7), z = hcz + lz*(maxd + 7);
+    for (let g = 0; g < 18 && (waterDepthAt(x, z) > 0.04 || surfaceAt(x, z).slope > 0.4); g++) { x += lx*2; z += lz*2; }
+    if (waterDepthAt(x, z) <= 0.04 && surfaceAt(x, z).slope <= 0.4) { sx = x; sz = z; } }
+  if (sx === null) {   // fallback: any dry gentle spot a little out from a hut
+    for (const h of kappaHuts) { for (let d = 3; d <= 9 && sx === null; d += 1.2) for (let a = 0; a < 6.28; a += 0.5) {
+      const x = h.x + Math.cos(a)*d, z = h.z + Math.sin(a)*d, s = surfaceAt(x, z);
+      if (waterDepthAt(x, z) <= 0.04 && s.slope < 0.4) { sx = x; sz = z; break; } }
+      if (sx !== null) break; } }
+  if (sx === null) { sx = kappaHuts[0].x; sz = kappaHuts[0].z; }   // last resort (enterWalk's unstick will nudge off)
+  kappaVillageSpawn = { x: sx, z: sz, yaw: Math.atan2(hcx - sx, -(hcz - sz)) };   // face the village (camForward convention)
+}
+function kappaSpawnPoint() {   // FEATURE: kappa  used by findSpawn so the player starts at the village
+  if (!KAPPA_ON || !kappaVillageSpawn) return null;
+  return { x: kappaVillageSpawn.x, z: kappaVillageSpawn.z, yaw: kappaVillageSpawn.yaw };
 }
 function kappaDaytime() { const t = (typeof timeOfDay === "number") ? timeOfDay : 0.3; return t >= KAPPA_DAWN && t <= KAPPA_DUSK; }
 function pickKappaTarget(k) {
