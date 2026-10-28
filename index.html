@@ -4296,6 +4296,9 @@ addEventListener("wheel", (e) => {
 }, { passive: true });
 canvas.addEventListener("auxclick", (e) => { if (e.button === 1) e.preventDefault(); });
 addEventListener("pointerup", (e) => { if (e.pointerType === "touch") clearBreakLock(); });   // §bugfix touch taps don't fire mouseup, so lift the break-lockout on the pointer release
+// FEATURE: mobile-eat  releasing the finger that is holding a food slot cancels the meal (a quick tap just selects, with no bite taken)
+if (IS_TOUCH) { const _endEat = (e) => { if (_mobileEatTouch === null) return; for (const t of e.changedTouches) if (t.identifier === _mobileEatTouch) { _mobileEatTouch = null; cancelEat(); return; } };
+  addEventListener("touchend", _endEat, { passive: true }); addEventListener("touchcancel", _endEat, { passive: true }); }
 // §P2 right-click is a game action everywhere (held-item use, satchel actions menu); never let the
 // browser's own context menu pop up over the game. Text inputs (the seed box) keep their native menu.
 addEventListener("contextmenu", (e) => { if (!(e.target.closest && e.target.closest("input, textarea"))) e.preventDefault(); }, false);
@@ -4814,6 +4817,7 @@ let chewT = 0;
 // Some foods leave a shell / peel behind, which goes to the pack (or drops at your feet if it's full).
 const LEFTOVER = { oyster: "oystershell", clam: "clamshell", mussel: "musselshell", banana: "bananapeel" };
 let eating = null;   // { id, t, dur, munch } while the meal is in progress, else null
+let _mobileEatTouch = null;   // FEATURE: mobile-eat  the touch id that is holding a food slot to eat (so a second finger moving doesn't cancel it)
 function eatProgress() { return eating ? Math.min(1, eating.t / eating.dur) : 0; }
 function startEat() {   // called on right-mouse-down; returns true if a meal began (so the world right-click is skipped)
   if (eating) return true;
@@ -8994,7 +8998,12 @@ function renderHotbar() {
   el.querySelectorAll(".hslot").forEach((s) => {
     const pick = (e) => { e.preventDefault(); e.stopPropagation(); selectHotbar(+s.dataset.h); };
     s.onclick = pick;
-    s.addEventListener("touchstart", pick, { passive: false });   // mobile: tap a loop to switch tool
+    s.addEventListener("touchstart", (e) => {   // mobile: tap a slot to switch tool; hold a FOOD slot to eat it
+      pick(e);
+      const c = Inv.hotbar[+s.dataset.h];   // FEATURE: mobile-eat  hold-to-eat on touch (mirrors desktop hold-right-click)
+      if (IS_TOUCH && c && typeof isFood === "function" && isFood(c.id) && mode === "walk" && !isPanelOpen() && typeof startEat === "function" && startEat())
+        _mobileEatTouch = (e.changedTouches && e.changedTouches[0]) ? e.changedTouches[0].identifier : 0;
+    }, { passive: false });
     s.addEventListener("contextmenu", (e) => {   // §13.3 right-click the bucket on the belt → Look inside
       const c = Inv.hotbar[+s.dataset.h]; if (c && c.id === "bucket") { e.preventDefault(); e.stopPropagation(); Inv.selected = +s.dataset.h; renderHotbar(); openBucketMenu(bkOfSlot(c)); } });
   });
@@ -9646,6 +9655,7 @@ function targetAlongRay(r, sticky) {
   if (typeof tallGrass !== "undefined") for (const g of tallGrass) if (!g.cut) sphere(g, "tallgrass", g.x, g.z, 0.4*g.scale, 0.7*g.scale);   // §veg5 strip tall grass for fibre
   if (typeof plants !== "undefined") for (const pl of plants) if (!pl.cut) sphere(pl, "plant", pl.x, pl.z, 0.35*pl.scale, 0.55*pl.scale);   // §P3 pick flowers / ferns
   if (typeof shrooms !== "undefined") for (const sh of shrooms) if (!sh.cut) sphere(sh, "shroom", sh.x, sh.z, 0.3*sh.scale, 0.5*sh.scale);   // FEATURE: shrooms  pick a mushroom cluster
+  if (typeof kappas !== "undefined") for (const kp of kappas) if (!kp.inside) sphere(kp, "kappa", kp.x, kp.z, 0.5, 0.7);   // FEATURE: kappa  a hit makes it stumble (never harmed/scooped)
   // §P3 standing bull kelp: a tall capsule down the whole stipe (seabed → crown) so any part in reach grabs it,
   // from above or below the surface. A harvested stalk has its instance scale zeroed, so skip those.
   if (kelpType && kelpType.inst.data) { const kd = kelpType.inst.data, gate = (STICK_REACH + 3) * (STICK_REACH + 3);
@@ -9677,7 +9687,7 @@ let curTarget = null;    // recomputed each frame from the crosshair (desktop)
 // something (so a click can fall through to a ground tool-use otherwise).
 // §A3 target kinds that ANY held item can act on (harvest a plant, hit a creature, pick a find, open a thing).
 // The tool-gated kinds (tree/fallentree/rock/searock/stump/geode/heaveboulder) are deliberately excluded.
-const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","tallgrass","plant","shroom","kelp","salt",
+const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","tallgrass","plant","shroom","kappa","kelp","salt",
   "flotsam","barnacle","nest","driftwood","chest","openchest","storagebox",
   "lantern","fence","crate","barrel","searock"]);
 function softTargetUnderCrosshair() { const t = effectiveTarget(); return (t && SOFT_INTERACT.has(t.kind)) ? t : null; }
@@ -9702,6 +9712,7 @@ function useToolOnTarget(t) {
     case "tallgrass": harvestTallGrass(t.obj); return true;   // §veg5 strip for Plant Fiber
     case "plant": harvestPlant(t.obj); return true;           // §P3 pick a flower or fern
     case "shroom": harvestShroom(t.obj); return true;         // FEATURE: shrooms  pick a magic mushroom cluster
+    case "kappa": kappaStumble(t.obj); return true;           // FEATURE: kappa  a hit just makes it stumble back with a chirp
     case "kelp": harvestKelp(t.obj); return true;             // §P3 pick standing bull kelp (above or below water)
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "flotsam": collectFlotsam(t.obj); return true;   // §5 scoop floating debris straight from the water
@@ -11425,6 +11436,280 @@ function updateShroomAudio(env) {
 }
 if (typeof SND !== "undefined") SND.def("shroom_eat", { freq: 320, freq2: 540, shape: "sine", atk: 0.02, sus: 0.3, rel: 0.8, noise: 0.05, gain: 0.4 }, { vol: 0.4 });   // a soft, dreamy swell on eating
 // === SHROOMS END ===
+
+// === KAPPA START ===
+// A few neutral kappa (original design, loosely river-sprite inspired) who live
+// by fresh water, wander the island by day and go home at dusk. This phase is
+// model + animation + navigation only: no interactions beyond a hit-stumble.
+// Self-contained; toggle the whole feature with KAPPA_ON below.
+//
+// HOOKS THIS FEATURE TOUCHES (search "// FEATURE: kappa" to find every one):
+//   · frame() walk update   - updateKappa(dt)
+//   · frame() draw list      - drawKappa(view)
+//   · generateWorld()+init   - placeKappaVillage() (after props/pools exist)
+//   · targetAlongRay()       - a sphere() candidate per kappa (kind "kappa")
+//   · SOFT_INTERACT set      - "kappa" is hand-hittable (stumble only)
+//   · useToolOnTarget()      - case "kappa": kappaStumble()
+//   · aim tooltip (frame)    - a "shy kappa" readout
+//   · colliders (placement)  - hut colliders so the player can't walk through
+//
+const KAPPA_ON = true;            // master on/off for the entire feature
+
+// --- tunables (live in the central TUNE + debug sliders; read as TUNE.KAPPA_*) ---
+Object.assign(TUNE, {
+  KAPPA_COUNT: 4,        // kappa (and huts) per village (3-4)
+  KAPPA_SPEED: 1.3,      // walk speed (m/s)
+  KAPPA_SWIMSPEED: 0.9,  // swim speed (m/s)
+  KAPPA_TURN: 2.6,       // max turn rate (rad/s) — capped so heading never snaps
+  KAPPA_SCALE: 1.0,      // body scale (~1 m tall at 1.0)
+});
+TUNABLES.push(
+  { k: "KAPPA_SPEED", min: 0.3, max: 3.0, step: 0.1 },
+  { k: "KAPPA_SWIMSPEED", min: 0.3, max: 2.5, step: 0.1 },
+  { k: "KAPPA_TURN", min: 0.5, max: 6.0, step: 0.1 },
+  { k: "KAPPA_SCALE", min: 0.5, max: 1.8, step: 0.05 },
+);
+const KAPPA_R = 0.42;        // body radius for collision/steering
+const KAPPA_SWIMD = 0.75;    // water depth (m) past which a kappa swims
+const KAPPA_MAXD = 2.4;      // deepest water a wander target may sit in
+const KAPPA_FLOAT = 0.52;    // how far the body sits below the surface while swimming (head stays above)
+const KAPPA_STUCK = 3.0;     // seconds of no progress before picking a new target
+const KAPPA_DAWN = 0.06, KAPPA_DUSK = 0.52;   // out between these times of day; home otherwise (timeOfDay 0..1)
+
+// --- colours ---
+const KC_SKIN = [0.33, 0.72, 0.26], KC_BELLY = [0.63, 0.87, 0.43], KC_SHELL = [0.13, 0.45, 0.15];
+const KC_BEAK = [0.97, 0.82, 0.17], KC_DISH = [0.99, 0.87, 0.24], KC_HAIR = [0.19, 0.5, 0.15];
+const KC_EYEW = [0.98, 0.98, 0.95], KC_EYEP = [0.09, 0.09, 0.13];
+
+// --- part meshes (each modelled around its own pivot at the local origin, +Z forward, feet at y=0) ---
+function kappaTrunkMesh() {   // torso + belly + back shell; pivot at the hip
+  const m = Mesh();
+  mergeAt(m, scaleMeshXYZ(sphM(0.40, KC_SKIN, 11, 8), 1.05, 1.0, 0.95), 0, 0.0, 0);     // round lower body
+  mergeAt(m, scaleMeshXYZ(sphM(0.30, KC_SKIN, 10, 7), 1.0, 0.95, 0.95), 0, 0.36, 0);    // narrower chest → pear
+  mergeAt(m, scaleMeshXYZ(sphM(0.31, KC_BELLY, 9, 6), 0.78, 0.9, 0.55), 0, 0.02, 0.26);  // lighter belly patch (front)
+  mergeAt(m, scaleMeshXYZ(sphM(0.35, KC_SHELL, 9, 6), 1.0, 0.92, 0.6), 0, 0.14, -0.24);  // darker dome shell (back)
+  return m;
+}
+function kappaHeadMesh() {   // head + beak + dish + spiky hair; pivot at the neck
+  const m = Mesh();
+  mergeAt(m, scaleMeshXYZ(sphM(0.33, KC_SKIN, 12, 8), 1.0, 0.98, 1.0), 0, 0.22, 0);       // big round head
+  mergeAt(m, scaleMeshXYZ(sphM(0.15, KC_BEAK, 8, 6), 1.35, 0.5, 1.5), 0, 0.17, 0.32);     // wide upper beak
+  mergeAt(m, scaleMeshXYZ(sphM(0.12, KC_BEAK, 7, 5), 1.2, 0.42, 1.2), 0, 0.07, 0.3);       // lower beak
+  mergeAt(m, scaleMeshXYZ(sphM(0.22, KC_DISH, 14, 4), 1.0, 0.16, 1.0), 0, 0.52, 0);         // flat dish on top
+  for (let i = 0; i < 11; i++) { const a = i / 11 * 6.2832, r = 0.27;                        // spiky hair ringing the dish
+    const spike = mCylMeshK(0, 0.15, 0.05, 0, 4, KC_HAIR);
+    mergeAt(m, spike, Math.cos(a) * r, 0.4, Math.sin(a) * r); }
+  return m;
+}
+function mCylMeshK(y0, y1, r0, r1, sides, col) { const m = Mesh(); mCyl(m, y0, y1, r0, r1, sides, col); return m; }
+function kappaEyeMesh() {   // a pair of eyes; pivot at the eye-centre, faces +Z
+  const m = Mesh();
+  for (const sx of [-0.14, 0.14]) {
+    mergeAt(m, sphM(0.1, KC_EYEW, 8, 6), sx, 0, 0);          // white
+    mergeAt(m, sphM(0.052, KC_EYEP, 6, 5), sx, 0.0, 0.065);  // black pupil, forward
+  }
+  return m;
+}
+function kappaArmMesh() {   // stubby arm; pivot at the shoulder, hangs down
+  const m = Mesh();
+  mCyl(m, 0, -0.26, 0.1, 0.085, 7, KC_SKIN);
+  mergeAt(m, sphM(0.1, KC_SKIN, 7, 5), 0, -0.28, 0);        // little hand
+  return m;
+}
+function kappaLegMesh() {   // short leg + flat foot; pivot at the hip
+  const m = Mesh();
+  mCyl(m, 0, -0.34, 0.12, 0.1, 7, KC_SKIN);
+  mBox(m, 0, -0.37, 0.07, 0.11, 0.045, 0.16, KC_SKIN);      // flat foot, forward
+  return m;
+}
+function kappaHutMesh() {   // a simple box house with a hip roof + round door (can't be broken)
+  const m = Mesh(), W = 0.95, H = 1.0, wood = [0.62, 0.46, 0.3], roof = [0.44, 0.31, 0.2], roof2 = [0.38, 0.26, 0.17], door = [0.17, 0.11, 0.07];
+  mBox(m, 0, H, 0, W, H, W, wood);                           // walls
+  const e = [[-W, 2*H, -W], [W, 2*H, -W], [W, 2*H, W], [-W, 2*H, W]], apex = [0, 2*H + 0.9, 0];
+  for (let i = 0; i < 4; i++) mTri(m, e[i], e[(i+1)%4], apex, i % 2 ? roof : roof2);   // hip roof
+  mBox(m, 0, 0.52, W + 0.02, 0.3, 0.52, 0.03, door);         // doorway on the +Z (pond-facing) wall
+  return m;
+}
+
+// --- village: find fresh water, place huts + kappa around it ---
+let kappaVillage = null, kappaHuts = [], kappas = [];
+function placeKappaVillage() {
+  kappaVillage = null; kappaHuts = []; kappas = [];
+  if (!KAPPA_ON) return;
+  const R = mulberry32(((SEED_INT ^ 0x6b617070) >>> 0) || 1);   // own stream ("kapp"): zero draws from the shared rng
+  // prefer the biggest inland freshwater pool; else a sheltered shallow lagoon on the shore
+  let best = null; for (const p of pools) { if (p.n < 16) continue; if (!best || p.n > best.n) best = p; }
+  let cx, cz, waterY, shoreR;
+  if (best) { cx = best.x; cz = best.z; waterY = best.rim; shoreR = Math.sqrt(best.n / Math.PI) * CELL; }
+  else {
+    // no inland freshwater: settle a sheltered shallow lagoon on the shore (gentle dry ground next to calm shallows)
+    let found = null, bestScore = -1;
+    for (let i = 0; i < 900; i++) { const a = R()*6.283, r = HALF*(0.18 + R()*0.56), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+      const s = surfaceAt(x, z); if (s.h < 0.5 || s.h > 9 || s.slope > 0.3) continue;
+      let water = 0; for (let k = 0; k < 8; k++) { const aa = k/8*6.283, d = waterDepthAt(x + Math.cos(aa)*6, z + Math.sin(aa)*6); if (d > 0.2 && d < 3.5) water++; }
+      if (!water) continue; const score = water - s.slope*2; if (score > bestScore) { bestScore = score; found = { x, z }; } }
+    if (!found) return;   // no freshwater and no sheltered lagoon on this seed → no village
+    cx = found.x; cz = found.z; waterY = waterLevel; shoreR = 9;
+  }
+  const centerWet = waterDepthAt(cx, cz) > 0.05;
+  // a point on the dry shore along a given bearing (march out past the water's edge for a pond; a ring for a lagoon)
+  const shorePoint = (a) => {
+    if (centerWet) { const lim = shoreR*2.4 + 40;
+      for (let d = 2; d < lim; d += 1.5) if (waterDepthAt(cx + Math.cos(a)*d, cz + Math.sin(a)*d) <= 0.05) {
+        const d2 = d + 2.2; return { x: cx + Math.cos(a)*d2, z: cz + Math.sin(a)*d2 }; }
+      return null;
+    }
+    const d = 5 + R()*7; return { x: cx + Math.cos(a)*d, z: cz + Math.sin(a)*d };
+  };
+  kappaVillage = { x: cx, z: cz, waterY, rad: Math.max(7, Math.min(shoreR + 6, 28)) };
+  const want = Math.max(3, Math.min(4, (TUNE.KAPPA_COUNT | 0) || 4));
+  const baseA = R()*6.283;   // cluster the huts on ONE stretch of shore (a village, not a ring around the whole lake)
+  const tryHut = (ang) => {
+    const sp = shorePoint(ang); if (!sp) return;
+    const s = surfaceAt(sp.x, sp.z);
+    if (waterDepthAt(sp.x, sp.z) > 0.05 || s.slope > 0.33) return;                        // dry, gentle ground at the shore
+    if (typeof nearPOI === "function" && nearPOI(sp.x, sp.z, 3)) return;
+    if (typeof insideCottage === "function" && insideCottage(sp.x, sp.z)) return;
+    for (const h of kappaHuts) if (Math.hypot(h.x-sp.x, h.z-sp.z) < 3.4) return;
+    kappaHuts.push({ x: sp.x, z: sp.z, y: s.h, yaw: Math.atan2(cx - sp.x, cz - sp.z) });   // door faces the water
+  };
+  for (let t = 0; t < 500 && kappaHuts.length < want; t++) tryHut(baseA + (R() - 0.5) * 2.0);   // a ~60° arc first
+  for (let t = 0; t < 400 && kappaHuts.length < want; t++) tryHut(R() * 6.283);                 // then anywhere on the shore
+  if (!kappaHuts.length) { kappaVillage = null; return; }
+  // recentre the village on the huts so the kappa wander around their homes + the adjacent shallows (not the whole lake)
+  let hcx = 0, hcz = 0; for (const h of kappaHuts) { hcx += h.x; hcz += h.z; } hcx /= kappaHuts.length; hcz /= kappaHuts.length;
+  let maxd = 0; for (const h of kappaHuts) maxd = Math.max(maxd, Math.hypot(h.x - hcx, h.z - hcz));
+  kappaVillage = { x: hcx, z: hcz, waterY, rad: Math.max(10, Math.min(maxd + 13, 30)) };
+  for (const h of kappaHuts) colliders.push({ x: h.x, z: h.z, r: 1.1, kind: "kappahut" });   // FEATURE: kappa  huts block the player
+  if (typeof rebuildCollHash === "function") rebuildCollHash();
+  for (const h of kappaHuts) kappas.push({
+    home: h, x: h.x, z: h.z, yaw: h.yaw, tx: h.x, tz: h.z, spd: 0,
+    phase: R()*6.28, seed: R()*6.28, state: "wander", inside: false,
+    blink: 1, blinkT: 1 + R()*3, look: 0, lookTarget: 0, lookT: R()*4,
+    stuckT: 0, lastx: h.x, lastz: h.z, swim: 0, renderY: h.y, stumble: 0,
+  });
+}
+function kappaDaytime() { const t = (typeof timeOfDay === "number") ? timeOfDay : 0.3; return t >= KAPPA_DAWN && t <= KAPPA_DUSK; }
+function pickKappaTarget(k) {
+  if (!kappaVillage) return;
+  for (let t = 0; t < 10; t++) { const a = Math.random()*6.283, r = kappaVillage.rad * (0.25 + Math.random()*1.05);
+    const x = kappaVillage.x + Math.cos(a)*r, z = kappaVillage.z + Math.sin(a)*r;
+    if (waterSurfaceAt(x, z) - surfaceAt(x, z).h > KAPPA_MAXD) continue;   // avoid deep water
+    k.tx = x; k.tz = z; return; }
+  k.tx = kappaVillage.x; k.tz = kappaVillage.z;
+}
+function kappaResolve(k, x, z) {   // steer around obstacles: slide out of colliders, the player and other kappa
+  const cx = Math.floor(x / COLL_CELL), cz = Math.floor(z / COLL_CELL);
+  for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) { const bk = collHash.get((cx+i) + "," + (cz+j)); if (!bk) continue;
+    for (const c of bk) {
+      if (c.kind === "kappahut" && Math.abs(c.x - k.home.x) < 0.01 && Math.abs(c.z - k.home.z) < 0.01) continue;   // its own home never blocks it
+      const dx = x - c.x, dz = z - c.z, minD = c.r + KAPPA_R; let d = Math.hypot(dx, dz);
+      if (d < minD) { if (d < 1e-4) x += minD; else { const p = (minD - d)/d; x += dx*p; z += dz*p; } } } }
+  { const dx = x - player.x, dz = z - player.z, minD = PLAYER_R + KAPPA_R; let d = Math.hypot(dx, dz); if (d < minD && d > 1e-4) { const p = (minD - d)/d; x += dx*p; z += dz*p; } }
+  for (const o of kappas) { if (o === k || o.inside) continue; const dx = x - o.x, dz = z - o.z, minD = KAPPA_R*2; let d = Math.hypot(dx, dz); if (d < minD && d > 1e-4) { const p = (minD - d)/d*0.5; x += dx*p; z += dz*p; } }
+  return [x, z];
+}
+function updateKappa(dt) {
+  if (!KAPPA_ON || !kappas.length) return;
+  const day = kappaDaytime();
+  for (const k of kappas) {
+    if (k.stumble > 0) k.stumble = Math.max(0, k.stumble - dt);
+    // schedule: home at dusk/night, out at dawn
+    if (!day) { if (k.state !== "goHome" && k.state !== "inside") { k.state = "goHome"; k.tx = k.home.x; k.tz = k.home.z; } }
+    else if (k.inside || k.state === "goHome") { k.inside = false; k.state = "wander"; pickKappaTarget(k); }
+    if (k.inside) { k.spd = 0; continue; }                                   // hidden indoors, not moving
+    if (k.state === "goHome" && Math.hypot(k.x - k.home.x, k.z - k.home.z) < 0.8) { k.inside = true; k.spd = 0; continue; }
+    if (k.state === "wander" && Math.hypot(k.x - k.tx, k.z - k.tz) < 0.8) pickKappaTarget(k);
+    // desired heading toward the target (prop yaw convention: local +Z → (sin,cos))
+    const dx = k.tx - k.x, dz = k.tz - k.z;
+    const desired = (k.stumble > 0) ? k.yaw : Math.atan2(dx, dz);
+    let dd = desired - k.yaw; while (dd > Math.PI) dd -= 6.283185; while (dd < -Math.PI) dd += 6.283185;
+    const maxTurn = TUNE.KAPPA_TURN * dt; k.yaw += Math.max(-maxTurn, Math.min(maxTurn, dd));   // capped turn rate
+    // speed: back up during a stumble, otherwise ease off while turning sharply (heading only changes meaningfully while moving)
+    const base = k.swim > 0.5 ? TUNE.KAPPA_SWIMSPEED : TUNE.KAPPA_SPEED;
+    let mv = (k.stumble > 0) ? -base * 1.5 * Math.min(1, k.stumble / 0.35) : base * Math.max(0.12, Math.cos(dd));
+    const nx0 = k.x + Math.sin(k.yaw)*mv*dt, nz0 = k.z + Math.cos(k.yaw)*mv*dt;
+    const [nx, nz] = kappaResolve(k, nx0, nz0);
+    const moved = Math.hypot(nx - k.x, nz - k.z); k.x = nx; k.z = nz;
+    k.spd = (k.stumble > 0) ? 0 : Math.min(1, moved / (base*dt + 1e-5));
+    // stuck → new target
+    if (k.state === "wander") { k.stuckT += dt;
+      if (Math.hypot(k.x - k.lastx, k.z - k.lastz) > 1.2) { k.stuckT = 0; k.lastx = k.x; k.lastz = k.z; }
+      else if (k.stuckT > KAPPA_STUCK) { k.stuckT = 0; k.lastx = k.x; k.lastz = k.z; pickKappaTarget(k); } }
+    // ground vs water: feet planted on land, body floats while swimming (never floating/sinking on land)
+    const g = surfaceAt(k.x, k.z).h, ws = waterSurfaceAt(k.x, k.z), depth = ws - g;
+    k.swim += ((depth > KAPPA_SWIMD ? 1 : 0) - k.swim) * Math.min(1, dt*3);
+    if (k.swim < 0.5) k.renderY = g;   // feet planted on the bottom on land AND while wading (never floats or sinks)
+    else k.renderY += ((ws - KAPPA_FLOAT) - k.renderY) * Math.min(1, dt*6);   // only true swimming floats the body, smoothly
+    // walk/paddle cycle advances by distance travelled, so it stays synced to speed
+    if (moved > 1e-4 && k.stumble <= 0) k.phase += moved * (k.swim > 0.5 ? 5.5 : 7.5);
+    // blink + idle look-around
+    k.blinkT -= dt; if (k.blinkT <= 0) { k.blink = 0; if (k.blinkT < -0.11) { k.blink = 1; k.blinkT = 1.6 + Math.random()*3.6; } }
+    k.lookT -= dt; if (k.lookT <= 0) { k.lookTarget = (Math.random() - 0.5) * 1.1; k.lookT = 1.4 + Math.random()*2.6; }
+    k.look += (k.lookTarget - k.look) * Math.min(1, dt*2);
+  }
+}
+function kappaStumble(k) {   // a hit just makes it recoil with a chirp (it can't be harmed or scooped)
+  k.stumble = 0.45; k.yaw = Math.atan2(player.x - k.x, player.z - k.z);   // face the player, then back away
+  if (typeof SND !== "undefined") SND.play("kappa_chirp");
+}
+// --- draw: a tiny CPU bone rig, one instance per body part ---
+const _kDyn = {}; let _hutDyn = null;
+const _kScratch = { t: new Float32Array(8*10), h: new Float32Array(8*10), e: new Float32Array(8*10), a: new Float32Array(16*10), l: new Float32Array(16*10) };
+function drawKappaHuts(view) {
+  if (!kappaHuts.length) return;
+  if (!_hutDyn) _hutDyn = makeDynamic(kappaHutMesh(), 8);
+  const a = rockScratch; let n = 0;
+  for (const h of kappaHuts) { const dx = h.x-cam.pos[0], dz = h.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R || n >= 8) continue;
+    const o = n*10; a[o]=h.x;a[o+1]=h.y;a[o+2]=h.z;a[o+3]=1;a[o+4]=h.yaw;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
+  if (n) { propUniforms(view); gl.uniform1f(propU.uSway, 0); _hutDyn.draw(a, n); }
+}
+function drawKappa(view) {
+  if (!KAPPA_ON) return;
+  drawKappaHuts(view);
+  if (!kappas.length) return;
+  if (!_kDyn.trunk) { _kDyn.trunk = makeDynamic(kappaTrunkMesh(), 8); _kDyn.head = makeDynamic(kappaHeadMesh(), 8);
+    _kDyn.eye = makeDynamic(kappaEyeMesh(), 8); _kDyn.arm = makeDynamic(kappaArmMesh(), 16); _kDyn.leg = makeDynamic(kappaLegMesh(), 16); }
+  propUniforms(view); gl.uniform1f(propU.uSway, 0);
+  const S = TUNE.KAPPA_SCALE, t = performance.now()*0.001;
+  const tA=_kScratch.t, hA=_kScratch.h, eA=_kScratch.e, aA=_kScratch.a, lA=_kScratch.l;
+  let nt=0, nh=0, ne=0, na=0, nl=0;
+  for (const k of kappas) {
+    if (k.inside) continue;
+    const dx = k.x - cam.pos[0], dz = k.z - cam.pos[2]; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
+    const cyw = Math.cos(k.yaw), syw = Math.sin(k.yaw), swim = k.swim, land = 1 - swim;
+    const yr = (ox, oy, oz) => [ k.x + (ox*cyw + oz*syw)*S, k.renderY + oy*S, k.z + (-ox*syw + oz*cyw)*S ];   // local→world (prop yaw)
+    const breath = Math.sin(t*2.0 + k.seed) * 0.02;
+    const bob = (k.spd > 0.05 ? Math.abs(Math.sin(k.phase)) * 0.04 * land : 0) + breath;
+    const roll = Math.sin(k.phase) * 0.12 * k.spd * land;     // waddle side-to-side roll
+    const swimPitch = 0.55 * swim;                            // lean forward while swimming
+    const headYaw = k.yaw + k.look * land;
+    // trunk (hip pivot). land → roll about local Z; swim → pitch forward about local X.
+    { const w = yr(0, 0.42, 0); const o = nt*10; tA[o]=w[0];tA[o+1]=w[1]+bob*S;tA[o+2]=w[2];tA[o+3]=S;tA[o+4]=k.yaw;
+      tA[o+5] = swim > 0.5 ? swimPitch : roll; tA[o+6] = swim > 0.5 ? 0 : 1.5708; tA[o+7]=1;tA[o+8]=1;tA[o+9]=1; nt++; }
+    // head (neck pivot): matches the trunk's roll on land, a small downward nod while swimming
+    { const w = yr(0, 0.80, 0); const o = nh*10; hA[o]=w[0];hA[o+1]=w[1]+bob*S;hA[o+2]=w[2];hA[o+3]=S;hA[o+4]=headYaw;
+      hA[o+5] = swim > 0.5 ? 0.22 : roll; hA[o+6] = swim > 0.5 ? 0 : 1.5708; hA[o+7]=1;hA[o+8]=1;hA[o+9]=1; nh++; }
+    // eyes (on the face, following the head yaw; blink = a quick squash)
+    { const hy = Math.cos(headYaw), hs = Math.sin(headYaw), ex = 0, ey = 1.0, ez = 0.25;
+      const wx = k.x + (ex*hy + ez*hs)*S, wz = k.z + (-ex*hs + ez*hy)*S, wy = k.renderY + (ey + bob)*S;
+      const o = ne*10; eA[o]=wx;eA[o+1]=wy;eA[o+2]=wz;eA[o+3]=S*(k.blink ? 1 : 0.15);eA[o+4]=headYaw;eA[o+5]=0;eA[o+6]=0;eA[o+7]=1;eA[o+8]=1;eA[o+9]=1; ne++; }
+    // arms (shoulders): swing opposite the legs on land, paddle while swimming
+    for (const side of [-1, 1]) { const w = yr(side*0.32, 0.72, 0);
+      let lean = swim > 0.5 ? Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI)) * 0.9
+                            : Math.sin(k.phase + (side > 0 ? Math.PI : 0)) * 0.4 * k.spd;
+      const o = na*10; aA[o]=w[0];aA[o+1]=w[1]+bob*S;aA[o+2]=w[2];aA[o+3]=S;aA[o+4]=k.yaw;aA[o+5]=lean;aA[o+6]=0;aA[o+7]=1;aA[o+8]=1;aA[o+9]=1; na++; }
+    // legs (hips): forward/back swing synced to the stride on land, a gentle trail while swimming
+    for (const side of [-1, 1]) { const w = yr(side*0.17, 0.40, 0);
+      let lean = swim > 0.5 ? (-0.3 + Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI)) * 0.2)
+                            : Math.sin(k.phase + (side > 0 ? 0 : Math.PI)) * 0.5 * k.spd * land;
+      const o = nl*10; lA[o]=w[0];lA[o+1]=w[1];lA[o+2]=w[2];lA[o+3]=S;lA[o+4]=k.yaw;lA[o+5]=lean;lA[o+6]=0;lA[o+7]=1;lA[o+8]=1;lA[o+9]=1; nl++; }
+  }
+  if (nt) _kDyn.trunk.draw(tA, nt); if (nh) _kDyn.head.draw(hA, nh); if (ne) _kDyn.eye.draw(eA, ne);
+  if (na) _kDyn.arm.draw(aA, na); if (nl) _kDyn.leg.draw(lA, nl);
+}
+if (typeof SND !== "undefined") SND.def("kappa_chirp", { freq: 620, freq2: 880, shape: "sine", atk: 0.005, sus: 0.04, rel: 0.12, noise: 0.08, gain: 0.4 }, { vol: 0.4, pv: 0.18 });   // a soft startled chirp
+// === KAPPA END ===
 
 /* ===================================================================== *
  * § 17  FARMING, forage wild tropical plants, or plant seeds on dug soil
@@ -13867,6 +14152,7 @@ if (typeof recomputeClusterAttach === "function") recomputeClusterAttach();   //
 if (debugMode) auditRegistries();
 if (debugMode && typeof validateClusters === "function") validateClusters();   // §clust8 report any floating cluster (should be 0)
 seedShrooms();   // FEATURE: shrooms  forage mushrooms (last, so its footprint claims never shift other seeders)
+placeKappaVillage();   // FEATURE: kappa  freshwater village + residents (own seed stream; adds hut colliders)
 validateFootprints();   // §P3 overlap self-check on the initial world (want 0)
 
 /* ===================================================================== *
@@ -13997,6 +14283,7 @@ function generateWorld() {
   if (typeof recomputeClusterAttach === "function") recomputeClusterAttach();
   if (debugMode && typeof validateClusters === "function") validateClusters();
   seedShrooms();   // FEATURE: shrooms  forage mushrooms (last, so its footprint claims never shift other seeders)
+  placeKappaVillage();   // FEATURE: kappa  freshwater village + residents (own seed stream; adds hut colliders)
   validateFootprints();   // §P3 overlap self-check: logs the count (want 0) and records offenders for the debug overlay
 }
 // Regenerate onto a new seed, in place. No reload: audio context, music,
@@ -14282,6 +14569,7 @@ function frame(now) {
 
   if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateFishing(dt); updateCatchCine(dt); updateEat(dt); updatePlacedTide(); }   // §14A/B/C + §Fishing + §P2 eating + §P2 tide over placed buckets/lanterns
   if (mode === "walk") { updateShrooms(dt); updateTrip(dt); }   // FEATURE: shrooms  restock mushrooms + advance any active trip
+  if (mode === "walk") updateKappa(dt);   // FEATURE: kappa  village wander / schedule / navigation
   updateCatchPop(dt);   // §catch5 the non-blocking catch card's own timer (runs even in menus, so it fades on its own)
   updateFade(dt);
   safetyCheck(dt);
@@ -14399,6 +14687,7 @@ function frame(now) {
   drawTallGrass(view);   // §veg5
   drawPlants(view);      // §P3 pickable flowers & ferns
   drawShrooms(view);     // FEATURE: shrooms  foraged magic-mushroom clusters
+  drawKappa(view);       // FEATURE: kappa  village huts + the kappa themselves
   drawBarnacles(view);   // §5 barnacle crusts on intertidal rocks (before the transparent water)
   drawCrops(view);
   drawGoblins(view);
@@ -14580,6 +14869,11 @@ function frame(now) {
     }
     if (!buildMode && curTarget && (curTarget.kind === "tallgrass" || curTarget.kind === "plant" || curTarget.kind === "kelp")) {   // §veg5/§P3 tall-grass + flower/fern + kelp tooltip
       promptEl.textContent = curTarget.kind === "plant" ? plantPrompt(curTarget.obj) : curTarget.kind === "kelp" ? kelpPrompt(curTarget.obj) : tallGrassPrompt(curTarget.obj);
+      promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
+      crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
+    }
+    if (!buildMode && curTarget && curTarget.kind === "kappa") {   // FEATURE: kappa  a shy neutral villager
+      promptEl.textContent = "a shy kappa";
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
