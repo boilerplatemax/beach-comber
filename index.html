@@ -11477,50 +11477,207 @@ const KAPPA_FLOAT = 0.52;    // how far the body sits below the surface while sw
 const KAPPA_STUCK = 3.0;     // seconds of no progress before picking a new target
 const KAPPA_DAWN = 0.06, KAPPA_DUSK = 0.52;   // out between these times of day; home otherwise (timeOfDay 0..1)
 
-// --- colours ---
-const KC_SKIN = [0.33, 0.72, 0.26], KC_BELLY = [0.63, 0.87, 0.43], KC_SHELL = [0.13, 0.45, 0.15];
-const KC_BEAK = [0.97, 0.82, 0.17], KC_DISH = [0.99, 0.87, 0.24], KC_HAIR = [0.19, 0.5, 0.15];
-const KC_EYEW = [0.98, 0.98, 0.95], KC_EYEP = [0.09, 0.09, 0.13];
+// ---------------------------------------------------------------------------
+// §kappa-polish  A soft, cute, CHIBI kappa with its OWN toon look: smooth
+// per-vertex normals + 2-3 crisp light bands + a thin dark inverted-hull
+// outline. One tone per part (the band gives the shadow). Colours tint per
+// instance so we get colour variants for free. The rest of the world keeps
+// its flat-shaded dither; the kappa still goes through the shared post pass,
+// so it sits in the same palette.
+// ---------------------------------------------------------------------------
+const WHITE = [1, 1, 1];
+// colour variants (skin / hair / shell); leaf is common, pale is rare
+const KV = {
+  leaf:  { skin: [0.45, 0.76, 0.35], hair: [0.21, 0.47, 0.19], shell: [0.28, 0.43, 0.35] },
+  teal:  { skin: [0.31, 0.72, 0.63], hair: [0.14, 0.43, 0.41], shell: [0.20, 0.40, 0.43] },
+  olive: { skin: [0.57, 0.63, 0.31], hair: [0.35, 0.41, 0.18], shell: [0.41, 0.45, 0.27] },
+  pale:  { skin: [0.76, 0.87, 0.69], hair: [0.54, 0.67, 0.49], shell: [0.58, 0.66, 0.56] },
+};
+const KV_PICK = ["leaf", "leaf", "leaf", "leaf", "teal", "teal", "olive", "pale"];   // weighted draw
+// fixed feature colours
+const KC_CREAM = [0.96, 0.92, 0.77], KC_BEAK = [0.98, 0.80, 0.30], KC_WATER = [0.60, 0.84, 0.95];
+const KC_EYEW = [0.99, 0.99, 0.97], KC_EYEP = [0.08, 0.08, 0.12], KC_PINK = [0.98, 0.66, 0.66];
+const KC_CLOTH = [0.95, 0.95, 0.92], KC_WOOD = [0.68, 0.49, 0.30], KC_CUKE = [0.42, 0.66, 0.26], KC_LILY = [0.30, 0.57, 0.27];
 
-// --- part meshes (each modelled around its own pivot at the local origin, +Z forward, feet at y=0) ---
-function kappaTrunkMesh() {   // torso + belly + back shell; pivot at the hip
+// --- smooth-normal builder: weld triangle-soup verts by position and average face normals ---
+function kSmooth(m) {
+  const P = m.pos, N = new Array(P.length).fill(0), sum = new Map();
+  const key = (x, y, z) => Math.round(x*1000) + "," + Math.round(y*1000) + "," + Math.round(z*1000);
+  for (let i = 0; i < P.length; i += 9) {
+    const ax=P[i],ay=P[i+1],az=P[i+2], bx=P[i+3],by=P[i+4],bz=P[i+5], cx=P[i+6],cy=P[i+7],cz=P[i+8];
+    const nx=(by-ay)*(cz-az)-(bz-az)*(cy-ay), ny=(bz-az)*(cx-ax)-(bx-ax)*(cz-az), nz=(bx-ax)*(cy-ay)-(by-ay)*(cx-ax);   // area-weighted face normal
+    for (let t = 0; t < 3; t++) { const k = key(P[i+t*3], P[i+t*3+1], P[i+t*3+2]); let s = sum.get(k); if (!s) { s = [0,0,0]; sum.set(k, s); } s[0]+=nx; s[1]+=ny; s[2]+=nz; }
+  }
+  for (let i = 0; i < P.length; i += 3) { const s = sum.get(key(P[i],P[i+1],P[i+2])); const l = Math.hypot(s[0],s[1],s[2])||1; N[i]=s[0]/l; N[i+1]=s[1]/l; N[i+2]=s[2]/l; }
+  m.nrm = N; return m;
+}
+function ksph(r, col, lon, lat) {   // a flat-coloured UV sphere (no per-face checker, unlike sphM)
+  const d = Mesh(); lon = lon || 14; lat = lat || 10;
+  for (let j = 0; j < lat; j++) { const p0=j/lat*Math.PI, p1=(j+1)/lat*Math.PI, y0=Math.cos(p0)*r, y1=Math.cos(p1)*r, r0=Math.sin(p0)*r, r1=Math.sin(p1)*r;
+    for (let i = 0; i < lon; i++) { const a0=i/lon*6.2832, a1=(i+1)/lon*6.2832;
+      const A=[Math.cos(a0)*r0,y0,Math.sin(a0)*r0], B=[Math.cos(a1)*r0,y0,Math.sin(a1)*r0], C=[Math.cos(a1)*r1,y1,Math.sin(a1)*r1], E=[Math.cos(a0)*r1,y1,Math.sin(a0)*r1];
+      if (j===0) mTri(d,A,C,E,col); else if (j===lat-1) mTri(d,A,B,C,col); else mQuad(d,A,B,C,E,col); } }
+  return d;
+}
+function rotMeshY(m, a) { const c=Math.cos(a), s=Math.sin(a), P=m.pos; for (let i=0;i<P.length;i+=3){ const x=P[i],z=P[i+2]; P[i]=x*c+z*s; P[i+2]=-x*s+z*c; } return m; }
+
+// --- the toon + outline shaders (kappa only). One VAO feeds both via fixed attribute locations. ---
+const KAPPA_ATTRS = `
+layout(location=0) in vec3 aPos; layout(location=1) in vec3 aNrm; layout(location=2) in vec3 aCol;
+layout(location=3) in vec3 iOff; layout(location=4) in vec4 iSRL; layout(location=5) in vec3 iTint; layout(location=6) in vec2 iAnim;`;
+const KAPPA_XFORM = `
+  float s=iSRL.x, yaw=iSRL.y, lean=iSRL.z, ld=iSRL.w;
+  vec3 sp = aPos * vec3(s*iAnim.x, s*iAnim.y, s*iAnim.x);                 // scale + squash/stretch
+  vec3 nn = aNrm / vec3(iAnim.x, iAnim.y, iAnim.x);                       // normal under the (diagonal) squash
+  vec3 ax = vec3(cos(ld),0.0,sin(ld)); float cl=cos(lean), sl=sin(lean);
+  sp = sp*cl + cross(ax,sp)*sl + ax*dot(ax,sp)*(1.0-cl);                   // lean (tilt)
+  nn = nn*cl + cross(ax,nn)*sl + ax*dot(ax,nn)*(1.0-cl);
+  float cy=cos(yaw), sy=sin(yaw);
+  vec3 wp = vec3(sp.x*cy+sp.z*sy, sp.y, -sp.x*sy+sp.z*cy) + iOff;          // yaw + translate
+  vec3 wn = normalize(vec3(nn.x*cy+nn.z*sy, nn.y, -nn.x*sy+nn.z*cy));`;
+const kappaProg = program(`#version 300 es
+precision highp float; uniform mat4 uProj, uView; ${KAPPA_ATTRS}
+out vec3 vWorld; out vec3 vNrm; out vec3 vCol;
+void main(){ ${KAPPA_XFORM} vWorld=wp; vNrm=wn; vCol=aCol*iTint; gl_Position=uProj*uView*vec4(wp,1.0); }`,
+`#version 300 es
+precision highp float; in vec3 vWorld; in vec3 vNrm; in vec3 vCol; out vec4 frag;
+uniform vec3 uSunDir, uCamPos, uZenith, uHorizon, uWarm; uniform float uFogDensity, uFogNear, uDusk, uNight;
+${SKY_GLSL}
+void main(){
+  vec3 n = normalize(vNrm);
+  float lit = dot(n, normalize(uSunDir)) * 0.5 + 0.5;               // 0..1
+  float band = lit > 0.60 ? 1.0 : lit > 0.36 ? 0.82 : 0.66;         // 3 crisp toon bands
+  vec3 warm = mix(vec3(0.80,0.85,0.98), uWarm, clamp(lit,0.0,1.0)); // cool shadow → warm light
+  vec3 col = vCol * band * mix(vec3(0.95), warm, 0.5);
+  col *= (1.0 - 0.35*uNight);                                       // dim a touch at night
+  vec3 vv = vWorld - uCamPos; float dist=length(vv);
+  float fd = max(dist-uFogNear,0.0)*uFogDensity; float fog=1.0-exp(-fd*fd);
+  col = mix(col, skyColor(vv,uSunDir,uZenith,uHorizon,uWarm,uDusk), fog);
+  frag = vec4(col, 1.0);
+}`);
+const kappaU = uniforms(kappaProg);
+const kappaOutlineProg = program(`#version 300 es
+precision highp float; uniform mat4 uProj, uView; uniform float uOutline; ${KAPPA_ATTRS}
+void main(){ ${KAPPA_XFORM} gl_Position = uProj*uView*vec4(wp + wn*uOutline*s, 1.0); }`,
+`#version 300 es
+precision highp float; out vec4 frag; uniform vec3 uOutlineCol;
+void main(){ frag = vec4(uOutlineCol, 1.0); }`);
+const kappaOutlineU = uniforms(kappaOutlineProg);
+const KAPPA_OUTLINE = 0.02, KAPPA_OUTLINE_COL = [0.08, 0.10, 0.07];
+function makeKappaDyn(mesh, maxN) {
+  kSmooth(mesh);
+  const pos=new Float32Array(mesh.pos), nrm=new Float32Array(mesh.nrm), col=new Float32Array(mesh.col);
+  const vao=gl.createVertexArray(); gl.bindVertexArray(vao);
+  const mk=(data,loc,sz)=>{ const b=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,b); gl.bufferData(gl.ARRAY_BUFFER,data,gl.STATIC_DRAW); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc,sz,gl.FLOAT,false,0,0); return b; };
+  const pb=mk(pos,0,3), nb=mk(nrm,1,3), cb=mk(col,2,3);
+  const ST=48, ib=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,ib); gl.bufferData(gl.ARRAY_BUFFER,maxN*ST,gl.DYNAMIC_DRAW);
+  gl.enableVertexAttribArray(3); gl.vertexAttribPointer(3,3,gl.FLOAT,false,ST,0);  gl.vertexAttribDivisor(3,1);
+  gl.enableVertexAttribArray(4); gl.vertexAttribPointer(4,4,gl.FLOAT,false,ST,12); gl.vertexAttribDivisor(4,1);
+  gl.enableVertexAttribArray(5); gl.vertexAttribPointer(5,3,gl.FLOAT,false,ST,28); gl.vertexAttribDivisor(5,1);
+  gl.enableVertexAttribArray(6); gl.vertexAttribPointer(6,2,gl.FLOAT,false,ST,40); gl.vertexAttribDivisor(6,1);
+  gl.bindVertexArray(null);
+  const vc=pos.length/3;
+  return { vao, ib, pb, nb, cb, vc, draw(arr,n){ if(!n)return; gl.bindBuffer(gl.ARRAY_BUFFER,ib); gl.bufferSubData(gl.ARRAY_BUFFER,0,arr,0,n*12); gl.bindVertexArray(vao); gl.drawArraysInstanced(gl.TRIANGLES,0,vc,n); countDraw((vc/3)*n); } };
+}
+
+// --- part meshes (each modelled around its own frame pivot; +Z forward; feet at world y=0) ---
+// built with WHITE on tintable parts (skin/hair/shell → coloured by iTint), real colours on fixed features.
+function kBodyMesh() {   // small pear body (skin); pivot at the body centre
   const m = Mesh();
-  mergeAt(m, scaleMeshXYZ(sphM(0.40, KC_SKIN, 11, 8), 1.05, 1.0, 0.95), 0, 0.0, 0);     // round lower body
-  mergeAt(m, scaleMeshXYZ(sphM(0.30, KC_SKIN, 10, 7), 1.0, 0.95, 0.95), 0, 0.36, 0);    // narrower chest → pear
-  mergeAt(m, scaleMeshXYZ(sphM(0.31, KC_BELLY, 9, 6), 0.78, 0.9, 0.55), 0, 0.02, 0.26);  // lighter belly patch (front)
-  mergeAt(m, scaleMeshXYZ(sphM(0.35, KC_SHELL, 9, 6), 1.0, 0.92, 0.6), 0, 0.14, -0.24);  // darker dome shell (back)
+  mergeAt(m, scaleMeshXYZ(ksph(0.205, WHITE, 15, 11), 1.0, 0.96, 0.95), 0, -0.05, 0);   // rounded lower
+  mergeAt(m, scaleMeshXYZ(ksph(0.15,  WHITE, 13, 9),  1.0, 0.95, 0.95), 0, 0.12, 0);     // narrower upper → pear
+  mergeAt(m, scaleMeshXYZ(ksph(0.085, WHITE, 10, 7),  1.0, 0.9, 1.0),  0, 0.22, 0);      // little neck notch
   return m;
 }
-function kappaHeadMesh() {   // head + beak + dish + spiky hair; pivot at the neck
+function kBellyMesh() {   // smooth cream oval plate (fixed); body-frame
+  const m = Mesh(); mergeAt(m, scaleMeshXYZ(ksph(0.15, KC_CREAM, 13, 9), 0.82, 1.06, 0.5), 0, -0.03, 0.145); return m;
+}
+function kShellMesh() {   // olive-teal shell, snug on the back, a touch wider so the rim shows from the front (skin→shell tint); body-frame
   const m = Mesh();
-  mergeAt(m, scaleMeshXYZ(sphM(0.33, KC_SKIN, 12, 8), 1.0, 0.98, 1.0), 0, 0.22, 0);       // big round head
-  mergeAt(m, scaleMeshXYZ(sphM(0.15, KC_BEAK, 8, 6), 1.35, 0.5, 1.5), 0, 0.17, 0.32);     // wide upper beak
-  mergeAt(m, scaleMeshXYZ(sphM(0.12, KC_BEAK, 7, 5), 1.2, 0.42, 1.2), 0, 0.07, 0.3);       // lower beak
-  mergeAt(m, scaleMeshXYZ(sphM(0.22, KC_DISH, 14, 4), 1.0, 0.16, 1.0), 0, 0.52, 0);         // flat dish on top
-  for (let i = 0; i < 11; i++) { const a = i / 11 * 6.2832, r = 0.27;                        // spiky hair ringing the dish
-    const spike = mCylMeshK(0, 0.15, 0.05, 0, 4, KC_HAIR);
-    mergeAt(m, spike, Math.cos(a) * r, 0.4, Math.sin(a) * r); }
+  mergeAt(m, scaleMeshXYZ(ksph(0.24,  WHITE, 16, 11), 1.22, 0.98, 0.72), 0, 0.02, -0.05);   // broad dome, wider than the body
+  mergeAt(m, scaleMeshXYZ(ksph(0.255, WHITE, 18, 7),  1.24, 0.4, 0.66),  0, -0.12, -0.02);   // flared rim lip (peeks round the sides)
   return m;
 }
-function mCylMeshK(y0, y1, r0, r1, sides, col) { const m = Mesh(); mCyl(m, y0, y1, r0, r1, sides, col); return m; }
-function kappaEyeMesh() {   // a pair of eyes; pivot at the eye-centre, faces +Z
-  const m = Mesh();
-  for (const sx of [-0.14, 0.14]) {
-    mergeAt(m, sphM(0.1, KC_EYEW, 8, 6), sx, 0, 0);          // white
-    mergeAt(m, sphM(0.052, KC_EYEP, 6, 5), sx, 0.0, 0.065);  // black pupil, forward
+function kHeadMesh() {   // big round head (skin); pivot at the neck
+  const m = Mesh(); mergeAt(m, scaleMeshXYZ(ksph(0.30, WHITE, 18, 13), 1.0, 0.97, 0.99), 0, 0.30, 0); return m;
+}
+function kHairMesh() {   // a ring of flat leaf-flaps fanned around the dish, pointing out + slightly down (skin→hair tint); neck-frame
+  const m = Mesh(), N = 12;
+  for (let i = 0; i < N; i++) { const a = i / N * 6.2832;
+    let leaf = scaleMeshXYZ(ksph(0.17, WHITE, 8, 6), 1.0, 0.1, 0.42);     // a flat, pointed leaf along +X
+    rotMeshZ(leaf, -0.7);                                                  // tip droops down
+    rotMeshY(leaf, a + 1.5708);
+    mergeAt(m, leaf, Math.cos(a) * 0.24, 0.44, Math.sin(a) * 0.24);
   }
   return m;
 }
-function kappaArmMesh() {   // stubby arm; pivot at the shoulder, hangs down
+function kDishMesh() {   // a shallow cream bowl with a visible rim (fixed); neck-frame
   const m = Mesh();
-  mCyl(m, 0, -0.26, 0.1, 0.085, 7, KC_SKIN);
-  mergeAt(m, sphM(0.1, KC_SKIN, 7, 5), 0, -0.28, 0);        // little hand
+  mCyl(m, 0.5, 0.585, 0.165, 0.235, 20, KC_CREAM);                 // flared rim wall
+  mergeMesh(m, discMesh(0.5, 0.165, 20, 0, KC_CREAM));             // bowl floor
+  mergeMesh(m, discMesh(0.5, 0.235, 20, 0, [0.9,0.86,0.70]));      // underside of the rim
   return m;
 }
-function kappaLegMesh() {   // short leg + flat foot; pivot at the hip
+function kWaterMesh() { const m = Mesh(); mergeMesh(m, discMesh(0.55, 0.17, 20, 0, KC_WATER)); return m; }   // inset blue water disc (own instance → shimmer)
+function kBeakMesh() {   // small rounded upturned duck bill (fixed); neck-frame
+  let b = scaleMeshXYZ(ksph(0.105, KC_BEAK, 11, 8), 1.45, 0.6, 0.95);
+  rotMeshX(b, -0.28);                                              // upturn → a little smile
+  const m = Mesh(); mergeAt(m, b, 0, 0.2, 0.25); return m;
+}
+function kEyeMesh() {   // a pair of eyes; pivot at the EYE centre (so a blink squashes about the eyes)
   const m = Mesh();
-  mCyl(m, 0, -0.34, 0.12, 0.1, 7, KC_SKIN);
-  mBox(m, 0, -0.37, 0.07, 0.11, 0.045, 0.16, KC_SKIN);      // flat foot, forward
+  for (const sx of [-0.12, 0.12]) {
+    mergeAt(m, scaleMeshXYZ(ksph(0.088, KC_EYEW, 12, 9), 0.85, 1.1, 0.7), sx, 0, 0);        // big white oval
+    mergeAt(m, scaleMeshXYZ(ksph(0.05,  KC_EYEP, 9, 7),  0.95, 1.0, 0.8), sx, -0.004, 0.06); // large black pupil (~half the eye)
+    mergeAt(m, ksph(0.016, WHITE, 6, 5), sx + 0.022, 0.036, 0.085);                          // white highlight dot
+  }
+  return m;
+}
+function kCheekMesh() {   // small pink blush discs (fixed); neck-frame
+  const m = Mesh();
+  for (const sx of [-0.2, 0.2]) mergeAt(m, scaleMeshXYZ(ksph(0.05, KC_PINK, 9, 6), 1.0, 1.0, 0.28), sx, 0.19, 0.2);
+  return m;
+}
+function kArmMesh() {   // short rounded capsule + mitten hand (skin); pivot at the shoulder, hangs down
+  const m = Mesh();
+  mergeAt(m, scaleMeshXYZ(ksph(0.072, WHITE, 10, 8), 1.0, 1.9, 1.0), 0, -0.12, 0);   // arm
+  mergeAt(m, scaleMeshXYZ(ksph(0.092, WHITE, 10, 8), 1.05, 1.0, 1.05), 0, -0.25, 0);  // mitten
+  return m;
+}
+function kLegMesh() {   // short rounded leg + webbed fan foot (skin); pivot at the hip
+  const m = Mesh();
+  mergeAt(m, scaleMeshXYZ(ksph(0.082, WHITE, 10, 8), 1.0, 1.7, 1.0), 0, -0.085, 0);     // leg
+  mergeAt(m, scaleMeshXYZ(ksph(0.11,  WHITE, 11, 7), 1.0, 0.32, 1.5), 0, -0.165, 0.055); // webbed foot, forward
+  return m;
+}
+// --- accessories (own meshes; drawn only for the kappa that carry them) ---
+function kClothMesh() {   // a white cloth wrapped round the waist (body-frame)
+  const m = Mesh();
+  mergeAt(m, scaleMeshXYZ(ksph(0.2, KC_CLOTH, 14, 6), 1.04, 0.5, 1.02), 0, -0.14, 0);
+  mergeAt(m, scaleMeshXYZ(ksph(0.05, KC_CLOTH, 7, 6), 1.0, 1.6, 0.5), 0.14, -0.2, 0.16);   // a little knotted tail
+  return m;
+}
+function kLilyMesh() {   // a lily pad worn like a hat (neck-frame, on top)
+  const m = Mesh();
+  mergeAt(m, scaleMeshXYZ(ksph(0.27, KC_LILY, 16, 4), 1.0, 0.12, 1.0), 0, 0.6, 0.02);
+  const notch = scaleMeshXYZ(ksph(0.09, [0.2,0.42,0.2], 8, 4), 1.0, 0.2, 1.0);              // a wedge notch
+  mergeAt(m, notch, 0.2, 0.61, 0.0);
+  return m;
+}
+function kTubMesh() {   // a small wooden tub balanced on the head (neck-frame, on top)
+  const m = Mesh();
+  mCyl(m, 0.58, 0.82, 0.2, 0.22, 16, KC_WOOD);
+  mergeMesh(m, discMesh(0.58, 0.2, 16, 0, [0.5,0.36,0.22]));
+  mCyl(m, 0.8, 0.84, 0.205, 0.225, 16, [0.5,0.36,0.22]);   // rim hoop
+  return m;
+}
+function kCukeMesh() {   // a cucumber carried in one hand (arm-frame, at the hand)
+  const m = Mesh(); mergeAt(m, scaleMeshXYZ(ksph(0.055, KC_CUKE, 9, 7), 1.0, 2.6, 1.0), 0, -0.3, 0.02); return m;
+}
+function kBasketMesh() {   // a little reed basket carried in one hand (arm-frame, at the hand)
+  const m = Mesh();
+  mCyl(m, -0.34, -0.2, 0.08, 0.1, 12, [0.72,0.58,0.34]);
+  mergeMesh(m, discMesh(-0.34, 0.08, 12, 0, [0.6,0.47,0.27]));
   return m;
 }
 function kappaHutMesh() {   // a simple box house with a hip roof + round door (can't be broken)
@@ -11607,6 +11764,11 @@ function placeKappaVillage() {
     phase: R()*6.28, seed: R()*6.28, state: "wander", inside: false,
     blink: 1, blinkT: 1 + R()*3, look: 0, lookTarget: 0, lookT: R()*4,
     stuckT: 0, lastx: h.x, lastz: h.z, swim: 0, renderY: h.y, stumble: 0,
+    // §kappa-polish appearance (visual only): colour variant, an optional accessory, kid size, head-lag + sleepy state
+    variant: KV_PICK[(R()*KV_PICK.length) | 0],
+    acc: (R() < 0.45) ? ["cloth","lily","tub","cuke","basket"][(R()*5) | 0] : null,
+    kid: R() < 0.25,
+    hyaw: h.yaw, idleT: 0, sleepy: false,
   });
   // the village IS the player's spawn: stand back on the land side so the whole cluster (and the water beyond) is in view
   let sx = null, sz = null;
@@ -11684,6 +11846,12 @@ function updateKappa(dt) {
     k.blinkT -= dt; if (k.blinkT <= 0) { k.blink = 0; if (k.blinkT < -0.11) { k.blink = 1; k.blinkT = 1.6 + Math.random()*3.6; } }
     k.lookT -= dt; if (k.lookT <= 0) { k.lookTarget = (Math.random() - 0.5) * 1.1; k.lookT = 1.4 + Math.random()*2.6; }
     k.look += (k.lookTarget - k.look) * Math.min(1, dt*2);
+    // §kappa-polish animation state (visual only; does not affect navigation): the head lags the body, sleepy when idle
+    if (k.hyaw == null) k.hyaw = k.yaw;
+    let hd = k.yaw - k.hyaw; while (hd > Math.PI) hd -= 6.283185; while (hd < -Math.PI) hd += 6.283185;
+    k.hyaw += hd * Math.min(1, dt*7);
+    k.idleT = (k.spd > 0.05 || k.stumble > 0) ? 0 : (k.idleT || 0) + dt;
+    k.sleepy = k.idleT > 4;
   }
 }
 function kappaStumble(k) {   // a hit just makes it recoil with a chirp (it can't be harmed or scooped)
@@ -11691,8 +11859,13 @@ function kappaStumble(k) {   // a hit just makes it recoil with a chirp (it can'
   if (typeof SND !== "undefined") SND.play("kappa_chirp");
 }
 // --- draw: a tiny CPU bone rig, one instance per body part ---
-const _kDyn = {}; let _hutDyn = null;
-const _kScratch = { t: new Float32Array(8*10), h: new Float32Array(8*10), e: new Float32Array(8*10), a: new Float32Array(16*10), l: new Float32Array(16*10) };
+let _hutDyn = null;
+// kappa part registry: one dynamic buffer + scratch per part (built lazily)
+const _kpMesh = { body:kBodyMesh, belly:kBellyMesh, shell:kShellMesh, head:kHeadMesh, hair:kHairMesh, dish:kDishMesh, water:kWaterMesh, beak:kBeakMesh, cheek:kCheekMesh, eye:kEyeMesh, arm:kArmMesh, leg:kLegMesh, cloth:kClothMesh, lily:kLilyMesh, tub:kTubMesh, cuke:kCukeMesh, basket:kBasketMesh };
+const _kpMax  = { body:8,belly:8,shell:8,head:8,hair:8,dish:8,water:8,beak:8,cheek:8,eye:8, arm:16,leg:16, cloth:8,lily:8,tub:8,cuke:8,basket:8 };
+const KP_ORDER = ["shell","body","belly","cloth","leg","arm","basket","cuke","head","hair","dish","water","tub","lily","cheek","beak","eye"];
+let _kp = null;
+function ensureKappaDyns() { if (_kp) return; _kp = {}; for (const key in _kpMesh) _kp[key] = { dyn: makeKappaDyn(_kpMesh[key](), _kpMax[key]), arr: new Float32Array(_kpMax[key]*12), n: 0 }; }
 function drawKappaHuts(view) {
   if (!kappaHuts.length) return;
   if (!_hutDyn) _hutDyn = makeDynamic(kappaHutMesh(), 8);
@@ -11705,45 +11878,76 @@ function drawKappa(view) {
   if (!KAPPA_ON) return;
   drawKappaHuts(view);
   if (!kappas.length) return;
-  if (!_kDyn.trunk) { _kDyn.trunk = makeDynamic(kappaTrunkMesh(), 8); _kDyn.head = makeDynamic(kappaHeadMesh(), 8);
-    _kDyn.eye = makeDynamic(kappaEyeMesh(), 8); _kDyn.arm = makeDynamic(kappaArmMesh(), 16); _kDyn.leg = makeDynamic(kappaLegMesh(), 16); }
-  propUniforms(view); gl.uniform1f(propU.uSway, 0);
-  const S = TUNE.KAPPA_SCALE, t = performance.now()*0.001;
-  const tA=_kScratch.t, hA=_kScratch.h, eA=_kScratch.e, aA=_kScratch.a, lA=_kScratch.l;
-  let nt=0, nh=0, ne=0, na=0, nl=0;
+  ensureKappaDyns();
+  for (const key in _kp) _kp[key].n = 0;
+  const t = performance.now() * 0.001;
+  const put = (key, wx, wy, wz, sc, yaw, lean, ld, tint, ax, ay) => { const p = _kp[key]; if (p.n >= _kpMax[key]) return; const o = p.n*12, a = p.arr;
+    a[o]=wx;a[o+1]=wy;a[o+2]=wz;a[o+3]=sc;a[o+4]=yaw;a[o+5]=lean;a[o+6]=ld;a[o+7]=tint[0];a[o+8]=tint[1];a[o+9]=tint[2];a[o+10]=ax;a[o+11]=ay; p.n++; };
   for (const k of kappas) {
     if (k.inside) continue;
-    const dx = k.x - cam.pos[0], dz = k.z - cam.pos[2]; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
-    const cyw = Math.cos(k.yaw), syw = Math.sin(k.yaw), swim = k.swim, land = 1 - swim;
-    const yr = (ox, oy, oz) => [ k.x + (ox*cyw + oz*syw)*S, k.renderY + oy*S, k.z + (-ox*syw + oz*cyw)*S ];   // local→world (prop yaw)
-    const breath = Math.sin(t*2.0 + k.seed) * 0.02;
-    const bob = (k.spd > 0.05 ? Math.abs(Math.sin(k.phase)) * 0.04 * land : 0) + breath;
-    const roll = Math.sin(k.phase) * 0.12 * k.spd * land;     // waddle side-to-side roll
-    const swimPitch = 0.55 * swim;                            // lean forward while swimming
-    const headYaw = k.yaw + k.look * land;
-    // trunk (hip pivot). land → roll about local Z; swim → pitch forward about local X.
-    { const w = yr(0, 0.42, 0); const o = nt*10; tA[o]=w[0];tA[o+1]=w[1]+bob*S;tA[o+2]=w[2];tA[o+3]=S;tA[o+4]=k.yaw;
-      tA[o+5] = swim > 0.5 ? swimPitch : roll; tA[o+6] = swim > 0.5 ? 0 : 1.5708; tA[o+7]=1;tA[o+8]=1;tA[o+9]=1; nt++; }
-    // head (neck pivot): matches the trunk's roll on land, a small downward nod while swimming
-    { const w = yr(0, 0.80, 0); const o = nh*10; hA[o]=w[0];hA[o+1]=w[1]+bob*S;hA[o+2]=w[2];hA[o+3]=S;hA[o+4]=headYaw;
-      hA[o+5] = swim > 0.5 ? 0.22 : roll; hA[o+6] = swim > 0.5 ? 0 : 1.5708; hA[o+7]=1;hA[o+8]=1;hA[o+9]=1; nh++; }
-    // eyes (on the face, following the head yaw; blink = a quick squash)
-    { const hy = Math.cos(headYaw), hs = Math.sin(headYaw), ex = 0, ey = 1.0, ez = 0.25;
-      const wx = k.x + (ex*hy + ez*hs)*S, wz = k.z + (-ex*hs + ez*hy)*S, wy = k.renderY + (ey + bob)*S;
-      const o = ne*10; eA[o]=wx;eA[o+1]=wy;eA[o+2]=wz;eA[o+3]=S*(k.blink ? 1 : 0.15);eA[o+4]=headYaw;eA[o+5]=0;eA[o+6]=0;eA[o+7]=1;eA[o+8]=1;eA[o+9]=1; ne++; }
-    // arms (shoulders): swing opposite the legs on land, paddle while swimming
-    for (const side of [-1, 1]) { const w = yr(side*0.32, 0.72, 0);
-      let lean = swim > 0.5 ? Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI)) * 0.9
-                            : Math.sin(k.phase + (side > 0 ? Math.PI : 0)) * 0.4 * k.spd;
-      const o = na*10; aA[o]=w[0];aA[o+1]=w[1]+bob*S;aA[o+2]=w[2];aA[o+3]=S;aA[o+4]=k.yaw;aA[o+5]=lean;aA[o+6]=0;aA[o+7]=1;aA[o+8]=1;aA[o+9]=1; na++; }
-    // legs (hips): forward/back swing synced to the stride on land, a gentle trail while swimming
-    for (const side of [-1, 1]) { const w = yr(side*0.17, 0.40, 0);
-      let lean = swim > 0.5 ? (-0.3 + Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI)) * 0.2)
-                            : Math.sin(k.phase + (side > 0 ? 0 : Math.PI)) * 0.5 * k.spd * land;
-      const o = nl*10; lA[o]=w[0];lA[o+1]=w[1];lA[o+2]=w[2];lA[o+3]=S;lA[o+4]=k.yaw;lA[o+5]=lean;lA[o+6]=0;lA[o+7]=1;lA[o+8]=1;lA[o+9]=1; nl++; }
+    const dx = k.x-cam.pos[0], dz = k.z-cam.pos[2]; if (dx*dx + dz*dz > DRAW_R*DRAW_R) continue;
+    const S = TUNE.KAPPA_SCALE * (k.kid ? 0.7 : 1.0);
+    const cyw = Math.cos(k.yaw), syw = Math.sin(k.yaw);
+    const rx = (ox, oz) => ox*cyw + oz*syw, rz = (ox, oz) => -ox*syw + oz*cyw;   // local xz → world xz (prop yaw)
+    const V = KV[k.variant] || KV.leaf, skin = V.skin, hair = V.hair, shell = V.shell;
+    const swim = k.swim, land = 1 - swim, step = Math.sin(k.phase), astep = Math.abs(step);
+    const moving = k.spd > 0.05 && k.stumble <= 0;
+    const bobBody = (moving ? astep*0.03*land : 0) + Math.sin(t*2 + k.seed)*0.012;
+    const sqY = moving ? 1 + (-astep*0.06 + (1-astep)*0.03) * land : 1 + Math.sin(t*2 + k.seed)*0.012;   // squash on the plant, stretch on the lift; gentle breathe when idle
+    const sqXZ = 1 / Math.sqrt(sqY);
+    const roll = step * 0.1 * k.spd * land;
+    const bodyLean = swim > 0.5 ? 0.5*swim : roll, bodyLd = swim > 0.5 ? 0 : 1.5708;
+    const headYaw = (k.hyaw != null ? k.hyaw : k.yaw) + k.look * land;       // head yaw lags the body (set in updateKappa)
+    const nod = swim > 0.5 ? 0.2 : Math.sin(t*1.5 + k.seed)*0.03;
+    const bodyY = k.renderY + (0.33 + bobBody) * S;
+    const neckY = k.renderY + (0.5 + bobBody*0.55) * S;                      // the head bobs a little behind the body
+    // body-frame parts (pivot at the body centre): roll with the body
+    put("body",  k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, skin,  sqXZ, sqY);
+    put("belly", k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, WHITE, sqXZ, sqY);
+    put("shell", k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, shell, sqXZ, sqY);
+    if (k.acc === "cloth") put("cloth", k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, WHITE, sqXZ, sqY);
+    // head-frame parts (pivot at the neck): follow the (lagged) head yaw + nod
+    put("head",  k.x, neckY, k.z, S, headYaw, nod, 0, skin,  1, 1);
+    put("hair",  k.x, neckY, k.z, S, headYaw, nod, 0, hair,  1, 1);
+    put("dish",  k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
+    const shim = 0.82 + 0.18*Math.sin(t*2.4 + k.seed*3);                     // the dish water shimmers
+    put("water", k.x, neckY, k.z, S, headYaw, nod, 0, [shim, shim, 1.0], 1, 1);
+    put("cheek", k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
+    put("beak",  k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
+    if (k.acc === "tub")  put("tub",  k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
+    if (k.acc === "lily") put("lily", k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
+    // eyes (own pivot at the eye centre → a blink/sleepy squash is about the eyes)
+    { const exw = k.x + rx(0, 0.235)*S, ezw = k.z + rz(0, 0.235)*S, eyw = neckY + 0.3*S;
+      const blink = k.blink ? (k.sleepy ? 0.45 : 1.0) : 0.1;                 // sleepy = half-closed
+      put("eye", exw, eyw, ezw, S, headYaw, nod, 0, WHITE, 1, blink); }
+    // arms (shoulder pivots): swing (land) / paddle (swim)
+    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.24, 0)*S, wz = k.z + rz(side*0.24, 0)*S, wy = bodyY + 0.12*S;
+      const lean = swim > 0.5 ? Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.9 : Math.sin(k.phase + (side > 0 ? Math.PI : 0))*0.45*k.spd;
+      put("arm", wx, wy, wz, S, k.yaw, lean, 0, skin, 1, 1);
+      if (side === 1 && k.acc === "cuke")   put("cuke",   wx, wy, wz, S, k.yaw, lean, 0, WHITE, 1, 1);
+      if (side === 1 && k.acc === "basket") put("basket", wx, wy, wz, S, k.yaw, lean, 0, WHITE, 1, 1);
+    }
+    // legs (hip pivots near the feet): stride (land) / trail (swim)
+    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.1, 0.02)*S, wz = k.z + rz(side*0.1, 0.02)*S, wy = k.renderY + 0.18*S;
+      const lean = swim > 0.5 ? (-0.3 + Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.2) : Math.sin(k.phase + (side > 0 ? 0 : Math.PI))*0.5*k.spd*land;
+      put("leg", wx, wy, wz, S, k.yaw, lean, 0, skin, 1, 1);
+    }
   }
-  if (nt) _kDyn.trunk.draw(tA, nt); if (nh) _kDyn.head.draw(hA, nh); if (ne) _kDyn.eye.draw(eA, ne);
-  if (na) _kDyn.arm.draw(aA, na); if (nl) _kDyn.leg.draw(lA, nl);
+  // PASS 1: dark inverted-hull outline (expand along the normal, draw the back of the hull)
+  gl.enable(gl.CULL_FACE); gl.cullFace(gl.FRONT);
+  gl.useProgram(kappaOutlineProg);
+  gl.uniformMatrix4fv(kappaOutlineU.uProj, false, proj); gl.uniformMatrix4fv(kappaOutlineU.uView, false, view);
+  gl.uniform1f(kappaOutlineU.uOutline, KAPPA_OUTLINE); gl.uniform3fv(kappaOutlineU.uOutlineCol, KAPPA_OUTLINE_COL);
+  for (const key of KP_ORDER) { const p = _kp[key]; if (p.n) p.dyn.draw(p.arr, p.n); }
+  // PASS 2: the lit toon pass (no cull so thin flaps show from both sides)
+  gl.disable(gl.CULL_FACE);
+  gl.useProgram(kappaProg);
+  gl.uniformMatrix4fv(kappaU.uProj, false, proj); gl.uniformMatrix4fv(kappaU.uView, false, view);
+  gl.uniform3fv(kappaU.uSunDir, SKY.sun); gl.uniform3fv(kappaU.uCamPos, cam.pos);
+  gl.uniform3fv(kappaU.uZenith, SKY.zenith); gl.uniform3fv(kappaU.uHorizon, SKY.horizon); gl.uniform3fv(kappaU.uWarm, SKY.warm);
+  gl.uniform1f(kappaU.uFogDensity, FOG_DENSITY); gl.uniform1f(kappaU.uFogNear, FOG_NEAR);
+  gl.uniform1f(kappaU.uDusk, SKY.dusk); gl.uniform1f(kappaU.uNight, 1 - (typeof dayFactor === "function" ? dayFactor() : 1));
+  for (const key of KP_ORDER) { const p = _kp[key]; if (p.n) p.dyn.draw(p.arr, p.n); }
 }
 if (typeof SND !== "undefined") SND.def("kappa_chirp", { freq: 620, freq2: 880, shape: "sine", atk: 0.005, sus: 0.04, rel: 0.12, noise: 0.08, gain: 0.4 }, { vol: 0.4, pv: 0.18 });   // a soft startled chirp
 // === KAPPA END ===
