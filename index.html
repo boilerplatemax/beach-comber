@@ -1883,6 +1883,10 @@ function soundCategory(id, bus) {
   D("step_rock",  { shape:"noise", lpf:0.5, atk:0.0004,sus:0.004, rel:0.03, gain:0.45 }, { vol:0.2, cd:0.05, pv:0.14 });
   D("step_wood",  { freq:200, shape:"tri", atk:0.001, sus:0.01, rel:0.06, noise:0.3, gain:0.4 }, { vol:0.22, cd:0.05, pv:0.1 });
   D("step_water", { shape:"noise", lpf:0.28, atk:0.001, sus:0.02, rel:0.08, gain:0.5 }, { vol:0.24, cd:0.05, pv:0.14 });
+  // §ship the sailing ship: a struck bell, groaning timbers, creaking rope
+  D("ship_bell",  { freq:1180, freq2:1170, shape:"sine", atk:0.001, sus:0.05, rel:1.1, gain:0.5, curve:1.4 }, { vol:0.5, pv:0.02, cd:0.12, bus:"sfx" });
+  D("ship_creak", { freq:150, freq2:90, shape:"saw", atk:0.04, sus:0.12, rel:0.3, noise:0.25, lpf:0.12, gain:0.3, curve:1.6 }, { vol:0.28, pv:0.25, cd:0.3, bus:"ambience" });
+  D("ship_rope",  { freq:320, freq2:260, shape:"tri", atk:0.004, sus:0.03, rel:0.1, noise:0.4, gain:0.3 }, { vol:0.22, pv:0.2, cd:0.2, bus:"ambience" });
   // landing / breath
   D("land_soft",  { freq:120, freq2:60, shape:"sine", atk:0.001, sus:0.02, rel:0.1, noise:0.3, gain:0.55 }, { vol:0.4 });
   D("land_hard",  { freq:95, freq2:45, shape:"sine", atk:0.001, sus:0.03, rel:0.16, noise:0.4, gain:0.7 }, { vol:0.6 });
@@ -9297,6 +9301,13 @@ function syncDebugPanel() {
     <label>Saturation <b class="atv" data-ak="saturation">${ATMO.saturation.toFixed(2)}</b> <input class="dbgatv" data-ak="saturation" type="range" min="0.5" max="1.8" step="0.02" value="${ATMO.saturation}"></label>
     <label>Contrast <b class="atv" data-ak="contrast">${ATMO.contrast.toFixed(2)}</b> <input class="dbgatv" data-ak="contrast" type="range" min="0.8" max="1.4" step="0.01" value="${ATMO.contrast}"></label>
     <label>Warmth <b class="atv" data-ak="warmth">${ATMO.warmth.toFixed(2)}</b> <input class="dbgatv" data-ak="warmth" type="range" min="-0.2" max="0.3" step="0.01" value="${ATMO.warmth}"></label>
+    <h3>Ship${ship ? ` (${ship.tier})` : ""}</h3>
+    <label>Bob <b class="shv" data-sk="bob">${SHIP.bob.toFixed(2)}</b> <input class="dbgship" data-sk="bob" type="range" min="0" max="0.6" step="0.02" value="${SHIP.bob}"></label>
+    <label>Roll <b class="shv" data-sk="roll">${SHIP.roll.toFixed(3)}</b> <input class="dbgship" data-sk="roll" type="range" min="0" max="0.1" step="0.002" value="${SHIP.roll}"></label>
+    <label>Sail billow <b class="shv" data-sk="sailAmp">${SHIP.sailAmp.toFixed(2)}</b> <input class="dbgship" data-sk="sailAmp" type="range" min="0" max="1.2" step="0.05" value="${SHIP.sailAmp}"></label>
+    <label>Length <b class="shv" data-sk="len">${SHIP.len.toFixed(0)}</b> <input class="dbgshipr" data-sk="len" type="range" min="28" max="70" step="1" value="${SHIP.len}"></label>
+    <label>Draft <b class="shv" data-sk="draft">${SHIP.draft.toFixed(1)}</b> <input class="dbgshipr" data-sk="draft" type="range" min="1" max="4" step="0.1" value="${SHIP.draft}"></label>
+    <div class="dbgrow"><button id="dbgShipTP">Teleport to ship</button></div>
     <h3>Weather, ${weather ? (weather.forced ? "forced " : "") + WEATHER_LABEL[weather.state] : ", "}</h3>
     <div class="dbgrow"><button data-wx="clear">Clear</button><button data-wx="overcast">Overcast</button><button data-wx="fog">Fog</button><button data-wx="rain">Rain</button><button data-wx="storm">Storm</button><button data-wx="">Auto</button></div>
     <div class="dbgrow"><button id="dbgStormMorn">Skip to post-storm morning</button></div>
@@ -9376,6 +9387,12 @@ function syncDebugPanel() {
   p.querySelectorAll(".dbgatmo").forEach(b => b.onclick = () => { const k = b.dataset.at; ATMO[k] = !ATMO[k]; syncDebugPanel(); });   // §ATMO per-effect A/B toggles
   p.querySelectorAll(".dbgatv").forEach(el => el.oninput = (e) => { const k = el.dataset.ak, v = +e.target.value; ATMO[k] = v;   // §VIB grade sliders
     const b = p.querySelector(`.atv[data-ak="${k}"]`); if (b) b.textContent = v.toFixed(2); });
+  p.querySelectorAll(".dbgship").forEach(el => el.oninput = (e) => { const k = el.dataset.sk, v = +e.target.value; SHIP[k] = v;   // §ship live motion/sail sliders
+    const b = p.querySelector(`.shv[data-sk="${k}"]`); if (b) b.textContent = v.toFixed(k==="roll"?3:2); });
+  p.querySelectorAll(".dbgshipr").forEach(el => el.onchange = (e) => { const k = el.dataset.sk, v = +e.target.value; SHIP[k] = v;   // §ship size sliders → rebuild the ship
+    const b = p.querySelector(`.shv[data-sk="${k}"]`); if (b) b.textContent = v.toFixed(1); if (typeof buildShip === "function") buildShip(); });
+  { const tp = p.querySelector("#dbgShipTP"); if (tp) tp.onclick = () => { if (!ship) return; const g = shipGeo(), w = shipLocalToWorld(0, g.zFwd-2);   // drop onto the main deck
+      player.x = w[0]; player.z = w[1]; player.feetY = shipBaseY()+g.DECK+0.1; player.eyeY = player.feetY+EYE; player.vy = 0; player.airborne = false; player.swimming = false; }; }
   p.querySelectorAll(".dbgtune").forEach((el) => el.oninput = (e) => {
     const k = el.dataset.k, v = +e.target.value; DBG_SET(k, v);
     const b = p.querySelector(`.tv[data-k="${k}"]`); if (b) b.textContent = v.toFixed(v < 0.01 ? 3 : 2);
@@ -9411,6 +9428,7 @@ function DBG_SET(k, v) { if (k in TUNE) TUNE[k] = v; }
 // E interacts with whatever the crosshair is on (same target as a click).
 function interact() { if (heave) { heaveStrike(); return; } if (pry) { pryStrike(); return; }
   if (rodEquipped()) { rodTap(); return; }   // §Fishing F / mobile Use = cast / set hook / reel pulse
+  if (shipInteract()) return;                 // §ship bell / crates / captain's chest when aboard
   const t = curTarget || targetAlongRay(rayFromNDC(0, 0));
   if (t) { interactTarget(t); return; }
   if (mode === "walk" && !isPanelOpen()) { punch(null); }   // §15/§bugfix nothing in reach → a punch (eating is only by holding right-click now)
@@ -13501,6 +13519,615 @@ function loadTamed() { try { localStorage.removeItem("bcg_" + SEED_STR); } catch
 }
 
 /* --------------------------------------------------------------------- *
+ * § SHIP  (one large, explorable sailing ship anchored off the spawn.
+ *   A deliberate landmark, separate from the removed shipwreck. It FLOATS
+ *   at the live water level (so it rides the tide and never grounds), with
+ *   a gentle extra bob/roll. Built in LOCAL space (bow at +Z, beam along X,
+ *   waterline at y=0) and drawn through the prop shader via one makeDynamic
+ *   mesh (exterior) + one for the interior, which is only drawn near/aboard.
+ *   Collision, ladders, interior and interactive props build on this. ---- */
+
+// §ship tunables (mutated live by the debug panel). Lengths in metres.
+const SHIP = {
+  len: 45,            // overall length (bow→stern), the headline "very large"
+  beamHalf: 5.6,      // half-beam at the widest station
+  draft: 2.4,         // keel depth below the waterline
+  margin: 1.1,        // extra clearance the seabed must keep under the keel at the lowest tide
+  deckH: 2.3,         // main-deck height above the waterline (local y)
+  railH: 1.0,         // bulwark/rail height above the main deck
+  quarterRise: 1.7,   // quarterdeck (raised stern) rise above the main deck
+  foreRise: 1.25,     // forecastle (raised bow) rise above the main deck
+  holdY: 0.42,        // below-deck (gun-deck) floor height, local y — kept above the waterline + bob so the sea never floods the hold
+  bob: 0.14,          // vertical bob amplitude (m); 0 = dead still
+  roll: 0.018,        // roll amplitude (radians); 0 = no roll
+  sailAmp: 0.4,       // how far the canvas billows / pennants flutter (m)
+  bobSpeed: 0.55,     // bob angular speed
+  rollSpeed: 0.42,    // roll angular speed
+  minDist: 30,        // nearest the hull centre sits from the shore spawn
+  maxDist: 170,       // farthest out the depth search will look
+};
+// §ship palette
+const SH_TAN = [0.80,0.655,0.45], SH_LOW = [0.70,0.55,0.37], SH_WALE = [0.36,0.25,0.16],
+      SH_TRIM = [0.46,0.32,0.20], SH_DECK = [0.85,0.76,0.58], SH_DECK2 = [0.78,0.68,0.50],
+      SH_MAST = [0.52,0.38,0.24], SH_SAIL = [0.90,0.885,0.82], SH_SAIL2 = [0.82,0.80,0.73],
+      SH_PENN = [0.74,0.17,0.15], SH_PORT = [0.12,0.10,0.09], SH_YEL = [0.90,0.74,0.26],
+      SH_IRON = [0.22,0.22,0.24], SH_ROPE = [0.62,0.54,0.38], SH_GLASS = [0.52,0.70,0.74];
+
+let ship = null;            // placement + runtime state ({cx,cz,yaw,minDepth,...})
+let shipExtDyn = null, shipInnerDyn = null, shipRigDyn = null;   // GL meshes (exterior / interior / sails+pennants)
+let shipRigBase = null, shipRigBill = null, shipRigScratch = null;   // §ship sail-billow animation buffers
+const _shipInst = new Float32Array(10);
+
+// The lowest the open sea ever drops to (spring minus-tide), scanned over a full spring/neap cycle.
+function lowestTideLevel() {
+  let lo = 1e9;
+  for (let d = 0; d <= TIDE_CYCLE_DAYS; d += 0.25)
+    for (let p = 0; p < 1; p += 0.02) { const v = levelAt(p, d); if (v < lo) lo = v; }
+  return lo;
+}
+
+/* ---- mesh: the whole ship above a single waterline, in local space ---- */
+// Convention: +Z bow, -Z stern, +X starboard (out to sea), -X port (faces shore), y=0 waterline.
+function shipHalfBeam(zf) {   // half-beam multiplier along the hull (zf = z/HL, -1 stern … +1 bow)
+  // control points: full transom stern, max beam just aft of midships, fine pointed bow
+  const ZS = [-1.0,-0.85,-0.65,-0.4,-0.1, 0.2, 0.45, 0.65, 0.8, 0.92, 1.0];
+  const WS = [ 0.60, 0.80, 0.93, 1.0, 1.0, 0.97, 0.88, 0.72, 0.5, 0.26, 0.05];
+  let i = 0; while (i < ZS.length-1 && zf > ZS[i+1]) i++;
+  const t = (zf - ZS[i]) / (ZS[i+1] - ZS[i] || 1);
+  return WS[i] + (WS[i+1] - WS[i]) * Math.max(0, Math.min(1, t));
+}
+function shipExtMesh() {
+  const m = Mesh();
+  const HL = SHIP.len/2, BW = SHIP.beamHalf, KEEL = -SHIP.draft, DECK = SHIP.deckH, RAIL = SHIP.railH;
+  const N = 22;                                                         // longitudinal stations
+  // vertical profile from keel up: [y, widthFrac]
+  const prof = [[KEEL,0.06],[KEEL*0.5,0.52],[-0.25,0.9],[DECK*0.45,1.0],[DECK,0.97],[DECK+RAIL,0.9]];
+  const hullCol = (y) => y < -0.35 ? SH_LOW : (y < 0.55 ? SH_WALE : SH_TAN);   // dark wale band around the waterline/sheer
+  const stat = [];                                                     // per-station world of local points
+  for (let i = 0; i <= N; i++) {
+    const zf = -1 + 2*i/N, z = zf*HL, hw = Math.max(0.05, BW*shipHalfBeam(zf));
+    const col = []; for (const p of prof) col.push([hw*p[1], p[0], z]); stat.push(col);
+  }
+  // hull plating: connect adjacent stations, port (+x) and starboard mirror (-x)
+  for (let i = 0; i < N; i++) for (let k = 0; k < prof.length-1; k++) {
+    const a = stat[i], b = stat[i+1];
+    const y0 = prof[k][1], y1 = prof[k+1][1], c = hullCol((y0+y1)/2);
+    const c2 = [c[0]*0.93, c[1]*0.93, c[2]*0.93];
+    // starboard (+x)
+    mQuad(m, [a[k][0],a[k][1],a[k][2]], [b[k][0],b[k][1],b[k][2]], [b[k+1][0],b[k+1][1],b[k+1][2]], [a[k+1][0],a[k+1][1],a[k+1][2]], c);
+    // port (-x) mirrored (reverse winding)
+    mQuad(m, [-a[k][0],a[k][1],a[k][2]], [-a[k+1][0],a[k+1][1],a[k+1][2]], [-b[k+1][0],b[k+1][1],b[k+1][2]], [-b[k][0],b[k][1],b[k][2]], c2);
+  }
+  // keel strip + bow stem (close the bottom centreline) and the pointed bow
+  for (let i = 0; i < N; i++) { const a = stat[i][0], b = stat[i+1][0];
+    mQuad(m, [a[0],a[1],a[2]], [-a[0],a[1],a[2]], [-b[0],b[1],b[2]], [b[0],b[1],b[2]], SH_LOW); }
+  // transom (flat stern face), filled across the profile
+  { const s = stat[0]; for (let k = 0; k < prof.length-1; k++)
+      mQuad(m, [-s[k][0],s[k][1],s[k][2]], [s[k][0],s[k][1],s[k][2]], [s[k+1][0],s[k+1][1],s[k+1][2]], [-s[k+1][0],s[k+1][1],s[k+1][2]], SH_TRIM); }
+  // deck surfaces (main / raised quarterdeck aft / raised forecastle fwd) + planking look
+  const zAftMain = -HL*0.42, zFwdMain = HL*0.34, zFwdEnd = HL*0.72;
+  const deckLevel = (z) => z < zAftMain ? DECK+SHIP.quarterRise : (z > zFwdMain && z < zFwdEnd) ? DECK+SHIP.foreRise : (z <= zFwdEnd ? DECK : null);
+  for (let i = 0; i < N; i++) {
+    const za = -1 + 2*i/N, zb = -1 + 2*(i+1)/N, z0 = za*HL, z1 = zb*HL;
+    const lv = deckLevel((z0+z1)/2); if (lv == null) continue;
+    const hwA = Math.max(0.05, BW*shipHalfBeam(za))*0.86, hwB = Math.max(0.05, BW*shipHalfBeam(zb))*0.86;
+    const nst = 5;                                                     // plank strips across the beam
+    for (let s = 0; s < nst; s++) {
+      const u0 = -1 + 2*s/nst, u1 = -1 + 2*(s+1)/nst, c = s%2 ? SH_DECK : SH_DECK2;
+      const xc = (u0+u1)/2 * (hwA+hwB)/2, zc = (z0+z1)/2;
+      if (lv === DECK && xc > SHIP_HATCH.x0-0.2 && xc < SHIP_HATCH.x1+0.2 && zc > SHIP_HATCH.z0 && zc < SHIP_HATCH.z1) continue;   // leave the hatch open
+      mQuad(m, [u0*hwA, lv, z0], [u1*hwA, lv, z0], [u1*hwB, lv, z1], [u0*hwB, lv, z1], c);
+    }
+  }
+  // hatch coaming (a raised rim around the opening)
+  { const h = SHIP_HATCH; for (const zz of [h.z0, h.z1]) mBox(m, 0, DECK+0.12, zz, (h.x1-h.x0)/2, 0.14, 0.08, SH_TRIM);
+    for (const xx of [h.x0, h.x1]) mBox(m, xx, DECK+0.12, (h.z0+h.z1)/2, 0.08, 0.14, (h.z1-h.z0)/2, SH_TRIM); }
+  // risers between deck levels (short vertical steps) + their rails handled as stairs later
+  const riser = (z, yLo, yHi) => { const hw = Math.max(0.05, BW*shipHalfBeam(z/HL))*0.86;
+    mQuad(m, [-hw,yLo,z], [hw,yLo,z], [hw,yHi,z], [-hw,yHi,z], SH_TRIM); };
+  riser(zAftMain, DECK, DECK+SHIP.quarterRise);
+  riser(zFwdMain, DECK, DECK+SHIP.foreRise);
+  // gun-port band with yellow trim stripe down both midship sides
+  for (let g = 0; g < 7; g++) {
+    const z = -HL*0.5 + g*(HL*1.0/7), hw = Math.max(0.05, BW*shipHalfBeam(z/HL));
+    for (const sx of [1,-1]) {
+      mBox(m, sx*(hw+0.02), 1.25, z, 0.03, 0.26, 0.26, SH_PORT);        // the dark port opening
+      mBox(m, sx*(hw+0.015), 0.86, z+0.0, 0.025, 0.07, 0.95, SH_YEL);   // yellow stripe under the ports (per segment)
+    }
+  }
+  // bulwark cap rail along the main deck sheer (broken at the two midship gangways)
+  for (let i = 0; i < N; i++) { const za=-1+2*i/N, zb=-1+2*(i+1)/N, zm=(za+zb)/2*HL; if (zm > -3 && zm < 3) continue;
+    const hwa = Math.max(0.05, BW*shipHalfBeam(za))*0.94, hwb = Math.max(0.05, BW*shipHalfBeam(zb))*0.94;
+    for (const sx of [1,-1]) mQuad(m, [sx*hwa,DECK+RAIL,za*HL], [sx*hwb,DECK+RAIL,zb*HL], [sx*hwb*0.97,DECK+RAIL-0.12,zb*HL], [sx*hwa*0.97,DECK+RAIL-0.12,za*HL], SH_TRIM);
+  }
+  // ---- boarding ladder (port/shore side), boarding net (starboard/sea side), main-mast ladder to the crow's nest ----
+  { const hw0 = BW*shipHalfBeam(0);
+    // port rope ladder: two rails + rungs from below the waterline up to the deck
+    for (const rail of [-0.35, 0.35]) mBox(m, -(hw0+0.12), (DECK-SHIP.draft)/2, rail, 0.03, (DECK+SHIP.draft)/2+0.2, 0.04, SH_ROPE);
+    for (let r = 0; r*0.42 <= DECK+SHIP.draft; r++) mBox(m, -(hw0+0.12), -SHIP.draft+0.3 + r*0.42, 0, 0.05, 0.03, 0.4, SH_TRIM);
+    // starboard boarding net: a criss-cross panel
+    for (let r = 0; r*0.5 <= DECK+SHIP.draft; r++) mBox(m, hw0+0.1, -SHIP.draft+0.3 + r*0.5, 0, 0.02, 0.02, 0.7, SH_ROPE);
+    for (const cx of [-0.5,0,0.5]) mBox(m, hw0+0.1, (DECK-SHIP.draft)/2, cx, 0.02, (DECK+SHIP.draft)/2+0.2, 0.02, SH_ROPE);
+    // main-mast ladder: rungs up the forward face of the main mast to the crow's nest
+    const mz = 0.2, nestY = DECK + 23*0.6 + 0.2;
+    for (const rail of [-0.22,0.22]) mBox(m, 0.3, (DECK+nestY)/2, mz+rail, 0.03, (nestY-DECK)/2, 0.03, SH_ROPE);
+    for (let r = 0; DECK + r*0.55 <= nestY; r++) mBox(m, 0.32, DECK + r*0.55, mz, 0.06, 0.03, 0.22, SH_TRIM);
+  }
+  // ---- captain's cabin front wall at the stern riser, with a door opening ----
+  { const z = zAftMain, chw = Math.max(0.05, BW*shipHalfBeam(z/HL))*0.82;
+    for (const side of [[-chw,-1.1],[1.1,chw]]) { const w0=side[0], w1=side[1]; mQuad(m, [w0,DECK,z],[w1,DECK,z],[w1,DECK+SHIP.quarterRise,z],[w0,DECK+SHIP.quarterRise,z], SH_TAN); }
+    mBox(m, 0, DECK+SHIP.quarterRise-0.1, z, 1.2, 0.12, 0.08, SH_TRIM);   // lintel over the door
+    for (const dx of [-1.1,1.1]) mBox(m, dx, DECK+(SHIP.quarterRise-0.1)/2, z, 0.08, (SHIP.quarterRise-0.1)/2, 0.08, SH_TRIM);   // door jambs
+  }
+  // ---- stern cabin (captain's cabin) exterior block with a window band across the transom ----
+  { const cz = -HL*0.78, cw = BW*0.56, cy0 = DECK, cy1 = DECK+SHIP.quarterRise+0.1, cback = -HL+0.4;
+    mergeAt(m, boxShell(cw, cy1-cy0, (cz-cback), SH_TAN), 0, (cy0+cy1)/2, (cz+cback)/2);   // cabin block (open front)
+    // stern window band
+    for (let w = 0; w < 5; w++) { const wx = -cw*0.7 + w*(cw*1.4/4);
+      mBox(m, wx, cy0+0.9, cback-0.02, cw*0.12, 0.42, 0.03, SH_GLASS); }
+    mBox(m, 0, cy0+0.9, cback-0.06, cw*0.86, 0.5, 0.04, SH_TRIM);   // window frame backing
+  }
+  // ---- masts, yards, crow's nest, pennant poles, bowsprit spar (the canvas is a separate swaying mesh) ----
+  const M = shipMasts();
+  for (const mm of M.masts) {
+    mergeAt(m, cylMesh(mm.baseY, mm.baseY+mm.h, mm.r, mm.r*0.6, 8, SH_MAST), 0, 0, mm.z);
+    for (let s = 0; s < 2; s++) mBox(m, 0, mm.yh[s], mm.z, mm.yw[s], 0.1, 0.1, SH_MAST);       // yard spars
+    mergeAt(m, cylMesh(0, 0.12, 0.05, 0.05, 4, SH_MAST), 0, mm.baseY+mm.h, mm.z);               // pennant pole
+    if (mm.name === "main") { const ny = mm.baseY+mm.h*0.6;
+      mergeAt(m, discMesh(0, 0.95, 10, 0.1, SH_TRIM), 0, ny, mm.z); mergeAt(m, ringWall(0.95, 0.5, 10, SH_TAN), 0, ny, mm.z); }
+  }
+  mergeMesh(m, segTube([0,M.bs.y0,M.bs.z0],[0,M.bs.y1,M.bs.z1],0.14,6,SH_MAST));                // bowsprit spar
+  // ---- anchor on the bow, shore (port, -x) side, near the waterline ----
+  { const az = HL*0.78, ax = -(BW*shipHalfBeam(0.7))-0.1;
+    mBox(m, ax, 1.2, az, 0.05, 0.6, 0.1, SH_IRON);                      // shank
+    mBox(m, ax, 0.7, az, 0.05, 0.08, 0.6, SH_IRON);                     // stock/arms
+    for (const s of [1,-1]) mTri(m, [ax,0.5,az+s*0.55],[ax,0.9,az+s*0.42],[ax,0.78,az+s*0.6], SH_IRON);
+    mBox(m, ax, 1.75, az, 0.04, 0.12, 0.12, SH_IRON);                   // ring
+    // anchor chain: links running from a bow hawse down past the waterline into the sea
+    for (let k = 0; k < 10; k++) { const tt = k/9, cx = ax + (ax*0.3-ax)*tt*0.0, cy = 2.2 - tt*4.4, cz = az + 0.2*tt;
+      mBox(m, ax, cy, cz, 0.05, 0.1, 0.05, k%2?SH_IRON:[0.3,0.3,0.32]); }
+  }
+  // ---- staircases up to the quarterdeck & forecastle (match shipStairs() collision ramps) ----
+  for (const s of shipStairs()) {
+    const n = 6, zdir = Math.sign(s.z1 - s.z0);
+    for (let i = 0; i < n; i++) {
+      const z = s.z0 + (s.z1-s.z0)*(i+0.5)/n, y = s.y0 + (s.y1-s.y0)*(i+0.5)/n;
+      mBox(m, 0, y-0.14, z, s.half*0.92, 0.12, Math.abs(s.z1-s.z0)/n/2*1.2, i%2?SH_DECK:SH_DECK2);
+    }
+    for (const sx of [1,-1]) mBox(m, sx*s.half, (s.y0+s.y1)/2, (s.z0+s.z1)/2, 0.06, (s.y1-s.y0)/2+0.2, Math.abs(s.z1-s.z0)/2, SH_TRIM);   // stair cheeks
+  }
+  // ---- rails around the raised decks (simple rectangles, open toward the main deck) ----
+  const railRect = (y, x0, x1, z0, z1, openZ) => {
+    const post = (x,z)=>mBox(m, x, y+0.45, z, 0.06, 0.45, 0.06, SH_TRIM);
+    const bar = (ax,az,bx,bz)=>{ const mx=(ax+bx)/2,mz=(az+bz)/2,hx=Math.abs(bx-ax)/2+0.04,hz=Math.abs(bz-az)/2+0.04; mBox(m, mx, y+0.82, mz, hx, 0.05, hz, SH_MAST); };
+    const corners=[[x0,z0],[x1,z0],[x1,z1],[x0,z1]];
+    for (const c of corners) post(c[0],c[1]);
+    // sides (skip the edge nearest openZ so you can walk on/off via the stairs)
+    if (openZ!==z0) bar(x0,z0,x1,z0); if (openZ!==z1) bar(x0,z1,x1,z1);
+    bar(x0,z0,x0,z1); bar(x1,z0,x1,z1);
+  };
+  const qHW = shipHWAt((zAftMain-HL)/2)*0.78, fHW = shipHWAt((zFwdMain+zFwdEnd)/2)*0.72;
+  railRect(DECK+SHIP.quarterRise, -qHW, qHW, -HL+0.6, zAftMain, zAftMain);   // quarterdeck, open toward midships
+  railRect(DECK+SHIP.foreRise, -fHW, fHW, zFwdMain, zFwdEnd-0.3, zFwdMain);  // forecastle, open toward midships
+  // ship's wheel on the quarterdeck + a bell near the main mast (visual; interaction added later)
+  mergeAt(m, wheelMesh(), 0, DECK+SHIP.quarterRise+0.6, -HL*0.5);
+  mergeAt(m, shipBellMesh(), BW*0.4, DECK+0.0, -HL*0.1);
+  return m;
+}
+function shipBellMesh() { const m = Mesh();
+  mBox(m, 0, 0.85, 0, 0.05, 0.85, 0.05, SH_MAST);                       // upright post
+  mBox(m, 0, 1.62, 0, 0.28, 0.05, 0.05, SH_MAST);                       // cross arm the bell hangs from
+  mergeAt(m, mCylMesh(-0.26, 0, 0.1, 0.17, 8, SH_YEL), 0.22, 1.62, 0);  // bell body (wider at the mouth)
+  mergeAt(m, discMesh(0, 0.17, 8, -0.03, [SH_YEL[0]*0.8,SH_YEL[1]*0.8,SH_YEL[2]*0.7]), 0.22, 1.36, 0);
+  return m; }
+function mCylMesh(y0,y1,r0,r1,s,c){ const m=Mesh(); mCyl(m,y0,y1,r0,r1,s,c); return m; }
+// §ship interior (below-deck hold + captain's cabin), drawn only when near/aboard. Baked dim so it
+// reads as shadowed inside, with the lantern (and light through the hatch & gun ports) picking it out.
+function shipInnerMesh() {
+  const m = Mesh(), g = shipGeo(), HL = g.HL, BW = SHIP.beamHalf, DECK = g.DECK, holdY = g.holdY;
+  const dim = (c, k) => [c[0]*k, c[1]*k, c[2]*k];
+  const WOOD = dim(SH_TAN, 0.4), WOOD2 = dim(SH_LOW, 0.4), FLOOR = dim(SH_DECK, 0.42), FLOOR2 = dim(SH_DECK2, 0.42), BEAM = dim(SH_TRIM, 0.5);
+  // ---- hold: floor, dark hull-side walls, ceiling beams ----
+  const hz0 = g.holdZ0, hz1 = g.holdZ1, NS = 16;
+  for (let i = 0; i < NS; i++) {
+    const za = hz0 + (hz1-hz0)*i/NS, zb = hz0 + (hz1-hz0)*(i+1)/NS;
+    const hwa = shipHWAt(za)*0.76, hwb = shipHWAt(zb)*0.76, c = i%2?FLOOR:FLOOR2;
+    mQuad(m, [-hwa,holdY,za], [hwa,holdY,za], [hwb,holdY,zb], [-hwb,holdY,zb], c);              // floor
+    for (const sx of [1,-1]) mQuad(m, [sx*hwa,holdY,za], [sx*hwb,holdY,zb], [sx*hwb,DECK-0.1,zb], [sx*hwa,DECK-0.1,za], i%2?WOOD:WOOD2);   // hull-side walls
+  }
+  for (let b = 0; b < 6; b++) { const z = hz0+1 + (hz1-hz0-2)*b/5, hw = shipHWAt(z)*0.76; mBox(m, 0, DECK-0.15, z, hw, 0.08, 0.12, BEAM); }   // deckhead beams
+  // ---- cannons at alternate gun ports, both sides: a carriage + a barrel pointing out the port ----
+  for (let gp = 0; gp < 7; gp += 2) { const z = -HL*0.5 + gp*(HL/7); if (z < hz0+1 || z > hz1-1) continue;
+    for (const sx of [1,-1]) { const hw = shipHWAt(z)*0.72;
+      mBox(m, sx*(hw-0.35), holdY+0.42, z, 0.3, 0.26, 0.4, dim(SH_TRIM,0.7));                     // carriage
+      const bar = mCylMesh(0, 0.85, 0.1, 0.07, 7, SH_IRON); rotMeshZ(bar, sx*Math.PI/2);
+      mergeAt(m, bar, sx*(hw-0.1), holdY+0.82, z); mergeAt(m, sphM(0.11, SH_IRON, 6, 3), sx*(hw-0.55), holdY+0.82, z);   // barrel + breech knob (aligned with the ports)
+    }
+  }
+  // ---- barrels, sacks, hammocks ----
+  for (const b of [[-2.2,-9],[2.0,-6],[-1.8,1],[2.2,3]]) { mergeAt(m, mCylMesh(0,0.7,0.26,0.22,8,dim(SH_MAST,0.75)), b[0], holdY, b[1]); mergeAt(m, discMesh(0,0.24,8,0.03,dim(SH_TRIM,0.7)), b[0], holdY+0.7, b[1]); }
+  for (const s of [[1.6,-12],[-2.0,-13.5],[0.5,-11]]) mergeAt(m, scaleMeshXYZ(sphM(0.34, dim([0.62,0.55,0.4],0.8), 7, 4), 1, 0.8, 1.2), s[0], holdY+0.26, s[1]);
+  for (const h of [-14, -4]) for (const sx of [1,-1]) { const hw = shipHWAt(h)*0.7;   // hammocks slung along the sides
+    mQuad(m, [sx*(hw-0.1),holdY+1.0,h-0.9],[sx*(hw-1.3),holdY+0.85,h-0.9],[sx*(hw-1.3),holdY+0.85,h+0.9],[sx*(hw-0.1),holdY+1.0,h+0.9], dim([0.7,0.68,0.6],0.7)); }
+  // ---- captain's cabin interior (stern, main-deck floor, under the quarterdeck) ----
+  const cz0 = -HL+0.5, cz1 = g.zAft;
+  for (let i = 0; i < 6; i++) { const za = cz0 + (cz1-cz0)*i/6, zb = cz0 + (cz1-cz0)*(i+1)/6, hwa = shipHWAt(za)*0.8, hwb = shipHWAt(zb)*0.8;
+    mQuad(m, [-hwa,DECK,za],[hwa,DECK,za],[hwb,DECK,zb],[-hwb,DECK,zb], dim(SH_DECK, 0.62+i*0.03)); }   // cabin floor (lighter, it has windows)
+  mBox(m, 0, DECK+0.82, cz0+0.3, BW*0.42, 0.04, 2.0, dim(SH_MAST,0.75)); for (const lx of [-1.2,1.2]) for (const lz of [cz0+1.6,cz0-1.4+2.0]) mBox(m, lx, DECK+0.4, cz0+1.1, 0.07, 0.4, 0.07, dim(SH_MAST,0.7));   // table top + legs
+  mQuad(m, [-1.0,DECK+0.85,cz0+0.5],[1.0,DECK+0.85,cz0+0.5],[1.0,DECK+0.85,cz0+1.7],[-1.0,DECK+0.85,cz0+1.7], [0.82,0.74,0.56]);   // a map on the table
+  mergeAt(m, lanternGlowMesh(), 0.7, DECK+0.86, cz0+1.1);
+  mergeAt(m, shipChestMesh(), 0, DECK, cz0+0.2);   // treasure chest against the stern
+  return m;
+}
+function lanternGlowMesh() { const m = Mesh(); mBox(m, 0, 0.12, 0, 0.09, 0.12, 0.09, [1.0,0.85,0.4]); mBox(m, 0, 0.26, 0, 0.03, 0.04, 0.03, SH_IRON); return m; }
+function shipChestMesh() { const m = Mesh(); const w = [0.44,0.3,0.18], ir = [0.3,0.26,0.16];
+  mBox(m, 0, 0.22, 0, 0.5, 0.22, 0.34, w);                                              // body
+  for (let i = 0; i < 6; i++) { const a = Math.PI*(i/5); mBox(m, 0, 0.46+Math.sin(a)*0.14, Math.cos(a)*0.32, 0.5, 0.04, 0.05, [w[0]*1.12,w[1]*1.12,w[2]*1.12]); }   // domed lid staves
+  for (const sx of [-0.34,0,0.34]) mBox(m, sx, 0.28, 0.345, 0.04, 0.3, 0.02, ir);       // vertical straps
+  mBox(m, 0, 0.3, 0.355, 0.07, 0.07, 0.03, SH_YEL);                                      // brass lock plate
+  return m; }
+// shared mast / yard / bowsprit geometry (exterior spars + the swaying canvas read the same numbers)
+function shipMasts() {
+  const g = shipGeo(), HL = g.HL, BW = SHIP.beamHalf, DECK = g.DECK;
+  const dl = (z) => z < g.zAft ? g.qdY : (z > g.zFwd && z < g.zFwdEnd) ? g.fcY : DECK;
+  const defs = [ { z: HL*0.46, h: 17, r: 0.26, name:"fore" }, { z: 0.2, h: 23, r: 0.30, name:"main" }, { z: -HL*0.5, h: 15, r: 0.24, name:"mizzen" } ];
+  const masts = defs.map(mm => { const baseY = dl(mm.z);
+    return { z: mm.z, h: mm.h, r: mm.r, name: mm.name, baseY, yh: [baseY+mm.h*0.42, baseY+mm.h*0.72], yw: [mm.z===0.2?BW*1.1:BW*0.92, mm.z===0.2?BW*0.86:BW*0.68] }; });
+  return { masts, bs: { z0: HL*0.86, y0: DECK+0.5, z1: HL*1.5, y1: DECK+2.2 } };
+}
+// the sails & pennants as their own mesh, with a per-vertex "billow weight" (0 = pinned, 1 = free edge).
+// drawShip wobbles these on the CPU each frame (a travelling wave along the canvas) and re-uploads them.
+function shipRigMesh() {
+  const g = shipGeo(), DECK = g.DECK, M = shipMasts(); const pos = [], col = [], bill = [];
+  const v = (p, c, b) => { pos.push(p[0],p[1],p[2]); col.push(c[0],c[1],c[2]); bill.push(b); };
+  const quad = (a,b,c,d, c0, ba,bb,bc,bd) => { v(a,c0,ba); v(b,c0,bb); v(c,c0,bc); v(a,c0,ba); v(c,c0,bc); v(d,c0,bd); };
+  const tri = (a,b,c, c0, ba,bb,bc) => { v(a,c0,ba); v(b,c0,bb); v(c,c0,bc); };
+  for (const mm of M.masts) for (let s = 0; s < 2; s++) {                    // two stacked square sails per mast
+    const yy = mm.yh[s]-0.1, hw = mm.yw[s]*0.9, sh = mm.h*0.26, bot = yy-sh, c = s?SH_SAIL2:SH_SAIL;
+    quad([-hw,yy,mm.z],[hw,yy,mm.z],[hw,bot,mm.z],[-hw,bot,mm.z], c, 0,0,1,1);   // top edge pinned, bottom edge free
+  }
+  for (const mm of M.masts) { const ty = mm.baseY+mm.h;                      // red pennant streaming aft/out from the pole
+    quad([0.04,ty,mm.z],[0.04,ty-0.5,mm.z],[1.9,ty-0.3,mm.z],[1.9,ty-0.1,mm.z], SH_PENN, 0,0,1,1); }
+  { const bs = M.bs;                                                          // triangular jib sails on the bowsprit
+    tri([0,DECK+SHIP.foreRise+1.0,g.HL*0.56],[0,bs.y0+0.2,bs.z0+1],[0,bs.y1,bs.z1], SH_SAIL, 0,1,0.55);
+    tri([0,DECK+SHIP.foreRise+2.2,g.HL*0.5],[0,bs.y0+0.6,bs.z0+3],[0,bs.y1-0.1,bs.z1-0.2], SH_SAIL2, 0,1,0.55); }
+  return { pos, col, bill };
+}
+// a small open-front box shell (4 walls + nothing on +z front) for the cabin
+function boxShell(hx, hy, depth, col) {
+  const m = Mesh(), hz = depth/2, d2 = [col[0]*0.92,col[1]*0.92,col[2]*0.92];
+  mBox(m, -hx, 0, 0, 0.08, hy/2, hz, col); mBox(m, hx, 0, 0, 0.08, hy/2, hz, col);   // side walls
+  mBox(m, 0, 0, -hz, hx, hy/2, 0.08, d2);                                             // back wall
+  mBox(m, 0, hy/2, 0, hx, 0.08, hz, SH_TRIM);                                         // roof
+  return m;
+}
+function cylMesh(y0, y1, r0, r1, sides, col) { const m = Mesh(); mCyl(m, y0, y1, r0, r1, sides, col); return m; }
+function ringWall(r, h, sides, col) { const m = Mesh();
+  for (let i = 0; i < sides; i++) { const a0=i/sides*6.2832, a1=(i+1)/sides*6.2832;
+    mQuad(m, [Math.cos(a0)*r,0,Math.sin(a0)*r],[Math.cos(a1)*r,0,Math.sin(a1)*r],[Math.cos(a1)*r,h,Math.sin(a1)*r],[Math.cos(a0)*r,h,Math.sin(a0)*r], col); }
+  return m; }
+function segTube(a, b, r, sides, col) { const m = Mesh();
+  mPathTube(m, [[a[0],a[1],a[2],r],[b[0],b[1],b[2],r*0.7]], sides, col); return m; }
+function wheelMesh() { const m = Mesh(), c = SH_MAST;
+  mergeMesh(m, ringWall(0.5, 0.0, 10, c));
+  for (let i = 0; i < 8; i++) { const a=i/8*6.2832; mBox(m, Math.cos(a)*0.35, 0, Math.sin(a)*0.35, 0.04, 0.04, 0.04, c);
+    mBox(m, Math.cos(a)*0.62, 0, Math.sin(a)*0.62, 0.05, 0.05, 0.05, c); }
+  rotMeshX(m, Math.PI/2);                                               // stand it upright, facing along z
+  mergeMesh(m, (function(){const s=Mesh(); mBox(s,0,-0.5,0,0.06,0.5,0.06,SH_TRIM); return s;})());
+  return m; }
+
+/* ---- deterministic placement: the closest genuinely deep-water spot near spawn, broadside to
+   the shore. Searches a seaward fan of bearings × distances and prefers (1) full clearance under
+   the extreme minus-tide, then (2) clearance under an ordinary low tide, then (3) the deepest spot
+   found. A runtime baseY clamp (shipBaseY) then guarantees the keel never clips the seabed at ANY
+   tide, so even a fallback placement can't intersect the bottom. ---- */
+function placeShip() {
+  const sp = findSpawn();
+  let ox = sp.x, oz = sp.z; const ol = Math.hypot(ox, oz) || 1; ox /= ol; oz /= ol;   // outward (island centre → spawn → sea)
+  const loTide = lowestTideLevel();                                                   // extreme spring minus-tide
+  const meanLow = TIDE_MID - TIDE_RANGE * 0.5;                                         // an ordinary low tide
+  const need = SHIP.draft + SHIP.margin;
+  const HL = SHIP.len/2, BW = SHIP.beamHalf;
+  // sample the hull footprint at a candidate centre + yaw; return {minDepthLo, minDepthMean, seabedMax, blocked}
+  const sample = (cx, cz, yaw) => {
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    let minLo = 1e9, minMean = 1e9, sbMax = -1e9, blocked = false;
+    for (let a = -HL; a <= HL+0.01; a += HL/7) for (let b = -BW; b <= BW+0.01; b += BW/3) {
+      const wx = cx + b*cy + a*sy, wz = cz - b*sy + a*cy, g = heightAt(wx, wz);
+      if (loTide - g < minLo) minLo = loTide - g;
+      if (meanLow - g < minMean) minMean = meanLow - g;
+      if (g > sbMax) sbMax = g;
+    }
+    const inHull = (x, z) => { const dx=x-cx, dz=z-cz, lx=dx*cy - dz*sy, lz=dx*sy + dz*cy; return Math.abs(lx) < BW+1.5 && Math.abs(lz) < HL+1.5; };
+    for (const c of colliders) if (c.kind === "rock" && inHull(c.x, c.z)) { blocked = true; break; }
+    if (!blocked && typeof kelpStalks !== "undefined") for (const k of kelpStalks) if (inHull(k.x, k.z)) { blocked = true; break; }
+    return { minLo, minMean, sbMax, blocked };
+  };
+  let full = null, ord = null, deepest = null;
+  for (let dist = SHIP.minDist; dist <= SHIP.maxDist; dist += 6) {
+    for (let db = -70; db <= 70; db += 10) {
+      const bang = Math.atan2(ox, oz) + db * Math.PI/180, dx = Math.sin(bang), dz = Math.cos(bang);
+      const cx = sp.x + dx*dist, cz = sp.z + dz*dist;
+      const yaw = Math.atan2(-dz, dx);               // bow along the shore tangent → the ship sits broadside to the viewer
+      const s = sample(cx, cz, yaw);
+      const cand = { cx, cz, yaw, minDepth: s.minLo, seabedMax: s.sbMax, dist };
+      if (!deepest || s.minLo > deepest.minDepth) deepest = cand;
+      if (s.blocked) continue;
+      if (s.minLo >= need && !full) full = cand;                       // floats clear even at the extreme minus-tide
+      if (s.minMean >= need && !ord) ord = cand;                       // floats clear at an ordinary low tide
+    }
+    if (full) break;   // closest full-clearance spot wins; stop searching farther out
+  }
+  const pick = full || ord || deepest || { cx: sp.x + ox*SHIP.minDist, cz: sp.z + oz*SHIP.minDist, yaw: Math.atan2(-oz, ox), minDepth: 0, seabedMax: 0, dist: SHIP.minDist };
+  ship = { cx: pick.cx, cz: pick.cz, yaw: pick.yaw, minDepth: pick.minDepth, seabedMax: pick.seabedMax, dist: pick.dist,
+           tier: full ? "deep (clears minus-tide)" : ord ? "ok (clears ordinary low; rests at extreme minus)" : "shallow (fallback; rests on bottom at low tide)",
+           ok: !!full, loTide, bellT: 0, chestOpened: false };
+  return ship;
+}
+function buildShip() {
+  placeShip();
+  if (shipExtDyn) { disposeGLObj(shipExtDyn); shipExtDyn = null; }
+  if (shipInnerDyn) { disposeGLObj(shipInnerDyn); shipInnerDyn = null; }
+  shipExtDyn = makeDynamic(shipExtMesh(), 1);
+  shipInnerDyn = makeDynamic(shipInnerMesh(), 1);
+  const rig = shipRigMesh();
+  shipRigDyn = makeDynamic({ pos: rig.pos, col: rig.col }, 1);
+  shipRigBase = new Float32Array(rig.pos); shipRigBill = new Float32Array(rig.bill); shipRigScratch = new Float32Array(rig.pos.length);
+  if (shipCrateDyn) { disposeGLObj(shipCrateDyn); shipCrateDyn = null; }
+  shipCrateDyn = makeDynamic(shipCrateMesh(), 8);
+  buildShipPerim();
+  setupShipProps();
+  // §ship validation log: chosen spot + the shallowest water under the hull at the lowest tide
+  const need = SHIP.draft + SHIP.margin;
+  console.log(`[ship] anchored at ${ship.cx.toFixed(1)},${ship.cz.toFixed(1)} (${ship.dist.toFixed(0)}m off spawn, yaw ${(ship.yaw*180/Math.PI).toFixed(0)}deg); min water depth under hull at the lowest tide = ${ship.minDepth.toFixed(2)}m (need >= ${need.toFixed(2)}m); seabed max under hull = ${ship.seabedMax.toFixed(2)}m, keel floor = ${(ship.seabedMax+SHIP.draft).toFixed(2)}m → ${ship.tier}`);
+}
+// current vertical + roll of the ship this frame (visual + collision share these)
+function shipBobY() { return ship ? SHIP.bob * Math.sin(clock.t * SHIP.bobSpeed) : 0; }
+function shipRollA() { return ship ? SHIP.roll * Math.sin(clock.t * SHIP.rollSpeed + 1.3) : 0; }
+// the ship floats at the live water level, but never so low that the keel clips the seabed under
+// it (at a very low tide it rests on the bottom instead) → the hull can never intersect the sand.
+function shipBaseY() { return ship ? Math.max(waterLevel + shipBobY(), ship.seabedMax + SHIP.draft + 0.05) : waterLevel; }
+function drawShip(view) {
+  if (!ship || !shipExtDyn) return;
+  const d = Math.hypot(ship.cx - player.x, ship.cz - player.z);
+  if (d > 380) return;        // §ship a giant landmark: visible from well down the beach
+  propUniforms(view);
+  gl.uniform1f(propU.uSway, 0);
+  const a = _shipInst;
+  a[0] = ship.cx; a[1] = shipBaseY(); a[2] = ship.cz; a[3] = 1; a[4] = ship.yaw; a[5] = shipRollA(); a[6] = Math.PI/2; a[7] = 1; a[8] = 1; a[9] = 1;
+  shipExtDyn.draw(a, 1);
+  if (shipInnerDyn && d < SHIP.len) shipInnerDyn.draw(a, 1);   // §ship interior only when on/near the ship
+  // §ship sails billow + pennants flutter: a travelling wave along each piece of canvas (wind-scaled)
+  if (shipRigDyn && shipRigBase && SHIP.sailAmp > 0) {
+    const t = clock.t, wind = 0.55 + (weather ? weather.wind : 0.15) * 1.6, amp = SHIP.sailAmp;
+    const B = shipRigBase, W = shipRigBill, S = shipRigScratch;
+    for (let i = 0, vi = 0; i < B.length; i += 3, vi++) { const x = B[i], y = B[i+1], z = B[i+2], b = W[vi];
+      S[i] = x + Math.sin(t*2.1 + y*0.4) * b * amp * 0.3 * wind;                 // lateral flutter
+      S[i+1] = y;
+      S[i+2] = z + Math.sin(t*1.7 + x*0.5 + y*0.25) * b * amp * wind;            // billow perpendicular to the canvas
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, shipRigDyn.pb); gl.bufferSubData(gl.ARRAY_BUFFER, 0, S);
+    shipRigDyn.draw(a, 1);
+  }
+  // crates (skip broken ones), placed on the deck/hold and oriented with the ship
+  if (shipCrateDyn && ship.props && d < SHIP.len) {
+    const roll = shipRollA(), base = shipBaseY(); let n = 0; const arr = digScratch;
+    for (const p of ship.props) { if (p.kind !== "crate" || p.broken) continue; const w = shipLocalToWorld(p.lx, p.lz), o = n*10;
+      arr[o]=w[0]; arr[o+1]=base+p.ly+p.lx*Math.sin(roll); arr[o+2]=w[1]; arr[o+3]=1; arr[o+4]=ship.yaw; arr[o+5]=roll; arr[o+6]=Math.PI/2; arr[o+7]=1; arr[o+8]=1; arr[o+9]=1; n++; }
+    if (n) shipCrateDyn.draw(arr, n);
+  }
+}
+
+/* --------------------------------------------------------------------- *
+ *  §ship COLLISION & WALKING: multi-level deck surfaces, stair ramps, a
+ *  hull/bulwark perimeter (with gangway gaps at the ladder & net), all in
+ *  local space, injected into the normal walker (standH + slideCircles).
+ * --------------------------------------------------------------------- */
+const SHIP_STEP = 0.62;              // step-up height onto decks / stairs
+// shared deck geometry (mesh + collision read the same numbers)
+function shipGeo() {
+  const HL = SHIP.len/2, BW = SHIP.beamHalf, DECK = SHIP.deckH;
+  return { HL, BW, DECK, RAIL: SHIP.railH,
+    zAft: -HL*0.42, zFwd: HL*0.34, zFwdEnd: HL*0.72,
+    qdY: DECK+SHIP.quarterRise, fcY: DECK+SHIP.foreRise,
+    holdY: SHIP.holdY, holdZ0: -HL*0.80, holdZ1: HL*0.30,
+    nestZ: 0.2, nestY: DECK + 23*0.6 + 0.2, nestR: 0.95 };   // main mast h=23, nest at 0.6·h
+}
+function shipHWAt(z) { const g = shipGeo(); return Math.max(0.05, g.BW*shipHalfBeam(z/g.HL)); }   // hull half-beam at local z
+// world point → ship-local [lx (beam), lz (length)]
+function shipLocal(wx, wz) { if (!ship) return [1e9,1e9];
+  const dx = wx-ship.cx, dz = wz-ship.cz, cy = Math.cos(ship.yaw), sy = Math.sin(ship.yaw);
+  return [dx*cy - dz*sy, dx*sy + dz*cy]; }
+// the stair lanes (bottom→top), local; narrow lanes you walk up
+const SHIP_HATCH = { x0: -1.35, x1: 1.35, z0: 2.4, z1: 5.6 };   // hatch opening in the main deck (descend to the hold)
+function shipStairs() { const g = shipGeo();
+  return [
+    { lane: 2.7, half: 0.9, z0: g.zAft+2.4, y0: g.DECK, z1: g.zAft-0.4, y1: g.qdY },  // up to the quarterdeck (starboard, clear of the cabin door)
+    { lane: 0, half: 1.1, z0: g.zFwd-2.4, y0: g.DECK, z1: g.zFwd+0.6, y1: g.fcY },    // up to the forecastle (toward bow)
+    { lane: 0, half: 1.05, z0: SHIP_HATCH.z1-0.1, y0: g.DECK, z1: SHIP_HATCH.z0+0.3, y1: g.holdY },   // down through the hatch to the hold
+  ]; }
+// highest ship surface under (wx,wz) that the feet can step up onto; -Infinity if none
+function shipDeckAt(wx, wz, feetY) {
+  if (!ship) return -Infinity;
+  const d2 = (wx-ship.cx)*(wx-ship.cx) + (wz-ship.cz)*(wz-ship.cz);
+  const g = shipGeo(); if (d2 > (g.HL+6)*(g.HL+6)) return -Infinity;
+  const [lx, lz] = shipLocal(wx, wz);
+  const base = shipBaseY(), roll = shipRollA(), rollT = lx*Math.sin(roll);
+  let best = -Infinity;
+  const consider = (localY) => { const wy = base + localY + rollT; if (wy <= feetY + SHIP_STEP && wy > best) best = wy; };
+  const innerHW = shipHWAt(lz)*0.82;
+  const inHatch = lx > SHIP_HATCH.x0 && lx < SHIP_HATCH.x1 && lz > SHIP_HATCH.z0 && lz < SHIP_HATCH.z1;
+  if (Math.abs(lx) < innerHW) {
+    if (lz >= g.zAft && lz <= g.zFwd && !inHatch) consider(g.DECK);  // main deck (minus the open hatch)
+    else if (lz < g.zAft && lz > -g.HL+0.6) { consider(g.qdY); consider(g.DECK); }   // quarterdeck on top / captain's cabin floor below
+    else if (lz > g.zFwd && lz < g.zFwdEnd) consider(g.fcY);         // forecastle (raised bow)
+  }
+  if (lz > g.holdZ0 && lz < g.holdZ1 && Math.abs(lx) < shipHWAt(lz)*0.74) consider(g.holdY);   // below-deck floor
+  for (const s of shipStairs()) {                                   // stair ramps
+    const zlo = Math.min(s.z0,s.z1), zhi = Math.max(s.z0,s.z1);
+    if (lz >= zlo && lz <= zhi && Math.abs(lx - s.lane) < s.half) {
+      const t = (lz - s.z0) / (s.z1 - s.z0); consider(s.y0 + (s.y1-s.y0)*t);
+    }
+  }
+  if (Math.hypot(lx-0, lz-g.nestZ) < g.nestR) consider(g.nestY);    // crow's nest platform
+  return best;
+}
+// is the player standing on / riding the ship right now?
+function shipAboard(wx, wz, feetY) { const h = shipDeckAt(wx, wz, feetY); return h > -1e8 && feetY >= h - 0.6; }
+// build the perimeter as local segments [x0,z0,x1,z1, localTop]. Two bands per side:
+//   • a watertight HULL band (blocks up to just under the deck) all the way around, so swimmers
+//     can't pass through the hull; • a BULWARK band above the deck with gaps at the two midship
+//     gangways (port = boarding ladder, starboard = net) so you can step off the deck into the sea.
+function buildShipPerim() {
+  if (!ship) return; const g = shipGeo(); const segs = [];
+  const gapLo = -3, gapHi = 3;                                      // midship gangway openings (z range)
+  const hullTop = g.DECK - 0.25, railTop = g.DECK + g.RAIL;
+  const NS = 18;
+  for (let i = 0; i < NS; i++) {
+    const za = -g.HL + 2*g.HL*i/NS, zb = -g.HL + 2*g.HL*(i+1)/NS, zm = (za+zb)/2;
+    const hwa = shipHWAt(za)*0.97, hwb = shipHWAt(zb)*0.97;
+    for (const sx of [1,-1]) { segs.push([sx*hwa,za,sx*hwb,zb,hullTop]);                 // watertight hull, both sides
+      if (!(zm > gapLo && zm < gapHi)) segs.push([sx*hwa*0.97,za,sx*hwb*0.97,zb,railTop]); }  // bulwark, gaps at the gangways
+  }
+  const ht = shipHWAt(-g.HL)*0.97; segs.push([-ht,-g.HL,ht,-g.HL,railTop]);              // transom cap (closed)
+  // rails around the raised decks (match railRect in the mesh): block walking off, open toward midships
+  const rect = (top, x0, x1, z0, z1, openZ) => {
+    if (openZ!==z0) segs.push([x0,z0,x1,z0,top]); if (openZ!==z1) segs.push([x0,z1,x1,z1,top]);
+    segs.push([x0,z0,x0,z1,top]); segs.push([x1,z0,x1,z1,top]);
+  };
+  const qHW = shipHWAt((g.zAft-g.HL)/2)*0.78, fHW = shipHWAt((g.zFwd+g.zFwdEnd)/2)*0.72;
+  rect(g.qdY+0.9, -qHW, qHW, -g.HL+0.6, g.zAft, g.zAft);
+  rect(g.fcY+0.9, -fHW, fHW, g.zFwd, g.zFwdEnd-0.3, g.zFwd);
+  // captain's cabin front wall at the stern riser, with a central door gap (top = quarterdeck height)
+  { const chw = shipHWAt(g.zAft)*0.82; segs.push([-chw, g.zAft, -1.1, g.zAft, g.qdY]); segs.push([1.1, g.zAft, chw, g.zAft, g.qdY]); }
+  ship.perim = segs;
+}
+// push a circle (PLAYER_R) out of any ship wall whose top is above the feet
+function shipCollideH(wx, wz, feetY) {
+  if (!ship || !ship.perim) return [wx, wz];
+  const g = shipGeo(), d2 = (wx-ship.cx)*(wx-ship.cx) + (wz-ship.cz)*(wz-ship.cz);
+  if (d2 > (g.HL+6)*(g.HL+6)) return [wx, wz];
+  const base = shipBaseY();
+  let [lx, lz] = shipLocal(wx, wz);
+  for (let iter = 0; iter < 2; iter++) {
+    for (const s of ship.perim) {
+      if (feetY > base + s[4] + 0.05) continue;                    // this wall is below the feet → step over it
+      const vx = s[2]-s[0], vz = s[3]-s[1], L2 = vx*vx+vz*vz || 1e-6;
+      let t = ((lx-s[0])*vx + (lz-s[1])*vz)/L2; t = Math.max(0, Math.min(1, t));
+      const cxp = s[0]+vx*t, czp = s[1]+vz*t, dx = lx-cxp, dz = lz-czp, dd = Math.hypot(dx,dz);
+      if (dd < PLAYER_R && dd > 1e-5) { const p = (PLAYER_R-dd)/dd; lx += dx*p; lz += dz*p; }
+    }
+  }
+  const cy = Math.cos(ship.yaw), sy = Math.sin(ship.yaw);
+  return [ship.cx + lx*cy + lz*sy, ship.cz - lx*sy + lz*cy];
+}
+const SHIP_CLIMB = 3.4;   // ladder climb speed (m/s)
+function shipLocalToWorld(lx, lz) { const cy = Math.cos(ship.yaw), sy = Math.sin(ship.yaw); return [ship.cx + lx*cy + lz*sy, ship.cz - lx*sy + lz*cy]; }
+// the ship's ladders: port boarding ladder (shore side), starboard net (sea side), main-mast ladder to the crow's nest
+function shipLadders() { const g = shipGeo(), hw0 = shipHWAt(0);
+  return [
+    { x: -(hw0+0.12), z: 0, yBot: -SHIP.draft-0.8, yTop: g.DECK+0.1, face: -1, kind: "ladder" },
+    { x:  (hw0+0.12), z: 0, yBot: -SHIP.draft-0.8, yTop: g.DECK+0.1, face:  1, kind: "net" },
+    { x: 0.32, z: g.nestZ, yBot: g.DECK, yTop: g.nestY+0.1, face: 0, kind: "mast" },
+  ]; }
+function shipLadderGrab(wx, wz, feetY) {
+  if (!ship) return null;
+  const g = shipGeo(), d2 = (wx-ship.cx)*(wx-ship.cx)+(wz-ship.cz)*(wz-ship.cz); if (d2 > (g.HL+6)*(g.HL+6)) return null;
+  const [lx, lz] = shipLocal(wx, wz), base = shipBaseY();
+  for (const L of shipLadders()) {
+    const near = L.kind === "mast" ? (Math.hypot(lx-L.x, lz-L.z) < 1.0) : (Math.abs(lx-L.x) < 0.95 && Math.abs(lz-L.z) < 1.3);
+    if (near && feetY > base+L.yBot-1.2 && feetY < base+L.yTop+1.2) return L;
+  }
+  return null;
+}
+// climb the ladder: W / forward = up, S / back = down, jump (handled by the caller) = let go
+function climbLadder(dt, L) {
+  if (player.swimming) stopSwim();
+  player.airborne = false; player.vy = 0; player.climbing = true;
+  const base = shipBaseY();
+  const up = (keys["KeyW"] || analog.y > 0.3) ? 1 : ((keys["KeyS"] || analog.y < -0.3) ? -1 : 0);
+  let fy = Math.max(base+L.yBot, Math.min(base+L.yTop, player.feetY + up*SHIP_CLIMB*dt));
+  // hug the ladder line
+  const hug = L.kind === "mast" ? [L.x, L.z] : [L.x - L.face*0.25, L.z], w = shipLocalToWorld(hug[0], hug[1]);
+  player.x += (w[0]-player.x)*Math.min(1, dt*8); player.z += (w[1]-player.z)*Math.min(1, dt*8);
+  player.feetY = fy; player.prevFeetY = fy;
+  if (fy >= base+L.yTop-0.08) {   // reached the top → step onto the deck / into the crow's nest
+    const inn = L.kind === "mast" ? [0, L.z] : [L.x - L.face*1.5, L.z], wi = shipLocalToWorld(inn[0], inn[1]);
+    player.x = wi[0]; player.z = wi[1];
+    player.feetY = base + (L.kind === "mast" ? shipGeo().nestY : shipGeo().DECK) + 0.02; player.prevFeetY = player.feetY;
+    player.climbing = false;
+  }
+  if (onFootstep && up !== 0 && Math.random() < 0.08) onFootstep("wood", 0.3);
+  player.eyeY = player.feetY + EYE;
+  cam.pos[0] = player.x; cam.pos[1] = player.eyeY; cam.pos[2] = player.z;
+}
+
+/* ---- §ship interactive props: the bell (ring), breakable crates (loot), the captain's chest (open once/seed) ---- */
+let shipCrateDyn = null;
+function shipCrateMesh() { const m = Mesh(), w = [0.56,0.44,0.28], e = [0.4,0.3,0.18];
+  mBox(m, 0, 0.35, 0, 0.42, 0.35, 0.42, w);
+  for (const s of [-1,1]) { mBox(m, s*0.42, 0.35, 0, 0.02, 0.35, 0.42, e); mBox(m, 0, 0.35, s*0.42, 0.42, 0.35, 0.02, e); }
+  mBox(m, 0, 0.0, 0, 0.44, 0.03, 0.44, e); mBox(m, 0, 0.7, 0, 0.44, 0.03, 0.44, e);
+  for (const s of [-1,1]) mBox(m, s*0.3, 0.35, 0.43, 0.04, 0.37, 0.01, e);
+  return m; }
+// set up the interactable props + load this seed's ship save (chest + crates)
+function setupShipProps() {
+  if (!ship) return; const g = shipGeo(), BW = SHIP.beamHalf;
+  ship.props = [
+    { kind: "bell",  lx: BW*0.4, ly: g.DECK+1.5, lz: -g.HL*0.1 },
+    { kind: "wheel", lx: 0, ly: g.qdY+1.0, lz: -g.HL*0.5 },
+    { kind: "chest", lx: 0, ly: g.DECK+0.4, lz: -g.HL+0.9 },
+    { kind: "crate", lx: 2.6, ly: g.DECK, lz: -6, broken: false },
+    { kind: "crate", lx: -2.9, ly: g.DECK, lz: -2.5, broken: false },
+    { kind: "crate", lx: 3.0, ly: g.DECK, lz: 5, broken: false },
+    { kind: "crate", lx: -1.2, ly: g.holdY, lz: -8, broken: false },   // one down in the hold
+  ];
+  ship.chestOpened = false;
+  try { const s = JSON.parse(localStorage.getItem("bcship_" + SEED_STR) || "null");
+    if (s) { ship.chestOpened = !!s.chestOpened; const cb = s.cratesBroken || [];
+      let ci = 0; for (const p of ship.props) if (p.kind === "crate") p.broken = !!cb[ci++]; } } catch (e) {}
+}
+function saveShipState() { if (!ship || !ship.props) return;
+  try { localStorage.setItem("bcship_" + SEED_STR, JSON.stringify({ chestOpened: ship.chestOpened,
+    cratesBroken: ship.props.filter(p => p.kind === "crate").map(p => !!p.broken) })); } catch (e) {}
+}
+// F / click near a ship prop: returns true if it handled the interaction
+function shipInteract() {
+  if (!ship || !ship.props || mode !== "walk") return false;
+  const g = shipGeo(); if (Math.hypot(ship.cx-player.x, ship.cz-player.z) > g.HL+6) return false;
+  let best = null, bd = 3.0;
+  for (const p of ship.props) { if (p.broken) continue;
+    const w = shipLocalToWorld(p.lx, p.lz), wy = shipBaseY()+p.ly;
+    const d = Math.hypot(w[0]-player.x, w[1]-player.z) + Math.abs(wy - (player.feetY+1.0))*0.6;
+    if (d < bd) { bd = d; best = { p, w, wy }; } }
+  if (!best) return false;
+  const p = best.p;
+  if (p.kind === "bell") { SND.play("ship_bell", { x: best.w[0], y: best.wy, z: best.w[1] }); showCard("Ship's bell", "You ring it, a bright clang rolls out over the water."); return true; }
+  if (p.kind === "wheel") { SND.play("ship_rope", {}); showCard("Ship's wheel", "The helm creaks as you turn it. She is going nowhere today."); return true; }
+  if (p.kind === "crate") { p.broken = true; if (onDig) onDig("thud"); SND.play("ship_rope", {});
+    const loot = ["stick","driftwood","stone","coiledshell"]; let got = [];
+    const n = 1 + (Math.random()*2|0); for (let k=0;k<n;k++){ const id = loot[Math.random()*loot.length|0]; if (Inv.add(id,1)>0){ got.push(id); const first=!discovered.has("f_"+id); discovered.add("f_"+id); if (typeof notify==="function") notify(id,1,first); } }
+    spawnSand(best.w[0], best.wy+0.3, best.w[1], 7, [0.6,0.5,0.35]); showCard("Crate", got.length? ("Smashed open: " + got.join(", ")) : "Empty."); saveShipState(); return true; }
+  if (p.kind === "chest") {
+    if (ship.chestOpened) { showCard("Captain's chest", "Already emptied. The lid hangs open."); return true; }
+    ship.chestOpened = true; SND.play("ship_rope", {}); if (typeof onDig==="function") onDig("thud");
+    const treasure = ["coiledshell","seaglass","fossil"]; let got = [];
+    for (const id of treasure) if (Inv.add(id,1)>0){ got.push(id); const first=!discovered.has("f_"+id); discovered.add("f_"+id); if (typeof notify==="function") notify(id,1,first); }
+    if (Inv.add("stone",2)>0) got.push("stone");
+    showCard("Captain's treasure!", got.length? ("Inside: " + got.join(", ")) : "The chest was bare.");
+    saveShipState(); return true;
+  }
+  return false;
+}
+let _shipCreakT = 0;
+function updateShipAmbience(dt) {
+  if (!ship || mode !== "walk") return;
+  if (!shipAboard(player.x, player.z, player.feetY)) return;
+  _shipCreakT -= dt;
+  if (_shipCreakT <= 0) { _shipCreakT = 3 + Math.random()*5; SND.play(Math.random()<0.6?"ship_creak":"ship_rope", {}); }
+}
+
+/* --------------------------------------------------------------------- *
  * § BUILD + LOOP
  * --------------------------------------------------------------------- */
 
@@ -13512,6 +14139,7 @@ paintBiomes();
 findHighPoint();
 computeBasins();
 buildProps();
+buildShip();       // §ship the explorable sailing ship, anchored off the spawn
 seedSetPieces();
 seedBerryBushes();
 seedTallGrass();   // §veg5 harvestable tall-grass clumps (Plant Fiber)
@@ -13628,6 +14256,10 @@ function disposeWorldGL() {
   if (barnacleRockDyn) { disposeGLObj(barnacleRockDyn); barnacleRockDyn = null; }  // intertidal rock mesh is seeded (SEED_INT^0x5b)
   _barnRockMesh = null;                                                     // seeded base mesh for standalone intertidal rocks; lazily rebuilt
   if (Array.isArray(oysterBeds)) for (const b of oysterBeds) if (b.dyn) { disposeGLObj(b.dyn); b.dyn = null; }   // §P3 each oyster rock has its own seeded mesh
+  if (shipExtDyn) { disposeGLObj(shipExtDyn); shipExtDyn = null; }      // §ship
+  if (shipInnerDyn) { disposeGLObj(shipInnerDyn); shipInnerDyn = null; }
+  if (shipRigDyn) { disposeGLObj(shipRigDyn); shipRigDyn = null; }
+  if (shipCrateDyn) { disposeGLObj(shipCrateDyn); shipCrateDyn = null; }
 }
 // Reset the arrays / maps the generation functions do NOT clear themselves
 // (the save-loaders push into these, or early-return and leave them stale).
@@ -13673,6 +14305,7 @@ function generateWorld() {
   findHighPoint();
   computeBasins();
   buildProps();          // reassigns propTypes with fresh instanced buffers (old ones freed in disposeWorldGL)
+  buildShip();           // §ship the explorable sailing ship, anchored in deep water off the spawn
   seedSetPieces();
   seedBerryBushes();
   seedTallGrass();
@@ -13891,8 +14524,16 @@ function frame(now) {
   } else {
     // §14A decide swim vs walk, with hysteresis on the open-sea depth under the player (not while climbing)
     const seaDepth = openSeaDepth(player.x, player.z);
-    if (!player.swimming && seaDepth >= SWIM_START) startSwim();
-    else if (player.swimming && seaDepth < SWIM_STOP) stopSwim();
+    const onShip = shipAboard(player.x, player.z, player.feetY);   // §ship standing on a deck above the sea → don't swim
+    // §ship ladder climbing takes priority (board ladder, boarding net, main-mast ladder to the crow's nest)
+    const lad = shipLadderGrab(player.x, player.z, player.feetY);
+    const wantClimb = (keys["KeyW"] || keys["KeyS"] || Math.abs(analog.y) > 0.3) && jumpBuffer <= 0;
+    if (lad && (player.climbing || wantClimb) && jumpBuffer <= 0) {
+     climbLadder(dt, lad);
+    } else {
+    player.climbing = false;
+    if (!player.swimming && seaDepth >= SWIM_START && !onShip) startSwim();
+    else if (player.swimming && (seaDepth < SWIM_STOP || onShip)) stopSwim();
    if (player.swimming) {
      swimStep(dt, right);
    } else {
@@ -13933,11 +14574,13 @@ function frame(now) {
       // deep water or a near-vertical rise per frame (prevents climbing cliff faces without snagging on bumps).
       let nx = player.x, nz = player.z;
       const WADE_INTO = SWIM_START + 0.7;   // §14A let wading carry you past the swim threshold so swimming kicks in
+      const onBoard = shipAboard(player.x, player.z, player.feetY);   // §ship on deck: move freely over the water below
       const sX = surfaceAt(player.x + wx*dist, player.z);
-      if (waterLevel - sX.h <= WADE_INTO) nx = player.x + wx*dist;   // §strip only water blocks horizontal move now
+      if (onBoard || waterLevel - sX.h <= WADE_INTO) nx = player.x + wx*dist;   // §strip only water blocks horizontal move now
       const sZ = surfaceAt(nx, player.z + wz*dist);
-      if (waterLevel - sZ.h <= WADE_INTO) nz = player.z + wz*dist;
+      if (onBoard || waterLevel - sZ.h <= WADE_INTO) nz = player.z + wz*dist;
       [nx, nz] = slideCircles(nx, nz);
+      [nx, nz] = shipCollideH(nx, nz, player.feetY);                  // §ship hull & bulwark walls
       player.x = nx; player.z = nz;
       // §foot one footstep per stride of real distance travelled (not a timer), and the head-bob
       // phase advances in lock-step: PI of bob phase == one stride, so the bob peaks once per footfall.
@@ -13945,14 +14588,14 @@ function frame(now) {
       const prevBob = player.bob;
       player.bob += dist * (Math.PI / strideLen);
       if (Math.floor(player.bob / Math.PI) !== Math.floor(prevBob / Math.PI)) {
-        if (onFootstep) onFootstep(surfaceType(here.h, here.slope), player.sprinting ? 0.9 : 0.55);
+        if (onFootstep) onFootstep(onBoard ? "wood" : surfaceType(here.h, here.slope), player.sprinting ? 0.9 : 0.55);   // §ship wood footfalls on deck
         _stepLog.push(clock.t);   // §foot2 for the debug steps/sec readout
       }
     }
     player.scramble += (scrambleTarget - player.scramble) * Math.min(1, dt * 4);
     if (player.landStun > 0) player.landStun = Math.max(0, player.landStun - dt);
     const g = surfaceAt(player.x, player.z);
-    const standH = Math.max(g.h, trunkHeightAt(player.x, player.z));   // stand on a fallen trunk (or terrain)
+    const standH = Math.max(g.h, trunkHeightAt(player.x, player.z), shipDeckAt(player.x, player.z, player.feetY));   // §ship stand on a deck, a fallen trunk, or terrain
     // coyote window + buffered jump
     player.coyote = player.airborne ? Math.max(0, player.coyote - dt) : COYOTE_TIME;
     // §P2 buffered jump: a recent Space press fires once you're grounded (or within the coyote window),
@@ -13986,9 +14629,10 @@ function frame(now) {
     if (critDbg) drawCritDebug();                                                          // §R4 creature AI overlay
     if (fpDbg) drawFootprintDebug();                                                       // §P3 spawn-footprint / overlap overlay
    }
+   }                                                                                       // §ship close the ladder-climb else
   }
 
-  if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateFishing(dt); updateCatchCine(dt); updateEat(dt); updatePlacedTide(); }   // §14A/B/C + §Fishing + §P2 eating + §P2 tide over placed buckets/lanterns
+  if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateFishing(dt); updateCatchCine(dt); updateEat(dt); updatePlacedTide(); updateShipAmbience(dt); }   // §14A/B/C + §Fishing + §P2 eating + §P2 tide over placed buckets/lanterns + §ship creak
   updateCatchPop(dt);   // §catch5 the non-blocking catch card's own timer (runs even in menus, so it fades on its own)
   updateFade(dt);
   safetyCheck(dt);
@@ -14098,6 +14742,7 @@ function frame(now) {
 
   // props & points of interest (instanced), before the transparent water
   drawProps(view);
+  drawShip(view);            // §ship the anchored sailing ship
   drawFallenNotches(view);   // §A4 cut notches on chopped fallen trunks
   drawTools(view);
   drawDriftwood(view);
