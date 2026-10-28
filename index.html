@@ -11647,15 +11647,15 @@ function kDishMesh() {   // a shallow, WIDE wooden bowl (height ~1/4 of its widt
   return m;
 }
 function kWaterMesh() { const m = Mesh(); mergeMesh(m, discMesh(0.603, 0.165, 18, 0, KC_WATER)); return m; }   // water disc, just below the bowl rim (own instance → shimmer)
-function kBeakMesh() {   // a duck bill split into an upper + lower half with a thin dark mouth line that smiles up at the ends (fixed); neck-frame
-  const m = Mesh(), dark = [0.42, 0.28, 0.12];
+function kBeakMesh() {   // a duck bill split into an upper + lower half with a thin soft mouth line, near-neutral with only a hint of an upturn (fixed); neck-frame
+  const m = Mesh(), line = [0.58, 0.43, 0.24];   // soft warm brown (not a hard dark line)
   // two overlapping halves (overlap at the seam so no skin shows through the gap)
   mergeAt(m, scaleMeshXYZ(ksph(0.10, KC_BEAK, 10, 5), 1.45, 0.52, 0.95),  0,  0.020, 0);   // upper bill
   mergeAt(m, scaleMeshXYZ(ksph(0.09, KC_BEAK, 10, 5), 1.32, 0.44, 0.88),  0, -0.020, -0.006); // lower bill (a touch smaller/back)
-  // the mouth: a thin dark strip laid on the seam, rising at the ends into a small smile
-  const W = 0.135, segs = 8, h = 0.011, zf = 0.092, sm = (x) => 2.3 * x * x;
+  // the mouth: a thin soft strip on the seam, nearly flat with just a hint of a smile at the ends
+  const W = 0.11, segs = 8, h = 0.008, zf = 0.092, sm = (x) => 0.7 * x * x;
   for (let i = 0; i < segs; i++) { const x0 = -W + 2*W*i/segs, x1 = -W + 2*W*(i+1)/segs, y0 = sm(x0), y1 = sm(x1);
-    mQuad(m, [x0, y0-h, zf], [x1, y1-h, zf], [x1, y1+h, zf], [x0, y0+h, zf], dark); }
+    mQuad(m, [x0, y0-h, zf], [x1, y1-h, zf], [x1, y1+h, zf], [x0, y0+h, zf], line); }
   let b = Mesh(); mergeAt(b, m, 0, 0, 0); rotMeshX(b, -0.26);                // gentle upturn
   const out = Mesh(); mergeAt(out, b, 0, 0.17, 0.27); return out;            // seat it on the lower face, proud of the surface
 }
