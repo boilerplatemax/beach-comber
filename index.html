@@ -11457,6 +11457,7 @@ if (typeof SND !== "undefined") SND.def("shroom_eat", { freq: 320, freq2: 540, s
 //   · colliders (placement)  - hut colliders so the player can't walk through
 //
 const KAPPA_ON = true;            // master on/off for the entire feature
+const KAPPA_SHELL_ON = false;     // §body-polish shell is off this phase (body first); will be rebuilt to fit the finished body
 
 // --- tunables (live in the central TUNE + debug sliders; read as TUNE.KAPPA_*) ---
 Object.assign(TUNE, {
@@ -11601,16 +11602,16 @@ function makeKappaDyn(mesh, maxN) {
 
 // --- part meshes (each modelled around its own frame pivot; +Z forward; feet at world y=0) ---
 // built with WHITE on tintable parts (skin/hair/shell → coloured by iTint), real colours on fixed features.
-function kBodyMesh() {   // small round pear body (skin); pivot at the body centre
+function kBodyMesh() {   // small round pear body (skin); pivot at the body centre. Few large facets (clean low-poly, not a disco ball).
   const m = Mesh();
-  mergeAt(m, scaleMeshXYZ(ksph(0.205, WHITE, 12, 9), 1.0, 0.96, 0.95), 0, -0.05, 0);    // rounded lower
-  mergeAt(m, scaleMeshXYZ(ksph(0.15,  WHITE, 11, 8), 1.0, 0.95, 0.95), 0, 0.12, 0);     // narrower upper → pear
-  mergeAt(m, scaleMeshXYZ(ksph(0.085, WHITE, 9, 6),  1.0, 0.9, 1.0),  0, 0.22, 0);      // little neck notch
+  mergeAt(m, scaleMeshXYZ(ksph(0.205, WHITE, 9, 6), 1.0, 0.96, 0.95), 0, -0.05, 0);    // rounded lower
+  mergeAt(m, scaleMeshXYZ(ksph(0.15,  WHITE, 8, 5), 1.0, 0.95, 0.95), 0, 0.12, 0);     // narrower upper → pear
+  mergeAt(m, scaleMeshXYZ(ksph(0.085, WHITE, 7, 4), 1.0, 0.9, 1.0),  0, 0.22, 0);      // little neck notch
   return m;
 }
-function kBellyMesh() {   // a soft cream-green patch that hugs the belly's curve (tinted per variant); body-frame
-  // same curvature as the lower body, mostly embedded so only the front emerges → conforms, never a separate egg.
-  const m = Mesh(); mergeAt(m, scaleMeshXYZ(ksph(0.19, WHITE, 12, 9), 0.80, 0.95, 0.99), 0, -0.03, 0.025); return m;
+function kBellyMesh() {   // one smooth cream-green oval plate that follows the belly's curve (tinted per variant); body-frame
+  // same curvature as the lower body, mostly embedded so only the front emerges → one conforming plate, no patches.
+  const m = Mesh(); mergeAt(m, scaleMeshXYZ(ksph(0.19, WHITE, 9, 6), 0.78, 0.96, 0.99), 0, -0.03, 0.03); return m;
 }
 function kShellMesh() {   // olive shell (skin→shell tint): a tall domed carapace that clearly bulges off the back + a wide rim lip that peeks round the sides from the front; body-frame
   const m = Mesh();
@@ -11619,62 +11620,72 @@ function kShellMesh() {   // olive shell (skin→shell tint): a tall domed carap
   return m;
 }
 function kHeadMesh() {   // round head, slightly wider than tall, with a gently flattened top as a seat for the bowl (skin); pivot at the neck
-  const h = scaleMeshXYZ(ksph(0.30, WHITE, 13, 10), 1.06, 0.90, 1.03);
+  // Few large facets (clean low-poly). One colour; all shading variation comes from the lighting.
+  const h = scaleMeshXYZ(ksph(0.30, WHITE, 9, 6), 1.06, 0.90, 1.03);
   const P = h.pos; for (let i = 0; i < P.length; i += 3) { if (P[i+1] > 0.20) P[i+1] = 0.20 + (P[i+1]-0.20)*0.30; }   // flatten just the crown into a seat
   const m = Mesh(); mergeAt(m, h, 0, 0.30, 0); return m;
 }
 function kHairMesh() {   // a short even fringe of small leaf-flaps ringing the bowl, above the eyes, tips lifting out+up → a leafy crown (skin→hair tint); neck-frame
   const m = Mesh(), N = 11;
   for (let i = 0; i < N; i++) { const a = i / N * 6.2832;
-    let leaf = scaleMeshXYZ(ksph(0.12, WHITE, 7, 5), 1.0, 0.13, 0.46);    // a small flat pointed leaf along +X
+    let leaf = scaleMeshXYZ(ksph(0.12, WHITE, 6, 4), 1.0, 0.13, 0.46);    // a small flat pointed leaf along +X
     rotMeshZ(leaf, 0.45);                                                 // tip lifts up (a crown, not a droop)
     rotMeshY(leaf, a + 1.5708);                                           // aim it radially outward
     mergeAt(m, leaf, Math.cos(a) * 0.195, 0.49, Math.sin(a) * 0.195);     // tidy ring high around the bowl, well above the eyes
   }
   return m;
 }
-function kDishMesh() {   // a small WOODEN bowl with a solid bottom, seated on the flattened head top (fixed wood colours); neck-frame
+function kDishMesh() {   // a shallow, WIDE wooden bowl (height ~1/4 of its width), solid bottom + lighter rim, seated on the head top; neck-frame
   const m = Mesh();
-  mCyl(m, 0.525, 0.635, 0.15, 0.19, 16, KC_WOOD);                 // outer wall, gently flared, warm brown
-  mCyl(m, 0.545, 0.635, 0.12, 0.155, 16, KC_WOODIN);             // inner wall, darker (reads as a bowl, not a plug)
-  mergeMesh(m, discMesh(0.545, 0.12, 16, 0, KC_WOODIN));         // solid bottom → nothing shows through
-  const ro = 0.19, ri = 0.155, yT = 0.635;                       // lighter rim ring across the top
-  for (let i = 0; i < 16; i++) { const a0 = i/16*6.2832, a1 = (i+1)/16*6.2832;
+  mCyl(m, 0.525, 0.62, 0.165, 0.20, 18, KC_WOOD);                // outer wall, low + gently flared, warm brown
+  mCyl(m, 0.54, 0.62, 0.14, 0.175, 18, KC_WOODIN);              // inner wall, darker (reads as a bowl, not a plug)
+  mergeMesh(m, discMesh(0.54, 0.14, 18, 0, KC_WOODIN));         // solid bottom → nothing shows through
+  const ro = 0.20, ri = 0.175, yT = 0.62;                        // lighter rim ring across the top
+  for (let i = 0; i < 18; i++) { const a0 = i/18*6.2832, a1 = (i+1)/18*6.2832;
     mQuad(m, [Math.cos(a0)*ro,yT,Math.sin(a0)*ro], [Math.cos(a1)*ro,yT,Math.sin(a1)*ro],
              [Math.cos(a1)*ri,yT,Math.sin(a1)*ri], [Math.cos(a0)*ri,yT,Math.sin(a0)*ri], KC_WOODRIM); }
   return m;
 }
-function kWaterMesh() { const m = Mesh(); mergeMesh(m, discMesh(0.618, 0.145, 16, 0, KC_WATER)); return m; }   // water disc, just below the bowl rim (own instance → shimmer)
-function kBeakMesh() {   // small rounded upturned duck bill (fixed); neck-frame
-  let b = scaleMeshXYZ(ksph(0.105, KC_BEAK, 11, 8), 1.45, 0.6, 0.95);
-  rotMeshX(b, -0.28);                                              // upturn → a little smile
-  const m = Mesh(); mergeAt(m, b, 0, 0.2, 0.25); return m;
+function kWaterMesh() { const m = Mesh(); mergeMesh(m, discMesh(0.603, 0.165, 18, 0, KC_WATER)); return m; }   // water disc, just below the bowl rim (own instance → shimmer)
+function kBeakMesh() {   // a duck bill split into an upper + lower half with a thin dark mouth line that smiles up at the ends (fixed); neck-frame
+  const m = Mesh(), dark = [0.42, 0.28, 0.12];
+  // two overlapping halves (overlap at the seam so no skin shows through the gap)
+  mergeAt(m, scaleMeshXYZ(ksph(0.10, KC_BEAK, 10, 5), 1.45, 0.52, 0.95),  0,  0.020, 0);   // upper bill
+  mergeAt(m, scaleMeshXYZ(ksph(0.09, KC_BEAK, 10, 5), 1.32, 0.44, 0.88),  0, -0.020, -0.006); // lower bill (a touch smaller/back)
+  // the mouth: a thin dark strip laid on the seam, rising at the ends into a small smile
+  const W = 0.135, segs = 8, h = 0.011, zf = 0.092, sm = (x) => 2.3 * x * x;
+  for (let i = 0; i < segs; i++) { const x0 = -W + 2*W*i/segs, x1 = -W + 2*W*(i+1)/segs, y0 = sm(x0), y1 = sm(x1);
+    mQuad(m, [x0, y0-h, zf], [x1, y1-h, zf], [x1, y1+h, zf], [x0, y0+h, zf], dark); }
+  let b = Mesh(); mergeAt(b, m, 0, 0, 0); rotMeshX(b, -0.26);                // gentle upturn
+  const out = Mesh(); mergeAt(out, b, 0, 0.17, 0.27); return out;            // seat it on the lower face, proud of the surface
 }
-function kEyeMesh() {   // a pair of eyes; pivot at the EYE centre (so a blink squashes about the eyes)
+// §body-polish eyes: each eye is a shallow white dome seated clearly ON the head surface (pushed out along the
+// head's facing in drawKappa), with the pupil + highlight layered in front, so the head's faces never cut across it.
+function kEyeMesh() {   // pivot at the eye plane (a blink squashes about the eye centre)
   const m = Mesh();
-  for (const sx of [-0.12, 0.12]) {
-    mergeAt(m, scaleMeshXYZ(ksph(0.088, KC_EYEW, 12, 9), 0.85, 1.1, 0.7), sx, 0, 0);        // big white oval
-    mergeAt(m, scaleMeshXYZ(ksph(0.05,  KC_EYEP, 9, 7),  0.95, 1.0, 0.8), sx, -0.004, 0.06); // large black pupil (~half the eye)
-    mergeAt(m, ksph(0.016, WHITE, 6, 5), sx + 0.022, 0.036, 0.085);                          // white highlight dot
+  for (const sx of [-0.13, 0.13]) {
+    mergeAt(m, scaleMeshXYZ(ksph(0.085, KC_EYEW, 10, 6), 0.92, 1.08, 0.5),  sx,  0.0,   0.02);  // domed white disc, proud of the head
+    mergeAt(m, scaleMeshXYZ(ksph(0.052, KC_EYEP, 8, 5),  0.95, 1.0,  0.5),  sx, -0.004, 0.055); // large pupil, in front
+    mergeAt(m, scaleMeshXYZ(ksph(0.017, WHITE,  6, 4),   1.0,  1.0,  0.7),  sx+0.022, 0.034, 0.08); // highlight dot, furthest front
   }
   return m;
 }
-function kCheekMesh() {   // small pink blush discs (fixed); neck-frame
+function kCheekMesh() {   // small pink blush discs sitting on the cheek surface (fixed); neck-frame
   const m = Mesh();
-  for (const sx of [-0.2, 0.2]) mergeAt(m, scaleMeshXYZ(ksph(0.05, KC_PINK, 9, 6), 1.0, 1.0, 0.28), sx, 0.19, 0.2);
+  for (const sx of [-0.19, 0.19]) mergeAt(m, scaleMeshXYZ(ksph(0.05, KC_PINK, 8, 4), 1.0, 1.0, 0.3), sx, 0.185, 0.235);
   return m;
 }
 function kArmMesh(side) {   // short rounded capsule + mitten hand (skin); shoulder pivot; hangs at the side, angled slightly outward
   const m = Mesh();
-  mergeAt(m, scaleMeshXYZ(ksph(0.072, WHITE, 9, 7), 1.0, 1.9, 1.0), 0, -0.12, 0);   // arm
-  mergeAt(m, scaleMeshXYZ(ksph(0.092, WHITE, 9, 7), 1.05, 1.0, 1.05), 0, -0.25, 0);  // mitten
+  mergeAt(m, scaleMeshXYZ(ksph(0.072, WHITE, 7, 5), 1.0, 1.9, 1.0), 0, -0.12, 0);   // arm
+  mergeAt(m, scaleMeshXYZ(ksph(0.092, WHITE, 7, 5), 1.05, 1.0, 1.05), 0, -0.25, 0);  // mitten
   rotMeshZ(m, (side || 0) * 0.24);   // splay the hand outward from the body (not hugging the belly)
   return m;
 }
 function kLegMesh() {   // short rounded leg + webbed fan foot (skin); pivot at the hip
   const m = Mesh();
-  mergeAt(m, scaleMeshXYZ(ksph(0.082, WHITE, 10, 8), 1.0, 1.7, 1.0), 0, -0.085, 0);     // leg
-  mergeAt(m, scaleMeshXYZ(ksph(0.11,  WHITE, 11, 7), 1.0, 0.32, 1.5), 0, -0.165, 0.055); // webbed foot, forward
+  mergeAt(m, scaleMeshXYZ(ksph(0.082, WHITE, 7, 5), 1.0, 1.7, 1.0), 0, -0.085, 0);      // leg
+  mergeAt(m, scaleMeshXYZ(ksph(0.11,  WHITE, 8, 4), 1.0, 0.32, 1.5), 0, -0.165, 0.055);  // webbed foot, forward
   return m;
 }
 // --- accessories (own meshes; drawn only for the kappa that carry them) ---
@@ -11931,7 +11942,7 @@ function drawKappa(view) {
     // body-frame parts (pivot at the body centre): roll with the body
     put("body",  k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, skin,  sqXZ, sqY);
     put("belly", k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, belly, sqXZ, sqY);
-    put("shell", k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, shell, sqXZ, sqY);
+    if (KAPPA_SHELL_ON) put("shell", k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, shell, sqXZ, sqY);
     if (k.acc === "cloth") put("cloth", k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, WHITE, sqXZ, sqY);
     // head-frame parts (pivot at the neck): follow the (lagged) head yaw + nod
     put("head",  k.x, neckY, k.z, S, headYaw, nod, 0, skin,  1, 1);
@@ -11943,8 +11954,9 @@ function drawKappa(view) {
     put("beak",  k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
     if (k.acc === "tub")  put("tub",  k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
     if (k.acc === "lily") put("lily", k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
-    // eyes (own pivot at the eye centre → a blink/sleepy squash is about the eyes)
-    { const exw = k.x + rx(0, 0.235)*S, ezw = k.z + rz(0, 0.235)*S, eyw = neckY + 0.3*S;
+    // eyes: seated on the head FRONT along the (lagged) head facing, pushed out so they sit proud of the surface
+    { const fwd = 0.30, shy = Math.sin(headYaw), chy = Math.cos(headYaw);
+      const exw = k.x + shy*fwd*S, ezw = k.z + chy*fwd*S, eyw = neckY + 0.285*S;
       const blink = k.blink ? (k.sleepy ? 0.45 : 1.0) : 0.1;                 // sleepy = half-closed
       put("eye", exw, eyw, ezw, S, headYaw, nod, 0, WHITE, 1, blink); }
     // arms (shoulder pivots): swing (land) / paddle (swim)
