@@ -5646,6 +5646,7 @@ uniform int uWetBand;                               // 1 only for the world prop
 uniform float uGhost; uniform vec3 uGhostCol;       // §16B building-placement ghost
 uniform vec3 uLanternPos; uniform float uLanternI, uLanternR;  // §18 lantern light pool (uLanternR = radius, tunable)
 uniform float uDissolve;                            // §urgent5 0 = solid; >0 = dithered dissolve (dying creatures)
+uniform float uEmissive;                            // §nightlight self-lit glow (village windows/lanterns): 1 = ignore lighting, use vCol directly
 uniform int uHemi;                                  // §ATMO #2 hemisphere ambient on/off (0 = flat, for icon/inspect renders)
 uniform float uDusk;                                // §sky sunrise/sunset strength (for fog colour)
 uniform vec3 uMoonDir, uMoonCol, uNightAmb;         // §night moon key light + dark-blue ambient floor
@@ -5688,6 +5689,7 @@ void main() {
     float ld = length(vWorld - uLanternPos);
     col += vec3(1.0, 0.62, 0.32) * (uLanternI * (1.0 - smoothstep(0.4, uLanternR, ld)));
   }
+  if (uEmissive > 0.001) col = mix(col, vCol, uEmissive);   // §nightlight village windows/lanterns glow from within (fog still applies below)
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
   float fd = max(dist - uFogNear, 0.0) * uFogDensity;
@@ -8718,7 +8720,10 @@ function activeLanternPos() {
   if (lanternLit()) return lanternPos();
   let best = null, bd = 1e9;
   for (const L of placedLanterns) { if (L.out) continue; const d = (L.x-cam.pos[0])**2 + (L.z-cam.pos[2])**2; if (d < bd) { bd = d; best = L; } }   // §P2 a tide-snuffed lantern casts no light
-  return best ? [best.x, best.y + 0.35, best.z] : null;
+  let bestP = best ? [best.x, best.y + 0.35, best.z] : null;
+  // §nightlight a lit village lantern (hut once a kappa is home, or a gazebo at night) throws a warm pool too
+  if (typeof villageLitLanterns !== "undefined") for (const L of villageLitLanterns) { const d = (L.x-cam.pos[0])**2 + (L.z-cam.pos[2])**2; if (d < bd) { bd = d; bestP = [L.x, L.y, L.z]; } }
+  return bestP;
 }
 function setLanternUniform(U) {   // call after the program + its uniforms are bound
   if (!U || U.uLanternI === undefined) return;
@@ -10005,6 +10010,7 @@ function propUniforms(view) {
     gl.uniform3f(propU.uNightAmb, ATMO.nightamb?nt*0.045:0, ATMO.nightamb?nt*0.065:0, ATMO.nightamb?nt*0.115:0);
     gl.uniform1f(propU.uNightRim, ATMO.nightrim ? nt*0.85 : 0); }
   gl.uniform1f(propU.uDissolve, 0);   // §urgent5 default: solid
+  if (propU.uEmissive !== undefined) gl.uniform1f(propU.uEmissive, 0);   // §nightlight default: normal lighting (only the village-glow pass turns this on)
 }
 
 /* ===================================================================== *
@@ -12116,6 +12122,8 @@ function makeKappaHut(o) {
       mBox(win, 0, 0, 0.035, 0.24, 0.026, 0.02, KVP.frame);             // muntin: horizontal bar (spans X)
       mBox(win, 0, 0, 0.035, 0.026, 0.24, 0.02, KVP.frame);             // muntin: vertical bar (spans Y) -> classic + cross
       rotMeshY(win, k*step); mergeAt(m, win, sx*(face + 0.02), D + 1.0, sz*(face + 0.02));
+      // §nightlight anchor: a soft pane glow sits a hair proud of the glass; cool blue when the house is empty, warm when a kappa is home
+      col.push({ kind:'light', lt:'window', hut:o.hutId, x:sx*(face + 0.06), z:sz*(face + 0.06), y:D + 1.0 });
     }
     // 6. lantern (front-left) + cucumber string (front-right) under the eaves
     if (o.lantern) {
@@ -12124,6 +12132,7 @@ function makeKappaHut(o) {
       cylAt(x, z, D + 1.215, D + 1.285, 0.1, 0.14, 6, KVP.hole);
       { const l = Mesh(); mergeMesh(l, ksph(0.2, KVP.lantern, 8, 5)); mergeAt(m, l, x, D + 1.05, z); }
       cylAt(x, z, D + 0.81, D + 0.87, 0.12, 0.08, 6, KVP.hole);
+      col.push({ kind:'light', lt:'lantern', hut:o.hutId, x, z, y:D + 1.05 });   // §nightlight hut lantern: lights up once a kappa is home for the night
     }
     if (o.cucumbers) {
       const x = Math.sin(0.45)*(W+0.7), z = Math.cos(0.45)*(W+0.7);
@@ -12135,6 +12144,7 @@ function makeKappaHut(o) {
   } else if (o.lantern) {
     kvRod(m, [0, roofY + 0.2, 0], [0, D + 1.35, 0], 0.015, 3, KVP.hole);
     const l = Mesh(); mergeMesh(l, ksph(0.2, KVP.lantern, 8, 5)); mergeAt(m, l, 0, D + 1.15, 0);
+    col.push({ kind:'light', lt:'gazebo', hut:o.hutId, x:0, z:0, y:D + 1.15 });   // §nightlight gazebo (lookout) lantern: auto-on at night
   }
 
   // 7. turtle-shell roof: rim + squashed dark dome + two staggered rings of hex plates
@@ -12217,6 +12227,9 @@ function makeKappaWalkway(a, b, kind, groundAt) {
 
 // GL + collision data for the rendered village (freed in disposeWorldGL)
 let villageGL = null, villageFloors = [], villageSolids = [], villageTriggers = [], villageReport = null;
+// §nightlight window/lantern glow anchors (world-space, tagged by hut): built from V.lights in placeKappaVillage.
+// Each: { x, y, z, lt:'window'|'lantern'|'gazebo', hut }. villageHutLit[i] eases 0..1 as a kappa settles in hut i.
+let villageLights = [], villageHutLit = [], villageGlowDyn = null, villageLitLanterns = [];
 // §cuke harvestable cucumber strings on the huts. Each: { x, z, y (top cuke world Y), dy (spacing), count 0..CUKE_MAX, regrowAt }
 let villageCukes = [], villageCukeGL = null;
 const CUKE_MAX = 3, CUKE_REGROW_DAYS = 2.0;   // 3 per string; a picked string refills (one at a time) after a couple of days, out of view
@@ -12274,7 +12287,7 @@ function makeKappaVillage(seed, worldSites, terrainHeight, { scale = 1, seaLevel
   const rng = kvRng(seed);
   const DRY = dryHeight / scale, level = rng.range(2.3, 3.0);
   const mainShell = rng.pick(KV_SHELLS), altShell = rng.pick(KV_SHELLS);
-  const mesh = Mesh(), solids = [], floors = [], triggers = [], cukes = [];
+  const mesh = Mesh(), solids = [], floors = [], triggers = [], cukes = [], lights = [];
   const rotXZ = (x, z, a) => [x * Math.cos(a) + z * Math.sin(a), -x * Math.sin(a) + z * Math.cos(a)];   // matches rotMeshY
 
   // 1. what stands on each site (site 0 = big elder hut)
@@ -12362,7 +12375,8 @@ function makeKappaVillage(seed, worldSites, terrainHeight, { scale = 1, seaLevel
       if (c.kind === 'solid') solids.push({ x: vx, z: vz, r: c.r, y0: c.y0 + h.base, y1: c.y1 + h.base });
       else if (c.kind === 'floor') floors.push({ shape: 'disc', x: vx, z: vz, r: c.r, y: c.y + h.base });
       else if (c.kind === 'trigger') triggers.push({ x: vx, z: vz, y: c.y + h.base, r: c.r, name: c.name });
-      else if (c.kind === 'cuke') cukes.push({ x: vx, z: vz, y: c.y + h.base, dy: c.dy }); }   // §cuke harvestable cucumber string anchor (top cuke)
+      else if (c.kind === 'cuke') cukes.push({ x: vx, z: vz, y: c.y + h.base, dy: c.dy });   // §cuke harvestable cucumber string anchor (top cuke)
+      else if (c.kind === 'light') lights.push({ x: vx, z: vz, y: c.y + h.base, lt: c.lt, hut: c.hut }); }   // §nightlight window/lantern glow anchor (world-space, tagged by hut)
   };
 
   // 5. walkways first (so ladders can take a free face), then huts
@@ -12375,15 +12389,16 @@ function makeKappaVillage(seed, worldSites, terrainHeight, { scale = 1, seaLevel
       const wk = makeKappaWalkway(attach(h, link.ang), end, link.type, groundAt);
       mergeMesh(mesh, wk.mesh); for (const c of wk.colliders) floors.push({ shape: 'ramp', ax: wk.a.x, az: wk.a.z, ay: wk.a.y, heading: wk.heading, halfWidth: c.halfWidth, z1: c.z1, dy: c.y1, sag: c.sag }); }
   }
-  for (const h of huts) {
+  huts.forEach((h, hi) => {
     let ladderFace = null;
     if (h.kind === 'hut' && h.ground < -0.3 && rng.chance(0.7)) { const back = Math.round(h.sides / 2);
       for (const off of [0, 1, -1, 2, -2]) { const k = (back + off + h.sides) % h.sides; if (!h.used.has(k)) { ladderFace = k; break; } } }
+    const lanternRoll = rng.chance(0.65);   // §nightlight keep the draw for determinism; a lookout (gazebo) always lights up so it reads as a lamp at night
     const built = makeKappaHut({ kind: h.kind, sides: h.sides, wallR: h.wallR, wallH: h.elder ? 2.1 : rng.range(1.5, 1.95),
       deckY: h.deckY, groundY: h.ground - h.base, shell: rng.chance(0.75) ? mainShell : altShell,
-      squash: rng.range(0.6, 0.8), lantern: rng.chance(0.65), cucumbers: rng.chance(0.5), ladderFace, rng });
+      squash: rng.range(0.6, 0.8), lantern: h.kind === 'lookout' ? true : lanternRoll, cucumbers: rng.chance(0.5), ladderFace, rng, hutId: hi });
     bakeHut(h, built);
-  }
+  });
 
   // 6. spawn (elder deck just outside its door) + report
   const elder = huts[0], est = (Math.PI * 2) / elder.sides;
@@ -12403,7 +12418,7 @@ function makeKappaVillage(seed, worldSites, terrainHeight, { scale = 1, seaLevel
   const S = scale, toW = (c) => { const o = { ...c }; for (const k of ['x', 'z', 'r', 'y', 'y0', 'y1', 'ax', 'az', 'halfWidth', 'z1']) if (typeof o[k] === 'number') o[k] *= S;
     if (typeof o.ay === 'number') o.ay = o.ay * S + seaLevel; for (const k of ['y', 'y0', 'y1']) if (typeof o[k] === 'number') o[k] += seaLevel; if (typeof o.dy === 'number') o.dy *= S; if (typeof o.sag === 'number') o.sag *= S; return o; };
   const outHuts = huts.map((h) => ({ x: h.x * S, z: h.z * S, y: h.base * S + seaLevel, deckWorld: h.deckWorld * S + seaLevel, rot: h.rot, kind: h.kind }));
-  return { mesh: worldMesh, solids: solids.map(toW), floors: floors.map(toW), triggers: triggers.map(toW), cukes: cukes.map(toW), spawn, report, huts: outHuts };
+  return { mesh: worldMesh, solids: solids.map(toW), floors: floors.map(toW), triggers: triggers.map(toW), cukes: cukes.map(toW), lights: lights.map(toW), spawn, report, huts: outHuts };
 }
 
 // §village step2 collisions. All data in villageFloors/villageSolids is world-space (toW applied).
@@ -12456,8 +12471,10 @@ function villagePushOut(x, z, feetY) {
 function placeKappaVillage() {
   kappaVillage = null; kappaHuts = []; kappas = []; kappaVillageSpawn = null;
   villageFloors = []; villageSolids = []; villageTriggers = []; villageReport = null; villageCukes = [];
+  villageLights = []; villageHutLit = []; villageLitLanterns = [];
   if (villageGL) { disposeGLObj(villageGL); villageGL = null; }
   if (villageCukeGL) { disposeGLObj(villageCukeGL); villageCukeGL = null; }
+  if (villageGlowDyn) { disposeGLObj(villageGlowDyn); villageGlowDyn = null; }
   if (!KAPPA_ON) return;
   const R = mulberry32(((SEED_INT ^ 0x6b617070) >>> 0) || 1);   // own stream ("kapp"): zero draws from the shared rng
   // Pick where the village sits. The restrictions are soft now, and a guaranteed shore fallback means EVERY seed
@@ -12533,6 +12550,13 @@ function placeKappaVillage() {
   villageSolids = V.solids;
   villageCukes = (V.cukes || []).map(c => ({ x: c.x, z: c.z, y: c.y, dy: c.dy, count: CUKE_MAX, regrowAt: 0 }));   // §cuke full strings to start
   rebuildVillageCukes();
+  // §nightlight window/lantern glow anchors + per-hut lit state (kappaHuts[i] <-> V.huts[i] <-> light.hut === i)
+  villageLights = (V.lights || []).map(l => ({ x: l.x, y: l.y, z: l.z, lt: l.lt, hut: l.hut }));
+  villageHutLit = kappaHuts.map(() => 0);
+  villageLitLanterns = [];
+  for (let i = 0; i < kappaHuts.length; i++) { kappaHuts[i].inside = false; kappaHuts[i].occupant = null; kappaHuts[i].kind = (V.huts[i] && V.huts[i].kind) || 'hut'; }
+  if (villageGlowDyn) { disposeGLObj(villageGlowDyn); villageGlowDyn = null; }
+  villageGlowDyn = makeDynamic(villageGlowMesh(), 64);
   if (typeof rebuildCollHash === "function") rebuildCollHash();
   for (const h of kappaHuts) kappas.push({
     home: h, x: h.x, z: h.z, yaw: h.yaw, tx: h.x, tz: h.z, spd: 0,
@@ -12573,10 +12597,11 @@ function pickKappaTarget(k) {
   k.tx = kappaVillage.x; k.tz = kappaVillage.z;
 }
 function kappaResolve(k, x, z) {   // steer around obstacles: slide out of colliders, the player and other kappa
+  const eh = k.nightHut || k.home;   // §nightlight the hut it's heading into tonight is the one that never blocks it
   const cx = Math.floor(x / COLL_CELL), cz = Math.floor(z / COLL_CELL);
   for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) { const bk = collHash.get((cx+i) + "," + (cz+j)); if (!bk) continue;
     for (const c of bk) {
-      if (c.kind === "kappahut" && Math.abs(c.x - k.home.x) < 0.01 && Math.abs(c.z - k.home.z) < 0.01) continue;   // its own home never blocks it
+      if (c.kind === "kappahut" && Math.abs(c.x - eh.x) < 0.01 && Math.abs(c.z - eh.z) < 0.01) continue;   // its own/chosen home never blocks it
       const dx = x - c.x, dz = z - c.z, minD = c.r + KAPPA_R; let d = Math.hypot(dx, dz);
       if (d < minD) { if (d < 1e-4) x += minD; else { const p = (minD - d)/d; x += dx*p; z += dz*p; } } } }
   // §kappacoll the village's stilts + hut walls block kappas too (vertical-aware, like the player). A kappa's OWN
@@ -12586,7 +12611,7 @@ function kappaResolve(k, x, z) {   // steer around obstacles: slide out of colli
     const footY = k.renderY, headY = k.renderY + KAPPA_R*2.2;
     for (const c of villageSolids) {
       if (headY <= c.y0 || footY >= c.y1) continue;
-      if (Math.hypot(c.x - k.home.x, c.z - k.home.z) < 3.0) continue;   // its own hut's stilts/walls don't block it
+      if (Math.hypot(c.x - eh.x, c.z - eh.z) < 3.0) continue;   // its own/chosen hut's stilts/walls don't block it
       const dx = x - c.x, dz = z - c.z, minD = c.r + KAPPA_R; let d = Math.hypot(dx, dz);
       if (d < minD) { if (d < 1e-4) x += minD; else { const p = (minD - d)/d; x += dx*p; z += dz*p; } }
     }
@@ -12595,16 +12620,25 @@ function kappaResolve(k, x, z) {   // steer around obstacles: slide out of colli
   for (const o of kappas) { if (o === k || o.inside) continue; const dx = x - o.x, dz = z - o.z, minD = KAPPA_R*2; let d = Math.hypot(dx, dz); if (d < minD && d > 1e-4) { const p = (minD - d)/d*0.5; x += dx*p; z += dz*p; } }
   return [x, z];
 }
+// §nightlight at dusk a kappa heads for the nearest un-taken hut (its own home if free), reserving it so two never pile in
+function claimNightHut(k) {
+  let best = k.home, bd = Infinity;
+  for (const h of kappaHuts) { if (h.occupant && h.occupant !== k) continue; const d = Math.hypot(h.x - k.x, h.z - k.z); if (d < bd) { bd = d; best = h; } }
+  if (k.nightHut && k.nightHut !== best) { k.nightHut.occupant = null; k.nightHut.inside = false; }
+  best.occupant = k;
+  return best;
+}
 function updateKappa(dt) {
   if (!KAPPA_ON || !kappas.length) return;
   const day = kappaDaytime();
   for (const k of kappas) {
     if (k.stumble > 0) k.stumble = Math.max(0, k.stumble - dt);
     // schedule: home at dusk/night, out at dawn
-    if (!day) { if (k.state !== "goHome" && k.state !== "inside") { k.state = "goHome"; k.tx = k.home.x; k.tz = k.home.z; } }
-    else if (k.inside || k.state === "goHome") { k.inside = false; k.state = "wander"; pickKappaTarget(k); }
+    if (!day) { if (k.state !== "goHome" && k.state !== "inside") { k.state = "goHome"; const h = claimNightHut(k); k.nightHut = h; k.tx = h.x; k.tz = h.z; } }
+    else if (k.inside || k.state === "goHome") { if (k.nightHut) { k.nightHut.occupant = null; k.nightHut.inside = false; k.nightHut = null; } k.inside = false; k.state = "wander"; pickKappaTarget(k); }
     if (k.inside) { k.spd = 0; continue; }                                   // hidden indoors, not moving
-    if (k.state === "goHome" && Math.hypot(k.x - k.home.x, k.z - k.home.z) < 0.8) { k.inside = true; k.spd = 0; continue; }
+    if (k.state === "goHome") { const h = k.nightHut || k.home;
+      if (Math.hypot(k.x - h.x, k.z - h.z) < 0.8) { k.inside = true; if (k.nightHut) k.nightHut.inside = true; k.spd = 0; continue; } }
     if (k.state === "wander" && Math.hypot(k.x - k.tx, k.z - k.tz) < 0.8) pickKappaTarget(k);
     // desired heading toward the target (prop yaw convention: local +Z → (sin,cos))
     const dx = k.tx - k.x, dz = k.tz - k.z;
@@ -12700,6 +12734,62 @@ function drawKappaHuts(view) {
   gl.drawArraysInstanced(gl.TRIANGLES, 0, villageGL.vertCount, villageGL.count);
   // §cuke the harvestable cucumbers (separate buffer so it rebuilds as they are picked / restock)
   if (villageCukeGL && villageCukeGL.vao && villageCukeGL.vertCount) { gl.bindVertexArray(villageCukeGL.vao); gl.drawArraysInstanced(gl.TRIANGLES, 0, villageCukeGL.vertCount, villageCukeGL.count); }
+  drawVillageGlow(view);   // §nightlight window/lantern glow (additive, night only)
+}
+// §nightlight a soft round blob (low-poly sphere, white) drawn additively & emissive so each window/lantern glows from within
+function villageGlowMesh() { return ksph(0.26, WHITE, 8, 5); }
+// pick the glow colour + brightness for a light anchor this frame (night ramp × per-hut occupancy)
+function drawVillageGlow(view) {
+  if (!villageLights.length || !villageGlowDyn) return;
+  const dusk = 1 - (typeof dayFactor === "function" ? dayFactor() : 1);
+  const night = Math.max(0, Math.min(1, (dusk - 0.18) / 0.5));   // 0 in daylight, eases to 1 by night (matches the lantern pool)
+  if (night < 0.01) return;
+  const flick = (typeof lanternFlicker === "function") ? lanternFlicker() : 1;
+  const WIN_BLUE = [0.34, 0.52, 0.86], WIN_WARM = [1.0, 0.72, 0.34], LAMP = [1.0, 0.68, 0.30];
+  const a = _villageGlowArr; let n = 0;
+  for (const L of villageLights) {
+    if (n >= 64) break;
+    const lit = villageHutLit[L.hut] || 0;
+    let r, g, b, size;
+    if (L.lt === 'window') {
+      const col = [WIN_BLUE[0] + (WIN_WARM[0]-WIN_BLUE[0])*lit, WIN_BLUE[1] + (WIN_WARM[1]-WIN_BLUE[1])*lit, WIN_BLUE[2] + (WIN_WARM[2]-WIN_BLUE[2])*lit];
+      const bright = night * (0.45 + 0.55*lit);   // dim blue when empty, full warm when a kappa is home
+      r = col[0]*bright; g = col[1]*bright; b = col[2]*bright; size = 1.0 + 0.25*lit;
+    } else if (L.lt === 'gazebo') {
+      const bright = night * flick;               // gazebo lanterns auto-on at night
+      r = LAMP[0]*bright; g = LAMP[1]*bright; b = LAMP[2]*bright; size = 1.25;
+    } else {   // hut lantern: only once a kappa is home
+      const bright = night * lit * flick;
+      if (bright < 0.02) continue;
+      r = LAMP[0]*bright; g = LAMP[1]*bright; b = LAMP[2]*bright; size = 1.2;
+    }
+    const o = n*10; a[o]=L.x; a[o+1]=L.y; a[o+2]=L.z; a[o+3]=size; a[o+4]=0; a[o+5]=0; a[o+6]=0; a[o+7]=r; a[o+8]=g; a[o+9]=b; n++;
+  }
+  if (!n) return;
+  propUniforms(view); gl.uniform1f(propU.uSway, 0); if (propU.uClampTop !== undefined) gl.uniform1f(propU.uClampTop, 1e9);
+  gl.uniform1f(propU.uEmissive, 1);   // self-lit: output the glow colour directly (fog still applies)
+  gl.uniform1f(propU.uLanternI, 0);
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE); gl.depthMask(false);   // additive glow
+  villageGlowDyn.draw(a, n);
+  gl.disable(gl.BLEND); gl.depthMask(true); gl.uniform1f(propU.uEmissive, 0);
+}
+const _villageGlowArr = new Float32Array(64*10);
+// ease each hut's "lit" toward 1 while a kappa is home for the night, and collect the lit lanterns so they cast a ground pool
+function updateVillageLights(dt) {
+  if (!villageLights.length) { villageLitLanterns.length = 0; return; }
+  for (let i = 0; i < villageHutLit.length; i++) {
+    const h = kappaHuts[i], target = (h && h.inside) ? 1 : 0;
+    villageHutLit[i] += (target - villageHutLit[i]) * Math.min(1, dt*1.6);
+  }
+  // the lit lanterns that should throw a warm pool on the ground/props (nearest one is picked by activeLanternPos)
+  const dusk = 1 - (typeof dayFactor === "function" ? dayFactor() : 1);
+  const night = Math.max(0, Math.min(1, (dusk - 0.18) / 0.5));
+  villageLitLanterns.length = 0;
+  if (night > 0.05) for (const L of villageLights) {
+    if (L.lt === 'window') continue;
+    const on = L.lt === 'gazebo' ? 1 : (villageHutLit[L.hut] || 0);
+    if (on > 0.4) villageLitLanterns.push(L);
+  }
 }
 function drawKappa(view) {
   if (!KAPPA_ON) return;
@@ -15288,6 +15378,7 @@ function disposeWorldGL() {
   if (barnacleRockDyn) { disposeGLObj(barnacleRockDyn); barnacleRockDyn = null; }  // intertidal rock mesh is seeded (SEED_INT^0x5b)
   if (villageGL) { disposeGLObj(villageGL); villageGL = null; }              // §village: the per-seed stilt-village mesh
   if (villageCukeGL) { disposeGLObj(villageCukeGL); villageCukeGL = null; }   // §cuke harvestable cucumbers buffer
+  if (villageGlowDyn) { disposeGLObj(villageGlowDyn); villageGlowDyn = null; }   // §nightlight window/lantern glow buffer
   _barnRockMesh = null;                                                     // seeded base mesh for standalone intertidal rocks; lazily rebuilt
   if (Array.isArray(oysterBeds)) for (const b of oysterBeds) if (b.dyn) { disposeGLObj(b.dyn); b.dyn = null; }   // §P3 each oyster rock has its own seeded mesh
 }
@@ -15662,6 +15753,7 @@ function frame(now) {
   if (mode === "walk") { updateShrooms(dt); updateTrip(dt); }   // FEATURE: shrooms  restock mushrooms + advance any active trip
   if (mode === "walk") updateKappa(simDt);   // FEATURE: kappa  village wander / schedule / navigation
   if (mode === "walk") updateVillageCukes(simDt);   // §cuke hut cucumbers restock out of view
+  updateVillageLights(dt);   // §nightlight ease window/lantern glow toward occupancy (real dt so it stays smooth; occupancy itself is simDt-gated)
   if (typeof VOICE !== "undefined") {     // §voice 3D listener follows the camera; live sentences track their speakers; kappas mumble when near
     const vf = (typeof camForward === "function") ? camForward() : [0, 0, 1];
     VOICE.listener(cam.pos[0], cam.pos[1], cam.pos[2], vf[0], vf[1], vf[2]); VOICE.update();
