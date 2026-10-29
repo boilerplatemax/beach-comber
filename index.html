@@ -11671,9 +11671,9 @@ function kBellyMesh() {   // §R3 one smooth cream-green oval plate, more segmen
 }
 function kShellMesh() {   // §R3 the turtle-shell carapace fitted to the back: scaled down, rotated so the dome bulges behind and the hollow faces the body; body-frame
   const s = turtleShellMesh();
-  scaleMeshXYZ(s, 0.56, 0.42, 0.54);   // width (slightly wider than the body), back-bulge (kept shallow so it hugs), vertical extent (covers the back)
+  scaleMeshXYZ(s, 0.50, 0.38, 0.44);   // §R4 smaller + shorter: width (still a touch wider than the body), shallow back-bulge (hugs), reduced vertical extent so it never reaches the head
   rotMeshX(s, -1.5708);                // dome → back (-Z), long axis → vertical (Y), hollow underside → the body (+Z)
-  const m = Mesh(); mergeAt(m, s, 0, 0.08, -0.10); return m;   // seat higher on the back, hugging it (rim peeks at the sides from the front, never cutting the belly)
+  const m = Mesh(); mergeAt(m, s, 0, -0.04, -0.09); return m;   // seat lower on the mid/lower back, hugging it (rim peeks at the sides from the front, clears the head, never cuts the belly)
 }
 function kHeadMesh() {   // round head, slightly wider than tall, with a gently flattened top as a seat for the bowl (skin); pivot at the neck
   // Few large facets (clean low-poly). One colour; all shading variation comes from the lighting.
@@ -11717,13 +11717,10 @@ function kCheekMesh() {   // small pink blush discs sitting on the cheek surface
   for (const sx of [-0.19, 0.19]) mergeAt(m, scaleMeshXYZ(ksph(0.05, KC_PINK, 8, 4), 1.0, 1.0, 0.3), sx, 0.185, 0.235);
   return m;
 }
-function kArmMesh(side) {   // §R3 ONE smooth tapered capsule (arm → mitten in a single piece), gently bent, shoulder sunk into the torso side; shoulder pivot
-  // profile top→bottom: starts above the joint (sinks into the body), tapers down, bulges into the mitten, caps.
-  const prof = [[0.09,0.0],[0.06,0.055],[0.0,0.075],[-0.10,0.067],[-0.20,0.060],[-0.27,0.063],[-0.31,0.086],[-0.35,0.070],[-0.375,0.0]];
-  const m = kLathe(prof, 10, WHITE);
-  const P = m.pos; for (let i = 0; i < P.length; i += 3) { const y = P[i+1]; if (y < 0) P[i+2] += Math.pow(-y, 1.3) * 0.16; }   // gentle forward bend of the lower arm + hand
-  rotMeshZ(m, (side || 0) * 0.13);   // a slight outward splay
-  return m;
+function kArmMesh(side) {   // §R4 relaxed Mii/Tomodachi-style arm: one smooth rounded limb that hangs straight down (no bend, no splay), a bit shorter than a Mii, with a rounded mitten hand; shoulder pivot
+  // profile top→bottom: sinks into the shoulder, slim and even down the arm, swells into the rounded hand, caps.
+  const prof = [[0.07,0.0],[0.04,0.052],[-0.02,0.062],[-0.12,0.058],[-0.19,0.057],[-0.225,0.072],[-0.255,0.080],[-0.28,0.058],[-0.295,0.0]];
+  return kLathe(prof, 10, WHITE);   // side unused: both arms hang straight and relaxed at the sides
 }
 function kLegMesh() {   // short rounded leg + webbed fan foot (skin); pivot at the hip
   const m = Mesh();
@@ -11731,36 +11728,7 @@ function kLegMesh() {   // short rounded leg + webbed fan foot (skin); pivot at 
   mergeAt(m, scaleMeshXYZ(ksph(0.11,  WHITE, 8, 4), 1.0, 0.32, 1.5), 0, -0.165, 0.055);  // webbed foot, forward
   return m;
 }
-// --- accessories (own meshes; drawn only for the kappa that carry them) ---
-function kClothMesh() {   // a white cloth wrapped round the waist (body-frame)
-  const m = Mesh();
-  mergeAt(m, scaleMeshXYZ(ksph(0.2, KC_CLOTH, 14, 6), 1.04, 0.5, 1.02), 0, -0.14, 0);
-  mergeAt(m, scaleMeshXYZ(ksph(0.05, KC_CLOTH, 7, 6), 1.0, 1.6, 0.5), 0.14, -0.2, 0.16);   // a little knotted tail
-  return m;
-}
-function kLilyMesh() {   // a lily pad worn like a hat (neck-frame, on top)
-  const m = Mesh();
-  mergeAt(m, scaleMeshXYZ(ksph(0.27, KC_LILY, 16, 4), 1.0, 0.12, 1.0), 0, 0.6, 0.02);
-  const notch = scaleMeshXYZ(ksph(0.09, [0.2,0.42,0.2], 8, 4), 1.0, 0.2, 1.0);              // a wedge notch
-  mergeAt(m, notch, 0.2, 0.61, 0.0);
-  return m;
-}
-function kTubMesh() {   // a small wooden tub balanced on the head (neck-frame, on top)
-  const m = Mesh();
-  mCyl(m, 0.58, 0.82, 0.2, 0.22, 16, KC_WOOD);
-  mergeMesh(m, discMesh(0.58, 0.2, 16, 0, [0.5,0.36,0.22]));
-  mCyl(m, 0.8, 0.84, 0.205, 0.225, 16, [0.5,0.36,0.22]);   // rim hoop
-  return m;
-}
-function kCukeMesh() {   // a cucumber carried in one hand (arm-frame, at the hand)
-  const m = Mesh(); mergeAt(m, scaleMeshXYZ(ksph(0.055, KC_CUKE, 9, 7), 1.0, 2.6, 1.0), 0, -0.3, 0.02); return m;
-}
-function kBasketMesh() {   // a little reed basket carried in one hand (arm-frame, at the hand)
-  const m = Mesh();
-  mCyl(m, -0.34, -0.2, 0.08, 0.1, 12, [0.72,0.58,0.34]);
-  mergeMesh(m, discMesh(-0.34, 0.08, 12, 0, [0.6,0.47,0.27]));
-  return m;
-}
+// §R4 kappa accessories (cloth / lily pad / tub / cucumber / basket) removed by request.
 function kappaHutMesh() {   // a simple box house with a hip roof + round door (can't be broken)
   const m = Mesh(), W = 0.95, H = 1.0, wood = [0.62, 0.46, 0.3], roof = [0.44, 0.31, 0.2], roof2 = [0.38, 0.26, 0.17], door = [0.17, 0.11, 0.07];
   mBox(m, 0, H, 0, W, H, W, wood);                           // walls
@@ -11847,7 +11815,7 @@ function placeKappaVillage() {
     stuckT: 0, lastx: h.x, lastz: h.z, swim: 0, renderY: h.y, stumble: 0,
     // §kappa-polish appearance (visual only): colour variant, an optional accessory, kid size, head-lag + sleepy state
     variant: KV_PICK[(R()*KV_PICK.length) | 0],
-    acc: (R() < 0.45) ? ["cloth","lily","tub","cuke","basket"][(R()*5) | 0] : null,
+    acc: null,   // §R4 accessories removed
     kid: R() < 0.25,
     hyaw: h.yaw, idleT: 0, sleepy: false,
   });
@@ -11945,9 +11913,9 @@ function kappaStumble(k) {   // a hit just makes it recoil with a chirp (it can'
 // --- draw: a tiny CPU bone rig, one instance per body part ---
 let _hutDyn = null;
 // kappa part registry: one dynamic buffer + scratch per part (built lazily)
-const _kpMesh = { body:kBodyMesh, belly:kBellyMesh, shell:kShellMesh, head:kHeadMesh, dish:kDishMesh, water:kWaterMesh, beak:kBeakMesh, cheek:kCheekMesh, eye:kEyeMesh, armL:()=>kArmMesh(-1), armR:()=>kArmMesh(1), leg:kLegMesh, cloth:kClothMesh, lily:kLilyMesh, tub:kTubMesh, cuke:kCukeMesh, basket:kBasketMesh };
-const _kpMax  = { body:8,belly:8,shell:8,head:8,dish:8,water:8,beak:8,cheek:8,eye:8, armL:8,armR:8,leg:16, cloth:8,lily:8,tub:8,cuke:8,basket:8 };
-const KP_ORDER = ["shell","body","belly","cloth","leg","armL","armR","basket","cuke","head","dish","water","tub","lily","cheek","beak","eye"];
+const _kpMesh = { body:kBodyMesh, belly:kBellyMesh, shell:kShellMesh, head:kHeadMesh, dish:kDishMesh, water:kWaterMesh, beak:kBeakMesh, cheek:kCheekMesh, eye:kEyeMesh, armL:()=>kArmMesh(-1), armR:()=>kArmMesh(1), leg:kLegMesh };
+const _kpMax  = { body:8,belly:8,shell:8,head:8,dish:8,water:8,beak:8,cheek:8,eye:8, armL:8,armR:8,leg:16 };
+const KP_ORDER = ["shell","body","belly","leg","armL","armR","head","dish","water","cheek","beak","eye"];
 let _kp = null;
 function ensureKappaDyns() { if (_kp) return; _kp = {}; for (const key in _kpMesh) _kp[key] = { dyn: makeKappaDyn(_kpMesh[key](), _kpMax[key]), arr: new Float32Array(_kpMax[key]*12), n: 0 }; }
 function drawKappaHuts(view) {
@@ -11989,7 +11957,6 @@ function drawKappa(view) {
     put("body",  k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, skin,  sqXZ, sqY);
     put("belly", k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, belly, sqXZ, sqY);
     if (KAPPA_SHELL_ON) put("shell", k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, k.shellTint || WHITE, sqXZ, sqY);   // default WHITE → the turtle shell's own amber/olive colours; k.shellTint tints it
-    if (k.acc === "cloth") put("cloth", k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, WHITE, sqXZ, sqY);
     // head-frame parts (pivot at the neck): follow the (lagged) head yaw + nod
     put("head",  k.x, neckY, k.z, S, headYaw, nod, 0, skin,  1, 1);
     put("dish",  k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
@@ -11997,8 +11964,6 @@ function drawKappa(view) {
     put("water", k.x, neckY, k.z, S, headYaw, nod, 0, [shim, shim, 1.0], 1, 1);
     put("cheek", k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
     put("beak",  k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
-    if (k.acc === "tub")  put("tub",  k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
-    if (k.acc === "lily") put("lily", k.x, neckY, k.z, S, headYaw, nod, 0, WHITE, 1, 1);
     // eyes: seated on the head FRONT along the (lagged) head facing, pushed out so they sit proud of the surface
     { const fwd = 0.30, shy = Math.sin(headYaw), chy = Math.cos(headYaw);
       const exw = k.x + shy*fwd*S, ezw = k.z + chy*fwd*S, eyw = neckY + 0.285*S;
@@ -12007,11 +11972,9 @@ function drawKappa(view) {
       const blink = 0.08 + 0.92*open;                                        // iAnim.y: squash whites+pupils to a thin line and back
       put("eye", exw, eyw, ezw, S, headYaw, nod, 0, WHITE, 1, blink); }
     // arms (shoulder pivots): swing (land) / paddle (swim)
-    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.19, -0.01)*S, wz = k.z + rz(side*0.19, -0.01)*S, wy = bodyY + 0.14*S;   // shoulders sunk into the torso side
-      const lean = swim > 0.5 ? Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.9 : Math.sin(k.phase + (side > 0 ? Math.PI : 0))*0.45*k.spd;
+    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.175, 0)*S, wz = k.z + rz(side*0.175, 0)*S, wy = bodyY + 0.10*S;   // §R4 lower, relaxed shoulders sunk into the torso side (no shrug)
+      const lean = swim > 0.5 ? Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.9 : Math.sin(k.phase + (side > 0 ? Math.PI : 0))*0.4*k.spd;   // gentle swing from a relaxed rest
       put(side > 0 ? "armR" : "armL", wx, wy, wz, S, k.yaw, lean, 0, skin, 1, 1);
-      if (side === 1 && k.acc === "cuke")   put("cuke",   wx, wy, wz, S, k.yaw, lean, 0, WHITE, 1, 1);
-      if (side === 1 && k.acc === "basket") put("basket", wx, wy, wz, S, k.yaw, lean, 0, WHITE, 1, 1);
     }
     // legs (hip pivots near the feet): stride (land) / trail (swim)
     for (const side of [-1, 1]) { const wx = k.x + rx(side*0.1, 0.02)*S, wz = k.z + rz(side*0.1, 0.02)*S, wy = k.renderY + 0.18*S;
