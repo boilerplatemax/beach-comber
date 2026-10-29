@@ -1,0 +1,42 @@
+{
+  "kappa": {
+    "happy": [
+      "kappa_happy_01.wav",
+      "kappa_happy_02.wav",
+      "kappa_happy_03.wav",
+      "kappa_happy_04.wav",
+      "kappa_happy_05.wav",
+      "kappa_happy_06.wav",
+      "kappa_happy_07.wav",
+      "kappa_happy_08.wav",
+      "kappa_happy_09.wav",
+      "kappa_happy_10.wav"
+    ],
+    "huff": [
+      "kappa_huff_01.wav",
+      "kappa_huff_02.wav",
+      "kappa_huff_03.wav",
+      "kappa_huff_04.wav",
+      "kappa_huff_05.wav",
+      "kappa_huff_06.wav",
+      "kappa_huff_07.wav",
+      "kappa_huff_08.wav",
+      "kappa_huff_09.wav",
+      "kappa_huff_10.wav",
+      "kappa_huff_11.wav",
+      "kappa_huff_12.wav",
+      "kappa_huff_13.wav"
+    ],
+    "idle": [
+      "kappa_idle_01.wav",
+      "kappa_idle_02.wav",
+      "kappa_idle_03.wav",
+      "kappa_idle_04.wav",
+      "kappa_idle_05.wav",
+      "kappa_idle_06.wav",
+      "kappa_idle_07.wav",
+      "kappa_idle_08.wav",
+      "kappa_idle_09.wav"
+    ]
+  }
+}

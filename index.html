@@ -1696,7 +1696,7 @@ function synthRender(ctx, p) {
 const SND = {
   ctx: null, master: null, bus: {}, lp: {}, buf: {}, voices: [], amb: {}, _noise: null,
   reg: {}, unlocked: false, muted: false, musicEnabled: true, underwater: false, lastAt: {},
-  vol: { master: 0.75, sfx: 0.9, ambience: 0.6, ui: 0.7, music: 0.55 },
+  vol: { master: 0.75, sfx: 0.9, ambience: 0.6, ui: 0.7, music: 0.55, voices: 0.95 },
   music: { el: null, node: null, fade: null, src: null, url: null, want: 0, cur: 0, _fadeT: null },
   MAX_VOICES: 24, MAX_DIST: 48,
   // register a sound: id → { p: params | [variants], vol, pv (pitch var), vv (vol var), cd (cooldown s), max, bus }
@@ -1717,6 +1717,8 @@ const SND = {
       }
       // §music a clean full-band bus for the title theme (streamed mp3), under master so Mute/Master apply
       { const g = ctx.createGain(); g.gain.value = this.vol.music; g.connect(this.master); this.bus.music = g; }
+      // §voice a dedicated bus for NPC voice clips (kappa etc.), under master so Mute/Master apply but separate from SFX/Music
+      { const g = ctx.createGain(); g.gain.value = this.vol.voices; g.connect(this.master); this.bus.voices = g; }
       // shared looping white-noise bed for the ambience layers
       const nb = ctx.createBuffer(1, ctx.sampleRate * 2, ctx.sampleRate), nd = nb.getChannelData(0);
       for (let i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1; this._noise = nb;
@@ -1873,6 +1875,153 @@ function soundCategory(id, bus) {
   if (/peep|skitter|seal_bark|^jet$|squirt|owl|^bat$|raccoon|hcrab|chirp|cricket|frog|toad|^duck|heron|seal|growl/.test(id)) return "creatures";
   return "other";
 }
+/* ===================================================================== *
+ * § NPC VOICE  Simlish-style NPC speech. A "sentence" chains 1-2 random clips
+ *   of one mood, back to back, played as positional 3D audio (Web Audio
+ *   PannerNode) on its own "voices" channel (SND.bus.voices), separate from
+ *   SFX and Music. Clips + moods + npc types are DISCOVERED at runtime from
+ *   assets/audio/voices/manifest.json (built by tools/build-voice-manifest.js),
+ *   so nothing here hardcodes filenames, counts, or the mood list. Reusable for
+ *   any NPC type: drop clips in voices/<npc>/<mood>/ and call VOICE.say({npc...}).
+ *   Every tuning number lives in VOICE_CFG at the top of this module.
+ * ===================================================================== */
+const VOICE_CFG = {
+  base: "assets/audio/voices",                          // folder holding <npc>/<mood>/*.wav
+  manifest: "assets/audio/voices/manifest.json",        // the generated index (refresh with tools/build-voice-manifest.js)
+  twoClipChance: 0.60,                                  // P(a sentence is 2 clips); otherwise 1 clip
+  gapMs: { idle: [60, 130], happy: [30, 80], huff: [20, 70], _default: [50, 100] },   // pause between the two clips, per mood
+  pitch: { min: 0.88, max: 1.15, perSentence: 0.02 },   // playbackRate: a fixed per-npc pitch (seeded) + a small +/- jitter each sentence
+  panner: { refDistance: 2.6, maxDistance: 48, rolloff: 1.1, model: "inverse", panning: "HRTF" },   // 3D distance falloff
+  // --- kappa "when they talk" behaviour (first pass, all easy to retune) ---
+  kappa: {
+    headY: 1.05,                                        // speak from head height (in KAPPA_SCALE units above the feet)
+    clickHappyChance: 0.20,                             // a plain poke plays 'happy' instead of 'idle' this often
+    annoyCount: 4, annoyWindowMs: 3000,                 // 4+ pokes within 3s -> 'huff'
+    huffCooldownMs: 2500,                               // after a huff, stay quiet (no idle/happy) this long
+    ambient: { near: 10, everyMs: [8000, 20000], volume: 0.5, maxConcurrent: 2 },   // nearby kappas mumble idle on their own
+  },
+};
+const VOICE = {
+  ready: false, loading: null, disabled: false, banks: {}, bags: {}, live: [],
+  onTalkStart: null, onTalkEnd: null,                   // optional global hooks (id, mood) for mouth/bob animation
+  // fetch the manifest and decode every clip once. Needs SND.ctx (built on the first gesture). Idempotent.
+  ensureLoaded() {
+    if (this.ready || this.loading || this.disabled) return this.loading;
+    if (typeof location !== "undefined" && location.protocol === "file:") { this.disabled = true; return null; }   // fetch()+decode needs http(s); skip on file:// (and in the headless validators)
+    if (typeof SND === "undefined" || !SND.ctx) return null;
+    const ctx = SND.ctx;
+    this.loading = fetch(VOICE_CFG.manifest).then(r => r.ok ? r.json() : Promise.reject("manifest " + r.status)).then(man => {
+      const jobs = [];
+      for (const npc in man) { this.banks[npc] = {};
+        for (const mood in man[npc]) { const arr = this.banks[npc][mood] = [];
+          man[npc][mood].forEach((file, i) => {
+            const url = VOICE_CFG.base + "/" + npc + "/" + mood + "/" + file;
+            jobs.push(fetch(url).then(r => r.arrayBuffer())
+              .then(ab => new Promise((res, rej) => ctx.decodeAudioData(ab, b => res(b), e => rej(e))))
+              .then(buf => { arr[i] = buf; }).catch(() => {}));   // a missing/corrupt clip just drops out
+          });
+        }
+      }
+      return Promise.all(jobs);
+    }).then(() => {
+      for (const npc in this.banks) for (const mood in this.banks[npc]) this.banks[npc][mood] = this.banks[npc][mood].filter(Boolean);
+      this.ready = true;
+    }).catch(e => { this.disabled = true; this.loading = null; });   // no voices available (e.g. not served yet); fail quiet
+    return this.loading;
+  },
+  has(npc, mood) { return !!(this.banks[npc] && this.banks[npc][mood] && this.banks[npc][mood].length); },
+  moods(npc) { return this.banks[npc] ? Object.keys(this.banks[npc]) : []; },
+  activeCount(npc) { let n = 0; for (const s of this.live) if (s.active && (!npc || s.npc === npc)) n++; return n; },
+  // shuffle bag per npc/mood: draw without repeats, reshuffle when empty, and never hand back `avoid`
+  _draw(npc, mood, avoid) {
+    const list = this.banks[npc][mood]; if (!list.length) return -1;
+    const key = npc + "/" + mood; let bag = this.bags[key];
+    if (!bag || !bag.length) { bag = this.bags[key] = []; for (let i = 0; i < list.length; i++) bag.push(i);
+      for (let i = bag.length - 1; i > 0; i--) { const j = (Math.random()*(i+1))|0; const t = bag[i]; bag[i] = bag[j]; bag[j] = t; } }
+    let idx = bag.pop();
+    if (idx === avoid && list.length > 1) {
+      if (bag.length) { const j = (Math.random()*bag.length)|0; const t = bag[j]; bag[j] = idx; idx = t; }
+      else { let alt = idx; for (let g = 0; g < 8 && alt === avoid; g++) alt = (Math.random()*list.length)|0; idx = alt; }
+    }
+    return idx;
+  },
+  // a fixed playbackRate per npc, seeded from its id/seed so each kappa keeps its own voice
+  pitchFor(seed) {
+    const r = (typeof mulberry32 === "function") ? mulberry32((seed >>> 0) || 1)() : ((Math.sin((seed||1)*12.9898)*43758.5453) % 1 + 1) % 1;
+    return VOICE_CFG.pitch.min + (VOICE_CFG.pitch.max - VOICE_CFG.pitch.min) * r;
+  },
+  // update the Web Audio listener from the camera (call once per frame)
+  listener(px, py, pz, fx, fy, fz) {
+    if (typeof SND === "undefined" || !SND.ctx) return;
+    const L = SND.ctx.listener;
+    try {
+      if (L.positionX) { const t = SND.ctx.currentTime, s = 0.02;
+        L.positionX.setTargetAtTime(px, t, s); L.positionY.setTargetAtTime(py, t, s); L.positionZ.setTargetAtTime(pz, t, s);
+        L.forwardX.setTargetAtTime(fx, t, s); L.forwardY.setTargetAtTime(fy, t, s); L.forwardZ.setTargetAtTime(fz, t, s);
+        L.upX.value = 0; L.upY.value = 1; L.upZ.value = 0;
+      } else { L.setPosition(px, py, pz); L.setOrientation(fx, fy, fz, 0, 1, 0); }
+    } catch (e) {}
+  },
+  // speak ONE sentence. opts: { npc, mood, speaker (object that holds this voice's state), seed, id,
+  //   getPosition:()=>[x,y,z] | position:[x,y,z], volume, interrupt, onStart(id,mood), onEnd(id,mood) }
+  say(opts) {
+    if (typeof SND === "undefined" || !SND.ctx || SND.muted) return false;
+    this.ensureLoaded();
+    const npc = opts.npc, mood = opts.mood;
+    if (!this.has(npc, mood)) return false;
+    const sp = opts.speaker || opts;                       // per-voice state lives on the speaker object
+    if (sp._vTalking) { if (!opts.interrupt) return false; this._stop(sp); }   // one sentence at a time; a huff may interrupt
+    const ctx = SND.ctx, now = ctx.currentTime, list = this.banks[npc][mood];
+    if (sp._vPitch == null) sp._vPitch = this.pitchFor(opts.seed != null ? opts.seed : (Math.random()*1e9)|0);
+    const rate = sp._vPitch * (1 + (Math.random()*2 - 1) * VOICE_CFG.pitch.perSentence);   // per-sentence +/- jitter on the fixed voice pitch
+    const nClips = (Math.random() < VOICE_CFG.twoClipChance && list.length > 1) ? 2 : 1;
+    const prev = sp._vLast || [];
+    const picks = [];
+    const i0 = this._draw(npc, mood, prev.length ? prev[prev.length - 1] : -1); picks.push(i0);
+    if (nClips === 2) { let i1 = this._draw(npc, mood, i0); if (i1 === i0) i1 = (i0 + 1) % list.length; picks.push(i1); }   // never the same clip twice in one sentence
+    sp._vLast = picks.slice();
+    const pan = ctx.createPanner();
+    pan.panningModel = VOICE_CFG.panner.panning; pan.distanceModel = VOICE_CFG.panner.model;
+    pan.refDistance = VOICE_CFG.panner.refDistance; pan.maxDistance = VOICE_CFG.panner.maxDistance; pan.rolloffFactor = VOICE_CFG.panner.rolloff;
+    const g = ctx.createGain(); g.gain.value = Math.max(0, opts.volume == null ? 1 : opts.volume);
+    pan.connect(g); g.connect((SND.bus && SND.bus.voices) || SND.master || ctx.destination);
+    const p0 = opts.getPosition ? opts.getPosition() : (opts.position || [0, 0, 0]);
+    try { if (pan.positionX) { pan.positionX.value = p0[0]; pan.positionY.value = p0[1]; pan.positionZ.value = p0[2]; } else pan.setPosition(p0[0], p0[1], p0[2]); } catch (e) {}
+    const gap = VOICE_CFG.gapMs[mood] || VOICE_CFG.gapMs._default;
+    let t = now + 0.012; const srcs = [];
+    for (let i = 0; i < picks.length; i++) {
+      const buf = list[picks[i]]; if (!buf) continue;
+      const s = ctx.createBufferSource(); s.buffer = buf; s.playbackRate.value = rate; s.connect(pan);
+      try { s.start(t); } catch (e) {}
+      srcs.push(s);
+      const played = buf.duration / rate;                  // playbackRate changes length: time the next clip from the REAL played duration
+      t += played + ((i < picks.length - 1) ? (gap[0] + Math.random()*(gap[1]-gap[0]))/1000 : 0);
+    }
+    if (!srcs.length) { try { pan.disconnect(); g.disconnect(); } catch (e) {} return false; }
+    const sentence = { npc, mood, speaker: sp, active: true, pan, g, srcs, getPosition: opts.getPosition };
+    sp._vTalking = true; sp._vSentence = sentence; this.live.push(sentence);
+    const done = () => { if (!sentence.active) return; sentence.active = false; sp._vTalking = false; sp._vSentence = null;
+      try { pan.disconnect(); g.disconnect(); } catch (e) {}
+      const i = this.live.indexOf(sentence); if (i >= 0) this.live.splice(i, 1);
+      if (opts.onEnd) { try { opts.onEnd(opts.id, mood); } catch (e) {} }
+      if (this.onTalkEnd) { try { this.onTalkEnd(opts.id, mood); } catch (e) {} } };
+    srcs[srcs.length - 1].onended = done;
+    if (opts.onStart) { try { opts.onStart(opts.id, mood); } catch (e) {} }
+    if (this.onTalkStart) { try { this.onTalkStart(opts.id, mood); } catch (e) {} }
+    return true;
+  },
+  _stop(sp) { const s = sp && sp._vSentence; if (!s) return; s.active = false; sp._vTalking = false; sp._vSentence = null;
+    for (const src of s.srcs) { try { src.onended = null; src.stop(); } catch (e) {} }
+    try { s.pan.disconnect(); s.g.disconnect(); } catch (e) {}
+    const i = this.live.indexOf(s); if (i >= 0) this.live.splice(i, 1); },
+  // per-frame: track each live sentence's panner to its speaker's current position (kappas move while they talk)
+  update() {
+    if (!this.live.length || !SND.ctx) return;
+    const t = SND.ctx.currentTime;
+    for (const s of this.live) { if (!s.active || !s.getPosition) continue; const p = s.getPosition(); if (!p) continue;
+      try { if (s.pan.positionX) { s.pan.positionX.setTargetAtTime(p[0], t, 0.03); s.pan.positionY.setTargetAtTime(p[1], t, 0.03); s.pan.positionZ.setTargetAtTime(p[2], t, 0.03); } else s.pan.setPosition(p[0], p[1], p[2]); } catch (e) {} }
+  },
+};
 // ---- the sound library (synth params per id) ----
 (function registerSounds() {
   const D = (id, p, o) => SND.def(id, p, o);
@@ -1966,6 +2115,7 @@ SND.loadVol();   // reflect saved volumes in Settings before the first gesture u
 // surfAudio kept as an alias so older checks still read "audio is on"
 let surfAudio = null;
 window.startAudio = function () { SND.init(); if (SND.ctx) surfAudio = SND;
+  if (typeof VOICE !== "undefined" && SND.ctx) VOICE.ensureLoaded();   // §voice preload+decode the NPC voice clips once the ctx exists
   if (typeof refreshMusicToggle === "function") refreshMusicToggle(); };   // §music8 the playlist is started by the Enter gate (MUSIC.start), not here
 
 // §music8 BACKGROUND MUSIC MANAGER. A shuffled playlist of full songs, played through each song's own <audio>
@@ -4637,6 +4787,7 @@ function openSettings() {
       <div class="srow"><label>Effects</label><input data-sv="sfx" type="range" min="0" max="1" step="0.05" value="${SND.vol.sfx}"></div>
       <div class="srow"><label>Ambience</label><input data-sv="ambience" type="range" min="0" max="1" step="0.05" value="${SND.vol.ambience}"></div>
       <div class="srow"><label>Music</label><input data-sv="music" type="range" min="0" max="1" step="0.05" value="${SND.vol.music}"></div>
+      <div class="srow"><label>Voices</label><input data-sv="voices" type="range" min="0" max="1" step="0.05" value="${SND.vol.voices}"></div>
       <div class="srow"><label>Interface</label><input data-sv="ui" type="range" min="0" max="1" step="0.05" value="${SND.vol.ui}"></div>
       <div class="srow"><label>Audio status</label><span class="sstat">${SND.ctx ? (SND.ctx.state + (SND.muted ? " · muted" : "")) : "not started"}</span></div>
       <div class="srow"><label>Test sound</label><button data-snd="test">Play ▶</button></div>
@@ -12384,11 +12535,46 @@ function updateKappa(dt) {
     k.hyaw += hd * Math.min(1, dt*7);
     k.idleT = (k.spd > 0.05 || k.stumble > 0) ? 0 : (k.idleT || 0) + dt;
     k.sleepy = k.idleT > 4;
+    k.talkEnv = (k.talkEnv || 0) + ((k.talking ? 1 : 0) - (k.talkEnv || 0)) * Math.min(1, dt * 12);   // §voice eased 0..1 while speaking, drives the mouth/head bob in the draw
   }
 }
-function kappaStumble(k) {   // a hit just makes it recoil with a chirp (it can't be harmed or scooped)
+function kappaStumble(k) {   // poking a kappa: a small recoil + a spoken reaction (it can't be harmed or scooped)
   k.stumble = 0.45; k.yaw = Math.atan2(player.x - k.x, player.z - k.z);   // face the player, then back away
-  if (typeof SND !== "undefined") SND.play("kappa_chirp");
+  kappaPoke(k);
+}
+/* ---- KAPPA VOICE glue (uses the reusable VOICE engine; tuning lives in VOICE_CFG.kappa) ---- */
+// speak from head height, tracked to the kappa so the sound follows it as it moves
+function kappaVoicePos(k) { const S = TUNE.KAPPA_SCALE * (k.kid ? 0.7 : 1.0); return [k.x, k.renderY + VOICE_CFG.kappa.headY * S, k.z]; }
+function kappaSay(k, mood, opts) {   // the one call item-giving / AI / clicks all use. Easy to call from anywhere later.
+  if (typeof VOICE === "undefined") return false;
+  return VOICE.say(Object.assign({
+    npc: "kappa", mood, speaker: k, id: k, seed: (((k.seed || 1) * 100003) | 0),
+    getPosition: () => kappaVoicePos(k),
+    onStart: () => { k.talking = true; }, onEnd: () => { k.talking = false; },
+  }, opts || {}));
+}
+// poke (click/tap) reaction: idle (sometimes happy); spam within the window -> huff + a short cooldown
+function kappaPoke(k) {
+  const C = VOICE_CFG.kappa, now = performance.now();
+  k._pokes = (k._pokes || []).filter(t => now - t < C.annoyWindowMs); k._pokes.push(now);
+  if (k._pokes.length >= C.annoyCount) { k._pokes.length = 0; k._huffUntil = now + C.huffCooldownMs; kappaSay(k, "huff", { interrupt: true }); return; }
+  if (now < (k._huffUntil || 0)) return;   // still cooling off after a huff: stay quiet
+  kappaSay(k, Math.random() < C.clickHappyChance ? "happy" : "idle");
+}
+// TODO(item-giving): when the give-an-item system exists, call kappaSay(k, likesIt ? "happy" : "huff")
+// from that handler. No item logic is built yet, so nothing calls this path for now.
+// ambient: nearby kappas mumble idle on their own, capped so the village never becomes a chorus
+let _kvAmbT = 2;
+function kappaVoiceAmbient(dt) {
+  const A = VOICE_CFG.kappa.ambient;
+  _kvAmbT -= dt; if (_kvAmbT > 0) return;
+  _kvAmbT = (A.everyMs[0] + Math.random() * (A.everyMs[1] - A.everyMs[0])) / 1000;
+  if (typeof VOICE === "undefined" || !VOICE.ready || VOICE.activeCount("kappa") >= A.maxConcurrent) return;
+  const now = performance.now(), near = [];
+  for (const k of kappas) { if (k.inside || k.talking || k.swim > 0.5) continue;
+    if (now < (k._huffUntil || 0)) continue;
+    const dx = k.x - player.x, dz = k.z - player.z; if (dx*dx + dz*dz <= A.near*A.near) near.push(k); }
+  if (near.length) kappaSay(near[(Math.random()*near.length)|0], "idle", { volume: A.volume });
 }
 // --- draw: a tiny CPU bone rig, one instance per body part ---
 let _hutDyn = null;
@@ -12431,7 +12617,8 @@ function drawKappa(view) {
     const roll = step * 0.16 * k.spd * land + idleSway * land;                                             // §R7 stronger walking weight-shift (waddle)
     const bodyLean = swim > 0.5 ? 0.5*swim : roll, bodyLd = swim > 0.5 ? 0 : 1.5708;
     const headYaw = (k.hyaw != null ? k.hyaw : k.yaw) + k.look * land;       // head yaw lags the body (set in updateKappa)
-    const nod = swim > 0.5 ? 0.2 : Math.sin(t*1.5 + k.seed)*0.03;
+    const talk = k.talkEnv || 0;                                             // §voice 0..1 while speaking: a quick head/beak bob so the mouth "moves"
+    const nod = (swim > 0.5 ? 0.2 : Math.sin(t*1.5 + k.seed)*0.03) + talk * Math.sin(t*22 + k.seed*5) * 0.06;
     const bodyY = k.renderY + (0.33 + bobBody) * S;
     const neckY = k.renderY + (0.5 + bobBody*0.55) * S;                      // the head bobs a little behind the body
     // body-frame parts (pivot at the body centre): roll with the body
@@ -15360,6 +15547,11 @@ function frame(now) {
   if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateFishing(dt); updateCatchCine(dt); updateEat(dt); updatePlacedTide(); }   // §14A/B/C + §Fishing + §P2 eating + §P2 tide over placed buckets/lanterns
   if (mode === "walk") { updateShrooms(dt); updateTrip(dt); }   // FEATURE: shrooms  restock mushrooms + advance any active trip
   if (mode === "walk") updateKappa(dt);   // FEATURE: kappa  village wander / schedule / navigation
+  if (typeof VOICE !== "undefined") {     // §voice 3D listener follows the camera; live sentences track their speakers; kappas mumble when near
+    const vf = (typeof camForward === "function") ? camForward() : [0, 0, 1];
+    VOICE.listener(cam.pos[0], cam.pos[1], cam.pos[2], vf[0], vf[1], vf[2]); VOICE.update();
+    if (mode === "walk" && typeof KAPPA_ON !== "undefined" && KAPPA_ON && kappas.length) kappaVoiceAmbient(dt);
+  }
   updateCatchPop(dt);   // §catch5 the non-blocking catch card's own timer (runs even in menus, so it fades on its own)
   updateFade(dt);
   safetyCheck(dt);
