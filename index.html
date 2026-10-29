@@ -11529,7 +11529,7 @@ function kLathe(prof, segs, col) {
 // Canonical orientation: dome up (+Y), long axis +Z (about 1.25x the width). Shared by the Turtle Shell item
 // and each kappa's back (kShellMesh rotates + scales a copy). Colours baked in; drawn with iTint=WHITE by default.
 function turtleShellMesh() {
-  const m = Mesh(), halfW = 0.5, halfL = 0.625, H = 0.36;
+  const m = Mesh(), halfW = 0.5, halfL = 0.625, H = 0.40;   // §R5 plumper dome (taller H)
   const domeY = (x, z) => { const u = x/halfW, v = z/halfL, k = 1 - u*u - v*v; return k > 0 ? H*Math.sqrt(k) : 0; };
   const nrmAt = (x, z) => { const y = domeY(x, z); let g = [x/(halfW*halfW), y/(H*H), z/(halfL*halfL)]; const L = Math.hypot(g[0],g[1],g[2])||1; return [g[0]/L, g[1]/L, g[2]/L]; };
   // base dome in the dark groove colour (shows between the raised scutes)
@@ -11539,6 +11539,14 @@ function turtleShellMesh() {
     for (let ti = 0; ti < SEG; ti++) { const t0 = ti/SEG*6.2832, t1 = (ti+1)/SEG*6.2832;
       if (ri === 0) mTri(m, [0,H,0], basePt(r1,t1), basePt(r1,t0), TS_GROOVE);
       else mQuad(m, basePt(r0,t0), basePt(r0,t1), basePt(r1,t1), basePt(r1,t0), TS_GROOVE); } }
+  // §R5 lower roll: carry the surface past the equator so the carapace curves back inward toward the
+  // body (plump, thickest at the centre, rounded bottom instead of a flat cut). Shares the equator ring
+  // with the dome above, so it welds smoothly.
+  const latMax = 2.04, LR = 3;                        // ~117°: a gentle roll-under
+  const rollPt = (lat, th) => { const sl = Math.sin(lat), cl = Math.cos(lat); return [Math.cos(th)*halfW*sl, H*cl, Math.sin(th)*halfL*sl]; };
+  for (let ri = 0; ri < LR; ri++) { const l0 = Math.PI/2 + (latMax-Math.PI/2)*ri/LR, l1 = Math.PI/2 + (latMax-Math.PI/2)*(ri+1)/LR;
+    for (let ti = 0; ti < SEG; ti++) { const t0 = ti/SEG*6.2832, t1 = (ti+1)/SEG*6.2832;
+      mQuad(m, rollPt(l0,t0), rollPt(l0,t1), rollPt(l1,t1), rollPt(l1,t0), TS_GROOVE); } }
   // a raised, faceted scute (shallow pyramid) seated on the dome at (cx,cz)
   const scute = (cx, cz, rad, nv, col, raise, rot) => {
     const C = [cx, domeY(cx, cz), cz], N = nrmAt(cx, cz);
@@ -11558,12 +11566,12 @@ function turtleShellMesh() {
   const lz = [0.36, 0.12, -0.12, -0.36];
   const lcolL = [TS_ORANGE, TS_AMBER, TS_AMBER2, TS_OLIVE], lcolR = [TS_AMBER, TS_OLIVE, TS_ORANGE, TS_AMBER2];
   for (let i = 0; i < 4; i++) { scute(-0.30, lz[i], 0.15, 6, lcolL[i], 0.042, 0.0); scute(0.30, lz[i], 0.15, 6, lcolR[i], 0.042, 0.0); }
-  // marginal ring, ~12 small darker scutes around the rim
-  for (let k = 0; k < 12; k++) { const a = k/12*6.2832, x = Math.cos(a)*halfW*0.9, z = Math.sin(a)*halfL*0.9; scute(x, z, 0.1, 5, TS_RIM, 0.03, a); }
-  // concave hollow underside (darker), a fan from a ceiling apex down to the rim ellipse at y=0
+  // marginal ring, ~12 small darker scutes near the equator edge (the rim rolls under smoothly below them)
+  for (let k = 0; k < 12; k++) { const a = k/12*6.2832, x = Math.cos(a)*halfW*0.95, z = Math.sin(a)*halfL*0.95; scute(x, z, 0.1, 5, TS_RIM, 0.03, a); }
+  // §R5 concave hollow underside (darker): cap the smaller rolled-under opening (faces the body / rests on sand, hidden)
+  const uy = H*Math.cos(latMax) + 0.03;               // shallow ceiling just inside the opening ring
   for (let ti = 0; ti < SEG; ti++) { const t0 = ti/SEG*6.2832, t1 = (ti+1)/SEG*6.2832;
-    const a = [Math.cos(t0)*halfW, 0, Math.sin(t0)*halfL], b = [Math.cos(t1)*halfW, 0, Math.sin(t1)*halfL];
-    mTri(m, [0, 0.17, 0], a, b, TS_UNDER); }
+    mTri(m, [0, uy, 0], rollPt(latMax, t1), rollPt(latMax, t0), TS_UNDER); }
   return m;
 }
 function turtleShellItemMesh() { return turtleShellMesh(); }   // the washed-up find, in its natural upright pose
@@ -11703,18 +11711,29 @@ function kBeakMesh() {   // a duck bill in two halves (upper + lower), no mouth 
 }
 // §body-polish eyes: each eye is a shallow white dome seated clearly ON the head surface (pushed out along the
 // head's facing in drawKappa), with the pupil + highlight layered in front, so the head's faces never cut across it.
-function kEyeMesh() {   // pivot at the eye plane (a blink squashes about the eye centre)
+function kEyeMesh() {   // §R5 each eye seated ON the head curve: built facing +Z, canted outward (yaw), then nested back
+  // onto the head sphere so the whites meet the skin (no forward float / periscope look). pivot at the eye plane.
   const m = Mesh();
-  for (const sx of [-0.13, 0.13]) {
-    mergeAt(m, scaleMeshXYZ(ksph(0.085, KC_EYEW, 10, 6), 0.92, 1.08, 0.5),  sx,  0.0,   0.02);  // domed white disc, proud of the head
-    mergeAt(m, scaleMeshXYZ(ksph(0.052, KC_EYEP, 8, 5),  0.95, 1.0,  0.5),  sx, -0.004, 0.055); // large pupil, in front
-    mergeAt(m, scaleMeshXYZ(ksph(0.017, WHITE,  6, 4),   1.0,  1.0,  0.7),  sx+0.022, 0.034, 0.08); // highlight dot, furthest front
+  const R = 0.30;                                     // head radius in the eye-instance frame (group origin ~ the front pole)
+  for (const side of [-1, 1]) {
+    const e = Mesh();
+    // white dome mostly embedded in the head; pupil + highlight sit only a hair proud (small local +Z offsets)
+    mergeAt(e, scaleMeshXYZ(ksph(0.085, KC_EYEW, 10, 6), 0.92, 1.08, 0.55),  0,     0.0,   -0.012); // domed white, nested in
+    mergeAt(e, scaleMeshXYZ(ksph(0.052, KC_EYEP, 8, 5),  0.95, 1.0,  0.55),  0,    -0.004,  0.022);  // large pupil, just in front
+    mergeAt(e, scaleMeshXYZ(ksph(0.017, WHITE,  6, 4),   1.0,  1.0,  0.7),    0.020, 0.034,  0.044);  // highlight dot
+    const phi = side * 0.46;                          // azimuth off the forward pole
+    rotMeshY(e, phi);                                 // cant the whole eye to face radially outward (follows the curve)
+    mergeAt(m, e, Math.sin(phi)*R, 0.0, Math.cos(phi)*R - R);   // seat on the sphere arc (pulled back at the sides)
   }
   return m;
 }
-function kCheekMesh() {   // small pink blush discs sitting on the cheek surface (fixed); neck-frame
+function kCheekMesh() {   // §R5 pink blush discs laid tangent to the curved cheek (yawed outward), not facing dead forward; neck-frame
   const m = Mesh();
-  for (const sx of [-0.19, 0.19]) mergeAt(m, scaleMeshXYZ(ksph(0.05, KC_PINK, 8, 4), 1.0, 1.0, 0.3), sx, 0.185, 0.235);
+  for (const side of [-1, 1]) {
+    const c = scaleMeshXYZ(ksph(0.05, KC_PINK, 8, 4), 1.0, 1.0, 0.3);   // flattened disc, faces +Z before the cant
+    rotMeshY(c, side * 0.62);                                           // cant outward so it lies along the cheek curve
+    mergeAt(m, c, side * 0.19, 0.185, 0.235);
+  }
   return m;
 }
 function kArmMesh(side) {   // §R4 relaxed Mii/Tomodachi-style arm: one smooth rounded limb that hangs straight down (no bend, no splay), a bit shorter than a Mii, with a rounded mitten hand; shoulder pivot
