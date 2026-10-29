@@ -3398,7 +3398,8 @@ function enterWalk() {
     unstickPlayer(false);
     spawnPoint = { x: player.x, z: player.z, yaw: cam.yaw };   // remember the corrected, reachable spawn
   }
-  updateSun();   // §look keep the time the title flythrough ended on (golden hour) so the hand-off into first person has no lighting pop; the day/night cycle carries on from there. (Sleeping still advances to the next dawn.)
+  timeOfDay = MORNING_TIME;   // §morning always start the world in the morning (then it advances into the day if the cycle is on)
+  updateSun();   // the day/night cycle carries on from morning. (Sleeping still advances to the next dawn.)
   if (typeof MUSIC !== "undefined") MUSIC.setMode("game");   // §music8 keep the current song playing into the world (no restart); switch to the gapped in-game rhythm
 }
 
@@ -5908,11 +5909,12 @@ function buildProps() {
   const vary = (base, amt) => [base[0]*(1+(rng()-0.5)*amt), base[1]*(1+(rng()-0.5)*amt), base[2]*(1+(rng()-0.5)*amt)];
   colliders.length = 0; bigCells.clear();
 
-  // seaweed clumps along the high-tide line (walkable)
+  // §noseaweed the decorative dark grass tufts (old "seaweed" clumps) no longer spawn. The scatter + rng draws are
+  // kept exactly so the rest of the world (rocks, trees, village, ...) is byte-identical; only the render is dropped.
   const seaweed = scatter(9, 0.9, 3000, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 0.2 || s.h > 4 || s.slope > 0.4) return;
     if (rng() > 0.45 || nearPOI(x, z, 2)) return;
-    pushInst(inst, x, s.h, z, 0.6 + rng()*0.5, rng()*6.28, 0, 0, vary([0.26,0.3,0.2], 0.3));
+    rng(); rng(); rng(); rng(); rng();   // consume the scale + yaw + 3 tint draws the clump used; emit nothing
   });
   // driftwood along the shore, lying flat, choppable (§13.1); tracked, not instanced
   driftObjs = [];
@@ -15355,6 +15357,7 @@ function frame(now) {
   // ---- shared clock: advance world in capped fixed substeps (stable at 60x) ----
   clock.t += clock.paused ? 0 : dt;
   let gdt = clock.paused ? 0 : dt * clock.speed * (catchCine ? catchCine.warp : 1), gdtTotal = gdt;   // §fishpolish slow-mo on the catch
+  const simDt = clock.paused ? 0 : dt;   // §pause world-sim delta: freezes every entity/tool/weather update while paused (music + UI keep real dt)
   while (gdt > 1e-4) {
     const s = Math.min(0.05, gdt);
     updateTide(s);
@@ -15366,29 +15369,29 @@ function frame(now) {
     else if (tideT < 0.55) washedThisLow = false;
     gdt -= s;
   }
-  updateDigging(dt);
-  if (mode === "walk") updateBucketMoisture(dt);   // §13.3 creatures dry out in a dry bucket (real-time)
+  updateDigging(simDt);
+  if (mode === "walk") updateBucketMoisture(simDt);   // §13.3 creatures dry out in a dry bucket (real-time)
   // §13.2 hold the use button to keep swinging at a work target (no repeated clicks needed)
   if (useHeld && mode === "walk" && !pry && !invOpen && !isPanelOpen()) {
     const t = effectiveTarget();
     if (t && WORK_KINDS[t.kind] && canHeavyAction() && shovelSwing < 0.15) clickAt(0, 0);
   }
-  updateTools(dt, gdtTotal);
-  updateGoats(dt);
-  updateReplenish(dt); // §R4 populations recover over time
-  updateEco(dt);       // §living the zoned beach ecosystem tops up finds & shore critters, never past target
-  updateFlotsam(dt);   // §5 floating debris drifts & beaches itself
+  updateTools(simDt, gdtTotal);
+  updateGoats(simDt);
+  updateReplenish(simDt); // §R4 populations recover over time
+  updateEco(simDt);       // §living the zoned beach ecosystem tops up finds & shore critters, never past target
+  updateFlotsam(simDt);   // §5 floating debris drifts & beaches itself
   updateBarnacles();   // §5 barnacles regrow over time
-  updateChests(dt);
-  updateWeather(dt);     // §20 weather state machine, fog/light/wind, lightning, after-storm
-  updateWeakStones(dt);  // §weak7 broken spots regrow a stone, out of view
-  updateHeaveBoulders(dt);  // §21D heavy-boulder roll + reset
-  updateHeave(dt);       // §21D the boulder heave mini-game
+  updateChests(simDt);
+  updateWeather(simDt);     // §20 weather state machine, fog/light/wind, lightning, after-storm
+  updateWeakStones(simDt);  // §weak7 broken spots regrow a stone, out of view
+  updateHeaveBoulders(simDt);  // §21D heavy-boulder roll + reset
+  updateHeave(simDt);       // §21D the boulder heave mini-game
   updateOysterBeds();    // §23 oyster beds reseed over days
-  updateHorseshoeNight(dt);  // §41 horseshoe-crab spawning / stranding on spring nights
-  updateFindableEvent(dt);   // §B5 keep the active event's chevron/gulls/sound cue going
-  updatePry(dt);
-  updateSalt(dt);
+  updateHorseshoeNight(simDt);  // §41 horseshoe-crab spawning / stranding on spring nights
+  updateFindableEvent(simDt);   // §B5 keep the active event's chevron/gulls/sound cue going
+  updatePry(simDt);
+  updateSalt(simDt);
   updateAutoPickup();
   updateStarRescue();
   updateSurf(); updateFootsteps(); updateCreatureSound(dt);   // §Sound ambience mix + footsteps + spatial creatures
@@ -15455,7 +15458,7 @@ function frame(now) {
     if (keys["KeyD"]) { wx += right[0]; wz += right[2]; manual = true; }
     if (keys["KeyA"]) { wx -= right[0]; wz -= right[2]; manual = true; }
     if (Math.abs(analog.x) + Math.abs(analog.y) > 0.01) { wx += right[0]*analog.x + hf[0]*analog.y; wz += right[2]*analog.x + hf[1]*analog.y; manual = true; }
-    if (isPanelOpen()) { wx = 0; wz = 0; manual = false; }   // §13.4 a panel is open → no movement (world keeps running)
+    if (isPanelOpen() || clock.paused) { wx = 0; wz = 0; manual = false; }   // §pause no walking while paused   // §13.4 a panel is open → no movement (world keeps running)
     // §playtest2 tools no longer root you, you can walk/sprint and use tools at the same time (digCommit still paces strikes)
 
     const wl = Math.hypot(wx, wz);
@@ -15546,11 +15549,11 @@ function frame(now) {
 
   if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateFishing(dt); updateCatchCine(dt); updateEat(dt); updatePlacedTide(); }   // §14A/B/C + §Fishing + §P2 eating + §P2 tide over placed buckets/lanterns
   if (mode === "walk") { updateShrooms(dt); updateTrip(dt); }   // FEATURE: shrooms  restock mushrooms + advance any active trip
-  if (mode === "walk") updateKappa(dt);   // FEATURE: kappa  village wander / schedule / navigation
+  if (mode === "walk") updateKappa(simDt);   // FEATURE: kappa  village wander / schedule / navigation
   if (typeof VOICE !== "undefined") {     // §voice 3D listener follows the camera; live sentences track their speakers; kappas mumble when near
     const vf = (typeof camForward === "function") ? camForward() : [0, 0, 1];
     VOICE.listener(cam.pos[0], cam.pos[1], cam.pos[2], vf[0], vf[1], vf[2]); VOICE.update();
-    if (mode === "walk" && typeof KAPPA_ON !== "undefined" && KAPPA_ON && kappas.length) kappaVoiceAmbient(dt);
+    if (mode === "walk" && !clock.paused && typeof KAPPA_ON !== "undefined" && KAPPA_ON && kappas.length) kappaVoiceAmbient(simDt);
   }
   updateCatchPop(dt);   // §catch5 the non-blocking catch card's own timer (runs even in menus, so it fades on its own)
   updateFade(dt);
@@ -15855,7 +15858,7 @@ function frame(now) {
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
     if (!buildMode && curTarget && curTarget.kind === "kappa") {   // FEATURE: kappa  a shy neutral villager
-      promptEl.textContent = "a shy kappa";
+      promptEl.textContent = "a kappa";
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
