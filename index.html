@@ -11534,10 +11534,10 @@ function turtleShellMesh() {
   const nrmAt = (x, z) => { const y = domeY(x, z); let g = [x/(halfW*halfW), y/(H*H), z/(halfL*halfL)]; const L = Math.hypot(g[0],g[1],g[2])||1; return [g[0]/L, g[1]/L, g[2]/L]; };
   // §R6 base dome: dark groove seams under the scutes on the inner dome; a consistent OLIVE border on the
   // outermost ring (and the roll below), so the carapace reads as scutes all around with a clean bottom margin.
-  const RINGS = 6, SEG = 22, rBorder = 0.80;
+  const RINGS = 8, SEG = 22, rBorder = 0.875;   // §R6b thinner border (only the outermost ring)
   const basePt = (rho, th) => { const x = Math.cos(th)*rho*halfW, z = Math.sin(th)*rho*halfL; return [x, domeY(x, z), z]; };
   for (let ri = 0; ri < RINGS; ri++) { const r0 = ri/RINGS, r1 = (ri+1)/RINGS;
-    const bcol = (r0 >= rBorder) ? TS_OLIVE : TS_GROOVE;
+    const bcol = (r0 >= rBorder) ? TS_RIM : TS_GROOVE;   // §R6b brown border (matches the shell), not olive
     for (let ti = 0; ti < SEG; ti++) { const t0 = ti/SEG*6.2832, t1 = (ti+1)/SEG*6.2832;
       if (ri === 0) mTri(m, [0,H,0], basePt(r1,t1), basePt(r1,t0), bcol);
       else mQuad(m, basePt(r0,t0), basePt(r0,t1), basePt(r1,t1), basePt(r1,t0), bcol); } }
@@ -11548,7 +11548,7 @@ function turtleShellMesh() {
   const rollPt = (lat, th) => { const sl = Math.sin(lat), cl = Math.cos(lat); return [Math.cos(th)*halfW*sl, H*cl, Math.sin(th)*halfL*sl]; };
   for (let ri = 0; ri < LR; ri++) { const l0 = Math.PI/2 + (latMax-Math.PI/2)*ri/LR, l1 = Math.PI/2 + (latMax-Math.PI/2)*(ri+1)/LR;
     for (let ti = 0; ti < SEG; ti++) { const t0 = ti/SEG*6.2832, t1 = (ti+1)/SEG*6.2832;
-      mQuad(m, rollPt(l0,t0), rollPt(l0,t1), rollPt(l1,t1), rollPt(l1,t0), TS_OLIVE); } }
+      mQuad(m, rollPt(l0,t0), rollPt(l0,t1), rollPt(l1,t1), rollPt(l1,t0), TS_RIM); } }
   // a raised, faceted scute (shallow pyramid) seated on the dome at (cx,cz)
   const scute = (cx, cz, rad, nv, col, raise, rot) => {
     const C = [cx, domeY(cx, cz), cz], N = nrmAt(cx, cz);
@@ -11569,9 +11569,12 @@ function turtleShellMesh() {
   const lz = [0.33, 0.11, -0.11, -0.33];
   const lcolL = [TS_ORANGE, TS_AMBER, TS_AMBER2, TS_OLIVE], lcolR = [TS_AMBER, TS_OLIVE, TS_ORANGE, TS_AMBER2];
   for (let i = 0; i < 4; i++) { scute(-0.285, lz[i], 0.16, 6, lcolL[i], 0.042, 0.0); scute(0.285, lz[i], 0.16, 6, lcolR[i], 0.042, 0.0); }
-  // filler ring: close the remaining gaps (front/back ends + between the columns), kept clear of the border
+  // filler ring: close the gaps between the columns
   const fcol = [TS_AMBER, TS_OLIVE, TS_ORANGE, TS_AMBER2, TS_AMBER];
-  for (let k = 0; k < 10; k++) { const a = k/10*6.2832, rho = 0.62, x = Math.cos(a)*halfW*rho, z = Math.sin(a)*halfL*rho; scute(x, z, 0.125, 5, fcol[k%5], 0.034, a); }
+  for (let k = 0; k < 10; k++) { const a = k/10*6.2832, rho = 0.60, x = Math.cos(a)*halfW*rho, z = Math.sin(a)*halfL*rho; scute(x, z, 0.125, 5, fcol[k%5], 0.034, a); }
+  // §R6b outer ring: carry the scutes right out to the (now thin) border, so plates cover the shell all around
+  const ocol = [TS_ORANGE, TS_AMBER, TS_OLIVE, TS_AMBER2];
+  for (let k = 0; k < 15; k++) { const a = k/15*6.2832, rho = 0.80, x = Math.cos(a)*halfW*rho, z = Math.sin(a)*halfL*rho; scute(x, z, 0.105, 5, ocol[k%4], 0.028, a); }
   // §R5 concave hollow underside (darker): cap the smaller rolled-under opening (faces the body / rests on sand, hidden)
   const uy = H*Math.cos(latMax) + 0.03;               // shallow ceiling just inside the opening ring
   for (let ti = 0; ti < SEG; ti++) { const t0 = ti/SEG*6.2832, t1 = (ti+1)/SEG*6.2832;
@@ -11744,8 +11747,8 @@ function kArmMesh(side) {   // §R6 relaxed Mii/Tomodachi-style arm, now FLARED 
   // profile top→bottom: sinks into the shoulder, slim and even down the arm, swells into the rounded hand, caps.
   const prof = [[0.07,0.0],[0.04,0.052],[-0.02,0.062],[-0.12,0.058],[-0.19,0.057],[-0.225,0.072],[-0.255,0.080],[-0.28,0.058],[-0.295,0.0]];
   const a = kLathe(prof, 10, WHITE);
-  rotMeshZ(a, side * 0.315);   // flare out ~18 deg about the shoulder socket (origin): hand swings away from the body, shoulder stays put
-  return a;                    // the fore/aft walk swing is added per-frame via the instance lean (see drawKappa)
+  rotMeshZ(a, side * 0.42);   // §R6b flare out ~24 deg about the shoulder socket (origin): more outward, less straight down
+  return a;                   // the fore/aft walk swing is added per-frame via the instance lean (see drawKappa)
 }
 function kLegMesh() {   // short rounded leg + webbed fan foot (skin); pivot at the hip
   const m = Mesh();
@@ -11997,7 +12000,7 @@ function drawKappa(view) {
       const blink = 0.08 + 0.92*open;                                        // iAnim.y: squash whites+pupils to a thin line and back
       put("eye", exw, eyw, ezw, S, headYaw, nod, 0, WHITE, 1, blink); }
     // arms (shoulder pivots): the outward flare is baked into the mesh; here we add the fore/aft swing + a faint breathing sway
-    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.175, 0.07)*S, wz = k.z + rz(side*0.175, 0.07)*S, wy = bodyY + 0.10*S;   // §R6 shoulders on the FRONT-sides of the torso (ahead of the shell, so the arm never covers it)
+    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.135, 0.07)*S, wz = k.z + rz(side*0.135, 0.07)*S, wy = bodyY + 0.10*S;   // §R6b socket pulled INTO the torso (x 0.175->0.135) so the arm reads as attached; still on the front-side, ahead of the shell
       const base = Math.sin(t*1.5 + k.seed*2 + (side > 0 ? Math.PI : 0)) * 0.05;                 // faint always-on sway, so the arms breathe even near-idle
       const walk = Math.sin(k.phase + (side > 0 ? Math.PI : 0)) * 0.55 * k.spd;                  // fore/aft walk swing, grows with speed
       const lean = swim > 0.5 ? Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.9 : (walk + base);
