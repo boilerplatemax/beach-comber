@@ -11686,7 +11686,7 @@ function kBellyMesh() {   // §R3 one smooth cream-green oval plate, more segmen
 }
 function kShellMesh() {   // §R3 the turtle-shell carapace fitted to the back: scaled down, rotated so the dome bulges behind and the hollow faces the body; body-frame
   const s = turtleShellMesh();
-  scaleMeshXYZ(s, 0.50, 0.38, 0.44);   // §R4 smaller + shorter: width (still a touch wider than the body), shallow back-bulge (hugs), reduced vertical extent so it never reaches the head
+  scaleMeshXYZ(s, 0.51, 0.47, 0.45);   // §R8b fuller back-bulge (Y maps to the back depth after the rotate): rounder, less flat/thin; slightly wider + taller too
   rotMeshX(s, -1.5708);                // dome → back (-Z), long axis → vertical (Y), hollow underside → the body (+Z)
   const m = Mesh(); mergeAt(m, s, 0, -0.04, -0.09); return m;   // seat lower on the mid/lower back, hugging it (rim peeks at the sides from the front, clears the head, never cuts the belly)
 }
@@ -12029,7 +12029,7 @@ function drawKappa(view) {
       const ph = k.phase + (side > 0 ? 0 : Math.PI), sw = Math.sin(ph), lift = Math.max(0, sw);
       let a1, a2;   // a1 = thigh angle (about local X), a2 = knee bend added onto a1 for the shin
       if (swim > 0.5) { a1 = -0.5 + Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.22; a2 = 0.5; }       // legs trail + paddle while swimming
-      else { a1 = 0.06 - sw*0.5*k.spd*land; a2 = -0.1 - lift*1.0*k.spd*land; }                             // rest: nearly straight (feet planted); walk: hip swings + knee folds up to clear the ground on the lift
+      else { a1 = -sw*0.46*k.spd*land; a2 = 0.12 + lift*1.05*k.spd*land; }                                 // §R8b rest: nearly straight (soft knee); walk: hip swings forward on the lift while the knee folds BACKWARD (natural, not inverted)
       put("thigh", hx, hy, hz, S, k.yaw, a1, 0, skin, 1, 1);
       const kz = -KLEG_L1*Math.sin(a1), kyl = -KLEG_L1*Math.cos(a1);                                       // knee offset from the hip (local), matching the shader's lean-about-X then yaw
       put("shin", hx + rx(0, kz)*S, hy + kyl*S, hz + rz(0, kz)*S, S, k.yaw, a1 + a2, 0, skin, 1, 1);
