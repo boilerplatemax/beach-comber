@@ -11532,13 +11532,15 @@ function turtleShellMesh() {
   const m = Mesh(), halfW = 0.5, halfL = 0.625, H = 0.40;   // §R5 plumper dome (taller H)
   const domeY = (x, z) => { const u = x/halfW, v = z/halfL, k = 1 - u*u - v*v; return k > 0 ? H*Math.sqrt(k) : 0; };
   const nrmAt = (x, z) => { const y = domeY(x, z); let g = [x/(halfW*halfW), y/(H*H), z/(halfL*halfL)]; const L = Math.hypot(g[0],g[1],g[2])||1; return [g[0]/L, g[1]/L, g[2]/L]; };
-  // base dome in the dark groove colour (shows between the raised scutes)
-  const RINGS = 6, SEG = 22;
+  // §R6 base dome: dark groove seams under the scutes on the inner dome; a consistent OLIVE border on the
+  // outermost ring (and the roll below), so the carapace reads as scutes all around with a clean bottom margin.
+  const RINGS = 6, SEG = 22, rBorder = 0.80;
   const basePt = (rho, th) => { const x = Math.cos(th)*rho*halfW, z = Math.sin(th)*rho*halfL; return [x, domeY(x, z), z]; };
   for (let ri = 0; ri < RINGS; ri++) { const r0 = ri/RINGS, r1 = (ri+1)/RINGS;
+    const bcol = (r0 >= rBorder) ? TS_OLIVE : TS_GROOVE;
     for (let ti = 0; ti < SEG; ti++) { const t0 = ti/SEG*6.2832, t1 = (ti+1)/SEG*6.2832;
-      if (ri === 0) mTri(m, [0,H,0], basePt(r1,t1), basePt(r1,t0), TS_GROOVE);
-      else mQuad(m, basePt(r0,t0), basePt(r0,t1), basePt(r1,t1), basePt(r1,t0), TS_GROOVE); } }
+      if (ri === 0) mTri(m, [0,H,0], basePt(r1,t1), basePt(r1,t0), bcol);
+      else mQuad(m, basePt(r0,t0), basePt(r0,t1), basePt(r1,t1), basePt(r1,t0), bcol); } }
   // §R5 lower roll: carry the surface past the equator so the carapace curves back inward toward the
   // body (plump, thickest at the centre, rounded bottom instead of a flat cut). Shares the equator ring
   // with the dome above, so it welds smoothly.
@@ -11546,7 +11548,7 @@ function turtleShellMesh() {
   const rollPt = (lat, th) => { const sl = Math.sin(lat), cl = Math.cos(lat); return [Math.cos(th)*halfW*sl, H*cl, Math.sin(th)*halfL*sl]; };
   for (let ri = 0; ri < LR; ri++) { const l0 = Math.PI/2 + (latMax-Math.PI/2)*ri/LR, l1 = Math.PI/2 + (latMax-Math.PI/2)*(ri+1)/LR;
     for (let ti = 0; ti < SEG; ti++) { const t0 = ti/SEG*6.2832, t1 = (ti+1)/SEG*6.2832;
-      mQuad(m, rollPt(l0,t0), rollPt(l0,t1), rollPt(l1,t1), rollPt(l1,t0), TS_GROOVE); } }
+      mQuad(m, rollPt(l0,t0), rollPt(l0,t1), rollPt(l1,t1), rollPt(l1,t0), TS_OLIVE); } }
   // a raised, faceted scute (shallow pyramid) seated on the dome at (cx,cz)
   const scute = (cx, cz, rad, nv, col, raise, rot) => {
     const C = [cx, domeY(cx, cz), cz], N = nrmAt(cx, cz);
@@ -11559,15 +11561,17 @@ function turtleShellMesh() {
       rim.push([C[0]+T1[0]*cu+T2[0]*cv, C[1]+T1[1]*cu+T2[1]*cv, C[2]+T1[2]*cu+T2[2]*cv]); }
     for (let k = 0; k < nv; k++) mTri(m, apex, rim[k], rim[(k+1)%nv], col);
   };
+  // §R6 scutes cover the whole inner dome (no bald patches), all kept inside the olive border ring.
   // central column (vertebral), 5 big hexagons
-  const vcol = [TS_AMBER, TS_ORANGE, TS_OLIVE, TS_AMBER, TS_ORANGE], vz = [0.46, 0.23, 0, -0.23, -0.46];
-  for (let i = 0; i < 5; i++) scute(0, vz[i], 0.17, 6, vcol[i], 0.05, 0.52);
+  const vcol = [TS_AMBER, TS_ORANGE, TS_OLIVE, TS_AMBER, TS_ORANGE], vz = [0.44, 0.22, 0, -0.22, -0.44];
+  for (let i = 0; i < 5; i++) scute(0, vz[i], 0.185, 6, vcol[i], 0.05, 0.52);
   // lateral (costal), 4 hexagons each side
-  const lz = [0.36, 0.12, -0.12, -0.36];
+  const lz = [0.33, 0.11, -0.11, -0.33];
   const lcolL = [TS_ORANGE, TS_AMBER, TS_AMBER2, TS_OLIVE], lcolR = [TS_AMBER, TS_OLIVE, TS_ORANGE, TS_AMBER2];
-  for (let i = 0; i < 4; i++) { scute(-0.30, lz[i], 0.15, 6, lcolL[i], 0.042, 0.0); scute(0.30, lz[i], 0.15, 6, lcolR[i], 0.042, 0.0); }
-  // marginal ring, ~12 small darker scutes near the equator edge (the rim rolls under smoothly below them)
-  for (let k = 0; k < 12; k++) { const a = k/12*6.2832, x = Math.cos(a)*halfW*0.95, z = Math.sin(a)*halfL*0.95; scute(x, z, 0.1, 5, TS_RIM, 0.03, a); }
+  for (let i = 0; i < 4; i++) { scute(-0.285, lz[i], 0.16, 6, lcolL[i], 0.042, 0.0); scute(0.285, lz[i], 0.16, 6, lcolR[i], 0.042, 0.0); }
+  // filler ring: close the remaining gaps (front/back ends + between the columns), kept clear of the border
+  const fcol = [TS_AMBER, TS_OLIVE, TS_ORANGE, TS_AMBER2, TS_AMBER];
+  for (let k = 0; k < 10; k++) { const a = k/10*6.2832, rho = 0.62, x = Math.cos(a)*halfW*rho, z = Math.sin(a)*halfL*rho; scute(x, z, 0.125, 5, fcol[k%5], 0.034, a); }
   // §R5 concave hollow underside (darker): cap the smaller rolled-under opening (faces the body / rests on sand, hidden)
   const uy = H*Math.cos(latMax) + 0.03;               // shallow ceiling just inside the opening ring
   for (let ti = 0; ti < SEG; ti++) { const t0 = ti/SEG*6.2832, t1 = (ti+1)/SEG*6.2832;
@@ -11736,10 +11740,12 @@ function kCheekMesh() {   // §R5 pink blush discs laid tangent to the curved ch
   }
   return m;
 }
-function kArmMesh(side) {   // §R4 relaxed Mii/Tomodachi-style arm: one smooth rounded limb that hangs straight down (no bend, no splay), a bit shorter than a Mii, with a rounded mitten hand; shoulder pivot
+function kArmMesh(side) {   // §R6 relaxed Mii/Tomodachi-style arm, now FLARED outward from the body (~18 deg) instead of hanging straight
   // profile top→bottom: sinks into the shoulder, slim and even down the arm, swells into the rounded hand, caps.
   const prof = [[0.07,0.0],[0.04,0.052],[-0.02,0.062],[-0.12,0.058],[-0.19,0.057],[-0.225,0.072],[-0.255,0.080],[-0.28,0.058],[-0.295,0.0]];
-  return kLathe(prof, 10, WHITE);   // side unused: both arms hang straight and relaxed at the sides
+  const a = kLathe(prof, 10, WHITE);
+  rotMeshZ(a, side * 0.315);   // flare out ~18 deg about the shoulder socket (origin): hand swings away from the body, shoulder stays put
+  return a;                    // the fore/aft walk swing is added per-frame via the instance lean (see drawKappa)
 }
 function kLegMesh() {   // short rounded leg + webbed fan foot (skin); pivot at the hip
   const m = Mesh();
@@ -11990,9 +11996,11 @@ function drawKappa(view) {
       if (k.sleepy) open = Math.min(open, 0.5);                              // sleepy = half-closed when idle
       const blink = 0.08 + 0.92*open;                                        // iAnim.y: squash whites+pupils to a thin line and back
       put("eye", exw, eyw, ezw, S, headYaw, nod, 0, WHITE, 1, blink); }
-    // arms (shoulder pivots): swing (land) / paddle (swim)
-    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.175, 0)*S, wz = k.z + rz(side*0.175, 0)*S, wy = bodyY + 0.10*S;   // §R4 lower, relaxed shoulders sunk into the torso side (no shrug)
-      const lean = swim > 0.5 ? Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.9 : Math.sin(k.phase + (side > 0 ? Math.PI : 0))*0.4*k.spd;   // gentle swing from a relaxed rest
+    // arms (shoulder pivots): the outward flare is baked into the mesh; here we add the fore/aft swing + a faint breathing sway
+    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.175, 0.07)*S, wz = k.z + rz(side*0.175, 0.07)*S, wy = bodyY + 0.10*S;   // §R6 shoulders on the FRONT-sides of the torso (ahead of the shell, so the arm never covers it)
+      const base = Math.sin(t*1.5 + k.seed*2 + (side > 0 ? Math.PI : 0)) * 0.05;                 // faint always-on sway, so the arms breathe even near-idle
+      const walk = Math.sin(k.phase + (side > 0 ? Math.PI : 0)) * 0.55 * k.spd;                  // fore/aft walk swing, grows with speed
+      const lean = swim > 0.5 ? Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.9 : (walk + base);
       put(side > 0 ? "armR" : "armL", wx, wy, wz, S, k.yaw, lean, 0, skin, 1, 1);
     }
     // legs (hip pivots near the feet): stride (land) / trail (swim)
