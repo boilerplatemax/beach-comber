@@ -11876,7 +11876,7 @@ function makeKappaHut(o) {
   const n = o.sides, step = (Math.PI*2)/n, half = Math.PI/n, isHut = o.kind === 'hut';
   // rotate the n-gon so a FLAT facet (not a corner) points at +z, where the door/windows go, for any n (6/7/8)
   const faceRot = (Math.round(Math.PI/2/step) + 0.5)*step - Math.PI/2;
-  const D = o.deckY, deckR = o.wallR + 1.0, deckEdge = deckR*Math.cos(half);
+  const D = o.deckY, deckR = o.wallR + 1.4, deckEdge = deckR*Math.cos(half);   // +1.4: a wider walking ring around the hut wall (comfortable at player size)
   const H = isHut ? o.wallH : 0, roofY = isHut ? D + H + 0.1 : D + 2.0;
   // helper: a vertical tapered cylinder centred at (x,z), from yA..yB
   const cylAt = (x, z, yA, yB, rA, rB, sides, c) => { const t = Mesh(); mCyl(t, yA, yB, rA, rB, sides, c); mergeAt(m, t, x, 0, z); };
@@ -11901,19 +11901,24 @@ function makeKappaHut(o) {
     { const w = Mesh(); mCyl(w, D, top, W, W, n, KVP.reed); rotMeshY(w, faceRot); mergeMesh(m, w); }
     for (let k = 0; k < n; k++) { const a = k*step - faceRot; cylAt(Math.cos(a)*(W+0.03), Math.sin(a)*(W+0.03), D, top + 0.1, 0.07, 0.07, 5, KVP.bamboo); }
     for (const f of [0.28, 0.78]) { const b = Mesh(); mCyl(b, D + H*f - 0.05, D + H*f + 0.05, W+0.04, W+0.04, n, KVP.rope); rotMeshY(b, faceRot); mergeMesh(m, b); }
-    // 4. door on face 0: frame, arched plank door, plank lines, brass knob
-    mBox(m, 0, D + 0.5, face + 0.01, 0.45, 0.5, 0.04, KVP.frame);
-    { const a = Mesh(); mCyl(a, -0.04, 0.04, 0.45, 0.45, 10, KVP.frame); rotMeshX(a, Math.PI/2); mergeAt(m, a, 0, D + 1.0, face + 0.01); }
-    mBox(m, 0, D + 0.48, face + 0.03, 0.35, 0.475, 0.05, KVP.door);
-    { const a = Mesh(); mCyl(a, -0.05, 0.05, 0.35, 0.35, 10, KVP.door); rotMeshX(a, Math.PI/2); mergeAt(m, a, 0, D + 0.95, face + 0.03); }
-    for (const x of [-0.12, 0.12]) mBox(m, x, D + 0.5, face + 0.06, 0.0175, 0.42, 0.025, KVP.doorLine);   // plank grooves, kept within the leaf
-    { const k = Mesh(); mergeMesh(k, ksph(0.06, KVP.knob, 6, 4)); mergeAt(m, k, 0.22, D + 0.5, face + 0.1); }
-    // 5. round porthole windows either side of the door: frame ring + pale-blue glass pane, facing outward
-    const glass = kvLerpCol(KVP.dishWater, [1, 1, 1], 0.3);
+    // 4. door on face 0: an ARCH (tall rectangle with a filled rounded top), framed. discMesh gives a filled
+    //    semicircle so there is no empty tympanum above the leaf (mCyl/kvDisc would only draw a hollow ring).
+    mBox(m, 0, D + 0.49, face + 0.01, 0.45, 0.47, 0.04, KVP.frame);                                                        // frame: lower rectangle
+    { const a = discMesh(0, 0.45, 14, 0, KVP.frame); rotMeshX(a, Math.PI/2); mergeAt(m, a, 0, D + 0.96, face + 0.01); }    // frame: filled arch top
+    mBox(m, 0, D + 0.44, face + 0.03, 0.35, 0.42, 0.05, KVP.door);                                                         // door leaf: lower rectangle
+    { const a = discMesh(0, 0.35, 14, 0, KVP.door); rotMeshX(a, Math.PI/2); mergeAt(m, a, 0, D + 0.86, face + 0.03); }     // door leaf: filled rounded top
+    for (const x of [-0.12, 0.12]) mBox(m, x, D + 0.44, face + 0.06, 0.0175, 0.40, 0.025, KVP.doorLine);                   // plank grooves within the leaf
+    { const k = Mesh(); mergeMesh(k, ksph(0.06, KVP.knob, 6, 4)); mergeAt(m, k, 0.22, D + 0.46, face + 0.1); }
+    // 5. round windows either side of the door: an OPAQUE filled pane (not a ring) in a frame, with a cross muntin
+    const glass = kvLerpCol(KVP.dishWater, [1, 1, 1], 0.28);
     for (const k of [1, n - 1]) {
-      const sx = Math.sin(k*step), sz = Math.cos(k*step);
-      const fr = kvDisc(0.3, 10, KVP.frame); kvAimY(fr, sx, 0, sz); mergeAt(m, fr, sx*(face+0.03), D + 1.0, sz*(face+0.03));
-      const gp = kvDisc(0.23, 10, glass);    kvAimY(gp, sx, 0, sz); mergeAt(m, gp, sx*(face+0.055), D + 1.0, sz*(face+0.055));
+      const sx = Math.sin(k*step), sz = Math.cos(k*step), win = Mesh();
+      // build the window in the XY plane facing +z, then YAW it to the facet (rotMeshY keeps the cross upright, unlike kvAimY)
+      { const d = discMesh(0, 0.3, 14, 0, KVP.frame); rotMeshX(d, Math.PI/2); mergeMesh(win, d); }            // frame backing (a border ring shows around the pane)
+      { const d = discMesh(0, 0.24, 14, 0, glass); rotMeshX(d, Math.PI/2); mergeAt(win, d, 0, 0, 0.02); }      // opaque glass pane, a hair proud of the frame
+      mBox(win, 0, 0, 0.035, 0.24, 0.026, 0.02, KVP.frame);             // muntin: horizontal bar (spans X)
+      mBox(win, 0, 0, 0.035, 0.026, 0.24, 0.02, KVP.frame);             // muntin: vertical bar (spans Y) -> classic + cross
+      rotMeshY(win, k*step); mergeAt(m, win, sx*(face + 0.02), D + 1.0, sz*(face + 0.02));
     }
     // 6. lantern (front-left) + cucumber string (front-right) under the eaves
     if (o.lantern) {
@@ -12245,7 +12250,7 @@ function placeKappaVillage() {
   const want = 6;   // §village: ~6 huts, some on sand and some in shallow water (the generator adds docks/stairs/bridges)
   // Build a cluster of huts along ONE stretch of shore. Try several base bearings and keep the fullest cluster,
   // so a village stays tight even when one stretch of the pond's shore is too steep or wet.
-  const CLUSTER_R = 24;   // keep every hut within this distance of the first one, so the village is tight on any pond size
+  const CLUSTER_R = 26;   // keep every hut within this distance of the first one, so the village is tight on any pond size
   const buildCluster = (ba, slopeMax, checkNice) => {
     const tmp = []; let anchor = null;
     for (let t = 0; t < 900 && tmp.length < want; t++) {
@@ -12254,7 +12259,7 @@ function placeKappaVillage() {
       if (waterDepthAt(sp.x, sp.z) > 1.3 || s.slope > slopeMax) continue;   // allow shallow water (huts on stilts) + sand
       if (checkNice && typeof insideCottage === "function" && insideCottage(sp.x, sp.z)) continue;
       if (anchor && Math.hypot(sp.x - anchor.x, sp.z - anchor.z) > CLUSTER_R) continue;   // distance leash → tight cluster
-      let ok = true; for (const h of tmp) if (Math.hypot(h.x-sp.x, h.z-sp.z) < 6.5) { ok = false; break; }   // ~8*scale apart, room for a hut + bridge
+      let ok = true; for (const h of tmp) if (Math.hypot(h.x-sp.x, h.z-sp.z) < 7.5) { ok = false; break; }   // wider decks (deckR=wallR+1.4 *1.3) need more gap between huts, room for a hut + bridge
       if (!ok) continue;
       tmp.push({ x: sp.x, z: sp.z, y: s.h, yaw: Math.atan2(cx - sp.x, cz - sp.z) });   // door faces the water
       if (!anchor) anchor = sp;
