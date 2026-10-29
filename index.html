@@ -11747,7 +11747,10 @@ function kArmMesh(side) {   // §R6 relaxed Mii/Tomodachi-style arm, now FLARED 
   // profile top→bottom: sinks into the shoulder, slim and even down the arm, swells into the rounded hand, caps.
   const prof = [[0.07,0.0],[0.04,0.052],[-0.02,0.062],[-0.12,0.058],[-0.19,0.057],[-0.225,0.072],[-0.255,0.080],[-0.28,0.058],[-0.295,0.0]];
   const a = kLathe(prof, 10, WHITE);
-  rotMeshZ(a, side * 0.42);   // §R6b flare out ~24 deg about the shoulder socket (origin): more outward, less straight down
+  // §R7 subtle relaxed elbow: bend the forearm (below the mid) gently forward about X, so the arm reads as jointed, not a straight stick
+  { const yP = -0.14, c = Math.cos(-0.22), s = Math.sin(-0.22), P = a.pos;
+    for (let i = 0; i < P.length; i += 3) { if (P[i+1] < yP) { const y = P[i+1]-yP, z = P[i+2]; P[i+1] = yP + y*c - z*s; P[i+2] = y*s + z*c; } } }
+  rotMeshZ(a, side * 0.47);   // §R7 flare out ~27 deg about the shoulder socket (origin): a touch more outward
   return a;                   // the fore/aft walk swing is added per-frame via the instance lean (see drawKappa)
 }
 function kLegMesh() {   // short rounded leg + webbed fan foot (skin); pivot at the hip
@@ -11972,10 +11975,11 @@ function drawKappa(view) {
     const V = KV[k.variant] || KV.leaf, skin = V.skin, hair = V.hair, shell = V.shell, belly = V.belly || KC_CREAM;
     const swim = k.swim, land = 1 - swim, step = Math.sin(k.phase), astep = Math.abs(step);
     const moving = k.spd > 0.05 && k.stumble <= 0;
-    const bobBody = (moving ? astep*0.03*land : 0) + Math.sin(t*2 + k.seed)*0.012;
-    const sqY = moving ? 1 + (-astep*0.06 + (1-astep)*0.03) * land : 1 + Math.sin(t*2 + k.seed)*0.012;   // squash on the plant, stretch on the lift; gentle breathe when idle
+    const bobBody = (moving ? astep*0.055*land : 0) + Math.sin(t*1.6 + k.seed)*0.02;                       // §R7 bouncier step + a clearer idle breath
+    const sqY = moving ? 1 + (-astep*0.09 + (1-astep)*0.05) * land : 1 + Math.sin(t*1.6 + k.seed)*0.022;   // §R7 deeper squash on the plant / stretch on the lift; a real breathe when idle
     const sqXZ = 1 / Math.sqrt(sqY);
-    const roll = step * 0.1 * k.spd * land;
+    const idleSway = moving ? 0 : Math.sin(t*0.5 + k.seed)*0.02;                                           // §R7 slow weight-shift when standing, so they are never frozen
+    const roll = step * 0.16 * k.spd * land + idleSway * land;                                             // §R7 stronger walking weight-shift (waddle)
     const bodyLean = swim > 0.5 ? 0.5*swim : roll, bodyLd = swim > 0.5 ? 0 : 1.5708;
     const headYaw = (k.hyaw != null ? k.hyaw : k.yaw) + k.look * land;       // head yaw lags the body (set in updateKappa)
     const nod = swim > 0.5 ? 0.2 : Math.sin(t*1.5 + k.seed)*0.03;
@@ -12000,7 +12004,7 @@ function drawKappa(view) {
       const blink = 0.08 + 0.92*open;                                        // iAnim.y: squash whites+pupils to a thin line and back
       put("eye", exw, eyw, ezw, S, headYaw, nod, 0, WHITE, 1, blink); }
     // arms (shoulder pivots): the outward flare is baked into the mesh; here we add the fore/aft swing + a faint breathing sway
-    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.135, 0.07)*S, wz = k.z + rz(side*0.135, 0.07)*S, wy = bodyY + 0.10*S;   // §R6b socket pulled INTO the torso (x 0.175->0.135) so the arm reads as attached; still on the front-side, ahead of the shell
+    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.11, 0.07)*S, wz = k.z + rz(side*0.11, 0.07)*S, wy = bodyY + 0.10*S;   // §R7 socket pulled further INTO the torso (x 0.135->0.11) so the arm sits deep and reads as attached
       const base = Math.sin(t*1.5 + k.seed*2 + (side > 0 ? Math.PI : 0)) * 0.05;                 // faint always-on sway, so the arms breathe even near-idle
       const walk = Math.sin(k.phase + (side > 0 ? Math.PI : 0)) * 0.55 * k.spd;                  // fore/aft walk swing, grows with speed
       const lean = swim > 0.5 ? Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.9 : (walk + base);
@@ -12008,8 +12012,10 @@ function drawKappa(view) {
     }
     // legs (hip pivots near the feet): stride (land) / trail (swim)
     for (const side of [-1, 1]) { const wx = k.x + rx(side*0.1, 0.02)*S, wz = k.z + rz(side*0.1, 0.02)*S, wy = k.renderY + 0.18*S;
-      const lean = swim > 0.5 ? (-0.3 + Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.2) : Math.sin(k.phase + (side > 0 ? 0 : Math.PI))*0.5*k.spd*land;
-      put("leg", wx, wy, wz, S, k.yaw, lean, 0, skin, 1, 1);
+      const lp = Math.sin(k.phase + (side > 0 ? 0 : Math.PI));
+      const lean = swim > 0.5 ? (-0.3 + Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.2) : lp*0.5*k.spd*land;
+      const legSq = (swim > 0.5) ? 1 : 1 - Math.max(0, lp)*0.16*k.spd*land;   // §R7 knee bends up on the lift (foot clears the ground), straightens on the plant
+      put("leg", wx, wy, wz, S, k.yaw, lean, 0, skin, 1, legSq);
     }
   }
   // one lit pass, matching the world props exactly (no cull so thin leaf flaps show from both sides)
