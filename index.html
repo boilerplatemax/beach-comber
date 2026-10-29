@@ -9829,6 +9829,8 @@ function targetAlongRay(r, sticky) {
   if (typeof plants !== "undefined") for (const pl of plants) if (!pl.cut) sphere(pl, "plant", pl.x, pl.z, 0.35*pl.scale, 0.55*pl.scale);   // §P3 pick flowers / ferns
   if (typeof shrooms !== "undefined") for (const sh of shrooms) if (!sh.cut) sphere(sh, "shroom", sh.x, sh.z, 0.3*sh.scale, 0.5*sh.scale);   // FEATURE: shrooms  pick a mushroom cluster
   if (typeof kappas !== "undefined") for (const kp of kappas) if (!kp.inside) sphere(kp, "kappa", kp.x, kp.z, 0.5, 0.7);   // FEATURE: kappa  a hit makes it stumble (never harmed/scooped)
+  if (typeof villageCukes !== "undefined") for (const cu of villageCukes) if (cu.count > 0) {   // §cuke the hanging cucumbers (up on the hut, so test at their real height, generous radius)
+    const midY = cu.y - cu.dy; consider(cu, "cuke", cu.x, cu.z, (w) => raySphere(r.o, r.d, cu.x, midY, cu.z, (0.45 + cu.dy)*Math.max(w, TARGET_FORGIVE))); }
   // §P3 standing bull kelp: a tall capsule down the whole stipe (seabed → crown) so any part in reach grabs it,
   // from above or below the surface. A harvested stalk has its instance scale zeroed, so skip those.
   if (kelpType && kelpType.inst.data) { const kd = kelpType.inst.data, gate = (STICK_REACH + 3) * (STICK_REACH + 3);
@@ -9860,7 +9862,7 @@ let curTarget = null;    // recomputed each frame from the crosshair (desktop)
 // something (so a click can fall through to a ground tool-use otherwise).
 // §A3 target kinds that ANY held item can act on (harvest a plant, hit a creature, pick a find, open a thing).
 // The tool-gated kinds (tree/fallentree/rock/searock/stump/geode/heaveboulder) are deliberately excluded.
-const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","tallgrass","plant","shroom","kappa","kelp","salt",
+const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","tallgrass","plant","shroom","kappa","cuke","kelp","salt",
   "flotsam","barnacle","nest","driftwood","chest","openchest","storagebox",
   "lantern","fence","crate","barrel","searock"]);
 function softTargetUnderCrosshair() { const t = effectiveTarget(); return (t && SOFT_INTERACT.has(t.kind)) ? t : null; }
@@ -9886,6 +9888,7 @@ function useToolOnTarget(t) {
     case "plant": harvestPlant(t.obj); return true;           // §P3 pick a flower or fern
     case "shroom": harvestShroom(t.obj); return true;         // FEATURE: shrooms  pick a magic mushroom cluster
     case "kappa": kappaStumble(t.obj); return true;           // FEATURE: kappa  a hit just makes it stumble back with a chirp
+    case "cuke": harvestCuke(t.obj); return true;             // §cuke pick a cucumber off a hut's hanging string
     case "kelp": harvestKelp(t.obj); return true;             // §P3 pick standing bull kelp (above or below water)
     case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
     case "flotsam": collectFlotsam(t.obj); return true;   // §5 scoop floating debris straight from the water
@@ -11462,6 +11465,11 @@ for (const k of ["magicmush", "glowshell"]) {
   ITEMS[k] = { id: k, name: FINDS[k].label, category: "find", rarity: k === "glowshell" ? "rare" : "uncommon", stackable: true, maxStack: 99, desc: FINDS[k].desc, model: FINDS[k].mesh, tint: [1,1,1] };
 }
 EDIBLE.magicmush = SHROOM_HUNGER;   // edible (fills a little hunger); deliberately NO FOOD_BOOST entry, so no stamina effect
+// §cuke the kappa village cucumber: a crunchy little snack (and a handy gift for the kappa later)
+FINDS.cucumber = { mesh: () => { const m = Mesh(); mergeMesh(m, scaleMeshXYZ(ksph(0.11, [0.31, 0.553, 0.235], 8, 6), 1, 1.9, 1)); return m; }, base: 0.34, max: 40, label: "Cucumber", desc: "A cool, crisp cucumber from a kappa's hut. Kappa adore them.", rare: 0 };
+FINDS.cucumber.dyn = makeDynamic(FINDS.cucumber.mesh(), FINDS.cucumber.max);   // the main FINDS dyn loop already ran; give it its draw buffer now
+ITEMS.cucumber = { id: "cucumber", name: "Cucumber", category: "find", rarity: "common", stackable: true, maxStack: 99, desc: FINDS.cucumber.desc, model: FINDS.cucumber.mesh, tint: [1,1,1] };
+EDIBLE.cucumber = 0.12;
 
 // --- world mushrooms: pick by hand; restock slowly, only out of view ---
 let shrooms = [];
@@ -12120,7 +12128,7 @@ function makeKappaHut(o) {
     if (o.cucumbers) {
       const x = Math.sin(0.45)*(W+0.7), z = Math.cos(0.45)*(W+0.7);
       kvRod(m, [x, top + 0.1, z], [x, D + 0.7, z], 0.015, 3, KVP.rope);
-      [1.2, 0.98, 0.76].forEach((y, i) => { const c = Mesh(); mergeMesh(c, scaleMeshXYZ(ksph(0.09, KVP.cuke, 7, 5), 1, 1.9, 1)); mergeAt(m, c, x + (i % 2 ? 0.05 : -0.05), D + y, z); });
+      col.push({ kind:'cuke', x, z, y: D + 1.2, dy: 0.22 });   // §cuke harvestable: the 3 cucumbers are rendered dynamically (vanish when picked, restock) instead of baked into the static mesh
     }
     col.push({ kind:'solid', shape:'cylinder', x:0, z:0, r:W + 0.1, y0:D, y1:top + 2 });
     col.push({ kind:'trigger', shape:'sphere', name:'door', x:0, y:D + 0.6, z:face + 0.5, r:0.8 });
@@ -12209,6 +12217,44 @@ function makeKappaWalkway(a, b, kind, groundAt) {
 
 // GL + collision data for the rendered village (freed in disposeWorldGL)
 let villageGL = null, villageFloors = [], villageSolids = [], villageTriggers = [], villageReport = null;
+// §cuke harvestable cucumber strings on the huts. Each: { x, z, y (top cuke world Y), dy (spacing), count 0..CUKE_MAX, regrowAt }
+let villageCukes = [], villageCukeGL = null;
+const CUKE_MAX = 3, CUKE_REGROW_DAYS = 2.0;   // 3 per string; a picked string refills (one at a time) after a couple of days, out of view
+function cukeMesh() { const m = Mesh(); mergeMesh(m, scaleMeshXYZ(ksph(0.09, KVP.cuke, 7, 5), 1, 1.9, 1)); return m; }
+// (re)build the instanced buffer of the cucumbers currently hanging (so picked ones disappear, restocked ones reappear)
+function rebuildVillageCukes() {
+  if (villageCukeGL) { disposeGLObj(villageCukeGL); villageCukeGL = null; }
+  const inst = [];
+  for (const cu of villageCukes) for (let i = 0; i < cu.count; i++) {
+    const xo = (i % 2 ? 0.065 : -0.065);
+    inst.push(cu.x + xo, cu.y - i*cu.dy, cu.z, 1, 0, 0, 0, 1, 1, 1);   // [x,y,z,scale,yaw,lean,leanDir,tintRGB]
+  }
+  if (inst.length) villageCukeGL = makeInstanced(cukeMesh(), inst);
+}
+function cukePrompt(cu) { const v = IS_TOUCH ? "tap" : "click"; return cu.count > 0 ? (v + " to pick a cucumber") : ""; }
+function harvestCuke(cu) {
+  if (!cu || cu.count <= 0) return;
+  const first = !(typeof discovered !== "undefined" && discovered.has("f_cucumber"));
+  const added = Inv.add("cucumber", 1);
+  if (added <= 0) { if (typeof showCard === "function") showCard("Pack full", "Drop something to make room."); if (typeof bagShake === "function") bagShake(); return; }
+  if (typeof discovered !== "undefined") discovered.add("f_cucumber");
+  if (typeof notify === "function") notify("cucumber", 1, first);
+  cu.count--; cu.regrowAt = clock.t + CUKE_REGROW_DAYS * DAY_PERIOD;   // one grows back after a couple of days, out of view
+  rebuildVillageCukes();
+  if (onDig) onDig("pluck");
+}
+// restock out of view: one cucumber at a time, only when the player is well away
+function updateVillageCukes(dt) {
+  if (!villageCukes.length) return;
+  let changed = false;
+  for (const cu of villageCukes) {
+    if (cu.count >= CUKE_MAX) continue;
+    if (clock.t < cu.regrowAt) continue;
+    const dx = cu.x - player.x, dz = cu.z - player.z; if (dx*dx + dz*dz < 24*24) continue;   // not while the player is near / watching
+    cu.count++; cu.regrowAt = clock.t + CUKE_REGROW_DAYS * DAY_PERIOD; changed = true;
+  }
+  if (changed) rebuildVillageCukes();
+}
 const VILLAGE_STEP_UP = 0.62;   // how high a village floor (deck/ramp) you can step straight up onto, in metres
 // a makeRng-style stream (adds .range/.pick/.chance) from a 32-bit seed
 function kvRng(seed) {
@@ -12228,7 +12274,7 @@ function makeKappaVillage(seed, worldSites, terrainHeight, { scale = 1, seaLevel
   const rng = kvRng(seed);
   const DRY = dryHeight / scale, level = rng.range(2.3, 3.0);
   const mainShell = rng.pick(KV_SHELLS), altShell = rng.pick(KV_SHELLS);
-  const mesh = Mesh(), solids = [], floors = [], triggers = [];
+  const mesh = Mesh(), solids = [], floors = [], triggers = [], cukes = [];
   const rotXZ = (x, z, a) => [x * Math.cos(a) + z * Math.sin(a), -x * Math.sin(a) + z * Math.cos(a)];   // matches rotMeshY
 
   // 1. what stands on each site (site 0 = big elder hut)
@@ -12308,7 +12354,8 @@ function makeKappaVillage(seed, worldSites, terrainHeight, { scale = 1, seaLevel
     for (const c of built.colliders) { const [lx, lz] = rotXZ(c.x, c.z, h.rot), vx = lx + h.x, vz = lz + h.z;
       if (c.kind === 'solid') solids.push({ x: vx, z: vz, r: c.r, y0: c.y0 + h.base, y1: c.y1 + h.base });
       else if (c.kind === 'floor') floors.push({ shape: 'disc', x: vx, z: vz, r: c.r, y: c.y + h.base });
-      else if (c.kind === 'trigger') triggers.push({ x: vx, z: vz, y: c.y + h.base, r: c.r, name: c.name }); }
+      else if (c.kind === 'trigger') triggers.push({ x: vx, z: vz, y: c.y + h.base, r: c.r, name: c.name });
+      else if (c.kind === 'cuke') cukes.push({ x: vx, z: vz, y: c.y + h.base, dy: c.dy }); }   // §cuke harvestable cucumber string anchor (top cuke)
   };
 
   // 5. walkways first (so ladders can take a free face), then huts
@@ -12349,7 +12396,7 @@ function makeKappaVillage(seed, worldSites, terrainHeight, { scale = 1, seaLevel
   const S = scale, toW = (c) => { const o = { ...c }; for (const k of ['x', 'z', 'r', 'y', 'y0', 'y1', 'ax', 'az', 'halfWidth', 'z1']) if (typeof o[k] === 'number') o[k] *= S;
     if (typeof o.ay === 'number') o.ay = o.ay * S + seaLevel; for (const k of ['y', 'y0', 'y1']) if (typeof o[k] === 'number') o[k] += seaLevel; if (typeof o.dy === 'number') o.dy *= S; if (typeof o.sag === 'number') o.sag *= S; return o; };
   const outHuts = huts.map((h) => ({ x: h.x * S, z: h.z * S, y: h.base * S + seaLevel, deckWorld: h.deckWorld * S + seaLevel, rot: h.rot, kind: h.kind }));
-  return { mesh: worldMesh, solids: solids.map(toW), floors: floors.map(toW), triggers: triggers.map(toW), spawn, report, huts: outHuts };
+  return { mesh: worldMesh, solids: solids.map(toW), floors: floors.map(toW), triggers: triggers.map(toW), cukes: cukes.map(toW), spawn, report, huts: outHuts };
 }
 
 // §village step2 collisions. All data in villageFloors/villageSolids is world-space (toW applied).
@@ -12401,8 +12448,9 @@ function villagePushOut(x, z, feetY) {
 
 function placeKappaVillage() {
   kappaVillage = null; kappaHuts = []; kappas = []; kappaVillageSpawn = null;
-  villageFloors = []; villageSolids = []; villageTriggers = []; villageReport = null;
+  villageFloors = []; villageSolids = []; villageTriggers = []; villageReport = null; villageCukes = [];
   if (villageGL) { disposeGLObj(villageGL); villageGL = null; }
+  if (villageCukeGL) { disposeGLObj(villageCukeGL); villageCukeGL = null; }
   if (!KAPPA_ON) return;
   const R = mulberry32(((SEED_INT ^ 0x6b617070) >>> 0) || 1);   // own stream ("kapp"): zero draws from the shared rng
   // Pick where the village sits. The restrictions are soft now, and a guaranteed shore fallback means EVERY seed
@@ -12476,6 +12524,8 @@ function placeKappaVillage() {
   // §village step2: stilts + hut-wall bodies are vertical-aware solids (villagePushOut), NOT flat colliders[] circles,
   // so the player can wade/walk UNDER a raised deck yet still be stopped by the walls up on the deck.
   villageSolids = V.solids;
+  villageCukes = (V.cukes || []).map(c => ({ x: c.x, z: c.z, y: c.y, dy: c.dy, count: CUKE_MAX, regrowAt: 0 }));   // §cuke full strings to start
+  rebuildVillageCukes();
   if (typeof rebuildCollHash === "function") rebuildCollHash();
   for (const h of kappaHuts) kappas.push({
     home: h, x: h.x, z: h.z, yaw: h.yaw, tx: h.x, tz: h.z, spd: 0,
@@ -12641,6 +12691,8 @@ function drawKappaHuts(view) {
   gl.disable(gl.CULL_FACE);   // village has one-sided caps/discs; show both faces (matches the kappa pass)
   gl.bindVertexArray(villageGL.vao);
   gl.drawArraysInstanced(gl.TRIANGLES, 0, villageGL.vertCount, villageGL.count);
+  // §cuke the harvestable cucumbers (separate buffer so it rebuilds as they are picked / restock)
+  if (villageCukeGL && villageCukeGL.vao && villageCukeGL.vertCount) { gl.bindVertexArray(villageCukeGL.vao); gl.drawArraysInstanced(gl.TRIANGLES, 0, villageCukeGL.vertCount, villageCukeGL.count); }
 }
 function drawKappa(view) {
   if (!KAPPA_ON) return;
@@ -15228,6 +15280,7 @@ function disposeWorldGL() {
   if (rubbleDyn) { disposeGLObj(rubbleDyn); rubbleDyn = null; }             // loose-Stone mesh is seeded (stoneMesh → mRock(SEED_INT^0x51a3))
   if (barnacleRockDyn) { disposeGLObj(barnacleRockDyn); barnacleRockDyn = null; }  // intertidal rock mesh is seeded (SEED_INT^0x5b)
   if (villageGL) { disposeGLObj(villageGL); villageGL = null; }              // §village: the per-seed stilt-village mesh
+  if (villageCukeGL) { disposeGLObj(villageCukeGL); villageCukeGL = null; }   // §cuke harvestable cucumbers buffer
   _barnRockMesh = null;                                                     // seeded base mesh for standalone intertidal rocks; lazily rebuilt
   if (Array.isArray(oysterBeds)) for (const b of oysterBeds) if (b.dyn) { disposeGLObj(b.dyn); b.dyn = null; }   // §P3 each oyster rock has its own seeded mesh
 }
@@ -15601,6 +15654,7 @@ function frame(now) {
   if (mode === "walk") { updateBreath(dt); updateSacks(dt); updateDeepVisitor(dt); updateFishing(dt); updateCatchCine(dt); updateEat(dt); updatePlacedTide(); }   // §14A/B/C + §Fishing + §P2 eating + §P2 tide over placed buckets/lanterns
   if (mode === "walk") { updateShrooms(dt); updateTrip(dt); }   // FEATURE: shrooms  restock mushrooms + advance any active trip
   if (mode === "walk") updateKappa(simDt);   // FEATURE: kappa  village wander / schedule / navigation
+  if (mode === "walk") updateVillageCukes(simDt);   // §cuke hut cucumbers restock out of view
   if (typeof VOICE !== "undefined") {     // §voice 3D listener follows the camera; live sentences track their speakers; kappas mumble when near
     const vf = (typeof camForward === "function") ? camForward() : [0, 0, 1];
     VOICE.listener(cam.pos[0], cam.pos[1], cam.pos[2], vf[0], vf[1], vf[2]); VOICE.update();
@@ -15910,6 +15964,11 @@ function frame(now) {
     }
     if (!buildMode && curTarget && curTarget.kind === "kappa") {   // FEATURE: kappa  a shy neutral villager
       promptEl.textContent = "a kappa";
+      promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
+      crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
+    }
+    if (!buildMode && curTarget && curTarget.kind === "cuke") {   // §cuke pick a cucumber
+      promptEl.textContent = cukePrompt(curTarget.obj);
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
