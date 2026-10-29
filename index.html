@@ -3237,8 +3237,9 @@ function enterWalk() {
   const s = findSpawn();
   spawnPoint = spawnPoint || { x: s.x, z: s.z, yaw: s.yaw };
   player.x = s.x; player.z = s.z; player.bob = 0;
-  player.eyeY = surfaceAt(s.x, s.z).h + EYE;
-  player.feetY = surfaceAt(s.x, s.z).h; player.vy = 0; player.airborne = false; player.landStun = 0;
+  const spawnY = groundStandAt(s.x, s.z, surfaceAt(s.x, s.z).h);   // §village step2: stand on terrain (or a floor within one step of it); don't get lifted onto a high deck overhead
+  player.eyeY = spawnY + EYE;
+  player.feetY = spawnY; player.vy = 0; player.airborne = false; player.landStun = 0;
   lastSafe.x = s.x; lastSafe.z = s.z;
   cam.yaw = s.yaw; cam.pitch = -0.04;
   mode = "walk";
@@ -4260,6 +4261,7 @@ addEventListener("keydown", (e) => {
     if (e.code === "KeyO") { fishForceBite = !fishForceBite; showCard("Debug: force bite", fishForceBite ? "Casts bite almost instantly (never junk)." : "Off."); }   // §Fishing force a quick bite
     if (e.code === "KeyU") { fishOddsLog = !fishOddsLog; console.log("fish odds log " + (fishOddsLog ? "ON" : "OFF")); }   // §Fishing log catch odds per cast
     if (e.code === "KeyG") { fpDbg = !fpDbg; const n = (typeof validateFootprints === "function") ? validateFootprints() : 0; showCard("Debug: spawn footprints", fpDbg ? `Faint = footprints, red = overlaps (${n}).` : "Off."); }   // §P3 footprint / overlap overlay
+    if (e.code === "KeyV") { villageCollDbg = !villageCollDbg; const cc = document.getElementById("critcanvas"); if (cc) cc.style.display = (villageCollDbg || critDbg || fpDbg) ? "block" : "none"; showCard("Debug: village colliders", villageCollDbg ? "Blue = floors (deck/ramp), orange = solids (stilt/wall), green = door triggers." : "Off."); }   // §village step2 collider overlay
     if (e.code === "KeyZ") { ecoDbg = !ecoDbg; _ecoZoneInfo = null; showCard("Debug: living beach", ecoDbg ? "Zone current/target counts (finds & shore critters)." : "Off."); }   // §living zoned-ecosystem overlay
   }
 });
@@ -10282,6 +10284,34 @@ function drawFootprintDebug() {
   for (const o of footprintOverlaps) { const dx = o.x - cam.pos[0], dz = o.z - cam.pos[2]; if (dx*dx + dz*dz > 90*90) continue;
     ring(o.x, o.z, o.r + 0.3, "rgba(255,70,70,.95)"); }
 }
+// §village step2 collider overlay (debug key V): deck/ramp floors (blue), hut/stilt solids (orange, at their y1 top),
+// door triggers (green). Shares the critcanvas with the other debug overlays.
+let villageCollDbg = false;
+function drawVillageCollDebug() {
+  const cc = document.getElementById("critcanvas"); if (!cc || !villageCollDbg) return;
+  if (cc.width !== innerWidth || cc.height !== innerHeight) { cc.width = innerWidth; cc.height = innerHeight; }
+  const ctx = cc.getContext("2d"); ctx.clearRect(0, 0, cc.width, cc.height); ctx.lineWidth = 1.6;
+  const near = (x, z) => { const dx = x - cam.pos[0], dz = z - cam.pos[2]; return dx*dx + dz*dz < 90*90; };
+  const ring = (x, y, z, r, stroke) => {
+    const c = projectToScreen(x, y, z); if (!c) return;
+    const e = projectToScreen(x + r, y, z); if (!e) return;
+    ctx.strokeStyle = stroke; ctx.beginPath(); ctx.arc(c[0], c[1], Math.max(2, Math.hypot(e[0]-c[0], e[1]-c[1])), 0, 6.283); ctx.stroke();
+  };
+  for (const f of villageFloors) {
+    if (f.shape === 'disc') { if (near(f.x, f.z)) ring(f.x, f.y + 0.03, f.z, f.r, "rgba(90,180,255,.9)"); }
+    else {   // ramp: draw its centre line + the two edges as projected segments
+      const s = Math.sin(f.heading), cH = Math.cos(f.heading);
+      const seg = (perp, col) => { ctx.strokeStyle = col; ctx.beginPath();
+        for (let i = 0; i <= 8; i++) { const t = i/8, along = t*f.z1;
+          const x = f.ax + s*along + cH*perp, z = f.az + cH*along - s*perp, y = f.ay + f.dy*t - f.sag*4*t*(1-t) + 0.04;
+          const p = projectToScreen(x, y, z); if (!p) { return; } i ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1]); }
+        ctx.stroke(); };
+      if (near(f.ax, f.az)) { seg(0, "rgba(90,180,255,.55)"); seg(f.halfWidth, "rgba(90,180,255,.9)"); seg(-f.halfWidth, "rgba(90,180,255,.9)"); }
+    }
+  }
+  for (const c of villageSolids) if (near(c.x, c.z)) { ring(c.x, c.y1, c.z, c.r, "rgba(255,150,60,.9)"); ring(c.x, c.y0, c.z, c.r, "rgba(255,150,60,.4)"); }
+  for (const t of villageTriggers) if (near(t.x, t.z)) ring(t.x, t.y, t.z, t.r, "rgba(110,230,140,.9)");
+}
 // §Sound debug: a panel listing every registered sound with a play button
 let soundTestOpen = false;
 function toggleSoundTest() {
@@ -11984,7 +12014,8 @@ function makeKappaWalkway(a, b, kind, groundAt) {
 }
 
 // GL + collision data for the rendered village (freed in disposeWorldGL)
-let villageGL = null, villageFloors = [], villageTriggers = [], villageReport = null;
+let villageGL = null, villageFloors = [], villageSolids = [], villageTriggers = [], villageReport = null;
+const VILLAGE_STEP_UP = 0.62;   // how high a village floor (deck/ramp) you can step straight up onto, in metres
 // a makeRng-style stream (adds .range/.pick/.chance) from a 32-bit seed
 function kvRng(seed) {
   const r = mulberry32((seed >>> 0) || 1);
@@ -12127,9 +12158,56 @@ function makeKappaVillage(seed, worldSites, terrainHeight, { scale = 1, seaLevel
   return { mesh: worldMesh, solids: solids.map(toW), floors: floors.map(toW), triggers: triggers.map(toW), spawn, report, huts: outHuts };
 }
 
+// §village step2 collisions. All data in villageFloors/villageSolids is world-space (toW applied).
+// A "floor" is a walkable surface you stand ON (deck disc or walkway ramp); a "solid" is a vertical
+// obstacle you push OFF (a stilt pole or a hut wall body), each with a [y0,y1] height span so the
+// player can wade/walk UNDER a raised deck without the wall above blocking them.
+
+// Height of the village floor at (x,z) the player can stand on from feetY, or -Infinity if none.
+// Only floors at/below feetY+step count, so a deck high overhead is ignored (you pass beneath it).
+function villageFloorHeight(x, z, feetY) {
+  let best = -Infinity;
+  for (const f of villageFloors) {
+    let fy;
+    if (f.shape === 'disc') {
+      const dx = x - f.x, dz = z - f.z; if (dx*dx + dz*dz > f.r*f.r) continue;
+      fy = f.y;
+    } else {   // ramp: local +z runs a->b along heading; surface = ay + dy*t - sag*4*t*(1-t)
+      const rx = x - f.ax, rz = z - f.az;
+      const along = rx*Math.sin(f.heading) + rz*Math.cos(f.heading);
+      if (along < -0.15 || along > f.z1 + 0.15) continue;
+      const perp = rx*Math.cos(f.heading) - rz*Math.sin(f.heading);
+      if (perp < -f.halfWidth || perp > f.halfWidth) continue;
+      const t = Math.max(0, Math.min(1, along / f.z1));
+      fy = f.ay + f.dy*t - f.sag*4*t*(1 - t);
+    }
+    if (fy <= feetY + VILLAGE_STEP_UP && fy > best) best = fy;
+  }
+  return best;
+}
+// Combined walking ground at (x,z): terrain, a fallen trunk, or a village floor underfoot (whichever is highest reachable).
+function groundStandAt(x, z, feetY) {
+  let h = surfaceAt(x, z).h;
+  const t = (typeof trunkHeightAt === "function") ? trunkHeightAt(x, z) : -Infinity; if (t > h) h = t;
+  const vf = villageFloorHeight(x, z, feetY); if (vf > h) h = vf;
+  return h;
+}
+// Push (x,z) out of any village solid whose [y0,y1] span overlaps the player's body column. Returns [x,z].
+function villagePushOut(x, z, feetY) {
+  if (!villageSolids.length) return [x, z];
+  const footY = feetY, headY = feetY + EYE;
+  for (const c of villageSolids) {
+    if (headY <= c.y0 || footY >= c.y1) continue;   // body entirely below or above this solid -> no block (wade under / stand over)
+    const dx = x - c.x, dz = z - c.z, minD = c.r + PLAYER_R;
+    let d = Math.hypot(dx, dz);
+    if (d < minD) { if (d < 1e-4) { x += minD; } else { const p = (minD - d)/d; x += dx*p; z += dz*p; } }
+  }
+  return [x, z];
+}
+
 function placeKappaVillage() {
   kappaVillage = null; kappaHuts = []; kappas = []; kappaVillageSpawn = null;
-  villageFloors = []; villageTriggers = []; villageReport = null;
+  villageFloors = []; villageSolids = []; villageTriggers = []; villageReport = null;
   if (villageGL) { disposeGLObj(villageGL); villageGL = null; }
   if (!KAPPA_ON) return;
   const R = mulberry32(((SEED_INT ^ 0x6b617070) >>> 0) || 1);   // own stream ("kapp"): zero draws from the shared rng
@@ -12201,7 +12279,9 @@ function placeKappaVillage() {
     { scale: 1.3, seaLevel: SEA_LEVEL, dryHeight: 0.7 });   // §village step1: land routes form on the beach (tide-safe siting is step 3/4)
   villageGL = makeInstanced(V.mesh, [0, 0, 0, 1, 0, 0, 0, 1, 1, 1]);
   villageFloors = V.floors; villageTriggers = V.triggers; villageReport = V.report;
-  for (const c of V.solids) colliders.push({ x: c.x, z: c.z, r: c.r, kind: "village" });   // hut bodies block the player (stilts/floors handled in step 2)
+  // §village step2: stilts + hut-wall bodies are vertical-aware solids (villagePushOut), NOT flat colliders[] circles,
+  // so the player can wade/walk UNDER a raised deck yet still be stopped by the walls up on the deck.
+  villageSolids = V.solids;
   if (typeof rebuildCollHash === "function") rebuildCollHash();
   for (const h of kappaHuts) kappas.push({
     home: h, x: h.x, z: h.z, yaw: h.yaw, tx: h.x, tz: h.z, spd: 0,
@@ -15212,11 +15292,14 @@ function frame(now) {
       // deep water or a near-vertical rise per frame (prevents climbing cliff faces without snagging on bumps).
       let nx = player.x, nz = player.z;
       const WADE_INTO = SWIM_START + 0.7;   // §14A let wading carry you past the swim threshold so swimming kicks in
-      const sX = surfaceAt(player.x + wx*dist, player.z);
-      if (waterLevel - sX.h <= WADE_INTO) nx = player.x + wx*dist;   // §strip only water blocks horizontal move now
-      const sZ = surfaceAt(nx, player.z + wz*dist);
-      if (waterLevel - sZ.h <= WADE_INTO) nz = player.z + wz*dist;
+      // §village step2: a deck/bridge floor underfoot counts as ground for the water gate, so you can walk out over
+      // the water on the village planks instead of the deep water blocking you.
+      const gXh = groundStandAt(player.x + wx*dist, player.z, player.feetY);
+      if (waterLevel - gXh <= WADE_INTO) nx = player.x + wx*dist;   // §strip only water blocks horizontal move now
+      const gZh = groundStandAt(nx, player.z + wz*dist, player.feetY);
+      if (waterLevel - gZh <= WADE_INTO) nz = player.z + wz*dist;
       [nx, nz] = slideCircles(nx, nz);
+      [nx, nz] = villagePushOut(nx, nz, player.feetY);   // §village step2: off stilts/walls (vertical-aware; wade under raised decks)
       player.x = nx; player.z = nz;
       // §foot one footstep per stride of real distance travelled (not a timer), and the head-bob
       // phase advances in lock-step: PI of bob phase == one stride, so the bob peaks once per footfall.
@@ -15231,8 +15314,8 @@ function frame(now) {
     }
     player.scramble += (scrambleTarget - player.scramble) * Math.min(1, dt * 4);
     if (player.landStun > 0) player.landStun = Math.max(0, player.landStun - dt);
-    const g = surfaceAt(player.x, player.z);
-    const standH = Math.max(g.h, trunkHeightAt(player.x, player.z));   // stand on a fallen trunk (or terrain)
+    const standH = groundStandAt(player.x, player.z, player.feetY);   // terrain, a fallen trunk, or a village deck/ramp underfoot
+    const g = surfaceAt(player.x, player.z);   // re-fetch fresh: groundStandAt/trunkHeightAt clobber the shared _surf, and g feeds stepVertical/landJump
     // coyote window + buffered jump
     player.coyote = player.airborne ? Math.max(0, player.coyote - dt) : COYOTE_TIME;
     // §P2 buffered jump: a recent Space press fires once you're grounded (or within the coyote window),
@@ -15265,6 +15348,7 @@ function frame(now) {
     if (dbgYGraph) { recordY(renderFeetY, cam.pos[1], player.airborne); drawYGraph(); }    // §P1
     if (critDbg) drawCritDebug();                                                          // §R4 creature AI overlay
     if (fpDbg) drawFootprintDebug();                                                       // §P3 spawn-footprint / overlap overlay
+    if (villageCollDbg) drawVillageCollDebug();                                            // §village step2 collider overlay
    }
   }
 
