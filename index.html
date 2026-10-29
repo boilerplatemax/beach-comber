@@ -11753,10 +11753,21 @@ function kArmMesh(side) {   // §R6 relaxed Mii/Tomodachi-style arm, now FLARED 
   rotMeshZ(a, side * 0.47);   // §R7 flare out ~27 deg about the shoulder socket (origin): a touch more outward
   return a;                   // the fore/aft walk swing is added per-frame via the instance lean (see drawKappa)
 }
-function kLegMesh() {   // short rounded leg + webbed fan foot (skin); pivot at the hip
+// §R8 legs split into a two-bone chain (thigh + shin) so the knee can really bend. Both pivot at the TOP
+// (origin y=0): the thigh at the hip, the shin at the knee. KLEG_L1/L2 are the bone lengths in mesh units;
+// drawKappa does the forward kinematics (hip angle -> knee world pos -> shin angle).
+const KLEG_L1 = 0.115, KLEG_L2 = 0.11;
+function kThighMesh() {   // upper leg: rounded + chunky, pivot at the hip, reaches down to the knee at y = -KLEG_L1
   const m = Mesh();
-  mergeAt(m, scaleMeshXYZ(ksph(0.082, WHITE, 7, 5), 1.0, 1.7, 1.0), 0, -0.085, 0);      // leg
-  mergeAt(m, scaleMeshXYZ(ksph(0.11,  WHITE, 8, 4), 1.0, 0.32, 1.5), 0, -0.165, 0.055);  // webbed foot, forward
+  mergeAt(m, scaleMeshXYZ(ksph(0.083, WHITE, 7, 5), 1.0, 1.0, 1.0), 0, 0, 0);                 // hip ball
+  mergeAt(m, scaleMeshXYZ(ksph(0.078, WHITE, 7, 5), 1.0, 1.25, 1.0), 0, -KLEG_L1*0.55, 0);    // thigh
+  mergeAt(m, scaleMeshXYZ(ksph(0.072, WHITE, 7, 5), 1.0, 1.0, 1.0), 0, -KLEG_L1, 0);          // knee ball
+  return m;
+}
+function kShinMesh() {   // lower leg + webbed fan foot: pivot at the knee, reaches down to the ankle at y = -KLEG_L2
+  const m = Mesh();
+  mergeAt(m, scaleMeshXYZ(ksph(0.07, WHITE, 7, 5), 1.0, 1.25, 1.0), 0, -KLEG_L2*0.5, 0);      // shin
+  mergeAt(m, scaleMeshXYZ(ksph(0.115, WHITE, 8, 4), 1.0, 0.32, 1.55), 0, -KLEG_L2, 0.06);     // webbed foot, forward
   return m;
 }
 // §R4 kappa accessories (cloth / lily pad / tub / cucumber / basket) removed by request.
@@ -11944,9 +11955,9 @@ function kappaStumble(k) {   // a hit just makes it recoil with a chirp (it can'
 // --- draw: a tiny CPU bone rig, one instance per body part ---
 let _hutDyn = null;
 // kappa part registry: one dynamic buffer + scratch per part (built lazily)
-const _kpMesh = { body:kBodyMesh, belly:kBellyMesh, shell:kShellMesh, head:kHeadMesh, dish:kDishMesh, water:kWaterMesh, beak:kBeakMesh, cheek:kCheekMesh, eye:kEyeMesh, armL:()=>kArmMesh(-1), armR:()=>kArmMesh(1), leg:kLegMesh };
-const _kpMax  = { body:8,belly:8,shell:8,head:8,dish:8,water:8,beak:8,cheek:8,eye:8, armL:8,armR:8,leg:16 };
-const KP_ORDER = ["shell","body","belly","leg","armL","armR","head","dish","water","cheek","beak","eye"];
+const _kpMesh = { body:kBodyMesh, belly:kBellyMesh, shell:kShellMesh, head:kHeadMesh, dish:kDishMesh, water:kWaterMesh, beak:kBeakMesh, cheek:kCheekMesh, eye:kEyeMesh, armL:()=>kArmMesh(-1), armR:()=>kArmMesh(1), thigh:kThighMesh, shin:kShinMesh };
+const _kpMax  = { body:8,belly:8,shell:8,head:8,dish:8,water:8,beak:8,cheek:8,eye:8, armL:8,armR:8,thigh:16,shin:16 };
+const KP_ORDER = ["shell","body","belly","thigh","shin","armL","armR","head","dish","water","cheek","beak","eye"];
 let _kp = null;
 function ensureKappaDyns() { if (_kp) return; _kp = {}; for (const key in _kpMesh) _kp[key] = { dyn: makeKappaDyn(_kpMesh[key](), _kpMax[key]), arr: new Float32Array(_kpMax[key]*12), n: 0 }; }
 function drawKappaHuts(view) {
@@ -12004,18 +12015,24 @@ function drawKappa(view) {
       const blink = 0.08 + 0.92*open;                                        // iAnim.y: squash whites+pupils to a thin line and back
       put("eye", exw, eyw, ezw, S, headYaw, nod, 0, WHITE, 1, blink); }
     // arms (shoulder pivots): the outward flare is baked into the mesh; here we add the fore/aft swing + a faint breathing sway
-    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.11, 0.07)*S, wz = k.z + rz(side*0.11, 0.07)*S, wy = bodyY + 0.10*S;   // §R7 socket pulled further INTO the torso (x 0.135->0.11) so the arm sits deep and reads as attached
+    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.11, -0.01)*S, wz = k.z + rz(side*0.11, -0.01)*S, wy = bodyY + 0.10*S;   // §R8 shoulder pulled BACK toward the shell (z 0.07->-0.01) so the arms no longer sit forward / hunched
       const base = Math.sin(t*1.5 + k.seed*2 + (side > 0 ? Math.PI : 0)) * 0.05;                 // faint always-on sway, so the arms breathe even near-idle
       const walk = Math.sin(k.phase + (side > 0 ? Math.PI : 0)) * 0.55 * k.spd;                  // fore/aft walk swing, grows with speed
       const lean = swim > 0.5 ? Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.9 : (walk + base);
       put(side > 0 ? "armR" : "armL", wx, wy, wz, S, k.yaw, lean, 0, skin, 1, 1);
     }
-    // legs (hip pivots near the feet): stride (land) / trail (swim)
-    for (const side of [-1, 1]) { const wx = k.x + rx(side*0.1, 0.02)*S, wz = k.z + rz(side*0.1, 0.02)*S, wy = k.renderY + 0.18*S;
-      const lp = Math.sin(k.phase + (side > 0 ? 0 : Math.PI));
-      const lean = swim > 0.5 ? (-0.3 + Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.2) : lp*0.5*k.spd*land;
-      const legSq = (swim > 0.5) ? 1 : 1 - Math.max(0, lp)*0.16*k.spd*land;   // §R7 knee bends up on the lift (foot clears the ground), straightens on the plant
-      put("leg", wx, wy, wz, S, k.yaw, lean, 0, skin, 1, legSq);
+    // §R8 legs: a real two-bone chain (thigh + shin) with a bending KNEE. We pose the hip (a1) and knee (a2)
+    // angles per side, then do forward kinematics: the shin's pivot is the knee, whose world position comes
+    // from rotating the thigh by a1 (exactly the transform the shader applies), so the chain stays connected.
+    for (const side of [-1, 1]) {
+      const hx = k.x + rx(side*0.1, 0.02)*S, hz = k.z + rz(side*0.1, 0.02)*S, hy = k.renderY + 0.205*S;   // hip
+      const ph = k.phase + (side > 0 ? 0 : Math.PI), sw = Math.sin(ph), lift = Math.max(0, sw);
+      let a1, a2;   // a1 = thigh angle (about local X), a2 = knee bend added onto a1 for the shin
+      if (swim > 0.5) { a1 = -0.5 + Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.22; a2 = 0.5; }       // legs trail + paddle while swimming
+      else { a1 = 0.06 - sw*0.5*k.spd*land; a2 = -0.1 - lift*1.0*k.spd*land; }                             // rest: nearly straight (feet planted); walk: hip swings + knee folds up to clear the ground on the lift
+      put("thigh", hx, hy, hz, S, k.yaw, a1, 0, skin, 1, 1);
+      const kz = -KLEG_L1*Math.sin(a1), kyl = -KLEG_L1*Math.cos(a1);                                       // knee offset from the hip (local), matching the shader's lean-about-X then yaw
+      put("shin", hx + rx(0, kz)*S, hy + kyl*S, hz + rz(0, kz)*S, S, k.yaw, a1 + a2, 0, skin, 1, 1);
     }
   }
   // one lit pass, matching the world props exactly (no cull so thin leaf flaps show from both sides)
