@@ -11844,6 +11844,8 @@ function kvDisc(r, sides, col) { const d = Mesh(); mCyl(d, -0.03, 0.03, r, r, si
 function makeKappaHut(o) {
   const m = Mesh(), col = [];
   const n = o.sides, step = (Math.PI*2)/n, half = Math.PI/n, isHut = o.kind === 'hut';
+  // rotate the n-gon so a FLAT facet (not a corner) points at +z, where the door/windows go, for any n (6/7/8)
+  const faceRot = (Math.round(Math.PI/2/step) + 0.5)*step - Math.PI/2;
   const D = o.deckY, deckR = o.wallR + 1.0, deckEdge = deckR*Math.cos(half);
   const H = isHut ? o.wallH : 0, roofY = isHut ? D + H + 0.1 : D + 2.0;
   // helper: a vertical tapered cylinder centred at (x,z), from yA..yB
@@ -11857,28 +11859,31 @@ function makeKappaHut(o) {
     col.push({ kind:'solid', shape:'cylinder', x, z, r:0.16, y0:footY, y1:stiltTop });
   }
 
-  // 2. deck (n-gon, rotated so a flat edge faces +z)
-  { const d = Mesh(); mCyl(d, D - 0.2, D, deckR, deckR, n, KVP.deck); rotMeshY(d, half); mergeMesh(m, d); }
+  // 2. deck: n-gon wall + a top cap (the walking floor) + a bottom cap, so it is a solid disc (mCyl has no end caps)
+  { const d = Mesh(); mCyl(d, D - 0.2, D, deckR, deckR, n, KVP.deck); rotMeshY(d, faceRot); mergeMesh(m, d); }
+  { const topc = discMesh(0, deckR, n, 0, KVP.deck); rotMeshY(topc, faceRot); mergeAt(m, topc, 0, D, 0); }
+  { const botc = discMesh(0, deckR, n, 0, KVP.deck); rotMeshY(botc, faceRot); mergeAt(m, botc, 0, D - 0.2, 0); }
   col.push({ kind:'floor', shape:'disc', x:0, z:0, r:deckEdge, y:D });
 
   if (isHut) {
     const W = o.wallR, top = D + H, face = W*Math.cos(half);
-    // 3. reed walls, bamboo corner posts, two rope bands
-    { const w = Mesh(); mCyl(w, D, top, W, W, n, KVP.reed); rotMeshY(w, half); mergeMesh(m, w); }
-    for (let k = 0; k < n; k++) { const a = half + k*step; cylAt(Math.sin(a)*(W+0.03), Math.cos(a)*(W+0.03), D, top + 0.1, 0.07, 0.07, 5, KVP.bamboo); }
-    for (const f of [0.28, 0.78]) { const b = Mesh(); mCyl(b, D + H*f - 0.05, D + H*f + 0.05, W+0.04, W+0.04, n, KVP.rope); rotMeshY(b, half); mergeMesh(m, b); }
+    // 3. reed walls, bamboo corner posts (on the wall's actual corners), two rope bands
+    { const w = Mesh(); mCyl(w, D, top, W, W, n, KVP.reed); rotMeshY(w, faceRot); mergeMesh(m, w); }
+    for (let k = 0; k < n; k++) { const a = k*step - faceRot; cylAt(Math.cos(a)*(W+0.03), Math.sin(a)*(W+0.03), D, top + 0.1, 0.07, 0.07, 5, KVP.bamboo); }
+    for (const f of [0.28, 0.78]) { const b = Mesh(); mCyl(b, D + H*f - 0.05, D + H*f + 0.05, W+0.04, W+0.04, n, KVP.rope); rotMeshY(b, faceRot); mergeMesh(m, b); }
     // 4. door on face 0: frame, arched plank door, plank lines, brass knob
     mBox(m, 0, D + 0.5, face + 0.01, 0.45, 0.5, 0.04, KVP.frame);
     { const a = Mesh(); mCyl(a, -0.04, 0.04, 0.45, 0.45, 10, KVP.frame); rotMeshX(a, Math.PI/2); mergeAt(m, a, 0, D + 1.0, face + 0.01); }
     mBox(m, 0, D + 0.48, face + 0.03, 0.35, 0.475, 0.05, KVP.door);
     { const a = Mesh(); mCyl(a, -0.05, 0.05, 0.35, 0.35, 10, KVP.door); rotMeshX(a, Math.PI/2); mergeAt(m, a, 0, D + 0.95, face + 0.03); }
-    for (const x of [-0.12, 0.12]) mBox(m, x, D + 0.62, face + 0.035, 0.0175, 0.575, 0.055, KVP.doorLine);
-    { const k = Mesh(); mergeMesh(k, ksph(0.06, KVP.knob, 6, 4)); mergeAt(m, k, 0.22, D + 0.55, face + 0.1); }
-    // 5. round windows either side of the door (disc frame + dark hole), facing outward
+    for (const x of [-0.12, 0.12]) mBox(m, x, D + 0.5, face + 0.06, 0.0175, 0.42, 0.025, KVP.doorLine);   // plank grooves, kept within the leaf
+    { const k = Mesh(); mergeMesh(k, ksph(0.06, KVP.knob, 6, 4)); mergeAt(m, k, 0.22, D + 0.5, face + 0.1); }
+    // 5. round porthole windows either side of the door: frame ring + pale-blue glass pane, facing outward
+    const glass = kvLerpCol(KVP.dishWater, [1, 1, 1], 0.3);
     for (const k of [1, n - 1]) {
       const sx = Math.sin(k*step), sz = Math.cos(k*step);
-      const fr = kvDisc(0.3, 8, KVP.frame); kvAimY(fr, sx, 0, sz); mergeAt(m, fr, sx*(face+0.03), D + 1.0, sz*(face+0.03));
-      const ho = kvDisc(0.21, 8, KVP.hole);  kvAimY(ho, sx, 0, sz); mergeAt(m, ho, sx*(face+0.06), D + 1.0, sz*(face+0.06));
+      const fr = kvDisc(0.3, 10, KVP.frame); kvAimY(fr, sx, 0, sz); mergeAt(m, fr, sx*(face+0.03), D + 1.0, sz*(face+0.03));
+      const gp = kvDisc(0.23, 10, glass);    kvAimY(gp, sx, 0, sz); mergeAt(m, gp, sx*(face+0.055), D + 1.0, sz*(face+0.055));
     }
     // 6. lantern (front-left) + cucumber string (front-right) under the eaves
     if (o.lantern) {
@@ -11904,6 +11909,7 @@ function makeKappaHut(o) {
   const Rr = isHut ? o.wallR + 0.95 : deckR*0.92, SQ = o.squash, sh = o.shell;
   cylAt(0, 0, roofY - 0.2, roofY + 0.1, Rr + 0.25, Rr, n*2, sh.rim);
   kvDome(m, 0, roofY, 0, Rr, SQ, n*2, sh.dark);
+  { const ceil = discMesh(0, Rr, n*2, 0, sh.dark); mergeAt(m, ceil, 0, roofY, 0); }   // flat underside so you see a ceiling, not into the open dome
   for (const [elev, size, twist] of [[0.42, 0.42, 0], [0.98, 0.52, half]]) {
     const ringR = Math.cos(elev)*Rr, r = size*(Math.PI*2*ringR)/n;
     for (let i = 0; i < n; i++) {
@@ -12311,6 +12317,7 @@ function drawKappaHuts(view) {
   // §village: one merged static mesh for the whole stilt village (built in placeKappaVillage, freed in disposeWorldGL)
   if (!villageGL || !villageGL.vao || !villageGL.vertCount) return;
   propUniforms(view); gl.uniform1f(propU.uSway, 0); if (propU.uClampTop) gl.uniform1f(propU.uClampTop, 1e9);
+  gl.disable(gl.CULL_FACE);   // village has one-sided caps/discs; show both faces (matches the kappa pass)
   gl.bindVertexArray(villageGL.vao);
   gl.drawArraysInstanced(gl.TRIANGLES, 0, villageGL.vertCount, villageGL.count);
 }
