@@ -11977,8 +11977,154 @@ function makeKappaWalkway(a, b, kind, groundAt) {
   return { mesh: world, colliders: col, heading, a };
 }
 
+// GL + collision data for the rendered village (freed in disposeWorldGL)
+let villageGL = null, villageFloors = [], villageTriggers = [], villageReport = null;
+// a makeRng-style stream (adds .range/.pick/.chance) from a 32-bit seed
+function kvRng(seed) {
+  const r = mulberry32((seed >>> 0) || 1);
+  r.range = (a, b) => a + (b - a) * r();
+  r.pick = (l) => l[Math.floor(r() * l.length)];
+  r.chance = (p) => r() < p;
+  return r;
+}
+/* makeKappaVillage(seed, worldSites, terrainHeight, {scale,seaLevel,dryHeight}) -> engine-native port of the
+   reference generator. worldSites = [{x,z}] (sites[0] = elder, where the player spawns). Returns a merged
+   world-space mesh plus collision data, spawn and a report. Everything is authored in village units
+   (sea level y=0) and scaled to the world at the end. */
+function makeKappaVillage(seed, worldSites, terrainHeight, { scale = 1, seaLevel = 0, dryHeight = 0.35 } = {}) {
+  const groundAt = (x, z) => (terrainHeight(x * scale, z * scale) - seaLevel) / scale;
+  const sites = worldSites.map((s) => ({ x: s.x / scale, z: s.z / scale }));
+  const rng = kvRng(seed);
+  const DRY = dryHeight / scale, level = rng.range(2.3, 3.0);
+  const mainShell = rng.pick(KV_SHELLS), altShell = rng.pick(KV_SHELLS);
+  const mesh = Mesh(), solids = [], floors = [], triggers = [];
+  const rotXZ = (x, z, a) => [x * Math.cos(a) + z * Math.sin(a), -x * Math.sin(a) + z * Math.cos(a)];   // matches rotMeshY
+
+  // 1. what stands on each site (site 0 = big elder hut)
+  const huts = sites.map((s, i) => {
+    const ground = groundAt(s.x, s.z), base = Math.max(0, ground);
+    const elder = i === 0, kind = !elder && rng.chance(0.2) ? 'lookout' : 'hut';
+    const sides = rng.pick([6, 7, 8]);
+    const wallR = kind === 'lookout' ? 0.9 : elder ? 2.1 : rng.range(1.4, 1.9);
+    const deckY = Math.max(1.1, level + rng.range(-0.6, 0.8) + (elder ? 0.5 : 0) - base);
+    return { x: s.x, z: s.z, ground, base, kind, sides, wallR, deckY, elder,
+      deckWorld: base + deckY, deckEdge: (wallR + 1.0) * Math.cos(Math.PI / sides), links: [], used: new Set() };
+  });
+
+  // plan-view helpers
+  const segDist = (p, a, b) => { const ax = b.x - a.x, az = b.z - a.z;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * ax + (p.z - a.z) * az) / (ax * ax + az * az || 1)));
+    return Math.hypot(p.x - a.x - ax * t, p.z - a.z - az * t); };
+  const sideOf = (p, q, r) => Math.sign((q.x - p.x) * (r.z - p.z) - (q.z - p.z) * (r.x - p.x));
+  const crosses = (a, b, c, d) => sideOf(a, b, c) !== sideOf(a, b, d) && sideOf(c, d, a) !== sideOf(c, d, b);
+  const paths = [];
+  const isClear = (a, b, ignore) => huts.every((h) => ignore.includes(h) || segDist(h, a, b) > h.deckEdge + 0.8) && paths.every(([c, d]) => !crosses(a, b, c, d));
+
+  // 2. rope bridges (shortest first, union-find clusters, occasional extra loop)
+  const parent = huts.map((_, i) => i), find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  const candidates = [];
+  huts.forEach((a, i) => huts.forEach((b, j) => { if (j <= i) return;
+    const span = Math.hypot(b.x - a.x, b.z - a.z) - a.deckEdge - b.deckEdge;
+    if (span >= 2 && span <= 10 && Math.abs(a.deckWorld - b.deckWorld) <= 0.3 * span) candidates.push({ i, j, span }); }));
+  candidates.sort((p, q) => p.span - q.span);
+  for (const { i, j } of candidates) {
+    const a = huts[i], b = huts[j];
+    if (find(i) === find(j) && !rng.chance(0.2)) continue;
+    const d = Math.hypot(b.x - a.x, b.z - a.z), ux = (b.x - a.x) / d, uz = (b.z - a.z) / d;
+    const p = { x: a.x + ux * a.deckEdge, z: a.z + uz * a.deckEdge }, q = { x: b.x - ux * b.deckEdge, z: b.z - uz * b.deckEdge };
+    if (!isClear(p, q, [a, b])) continue;
+    parent[find(i)] = find(j); paths.push([p, q]);
+    const ang = Math.atan2(b.x - a.x, b.z - a.z);
+    a.links.push({ type: 'bridge', ang, to: b }); b.links.push({ type: 'bridge', ang: ang + Math.PI, to: a });
+  }
+
+  // 3. ways up from dry land (dock for huts in water, stairs for huts on land)
+  const findLanding = (h) => { const onLand = h.base > 0, maxSlope = onLand ? 0.8 : 0.35; let best = null;
+    for (let k = 0; k < 24; k++) { const ang = (k / 24) * Math.PI * 2, sx = Math.sin(ang), sz = Math.cos(ang);
+      const from = { x: h.x + sx * h.deckEdge, z: h.z + sz * h.deckEdge };
+      for (let d = 1.5; d <= 12; d += 0.5) { const x = from.x + sx * d, z = from.z + sz * d, y = groundAt(x, z);
+        if (y < DRY || Math.abs(h.deckWorld - y) > maxSlope * d) continue;
+        if (isClear(from, { x, z }, [h]) && (!best || d < best.d)) best = { ang, d, x, y, z, from, kind: onLand ? 'stairs' : 'dock' };
+        break; } }
+    return best; };
+  const clusters = new Map();
+  huts.forEach((h, i) => { const r = find(i); if (!clusters.has(r)) clusters.set(r, []); clusters.get(r).push(h); });
+  for (const members of clusters.values()) {
+    const ways = members.length >= 3 && rng.chance(0.6) ? 2 : 1; let lastKind = null;
+    for (let w = 0; w < ways; w++) {
+      const options = [];
+      for (const h of members) { if (h.links.some((l) => l.type !== 'bridge')) continue; const land = findLanding(h); if (land) options.push({ h, land }); }
+      if (!options.length) break;
+      options.sort((p, q) => p.land.d - q.land.d);
+      const fresh = options.filter((o) => o.land.kind !== lastKind), pool = fresh.length && rng.chance(0.6) ? fresh : options;
+      const pick = pool[Math.floor(rng() * Math.min(3, pool.length))];
+      paths.push([pick.land.from, pick.land]);
+      pick.h.links.push({ type: pick.land.kind, ang: pick.land.ang, end: pick.land });
+      lastKind = pick.land.kind;
+    }
+  }
+
+  // 4. door facings
+  for (const h of huts) { const st = (Math.PI * 2) / h.sides; h.rot = h.links.length ? h.links[0].ang + rng.pick([0, 0, st, -st]) : rng.range(0, Math.PI * 2); }
+  const attach = (h, ang) => { const st = (Math.PI * 2) / h.sides, base = Math.round((ang - h.rot) / st); let k = base;
+    for (const off of [0, 1, -1, 2, -2, 3, -3]) { const kk = (((base + off) % h.sides) + h.sides) % h.sides; if (!h.used.has(kk)) { k = kk; break; } }
+    h.used.add(k); const a = h.rot + k * st;
+    return { x: h.x + Math.sin(a) * h.deckEdge, y: h.deckWorld, z: h.z + Math.cos(a) * h.deckEdge }; };
+
+  // bake a built hut's {mesh (local), colliders (local)} into the village mesh at (h)
+  const bakeHut = (h, built) => {
+    rotMeshY(built.mesh, h.rot); mergeAt(mesh, built.mesh, h.x, h.base, h.z);
+    for (const c of built.colliders) { const [lx, lz] = rotXZ(c.x, c.z, h.rot), vx = lx + h.x, vz = lz + h.z;
+      if (c.kind === 'solid') solids.push({ x: vx, z: vz, r: c.r, y0: c.y0 + h.base, y1: c.y1 + h.base });
+      else if (c.kind === 'floor') floors.push({ shape: 'disc', x: vx, z: vz, r: c.r, y: c.y + h.base });
+      else if (c.kind === 'trigger') triggers.push({ x: vx, z: vz, y: c.y + h.base, r: c.r, name: c.name }); }
+  };
+
+  // 5. walkways first (so ladders can take a free face), then huts
+  for (const h of huts) for (const link of h.links) {
+    if (link.done) continue;
+    if (link.type === 'bridge') { const back = link.to.links.find((l) => l.to === h && !l.done); link.done = back.done = true;
+      const wk = makeKappaWalkway(attach(h, link.ang), attach(link.to, back.ang), 'bridge', groundAt);
+      mergeMesh(mesh, wk.mesh); for (const c of wk.colliders) floors.push({ shape: 'ramp', ax: wk.a.x, az: wk.a.z, ay: wk.a.y, heading: wk.heading, halfWidth: c.halfWidth, z1: c.z1, dy: c.y1, sag: c.sag });
+    } else { link.done = true; const end = { x: link.end.x, y: link.end.y + 0.03, z: link.end.z };
+      const wk = makeKappaWalkway(attach(h, link.ang), end, link.type, groundAt);
+      mergeMesh(mesh, wk.mesh); for (const c of wk.colliders) floors.push({ shape: 'ramp', ax: wk.a.x, az: wk.a.z, ay: wk.a.y, heading: wk.heading, halfWidth: c.halfWidth, z1: c.z1, dy: c.y1, sag: c.sag }); }
+  }
+  for (const h of huts) {
+    let ladderFace = null;
+    if (h.kind === 'hut' && h.ground < -0.3 && rng.chance(0.7)) { const back = Math.round(h.sides / 2);
+      for (const off of [0, 1, -1, 2, -2]) { const k = (back + off + h.sides) % h.sides; if (!h.used.has(k)) { ladderFace = k; break; } } }
+    const built = makeKappaHut({ kind: h.kind, sides: h.sides, wallR: h.wallR, wallH: h.elder ? 2.1 : rng.range(1.5, 1.95),
+      deckY: h.deckY, groundY: h.ground - h.base, shell: rng.chance(0.75) ? mainShell : altShell,
+      squash: rng.range(0.6, 0.8), lantern: rng.chance(0.65), cucumbers: rng.chance(0.5), ladderFace, rng });
+    bakeHut(h, built);
+  }
+
+  // 6. spawn (elder deck just outside its door) + report
+  const elder = huts[0], est = (Math.PI * 2) / elder.sides;
+  const doorA = elder.rot, sdx = Math.sin(doorA), sdz = Math.cos(doorA);
+  const spawn = { x: (elder.x + sdx * (elder.deckEdge - 0.4)) * scale, z: (elder.z + sdz * (elder.deckEdge - 0.4)) * scale,
+    y: elder.deckWorld * scale + seaLevel, lookAt: { x: elder.x * scale, z: elder.z * scale } };
+  let bridges = 0, docks = 0, stairs = 0;
+  for (const h of huts) for (const l of h.links) { if (l.type === 'bridge') { if (l.to && huts.indexOf(l.to) > huts.indexOf(h)) bridges++; } else if (l.type === 'dock') docks++; else if (l.type === 'stairs') stairs++; }
+  const clusterHasLand = new Map();
+  for (const [r, members] of clusters) clusterHasLand.set(r, members.some((h) => h.links.some((l) => l.type !== 'bridge')));
+  let unreachable = 0; huts.forEach((h, i) => { if (!clusterHasLand.get(find(i))) unreachable++; });
+  const report = { huts: huts.length, bridges, docks, stairs, unreachable, spawnReachable: !!clusterHasLand.get(find(0)) };
+
+  // 7. village units -> world (scale about origin, then lift by seaLevel)
+  scaleMeshXYZ(mesh, scale, scale, scale);
+  const worldMesh = Mesh(); mergeAt(worldMesh, mesh, 0, seaLevel, 0);
+  const S = scale, toW = (c) => { const o = { ...c }; for (const k of ['x', 'z', 'r', 'y', 'y0', 'y1', 'ax', 'az', 'halfWidth', 'z1']) if (typeof o[k] === 'number') o[k] *= S;
+    if (typeof o.ay === 'number') o.ay = o.ay * S + seaLevel; for (const k of ['y', 'y0', 'y1']) if (typeof o[k] === 'number') o[k] += seaLevel; if (typeof o.dy === 'number') o.dy *= S; if (typeof o.sag === 'number') o.sag *= S; return o; };
+  const outHuts = huts.map((h) => ({ x: h.x * S, z: h.z * S, y: h.base * S + seaLevel, deckWorld: h.deckWorld * S + seaLevel, rot: h.rot, kind: h.kind }));
+  return { mesh: worldMesh, solids: solids.map(toW), floors: floors.map(toW), triggers: triggers.map(toW), spawn, report, huts: outHuts };
+}
+
 function placeKappaVillage() {
   kappaVillage = null; kappaHuts = []; kappas = []; kappaVillageSpawn = null;
+  villageFloors = []; villageTriggers = []; villageReport = null;
+  if (villageGL) { disposeGLObj(villageGL); villageGL = null; }
   if (!KAPPA_ON) return;
   const R = mulberry32(((SEED_INT ^ 0x6b617070) >>> 0) || 1);   // own stream ("kapp"): zero draws from the shared rng
   // Pick where the village sits. The restrictions are soft now, and a guaranteed shore fallback means EVERY seed
@@ -12012,19 +12158,19 @@ function placeKappaVillage() {
     }
     const d = 4 + R()*9; return { x: cx + Math.cos(a)*d, z: cz + Math.sin(a)*d };
   };
-  const want = Math.max(3, Math.min(4, (TUNE.KAPPA_COUNT | 0) || 4));
+  const want = 6;   // §village: ~6 huts, some on sand and some in shallow water (the generator adds docks/stairs/bridges)
   // Build a cluster of huts along ONE stretch of shore. Try several base bearings and keep the fullest cluster,
   // so a village stays tight even when one stretch of the pond's shore is too steep or wet.
-  const CLUSTER_R = 15;   // keep every hut within this distance of the first one, so the village is tight on any pond size
+  const CLUSTER_R = 24;   // keep every hut within this distance of the first one, so the village is tight on any pond size
   const buildCluster = (ba, slopeMax, checkNice) => {
     const tmp = []; let anchor = null;
-    for (let t = 0; t < 600 && tmp.length < want; t++) {
+    for (let t = 0; t < 900 && tmp.length < want; t++) {
       const sp = shorePoint(anchor ? R() * 6.283 : ba + (R() - 0.5) * 1.0); if (!sp) continue;   // first hut sets the anchor; the rest cluster near it
       const s = surfaceAt(sp.x, sp.z);
-      if (waterDepthAt(sp.x, sp.z) > 0.08 || s.slope > slopeMax) continue;
+      if (waterDepthAt(sp.x, sp.z) > 1.3 || s.slope > slopeMax) continue;   // allow shallow water (huts on stilts) + sand
       if (checkNice && typeof insideCottage === "function" && insideCottage(sp.x, sp.z)) continue;
       if (anchor && Math.hypot(sp.x - anchor.x, sp.z - anchor.z) > CLUSTER_R) continue;   // distance leash → tight cluster
-      let ok = true; for (const h of tmp) if (Math.hypot(h.x-sp.x, h.z-sp.z) < 3.2) { ok = false; break; }
+      let ok = true; for (const h of tmp) if (Math.hypot(h.x-sp.x, h.z-sp.z) < 6.5) { ok = false; break; }   // ~8*scale apart, room for a hut + bridge
       if (!ok) continue;
       tmp.push({ x: sp.x, z: sp.z, y: s.h, yaw: Math.atan2(cx - sp.x, cz - sp.z) });   // door faces the water
       if (!anchor) anchor = sp;
@@ -12043,7 +12189,13 @@ function placeKappaVillage() {
   let hcx = 0, hcz = 0; for (const h of kappaHuts) { hcx += h.x; hcz += h.z; } hcx /= kappaHuts.length; hcz /= kappaHuts.length;
   let maxd = 0; for (const h of kappaHuts) maxd = Math.max(maxd, Math.hypot(h.x - hcx, h.z - hcz));
   kappaVillage = { x: hcx, z: hcz, waterY, rad: Math.max(10, Math.min(maxd + 13, 30)) };
-  for (const h of kappaHuts) colliders.push({ x: h.x, z: h.z, r: 1.1, kind: "kappahut" });   // FEATURE: kappa  huts block the player
+  // §village: the most-central hut becomes the elder (site 0, where the player spawns); build the stilt village from the sites
+  kappaHuts.sort((a, b) => Math.hypot(a.x - hcx, a.z - hcz) - Math.hypot(b.x - hcx, b.z - hcz));
+  const V = makeKappaVillage(((SEED_INT ^ 0x6b617661) >>> 0) || 1, kappaHuts.map((h) => ({ x: h.x, z: h.z })), (x, z) => surfaceAt(x, z).h,
+    { scale: 1.3, seaLevel: SEA_LEVEL, dryHeight: 0.7 });   // §village step1: land routes form on the beach (tide-safe siting is step 3/4)
+  villageGL = makeInstanced(V.mesh, [0, 0, 0, 1, 0, 0, 0, 1, 1, 1]);
+  villageFloors = V.floors; villageTriggers = V.triggers; villageReport = V.report;
+  for (const c of V.solids) colliders.push({ x: c.x, z: c.z, r: c.r, kind: "village" });   // hut bodies block the player (stilts/floors handled in step 2)
   if (typeof rebuildCollHash === "function") rebuildCollHash();
   for (const h of kappaHuts) kappas.push({
     home: h, x: h.x, z: h.z, yaw: h.yaw, tx: h.x, tz: h.z, spd: 0,
@@ -12156,12 +12308,11 @@ const KP_ORDER = ["shell","body","belly","thigh","shin","armL","armR","head","di
 let _kp = null;
 function ensureKappaDyns() { if (_kp) return; _kp = {}; for (const key in _kpMesh) _kp[key] = { dyn: makeKappaDyn(_kpMesh[key](), _kpMax[key]), arr: new Float32Array(_kpMax[key]*12), n: 0 }; }
 function drawKappaHuts(view) {
-  if (!kappaHuts.length) return;
-  if (!_hutDyn) _hutDyn = makeDynamic(kappaHutMesh(), 8);
-  const a = rockScratch; let n = 0;
-  for (const h of kappaHuts) { const dx = h.x-cam.pos[0], dz = h.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R || n >= 8) continue;
-    const o = n*10; a[o]=h.x;a[o+1]=h.y;a[o+2]=h.z;a[o+3]=1;a[o+4]=h.yaw;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
-  if (n) { propUniforms(view); gl.uniform1f(propU.uSway, 0); _hutDyn.draw(a, n); }
+  // §village: one merged static mesh for the whole stilt village (built in placeKappaVillage, freed in disposeWorldGL)
+  if (!villageGL || !villageGL.vao || !villageGL.vertCount) return;
+  propUniforms(view); gl.uniform1f(propU.uSway, 0); if (propU.uClampTop) gl.uniform1f(propU.uClampTop, 1e9);
+  gl.bindVertexArray(villageGL.vao);
+  gl.drawArraysInstanced(gl.TRIANGLES, 0, villageGL.vertCount, villageGL.count);
 }
 function drawKappa(view) {
   if (!KAPPA_ON) return;
@@ -14744,6 +14895,7 @@ function disposeWorldGL() {
   if (rockDyn) { disposeGLObj(rockDyn); rockDyn = null; }                   // rock prop dynamic mesh is seeded (rockMesh(SEED_INT^0x51))
   if (rubbleDyn) { disposeGLObj(rubbleDyn); rubbleDyn = null; }             // loose-Stone mesh is seeded (stoneMesh → mRock(SEED_INT^0x51a3))
   if (barnacleRockDyn) { disposeGLObj(barnacleRockDyn); barnacleRockDyn = null; }  // intertidal rock mesh is seeded (SEED_INT^0x5b)
+  if (villageGL) { disposeGLObj(villageGL); villageGL = null; }              // §village: the per-seed stilt-village mesh
   _barnRockMesh = null;                                                     // seeded base mesh for standalone intertidal rocks; lazily rebuilt
   if (Array.isArray(oysterBeds)) for (const b of oysterBeds) if (b.dyn) { disposeGLObj(b.dyn); b.dyn = null; }   // §P3 each oyster rock has its own seeded mesh
 }
