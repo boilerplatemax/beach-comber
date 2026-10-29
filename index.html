@@ -12486,6 +12486,18 @@ function kappaResolve(k, x, z) {   // steer around obstacles: slide out of colli
       if (c.kind === "kappahut" && Math.abs(c.x - k.home.x) < 0.01 && Math.abs(c.z - k.home.z) < 0.01) continue;   // its own home never blocks it
       const dx = x - c.x, dz = z - c.z, minD = c.r + KAPPA_R; let d = Math.hypot(dx, dz);
       if (d < minD) { if (d < 1e-4) x += minD; else { const p = (minD - d)/d; x += dx*p; z += dz*p; } } } }
+  // §kappacoll the village's stilts + hut walls block kappas too (vertical-aware, like the player). A kappa's OWN
+  // home never blocks it (it has to reach the centre to step inside). Kappas walk on the ground, so only solids
+  // whose [y0,y1] overlap the body column at its feet matter (a high deck overhead is passed under).
+  if (typeof villageSolids !== "undefined" && villageSolids.length) {
+    const footY = k.renderY, headY = k.renderY + KAPPA_R*2.2;
+    for (const c of villageSolids) {
+      if (headY <= c.y0 || footY >= c.y1) continue;
+      if (Math.hypot(c.x - k.home.x, c.z - k.home.z) < 3.0) continue;   // its own hut's stilts/walls don't block it
+      const dx = x - c.x, dz = z - c.z, minD = c.r + KAPPA_R; let d = Math.hypot(dx, dz);
+      if (d < minD) { if (d < 1e-4) x += minD; else { const p = (minD - d)/d; x += dx*p; z += dz*p; } }
+    }
+  }
   { const dx = x - player.x, dz = z - player.z, minD = PLAYER_R + KAPPA_R; let d = Math.hypot(dx, dz); if (d < minD && d > 1e-4) { const p = (minD - d)/d; x += dx*p; z += dz*p; } }
   for (const o of kappas) { if (o === k || o.inside) continue; const dx = x - o.x, dz = z - o.z, minD = KAPPA_R*2; let d = Math.hypot(dx, dz); if (d < minD && d > 1e-4) { const p = (minD - d)/d*0.5; x += dx*p; z += dz*p; } }
   return [x, z];
@@ -12620,9 +12632,12 @@ function drawKappa(view) {
     const bodyLean = swim > 0.5 ? 0.5*swim : roll, bodyLd = swim > 0.5 ? 0 : 1.5708;
     const headYaw = (k.hyaw != null ? k.hyaw : k.yaw) + k.look * land;       // head yaw lags the body (set in updateKappa)
     const talk = k.talkEnv || 0;                                             // §voice 0..1 while speaking: a quick head/beak bob so the mouth "moves"
-    const nod = (swim > 0.5 ? 0.2 : Math.sin(t*1.5 + k.seed)*0.03) + talk * Math.sin(t*22 + k.seed*5) * 0.06;
-    const bodyY = k.renderY + (0.33 + bobBody) * S;
-    const neckY = k.renderY + (0.5 + bobBody*0.55) * S;                      // the head bobs a little behind the body
+    // §swimface keep the head UPRIGHT in water too (the old 0.2 swim tilt slid the eyes/beak off the face, since they
+    // are seated assuming an upright head); the face now reads exactly like on land.
+    const nod = Math.sin(t*1.5 + k.seed)*0.03 + talk * Math.sin(t*22 + k.seed*5) * 0.06;
+    const swimBob = swim > 0.5 ? Math.sin(k.phase)*0.05 : 0;                 // §swim a gentle rise/dip as it strokes through the water
+    const bodyY = k.renderY + (0.33 + bobBody + swimBob) * S;
+    const neckY = k.renderY + (0.5 + bobBody*0.55 + swimBob*0.8) * S;        // the head bobs a little behind the body
     // body-frame parts (pivot at the body centre): roll with the body
     put("body",  k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, skin,  sqXZ, sqY);
     put("belly", k.x, bodyY, k.z, S, k.yaw, bodyLean, bodyLd, belly, sqXZ, sqY);
@@ -12645,7 +12660,7 @@ function drawKappa(view) {
     for (const side of [-1, 1]) { const wx = k.x + rx(side*0.11, -0.01)*S, wz = k.z + rz(side*0.11, -0.01)*S, wy = bodyY + 0.10*S;   // §R8 shoulder pulled BACK toward the shell (z 0.07->-0.01) so the arms no longer sit forward / hunched
       const base = Math.sin(t*1.5 + k.seed*2 + (side > 0 ? Math.PI : 0)) * 0.05;                 // faint always-on sway, so the arms breathe even near-idle
       const walk = Math.sin(k.phase + (side > 0 ? Math.PI : 0)) * 0.55 * k.spd;                  // fore/aft walk swing, grows with speed
-      const lean = swim > 0.5 ? Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.9 : (walk + base);
+      const lean = swim > 0.5 ? (0.35 + Math.sin(k.phase*2)*0.7) : (walk + base);   // §swim both arms pull together (breaststroke): reach forward, sweep back
       put(side > 0 ? "armR" : "armL", wx, wy, wz, S, k.yaw, lean, 0, skin, 1, 1);
     }
     // §R8 legs: a real two-bone chain (thigh + shin) with a bending KNEE. We pose the hip (a1) and knee (a2)
@@ -12655,7 +12670,7 @@ function drawKappa(view) {
       const hx = k.x + rx(side*0.1, 0.02)*S, hz = k.z + rz(side*0.1, 0.02)*S, hy = k.renderY + 0.205*S;   // hip
       const ph = k.phase + (side > 0 ? 0 : Math.PI), sw = Math.sin(ph), lift = Math.max(0, sw);
       let a1, a2;   // a1 = thigh angle (about local X), a2 = knee bend added onto a1 for the shin
-      if (swim > 0.5) { a1 = -0.5 + Math.sin(k.phase*2 + (side > 0 ? 0 : Math.PI))*0.22; a2 = 0.5; }       // legs trail + paddle while swimming
+      if (swim > 0.5) { a1 = -0.35 + Math.sin(k.phase*3 + (side > 0 ? 0 : Math.PI))*0.4; a2 = 0.3; }       // §swim flutter kick: legs trail behind and beat up/down out of phase
       else { a1 = -sw*0.46*k.spd*land; a2 = 0.12 + lift*1.05*k.spd*land; }                                 // §R8b rest: nearly straight (soft knee); walk: hip swings forward on the lift while the knee folds BACKWARD (natural, not inverted)
       put("thigh", hx, hy, hz, S, k.yaw, a1, 0, skin, 1, 1);
       const kz = -KLEG_L1*Math.sin(a1), kyl = -KLEG_L1*Math.cos(a1);                                       // knee offset from the hip (local), matching the shader's lean-about-X then yaw
