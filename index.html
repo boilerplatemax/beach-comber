@@ -1768,7 +1768,7 @@ const SND = {
     catch (e) { this.music.el = this.music.el || null; }
   },
   applyMusicVol() { const m = this.music; if (!m.el) return;
-    try { m.el.volume = (this.muted || this.musicEnabled === false) ? 0 : Math.max(0, Math.min(1, (this.vol.master ?? 0.75) * (this.vol.music ?? 0.55) * (m.cur || 0))); } catch (e) {} },
+    try { m.el.volume = (this.muted || this.musicEnabled === false || m._tripMuted) ? 0 : Math.max(0, Math.min(1, (this.vol.master ?? 0.75) * (this.vol.music ?? 0.55) * (m.cur || 0))); } catch (e) {} },
   _startMusicFade() {
     const m = this.music; if (m._fadeT) return;
     m._fadeT = setInterval(() => {
@@ -1974,6 +1974,8 @@ const VOICE = {
     const ctx = SND.ctx, now = ctx.currentTime, list = this.banks[npc][mood];
     if (sp._vPitch == null) sp._vPitch = this.pitchFor(opts.seed != null ? opts.seed : (Math.random()*1e9)|0);
     const rate = sp._vPitch * (1 + (Math.random()*2 - 1) * VOICE_CFG.pitch.perSentence);   // per-sentence +/- jitter on the fixed voice pitch
+    const tripping = (typeof tripActive === "function" && tripActive());
+    const playRate = rate * (tripping ? 0.7 : 1);   // §trip kappa voices slow down (and get an echo) while tripping
     const nClips = (Math.random() < VOICE_CFG.twoClipChance && list.length > 1) ? 2 : 1;
     const prev = sp._vLast || [];
     const picks = [];
@@ -1984,24 +1986,33 @@ const VOICE = {
     pan.panningModel = VOICE_CFG.panner.panning; pan.distanceModel = VOICE_CFG.panner.model;
     pan.refDistance = VOICE_CFG.panner.refDistance; pan.maxDistance = VOICE_CFG.panner.maxDistance; pan.rolloffFactor = VOICE_CFG.panner.rolloff;
     const g = ctx.createGain(); g.gain.value = Math.max(0, opts.volume == null ? 1 : opts.volume);
-    pan.connect(g); g.connect((SND.bus && SND.bus.voices) || SND.master || ctx.destination);
+    const voiceBus = (SND.bus && SND.bus.voices) || SND.master || ctx.destination;
+    pan.connect(g); g.connect(voiceBus);
+    let echo = null;
+    if (tripping) {   // §trip a slight echo (delay + feedback) on the kappa voice
+      const d = ctx.createDelay(1.0); d.delayTime.value = 0.24;
+      const fb = ctx.createGain(); fb.gain.value = 0.38;
+      const wet = ctx.createGain(); wet.gain.value = 0.55;
+      g.connect(d); d.connect(fb); fb.connect(d); d.connect(wet); wet.connect(voiceBus);
+      echo = { d, fb, wet };
+    }
     const p0 = opts.getPosition ? opts.getPosition() : (opts.position || [0, 0, 0]);
     try { if (pan.positionX) { pan.positionX.value = p0[0]; pan.positionY.value = p0[1]; pan.positionZ.value = p0[2]; } else pan.setPosition(p0[0], p0[1], p0[2]); } catch (e) {}
     const gap = VOICE_CFG.gapMs[mood] || VOICE_CFG.gapMs._default;
     let t = now + 0.012; const srcs = [];
     for (let i = 0; i < picks.length; i++) {
       const buf = list[picks[i]]; if (!buf) continue;
-      const s = ctx.createBufferSource(); s.buffer = buf; s.playbackRate.value = rate; s.connect(pan);
+      const s = ctx.createBufferSource(); s.buffer = buf; s.playbackRate.value = playRate; s.connect(pan);
       try { s.start(t); } catch (e) {}
       srcs.push(s);
-      const played = buf.duration / rate;                  // playbackRate changes length: time the next clip from the REAL played duration
+      const played = buf.duration / playRate;                  // playbackRate changes length: time the next clip from the REAL played duration
       t += played + ((i < picks.length - 1) ? (gap[0] + Math.random()*(gap[1]-gap[0]))/1000 : 0);
     }
     if (!srcs.length) { try { pan.disconnect(); g.disconnect(); } catch (e) {} return false; }
-    const sentence = { npc, mood, speaker: sp, active: true, pan, g, srcs, getPosition: opts.getPosition };
+    const sentence = { npc, mood, speaker: sp, active: true, pan, g, srcs, echo, getPosition: opts.getPosition };
     sp._vTalking = true; sp._vSentence = sentence; this.live.push(sentence);
     const done = () => { if (!sentence.active) return; sentence.active = false; sp._vTalking = false; sp._vSentence = null;
-      try { pan.disconnect(); g.disconnect(); } catch (e) {}
+      try { pan.disconnect(); g.disconnect(); if (echo) { echo.d.disconnect(); echo.fb.disconnect(); echo.wet.disconnect(); } } catch (e) {}
       const i = this.live.indexOf(sentence); if (i >= 0) this.live.splice(i, 1);
       if (opts.onEnd) { try { opts.onEnd(opts.id, mood); } catch (e) {} }
       if (this.onTalkEnd) { try { this.onTalkEnd(opts.id, mood); } catch (e) {} } };
@@ -2012,7 +2023,7 @@ const VOICE = {
   },
   _stop(sp) { const s = sp && sp._vSentence; if (!s) return; s.active = false; sp._vTalking = false; sp._vSentence = null;
     for (const src of s.srcs) { try { src.onended = null; src.stop(); } catch (e) {} }
-    try { s.pan.disconnect(); s.g.disconnect(); } catch (e) {}
+    try { s.pan.disconnect(); s.g.disconnect(); if (s.echo) { s.echo.d.disconnect(); s.echo.fb.disconnect(); s.echo.wet.disconnect(); } } catch (e) {}
     const i = this.live.indexOf(s); if (i >= 0) this.live.splice(i, 1); },
   // per-frame: track each live sentence's panner to its speaker's current position (kappas move while they talk)
   update() {
@@ -11393,16 +11404,18 @@ const SHROOM_TEST_GIVE = true;    // TEST ONLY: start the player with one magic 
 
 // --- tunables (live in the central TUNE + debug sliders; read as TUNE.SHRM_*) ---
 Object.assign(TUNE, {
-  SHRM_DUR: 120,        // total trip length (s): ~2 real minutes
-  SHRM_FADE: 20,        // fade-in and fade-out length (s) at each end of the trip
+  SHRM_DUR: 60,         // total trip length (s): ~1 real minute (shortened by a minute)
+  SHRM_FADE: 18,        // fade-in and fade-out length (s) at each end of the trip
   SHRM_SOUVENIR: 0.5,   // chance, at the peak, that a glowing shell appears nearby
-  SHRM_INTENSITY: 1.0,  // master strength of the visual effects
+  SHRM_INTENSITY: 0.65, // master strength of the visual effects (toned down: gentler, less overwhelming)
+  SHRM_SPEED: 0.55,     // how fast the colours cycle/breathe (<1 slows the whole trip clock so it is calmer)
 });
 TUNABLES.push(
   { k: "SHRM_DUR", min: 20, max: 300, step: 5 },
   { k: "SHRM_FADE", min: 2, max: 60, step: 1 },
   { k: "SHRM_SOUVENIR", min: 0, max: 1, step: 0.05 },
   { k: "SHRM_INTENSITY", min: 0, max: 1.5, step: 0.05 },
+  { k: "SHRM_SPEED", min: 0.2, max: 1.5, step: 0.05 },
 );
 const SHROOM_HUNGER = 0.06;        // a small snack's worth of hunger; no stamina effect (no FOOD_BOOST entry)
 const SHROOM_REGROW_DAYS = 2.5;    // in-game days before a picked cluster can restock (and only while out of view)
@@ -11519,12 +11532,13 @@ function rollHappenings(k) { const pool = SHRM_HAPPENINGS.slice(); const out = [
 function startTrip() {
   if (!SHROOMS_ON || trip) return;       // no stacking: a second mushroom during a trip is just a snack
   trip = { t: 0, dur: Math.max(4, TUNE.SHRM_DUR), hap: rollHappenings(2), souv: false };
-  ensureShroomReverb();
+  ensureShroomReverb(); startReverseMusic();
   if (typeof SND !== "undefined") SND.play("shroom_eat");
   showCard("The world softens...", "A gentle shimmer creeps in at the edges.");
 }
 function endTrip() {
   trip = null; stepFlowers.length = 0;
+  stopReverseMusic();
   try { const el = SND && SND.music && SND.music.el; if (el) el.playbackRate = 1; } catch (e) {}
   if (_shroomWet) { try { _shroomWet.gain.value = 0; } catch (e) {} }
 }
@@ -11620,9 +11634,31 @@ function ensureShroomReverb() {
     _shroomVerb = conv; _shroomWet = wet;
   } catch (e) {}
 }
+// §trip play the current music track REVERSED (Web Audio) while tripping, muting the forward <audio> element.
+// Degrades to the normal slowed music if the track can't be decoded (e.g. file://).
+let _tripMusic = null;
+function startReverseMusic() {
+  try {
+    const el = SND && SND.music && SND.music.el; if (!SND || !SND.ctx || !el || !el.currentSrc) return;
+    fetch(el.currentSrc).then(r => r.arrayBuffer()).then(ab => new Promise((res, rej) => SND.ctx.decodeAudioData(ab, res, rej))).then(buf => {
+      if (!trip || _tripMusic) return;
+      const ctx = SND.ctx, rev = ctx.createBuffer(buf.numberOfChannels, buf.length, buf.sampleRate);
+      for (let ch = 0; ch < buf.numberOfChannels; ch++) { const a = buf.getChannelData(ch), d = rev.getChannelData(ch); for (let i = 0, n = buf.length; i < n; i++) d[i] = a[n - 1 - i]; }
+      const src = ctx.createBufferSource(); src.buffer = rev; src.loop = true; src.playbackRate.value = 0.9;
+      const g = ctx.createGain(); g.gain.value = 0; src.connect(g); g.connect((SND.bus && SND.bus.music) || SND.master);
+      src.start(); _tripMusic = { src, g };
+      SND.music._tripMuted = true; try { if (SND.applyMusicVol) SND.applyMusicVol(); } catch (e) {}
+    }).catch(() => {});
+  } catch (e) {}
+}
+function stopReverseMusic() {
+  if (_tripMusic) { try { _tripMusic.src.stop(); _tripMusic.src.disconnect(); _tripMusic.g.disconnect(); } catch (e) {} _tripMusic = null; }
+  if (SND && SND.music) { SND.music._tripMuted = false; try { if (SND.applyMusicVol) SND.applyMusicVol(); } catch (e) {} }
+}
 function updateShroomAudio(env) {
   try { const el = SND && SND.music && SND.music.el; if (el) { el.preservesPitch = false; el.mozPreservesPitch = false; el.webkitPreservesPitch = false; el.playbackRate = 1 - 0.30 * env; } } catch (e) {}
   if (_shroomWet) { try { _shroomWet.gain.value += (0.33 * env - _shroomWet.gain.value) * 0.08; } catch (e) {} }
+  if (_tripMusic) { try { const mv = (SND.vol.master ?? 0.75) * (SND.vol.music ?? 0.55); _tripMusic.g.gain.value += (mv * 0.9 * env - _tripMusic.g.gain.value) * 0.1; } catch (e) {} }
 }
 if (typeof SND !== "undefined") SND.def("shroom_eat", { freq: 320, freq2: 540, shape: "sine", atk: 0.02, sus: 0.3, rel: 0.8, noise: 0.05, gain: 0.4 }, { vol: 0.4 });   // a soft, dreamy swell on eating
 // === SHROOMS END ===
@@ -15786,7 +15822,7 @@ function frame(now) {
   gl.uniform1f(postU.uNightGrade, (ATMO.nightgrade && !camUnderwater) ? (1 - dayN) : 0);   // §night lift blacks into blue + cool
   // FEATURE: shrooms  the trip look (0 when not tripping → identical output)
   gl.uniform1f(postU.uTrip, (typeof shroomVisual === "function") ? shroomVisual() : 0);
-  gl.uniform1f(postU.uTripT, clock.t);
+  gl.uniform1f(postU.uTripT, clock.t * (TUNE.SHRM_SPEED || 1));   // §trip slow the colour cycling / breathing (calmer)
   gl.uniform2f(postU.uTripTurn, (typeof _tripTurn !== "undefined") ? _tripTurn[0] : 0, (typeof _tripTurn !== "undefined") ? _tripTurn[1] : 0);
   gl.bindVertexArray(fsTri);
   gl.drawArrays(gl.TRIANGLES, 0, 3);
