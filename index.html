@@ -11782,6 +11782,201 @@ function kappaHutMesh() {   // a simple box house with a hip roof + round door (
 
 // --- village: find fresh water, place huts + kappa around it ---
 let kappaVillage = null, kappaHuts = [], kappas = [], kappaVillageSpawn = null;   // FEATURE: kappa  the village doubles as the player's spawn
+/* === § KAPPA VILLAGE (stilt huts, bridges, docks) ========================
+   Engine-native port of the Three.js kappa-village reference: built from our
+   own primitives (per-vertex colour, no normals). Everything is authored in
+   "village units" (sea level at y=0); makeKappaVillage scales to world at the
+   end. Geometry builders return { mesh, colliders } (colliders in local space:
+   solid cylinders, floor discs/ramps, door triggers). ===================== */
+// colours (hex sRGB from the reference → [r,g,b])
+function kvHx(h) { return [((h>>16)&255)/255, ((h>>8)&255)/255, (h&255)/255]; }
+const KVP = {
+  wood: kvHx(0x6b4a2b), deck: kvHx(0x8d6440), plank: kvHx(0x9a7047), reed: kvHx(0xbcaa6d), bamboo: kvHx(0x8e8c4a), rope: kvHx(0x5f4a31),
+  door: kvHx(0x8a5a32), doorLine: kvHx(0x5a3a20), frame: kvHx(0x6b4a2b), hole: kvHx(0x2a231f), knob: kvHx(0xd9b45a),
+  dish: kvHx(0xe2dccb), dishWater: kvHx(0x6fb2c0), hair: kvHx(0x26453f), lantern: kvHx(0xf4ad4c), cuke: kvHx(0x4f8d3c),
+};
+const KV_SHELLS = [
+  { dark: kvHx(0x2f4626), plate: kvHx(0x5d7e3b), tint: kvHx(0x8a8d45), rim: kvHx(0x7f8c45) },   // moss
+  { dark: kvHx(0x1e3836), plate: kvHx(0x3f7a6c), tint: kvHx(0x7fa486), rim: kvHx(0x6f9078) },   // sea-glass teal
+  { dark: kvHx(0x3a2a14), plate: kvHx(0x8a6a2e), tint: kvHx(0xc09a45), rim: kvHx(0xa08848) },   // amber
+];
+function kvLerpCol(a, b, t) { return [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t]; }
+// rotate a mesh so its local +Y axis points along (dx,dy,dz) (Rodrigues about +Y×dir); matches the reference's aim()
+function kvAimY(mesh, dx, dy, dz) {
+  const L = Math.hypot(dx, dy, dz) || 1; dx/=L; dy/=L; dz/=L;
+  let ax = dz, ay = 0, az = -dx;                                   // axis = (0,1,0) × dir
+  const al = Math.hypot(ax, ay, az);
+  if (al < 1e-6) { if (dy < 0) rotMeshX(mesh, Math.PI); return mesh; }   // parallel / anti-parallel to +Y
+  ax/=al; az/=al;
+  const ang = Math.acos(Math.max(-1, Math.min(1, dy))), c = Math.cos(ang), s = Math.sin(ang), P = mesh.pos;
+  for (let i = 0; i < P.length; i += 3) {
+    const x = P[i], y = P[i+1], z = P[i+2];
+    const dot = ax*x + ay*y + az*z;                                // Rodrigues with axis (ax,0,az)
+    const crx = ay*z - az*y, cry = az*x - ax*z, crz = ax*y - ay*x;
+    P[i]   = x*c + crx*s + ax*dot*(1-c);
+    P[i+1] = y*c + cry*s + ay*dot*(1-c);
+    P[i+2] = z*c + crz*s + az*dot*(1-c);
+  }
+  return mesh;
+}
+// a round tube between two 3D points a,b (ropes, rails, rungs, posts, hangers)
+function kvRod(m, a, b, r, sides, col) { mPathTube(m, [[a[0],a[1],a[2],r], [b[0],b[1],b[2],r]], sides || 4, col); }
+// upper hemisphere dome (apex up), squashed in Y by SQ; equator at y=0 radius R
+function kvDome(m, cx, cy, cz, R, SQ, sides, col) {
+  const rings = 6;
+  for (let j = 0; j < rings; j++) {
+    const p0 = (j/rings)*(Math.PI/2), p1 = ((j+1)/rings)*(Math.PI/2);
+    const r0 = Math.cos(p0)*R, r1 = Math.cos(p1)*R, y0 = cy + Math.sin(p0)*R*SQ, y1 = cy + Math.sin(p1)*R*SQ;
+    for (let i = 0; i < sides; i++) {
+      const a0 = (i/sides)*6.2832, a1 = ((i+1)/sides)*6.2832;
+      const A = [cx+Math.cos(a0)*r0, y0, cz+Math.sin(a0)*r0], B = [cx+Math.cos(a1)*r0, y0, cz+Math.sin(a1)*r0];
+      const C = [cx+Math.cos(a1)*r1, y1, cz+Math.sin(a1)*r1], D = [cx+Math.cos(a0)*r1, y1, cz+Math.sin(a0)*r1];
+      if (j === rings-1) mTri(m, A, B, [cx, cy+R*SQ, cz], col); else mQuad(m, A, B, C, D, col);
+    }
+  }
+}
+// a flat disc (cylinder of near-zero height) centred at origin on the XZ plane, for windows/door arches before aiming
+function kvDisc(r, sides, col) { const d = Mesh(); mCyl(d, -0.03, 0.03, r, r, sides, col); return d; }
+
+/* ---- ONE HUT. Origin = where the stilts meet ground/sea level; door on local +z. ----
+   o: kind 'hut'|'lookout', sides, wallR, wallH, deckY, groundY (ground rel. to origin),
+      shell, squash, lantern, cucumbers, ladderFace (index|null), rng. Returns {mesh, colliders}. */
+function makeKappaHut(o) {
+  const m = Mesh(), col = [];
+  const n = o.sides, step = (Math.PI*2)/n, half = Math.PI/n, isHut = o.kind === 'hut';
+  const D = o.deckY, deckR = o.wallR + 1.0, deckEdge = deckR*Math.cos(half);
+  const H = isHut ? o.wallH : 0, roofY = isHut ? D + H + 0.1 : D + 2.0;
+  // helper: a vertical tapered cylinder centred at (x,z), from yA..yB
+  const cylAt = (x, z, yA, yB, rA, rB, sides, c) => { const t = Mesh(); mCyl(t, yA, yB, rA, rB, sides, c); mergeAt(m, t, x, 0, z); };
+
+  // 1. stilts, sunk 1 unit into the ground; a lookout's stilts carry up to its canopy
+  const stilts = isHut ? Math.min(n, 6) : 4, footY = o.groundY - 1, stiltTop = isHut ? D : roofY;
+  for (let i = 0; i < stilts; i++) {
+    const a = ((i + 0.5)/stilts)*Math.PI*2, x = Math.sin(a)*deckR*0.72, z = Math.cos(a)*deckR*0.72;
+    cylAt(x, z, footY, stiltTop, 0.13, 0.13, 5, KVP.wood);
+    col.push({ kind:'solid', shape:'cylinder', x, z, r:0.16, y0:footY, y1:stiltTop });
+  }
+
+  // 2. deck (n-gon, rotated so a flat edge faces +z)
+  { const d = Mesh(); mCyl(d, D - 0.2, D, deckR, deckR, n, KVP.deck); rotMeshY(d, half); mergeMesh(m, d); }
+  col.push({ kind:'floor', shape:'disc', x:0, z:0, r:deckEdge, y:D });
+
+  if (isHut) {
+    const W = o.wallR, top = D + H, face = W*Math.cos(half);
+    // 3. reed walls, bamboo corner posts, two rope bands
+    { const w = Mesh(); mCyl(w, D, top, W, W, n, KVP.reed); rotMeshY(w, half); mergeMesh(m, w); }
+    for (let k = 0; k < n; k++) { const a = half + k*step; cylAt(Math.sin(a)*(W+0.03), Math.cos(a)*(W+0.03), D, top + 0.1, 0.07, 0.07, 5, KVP.bamboo); }
+    for (const f of [0.28, 0.78]) { const b = Mesh(); mCyl(b, D + H*f - 0.05, D + H*f + 0.05, W+0.04, W+0.04, n, KVP.rope); rotMeshY(b, half); mergeMesh(m, b); }
+    // 4. door on face 0: frame, arched plank door, plank lines, brass knob
+    mBox(m, 0, D + 0.5, face + 0.01, 0.45, 0.5, 0.04, KVP.frame);
+    { const a = Mesh(); mCyl(a, -0.04, 0.04, 0.45, 0.45, 10, KVP.frame); rotMeshX(a, Math.PI/2); mergeAt(m, a, 0, D + 1.0, face + 0.01); }
+    mBox(m, 0, D + 0.48, face + 0.03, 0.35, 0.475, 0.05, KVP.door);
+    { const a = Mesh(); mCyl(a, -0.05, 0.05, 0.35, 0.35, 10, KVP.door); rotMeshX(a, Math.PI/2); mergeAt(m, a, 0, D + 0.95, face + 0.03); }
+    for (const x of [-0.12, 0.12]) mBox(m, x, D + 0.62, face + 0.035, 0.0175, 0.575, 0.055, KVP.doorLine);
+    { const k = Mesh(); mergeMesh(k, ksph(0.06, KVP.knob, 6, 4)); mergeAt(m, k, 0.22, D + 0.55, face + 0.1); }
+    // 5. round windows either side of the door (disc frame + dark hole), facing outward
+    for (const k of [1, n - 1]) {
+      const sx = Math.sin(k*step), sz = Math.cos(k*step);
+      const fr = kvDisc(0.3, 8, KVP.frame); kvAimY(fr, sx, 0, sz); mergeAt(m, fr, sx*(face+0.03), D + 1.0, sz*(face+0.03));
+      const ho = kvDisc(0.21, 8, KVP.hole);  kvAimY(ho, sx, 0, sz); mergeAt(m, ho, sx*(face+0.06), D + 1.0, sz*(face+0.06));
+    }
+    // 6. lantern (front-left) + cucumber string (front-right) under the eaves
+    if (o.lantern) {
+      const x = Math.sin(-0.45)*(W+0.7), z = Math.cos(-0.45)*(W+0.7);
+      kvRod(m, [x, top + 0.1, z], [x, D + 1.25, z], 0.015, 3, KVP.hole);
+      cylAt(x, z, D + 1.215, D + 1.285, 0.1, 0.14, 6, KVP.hole);
+      { const l = Mesh(); mergeMesh(l, ksph(0.2, KVP.lantern, 8, 5)); mergeAt(m, l, x, D + 1.05, z); }
+      cylAt(x, z, D + 0.81, D + 0.87, 0.12, 0.08, 6, KVP.hole);
+    }
+    if (o.cucumbers) {
+      const x = Math.sin(0.45)*(W+0.7), z = Math.cos(0.45)*(W+0.7);
+      kvRod(m, [x, top + 0.1, z], [x, D + 0.7, z], 0.015, 3, KVP.rope);
+      [1.2, 0.98, 0.76].forEach((y, i) => { const c = Mesh(); mergeMesh(c, scaleMeshXYZ(ksph(0.09, KVP.cuke, 7, 5), 1, 1.9, 1)); mergeAt(m, c, x + (i % 2 ? 0.05 : -0.05), D + y, z); });
+    }
+    col.push({ kind:'solid', shape:'cylinder', x:0, z:0, r:W + 0.1, y0:D, y1:top + 2 });
+    col.push({ kind:'trigger', shape:'sphere', name:'door', x:0, y:D + 0.6, z:face + 0.5, r:0.8 });
+  } else if (o.lantern) {
+    kvRod(m, [0, roofY + 0.2, 0], [0, D + 1.35, 0], 0.015, 3, KVP.hole);
+    const l = Mesh(); mergeMesh(l, ksph(0.2, KVP.lantern, 8, 5)); mergeAt(m, l, 0, D + 1.15, 0);
+  }
+
+  // 7. turtle-shell roof: rim + squashed dark dome + two staggered rings of hex plates
+  const Rr = isHut ? o.wallR + 0.95 : deckR*0.92, SQ = o.squash, sh = o.shell;
+  cylAt(0, 0, roofY - 0.2, roofY + 0.1, Rr + 0.25, Rr, n*2, sh.rim);
+  kvDome(m, 0, roofY, 0, Rr, SQ, n*2, sh.dark);
+  for (const [elev, size, twist] of [[0.42, 0.42, 0], [0.98, 0.52, half]]) {
+    const ringR = Math.cos(elev)*Rr, r = size*(Math.PI*2*ringR)/n;
+    for (let i = 0; i < n; i++) {
+      const az = twist + i*step, x = Math.sin(az)*ringR, z = Math.cos(az)*ringR, y = roofY + Math.sin(elev)*Rr*SQ;
+      const tint = kvLerpCol(sh.plate, sh.tint, o.rng.pick([0, 0.15, 0.3, 0.45]));
+      const plate = Mesh(); mCyl(plate, -0.09, 0.09, r, r*1.1, 6, tint);
+      const nx = x, ny = (y - roofY)/(SQ*SQ), nz = z;                 // dome normal
+      kvAimY(plate, nx, ny, nz); mergeAt(m, plate, x, y, z);
+    }
+  }
+
+  // 8. water dish on the crown, ringed with reed "hair"
+  const s = Rr/2.75, crown = roofY + Rr*SQ;
+  cylAt(0, 0, crown + 0.2*s - 0.275*s, crown + 0.2*s + 0.275*s, 0.95*s, 0.6*s, 10, KVP.dish);
+  cylAt(0, 0, crown + 0.48*s - 0.02, crown + 0.48*s + 0.02, 0.8*s, 0.8*s, 10, KVP.dishWater);
+  for (let i = 0; i < 14; i++) {
+    const a = (i/14)*Math.PI*2, px = Math.sin(a)*1.05*s, pz = Math.cos(a)*1.05*s, py = crown + 0.05*s;
+    const spike = Mesh(); mCyl(spike, -0.6*s, 0.6*s, 0.2*s, 0, 4, KVP.hair);
+    kvAimY(spike, Math.sin(a)*3*s - px, (crown - 0.35*s) - py, Math.cos(a)*3*s - pz); mergeAt(m, spike, px, py, pz);
+  }
+
+  // 9. kappa ladder into the sea (decorative)
+  if (o.ladderFace != null) {
+    const dx = Math.sin(o.ladderFace*step), dz = Math.cos(o.ladderFace*step), px = dz, pz = -dx;
+    const topY = D + 0.45, botY = Math.max(o.groundY, -0.9), out0 = deckEdge + 0.08, out1 = deckEdge + 0.43;
+    const at = (out, y, side) => [dx*out + px*0.3*side, y, dz*out + pz*0.3*side];
+    for (const side of [-1, 1]) kvRod(m, at(out1, botY, side), at(out0, topY, side), 0.05, 4, KVP.wood);
+    for (let y = botY + 0.35; y < D; y += 0.38) { const out = out1 + (out0 - out1)*(y - botY)/(topY - botY); kvRod(m, at(out, y, -1), at(out, y, 1), 0.035, 4, KVP.wood); }
+  }
+  return { mesh: m, colliders: col };
+}
+
+/* ---- A WALKWAY from world point a to b ({x,y,z}). kind 'dock'|'stairs'|'bridge'.
+   Built along local +z (a→b) then rotated/placed; returns {mesh, colliders} in WORLD space. ---- */
+function makeKappaWalkway(a, b, kind, groundAt) {
+  const local = Mesh(), col = [];
+  const dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz), dy = b.y - a.y, heading = Math.atan2(dx, dz);
+  const bridge = kind === 'bridge', sag = bridge ? Math.min(0.8, L*0.06) : 0;
+  const hw = bridge ? 0.5 : 0.6, railX = hw + 0.08, railH = 0.6;
+  const yAt = (t) => dy*t - sag*4*t*(1 - t), slopeAt = (t) => (dy - sag*4*(1 - 2*t))/L;
+  const groundBelow = (lz) => groundAt(a.x + Math.sin(heading)*lz, a.z + Math.cos(heading)*lz) - a.y;
+  // planks / steps
+  if (kind === 'stairs') {
+    const steps = Math.max(3, Math.round(Math.abs(dy)/0.25));
+    for (let i = 0; i < steps; i++) { const t = (i + 0.5)/steps; mBox(local, 0, yAt(t) - 0.05, t*L, hw, 0.05, L/steps/2 + 0.01, i % 2 ? KVP.plank : KVP.deck); }
+  } else {
+    const planks = Math.max(3, Math.round(L/0.4));
+    for (let i = 0; i < planks; i++) { const t = (i + 0.5)/planks; const p = Mesh(); mBox(p, 0, 0, 0, hw, 0.04, (L/planks - 0.06)/2, i % 2 ? KVP.plank : KVP.deck); rotMeshX(p, -Math.atan(slopeAt(t))); mergeAt(local, p, 0, yAt(t) - 0.04, t*L); }
+  }
+  // under-beams / sagging ropes + rope hand-rails
+  const segs = bridge ? 8 : 1;
+  for (let j = 0; j < segs; j++) {
+    const t0 = j/segs, t1 = (j + 1)/segs;
+    for (const x of [-hw*0.7, hw*0.7]) kvRod(local, [x, yAt(t0) - 0.12, t0*L], [x, yAt(t1) - 0.12, t1*L], bridge ? 0.03 : 0.07, 4, bridge ? KVP.rope : KVP.wood);
+    for (const x of [-railX, railX]) {
+      kvRod(local, [x, yAt(t0) + railH, t0*L], [x, yAt(t1) + railH, t1*L], 0.025, 3, KVP.rope);
+      if (bridge && j > 0) kvRod(local, [x, yAt(t0) + railH, t0*L], [x, yAt(t0) - 0.1, t0*L], 0.015, 3, KVP.rope);
+    }
+  }
+  // posts
+  const posts = bridge ? 2 : Math.max(2, Math.round(L/1.4) + 1);
+  for (let i = 0; i < posts; i++) {
+    const z = 0.12 + (i/(posts - 1))*(L - 0.24), y = yAt(z/L);
+    const top = y + railH + 0.15, bottom = bridge ? y - 0.35 : Math.min(groundBelow(z), y) - 0.6;
+    for (const x of [-railX, railX]) { const p = Mesh(); mCyl(p, bottom, top, 0.06, 0.06, 5, KVP.wood); mergeAt(local, p, x, 0, z); }
+  }
+  col.push({ kind:'floor', shape:'ramp', x:0, halfWidth:hw, z0:0, z1:L, y0:0, y1:dy, sag });
+  // place: rotate about Y by heading, then translate to a (local +z → a→b)
+  rotMeshY(local, heading);
+  const world = Mesh(); mergeAt(world, local, a.x, a.y, a.z);
+  return { mesh: world, colliders: col, heading, a };
+}
+
 function placeKappaVillage() {
   kappaVillage = null; kappaHuts = []; kappas = []; kappaVillageSpawn = null;
   if (!KAPPA_ON) return;
