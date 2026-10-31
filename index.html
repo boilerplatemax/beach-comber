@@ -6998,8 +6998,18 @@ function clamShellMesh() { const m = Mesh(); const out = [0.88,0.82,0.7], inner 
 // §clust8 BARNACLES: a flat crust of small WHITE acorn cones, each a squat volcano with a dark aperture.
 function barnacleMesh() { const m = Mesh(); const sh=[0.94,0.92,0.87], sh2=[0.86,0.84,0.8], ap=[0.3,0.3,0.33];
   const cone = (r,h,top) => { const d=Mesh(); mCyl(d,0,h,r,r*0.62,7,top?sh:sh2); mCyl(d,h,h*1.1,r*0.62,r*0.2,7,ap); return d; };   // low cone + tiny dark opening on top
-  const spots = [[0,0,0.12,0.14,1],[0.13,0.05,0.095,0.12,1],[-0.11,0.06,0.09,0.11,0],[0.06,-0.13,0.08,0.1,1],[-0.08,-0.1,0.075,0.095,0],[0.12,0.12,0.062,0.08,1],[-0.14,-0.03,0.058,0.075,0],[0.0,0.15,0.052,0.07,0],[0.17,-0.04,0.05,0.065,1],[-0.04,0.1,0.046,0.06,0]];
-  for (const [x,z,r,h,t] of spots) mergeAt(m, cone(r,h,t), x, 0, z);
+  // §barnscatter barnacles crust a wide patch over the rock's upper surface, not one knot on the crown: cones
+  // scattered over a shallow dome (kept upright so the whole patch tilts cleanly onto the rock face when drawn).
+  const R = mulberry32(0x6a17ac1e), domeR = 0.34, domeH = 0.07, N = 18;   // fixed seed → one stable mesh (no global rng touched)
+  for (let i=0;i<N;i++){
+    const ang=R()*6.283, rho=Math.sqrt(R())*domeR, f=rho/domeR;                 // uniform over the disc, then lifted onto the shallow dome
+    const x=Math.cos(ang)*rho, z=Math.sin(ang)*rho, y=domeH*Math.sqrt(Math.max(0,1-f*f));
+    const r=0.05+(1-f)*0.07+R()*0.02, h=r*1.0+R()*0.03, t=R()<0.6?1:0;
+    const c=cone(r,h,t);
+    const lean=(0.12+R()*0.18)*f;                                              // only the outer cones fan out a touch, so none splay sideways
+    if (lean>0.001) kvAimY(c, Math.cos(ang)*Math.sin(lean), Math.cos(lean), Math.sin(ang)*Math.sin(lean));
+    mergeAt(m, c, x, y, z);
+  }
   return m; }
 // §16.1 new creatures
 function seaSnailMesh() { const m = Mesh(); const s=[0.74,0.6,0.4], b=[0.52,0.46,0.42];
@@ -9290,6 +9300,7 @@ function eatItem(idx) {
   const c = Inv.cell(idx); if (!c || !isFood(c.id)) return; const id = c.id;
   c.qty--; if (c.qty <= 0) Inv.setCell(idx, null); Inv.emit();
   if (typeof feedPlayer === "function") feedPlayer(id); else { if (onDig) onDig("eat"); showCard("Ate " + ITEMS[id].name, ""); }
+  const left = LEFTOVER[id]; if (left) giveOrDrop(left, 1);   // §eatleftover inventory-eat gives the shell/peel back too (matches hold-to-eat)
 }
 function itemPrimary(idx) {
   const c = Inv.cell(idx); if (!c) return; const it = ITEMS[c.id];
@@ -14322,7 +14333,7 @@ function oysterClumpMesh(R) {
     mergeMesh(d, discMesh(0.09, 0.06, 5, 0.04, greyD));
     for (let i=0;i<d.pos.length;i+=3) d.pos[i+2] *= 2.2;   // elongated oyster shell
     return d; };
-  const nsh = 3 + (R()*4|0);
+  const nsh = 2 + (R()*3|0);   // §oystscatter fewer shells per clump (more, smaller clumps spread around the rock reads better than one big pile)
   for (let s=0;s<nsh;s++){ const r=0.7+R()*0.55, rot=R()*6.283, ox=(R()-0.5)*0.5, oz=(R()-0.5)*0.5;
     const d = shell(r>1.0?grey2:grey, grey2), c=Math.cos(rot), si=Math.sin(rot);
     for (let i=0;i<d.pos.length;i+=3){ const px=d.pos[i]*r, py=d.pos[i+1]*r, pz=d.pos[i+2]*r; d.pos[i]=px*c+pz*si; d.pos[i+1]=py; d.pos[i+2]=-px*si+pz*c; }
@@ -14341,10 +14352,15 @@ function oysterRockMesh(seed, nClusters) {
   const sx=0.8+R()*0.7, syk=0.5+R()*0.55, sz=0.8+R()*0.7;
   for (let i=0;i<rock.pos.length;i+=3){ rock.pos[i]*=sx; rock.pos[i+1]*=syk; rock.pos[i+2]*=sz; }
   mergeMesh(m, rock);
+  // §oystscatter the clumps crust the whole upper rock (sides + crown), not one knot on top: each sits at a
+  // random spot over the rock's dome and is tilted to cling to the surface, like real oysters on a tidal rock.
   for (let c=0;c<nClusters;c++){
-    const cl = oysterClumpMesh(R), cs=0.5+R()*0.6, ang=R()*6.283, rr=R()*0.5;
+    const cl = oysterClumpMesh(R), cs=0.42+R()*0.5;
     for (let i=0;i<cl.pos.length;i+=3){ cl.pos[i]*=cs; cl.pos[i+1]*=cs; cl.pos[i+2]*=cs; }
-    mergeAt(m, cl, Math.cos(ang)*rr, 0.22*syk + R()*0.18, Math.sin(ang)*rr);
+    const ang=R()*6.283, el=(0.12+R()*0.8)*(Math.PI/2), ce=Math.cos(el), se=Math.sin(el);   // el: 0 = low on the side, pi/2 = crown
+    kvAimY(cl, Math.cos(ang)*ce, se+0.35, Math.sin(ang)*ce);                                  // tilt the clump's up-axis to the dome normal here (up-biased so shells face skyward)
+    const px=Math.cos(ang)*sx*0.84*ce, pz=Math.sin(ang)*sz*0.84*ce, py=syk*0.58*se;
+    mergeAt(m, cl, px, Math.max(0.03, py), pz);
   }
   return m;
 }
@@ -14358,7 +14374,7 @@ function seedOysterBeds() {
     if (typeof insideCottage === "function" && insideCottage(x, z)) continue;
     if (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, 0.8)) continue;
     let near = false; for (const b of oysterBeds) if (Math.hypot(b.x-x, b.z-z) < 10) { near = true; break; } if (near) continue;
-    const rseed = oysterRockSeed(x, z), nClusters = 2 + (mulberry32((rseed^0x55)>>>0)()*4|0);   // §P3 per-bed variety (no global rng → deterministic)
+    const rseed = oysterRockSeed(x, z), nClusters = 4 + (mulberry32((rseed^0x55)>>>0)()*4|0);   // §oystscatter 4-7 clumps spread around the rock (per-bed sub-stream, no global rng → deterministic)
     oysterBeds.push({ x, z, yaw: rng()*6.283, sc: 0.9+rng()*0.4, n: OYSTER_PER_BED_MIN + (rng()*(OYSTER_PER_BED_MAX-OYSTER_PER_BED_MIN+1)|0), refillAt: 0, pickedAt: -99, rseed, nClusters });
   }
   if (_savedOysters) for (let i=0; i<oysterBeds.length && i<_savedOysters.length; i++) { const e = _savedOysters[i]; if (e) { oysterBeds[i].n = e[0]; oysterBeds[i].refillAt = e[1]; } }
