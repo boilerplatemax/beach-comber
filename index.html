@@ -3531,7 +3531,7 @@ function startleNear(x, z) {
   }
 }
 // §R4 weapons can strike any creature. Small per-species HP; a hit hurts and scatters it, enough hits kill it.
-const CREATURE_HP = { crab:2, hermit:2, hopper:1, seal:6, seaduck:2, snail:1, nudibranch:1, shrimp:1, star:1, urchin:1, anemone:1, jelly:1 };
+const CREATURE_HP = { crab:2, hermit:2, hopper:1, seal:6, seaduck:2, snail:1, nudibranch:1, shrimp:1, star:1, urchin:1, anemone:1, jelly:1, turtle:8 };
 const CREATURE_DROP = { crab:"crabmeat", hermit:"crabmeat", lobster:"crabmeat" };
 function creatureHP(t) { return CREATURE_HP[t] || 2; }
 const DEATH_FLASH = 0.28;      // §B1 seconds of red flash before a creature dissolves (tunable)
@@ -6462,6 +6462,72 @@ function ghostfishMesh(col) { col = col || [0.74,0.84,0.92];
 // §12B bigger, high-contrast gull: white body, grey wings, dark wingtips, yellow beak.
 function sealMesh() { const m = Mesh(); const c=[0.4,0.4,0.42]; for(let i=0;i<7;i++){const a0=i/7*6.283,a1=(i+1)/7*6.283,r1=0.35; mTri(m,[1.3,0.3,0],[0.2,0.3+Math.sin(a0)*r1,Math.cos(a0)*r1*0.8],[0.2,0.3+Math.sin(a1)*r1,Math.cos(a1)*r1*0.8],c); mTri(m,[-0.9,0.25,0],[0.2,0.3+Math.sin(a0)*r1,Math.cos(a0)*r1*0.8],[0.2,0.3+Math.sin(a1)*r1,Math.cos(a1)*r1*0.8],[c[0]*0.9,c[1]*0.9,c[2]*0.9]);} return m; }
 function jellyMesh() { const m = discMesh(0.3,0.4,8,0.25,[0.75,0.7,0.85]); for(let i=0;i<6;i++){const a=i/6*6.283; mTri(m,[Math.cos(a)*0.3,0.3,Math.sin(a)*0.3],[Math.cos(a)*0.3,-0.3,Math.sin(a)*0.3],[Math.cos(a+0.25)*0.3,0.1,Math.sin(a+0.25)*0.3],[0.7,0.65,0.8]);} return m; }
+// §turtle a sea turtle, authored in Blender and baked to {pos,col} (flat-shaded vertex colours, 182 tris). The raw model
+// is normalized here: centred on XZ, belly rested on y=0, scaled so its longest footprint is 1 unit, and yawed so it
+// faces +X (the creature-draw convention) so e.yaw points head-first like the other walkers.
+function turtleMeshRaw() {
+  const P = [
+    .7279,-.3714,-.1611,1.0259,-.1379,-.1379,.6891,-.2483,.9805,.6594,-.3354,-.6964,.8257,-.2253,-.6399,
+    .2802,-.2061,-1.718,.1867,.2269,-1.9341,.1599,.2476,-1.4235,.7488,.4975,.4089,.562,-.0205,1.3478,1.0833,
+    -.0707,.4013,.9534,-.1147,.4014,.7147,-.0231,.8561,.4659,.2085,-1.2885,.4807,.0845,-.9347,.2451,.2639,
+    -1.2628,1.1197,-.0923,-.1816,.8471,-.0113,-.6832,0,.8099,.3089,-.0005,.6562,.8319,.7851,.4913,-.1363,
+    .2918,.7001,-.5792,0,.3673,1.3421,.1782,.3195,-1.6293,.0023,-.1866,-1.9957,.0087,.0873,-2.201,0,.6277,
+    -.9502,0,.7667,-.5834,.2727,-.1223,-1.2515,.4994,-.2403,-.9915,.0012,-.3746,-1.0625,-.0012,-.2496,
+    -1.2989,0,.8038,-.1611,.0004,-.4959,-.1918,-.2438,.2604,-1.2659,.5188,-.1878,1.2786,.0031,-.1816,1.4343,
+    0,-.3614,.8091,-.1443,.3136,-1.4204,.0021,-.0627,1.4311,.5158,-.0613,1.2743,0,-.0338,1.5378,.9247,-.1509,
+    1.0581,.7227,-.275,1.7013,1.125,-.3208,1.2762,1.0877,-.3425,1.6769,.7286,-.1918,-1.2077,.9665,-.3741,
+    -.8009,1.0268,-.2216,-.8069,1.0634,-.3722,-1.2209,1.8499,-.3587,-.537,1.3959,-.4274,-1.1241,1.5914,-.313,
+    -.1206,1.9347,-.3188,-.0057,-.7186,-.1818,.8594,-1.0238,-.1542,-.1369,-.6344,-.3868,-.6924,-.8087,-.2884,
+    -.6362,-.1658,.234,-1.9356,-.2786,-.1948,-1.7204,-1.0833,-.0707,.4013,-.562,-.0205,1.3478,-.7488,.4975,
+    .4089,-.4566,.1832,1.3161,-.7171,-.0262,.8556,-.9538,-.1187,.4018,-.8463,-.0626,-.6806,-1.1212,-.0959,
+    -.1812,-.9258,.0206,-.7437,-.2918,.7001,-.5792,-.7851,.4913,-.1363,-.5173,-.1844,1.2785,-.1562,.3262,
+    -1.6307,-.4659,.2085,-1.2885,-.2707,-.1209,-1.2529,-.4819,-.2868,-.984,-.5161,-.0578,1.2732,-.6971,-.252,
+    1.709,-.9236,-.1738,1.0655,-1.1025,-.3527,1.2984,-1.0534,-.3509,1.6989,-.4883,.0534,-.9387,-.7144,-.2647,
+    -1.2017,-.925,-.4881,-.8076,-.9981,-.3443,-.7952,-1.3609,-.5464,-1.12,-1.513,-.5958,-.1081,-1.848,-.6505,
+    .018
+  ];
+  const C = [ .0395,.169,.0465, .0838,.0356,.0182 ];
+  const I = [
+    0,1,2,3,4,1,1,0,3,5,6,7,8,9,10,2,11,12,13,14,15,16,1,17,1,16,10,10,11,1,18,19,8,8,20,21,21,18,8,9,8,19,
+    19,22,9,7,6,23,20,13,21,24,25,5,6,5,25,26,27,21,28,29,30,30,31,28,27,32,21,3,0,33,23,34,7,2,35,36,36,37,
+    2,0,2,33,25,23,6,15,7,34,37,33,2,18,21,32,38,26,13,5,28,31,39,40,9,9,41,39,42,40,43,40,42,12,2,12,42,35,
+    2,42,44,43,35,35,42,44,44,42,45,43,45,42,43,44,45,29,3,33,33,30,29,21,13,26,14,13,17,29,14,46,4,3,47,48,
+    46,14,14,17,48,49,47,3,3,29,49,48,50,46,50,51,49,49,46,50,51,52,47,47,49,51,50,48,52,52,51,50,52,50,53,
+    50,52,53,9,22,41,16,20,8,8,10,16,17,13,20,20,16,17,9,40,12,9,12,11,11,10,9,5,7,15,28,5,15,38,13,15,48,47,
+    52,47,48,17,17,4,47,46,49,29,40,35,43,36,35,40,40,39,36,4,17,1,11,2,1,28,15,14,14,29,28,19,22,30,30,18,
+    19,41,39,33,54,55,56,55,57,56,34,58,59,60,61,62,63,62,61,64,65,54,66,55,67,67,68,66,55,65,60,60,67,55,62,
+    19,18,62,18,69,69,70,62,37,54,56,19,62,63,54,37,71,72,58,34,69,73,70,25,59,58,23,58,72,69,27,26,74,31,30,
+    30,75,74,24,59,25,69,32,27,23,72,34,59,24,5,36,71,37,63,22,19,33,37,56,58,23,25,32,69,18,59,5,31,31,74,
+    59,39,41,61,61,76,39,77,76,78,64,78,76,78,64,54,78,54,71,79,78,71,71,77,79,80,78,79,78,80,77,80,79,77,75,
+    30,33,26,38,69,73,69,38,33,56,75,81,66,68,68,73,81,82,81,75,83,56,57,84,66,81,81,82,84,82,75,56,56,83,82,
+    82,85,84,85,82,83,83,86,85,86,84,85,85,87,86,87,85,86,27,30,26,41,22,63,63,61,41,67,60,62,62,70,67,68,67,
+    70,70,73,68,64,76,61,61,60,65,65,64,61,30,32,18,30,27,32,41,30,22,59,74,34,38,15,34,81,34,74,86,83,84,83,
+    57,66,66,84,83,77,71,76,36,39,76,76,71,36,55,66,57,55,54,65,39,37,33,36,37,39,33,30,41,34,81,73,73,38,34,
+    74,75,81
+  ];
+  const J = [
+    0,0,0,0,1,0,1,1,1,1,1,1,1,1,1,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,1,0,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,1,1,1,1,1,0,1,
+    0,0,1,0,0,1,0,0,0,1,0,0,0,1,0,0,1,0,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,
+    1,1,1,1,1,1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0
+  ];
+  const pos = [], col = [];
+  for (let n = 0; n < I.length; n++) { const p = I[n]*3, c = J[(n/3)|0]*3;
+    pos.push(P[p], P[p+1], P[p+2]); col.push(C[c], C[c+1], C[c+2]); }
+  return { pos, col };
+}
+function turtleMesh() {
+  const m = turtleMeshRaw(), pos = m.pos;
+  // yaw about Y so the model's head (the raised, centred point at raw -Z) points +X, matching the creature-draw heading convention
+  for (let i = 0; i < pos.length; i += 3) { const x = pos[i], z = pos[i+2]; pos[i] = -z; pos[i+2] = x; }
+  // normalize: centre on XZ, rest the belly on y=0, scale so the longest horizontal span is 1 unit
+  let minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9,minZ=1e9,maxZ=-1e9;
+  for (let i=0;i<pos.length;i+=3){ const x=pos[i],y=pos[i+1],z=pos[i+2];
+    if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; if(z<minZ)minZ=z; if(z>maxZ)maxZ=z; }
+  const cx=(minX+maxX)/2, cz=(minZ+maxZ)/2, s=1/Math.max(maxX-minX, maxZ-minZ);
+  for (let i=0;i<pos.length;i+=3){ pos[i]=(pos[i]-cx)*s; pos[i+1]=(pos[i+1]-minY)*s; pos[i+2]=(pos[i+2]-cz)*s; }
+  return m;
+}
 // finds
 // §shells a spiral whelk: a coiled horn swept along a shrinking helix, big body-whorl at the base, pointed spire on top.
 function shellMesh() { return spireShell(0.64, 0.2, 0.72, 4.2, [0.93,0.86,0.75], [0.82,0.72,0.6], 0.021); }   // §shells a tall whelk/turret
@@ -7430,6 +7496,7 @@ const CREATURES = {
   urchin:   { mesh: () => urchinMesh([0.3,0.2,0.38]), base: 0.7, max: 140, label: "Sea Urchin", desc: "A pincushion wedged in a rocky crevice." },
   hermit:   { mesh: () => hermitMesh([0.75,0.7,0.6]), base: 0.5, max: 140, label: "Hermit Crab", desc: "Carries a borrowed shell across the pool." },
   seal:     { mesh: () => sealMesh(),                base: 2.2, max: 24, label: "Harbour Seal", desc: "Hauls out on the rocks at low water." },
+  turtle:   { mesh: () => turtleMesh(),              base: 1.15, max: 12, label: "Sea Turtle", desc: "Hauls out to bask on quiet sand; slips back to the sea when you draw near." },
   jelly:    { mesh: () => jellyMesh(),               base: 0.9, max: 90, label: "Stranded Jelly", desc: "Left glistening on the flats by the ebbing tide." },
   hopper:   { mesh: () => hopperMesh(),              base: 0.5, max: 120, label: "Beach Hopper", desc: "Springs out from under a flipped cobble." },
   // §14C huntable fish (spearable) + schooling minnows (atmosphere / bucket)
@@ -7735,6 +7802,18 @@ function populateLife() {
   }
   // initial finds
   washUp(true);
+  // §turtle a few sea turtles hauled out to bask on gentle sandy beaches, spread well apart (added LAST so no earlier
+  // placement shifts: existing seeds keep their crabs/finds and just gain turtles). Seeded from the shared stream like
+  // the other shore life, so the same seed lays them out identically every load.
+  for (let i = 0, tries = 0, want = 3 + (rng()*4|0); i < want && tries < 600; tries++) {
+    const a = rng()*6.283, r = HALF*(0.3 + rng()*0.55), x = Math.sin(a)*r, z = -Math.cos(a)*r;
+    const s = surfaceAt(x, z), band = waterLevel - s.h;
+    if (band > -0.2 || band < -2.2 || s.slope > 0.26) continue;             // gentle dry sand just above the tide line
+    if (coastBiomeAt(x, z) === "reef") continue;                           // sandy shores, not the rocky reef
+    if (typeof insideCottage === "function" && insideCottage(x, z)) continue;
+    if (life.some((e) => e.t === "turtle" && Math.hypot(e.x-x, e.z-z) < 22)) continue;   // keep them well spread out
+    spawnCreature("turtle", x, z, { hx: x, hz: z, hr: 7, timer: rng()*3 }); i++;
+  }
 }
 
 // Wash fresh finds along the current wrack line + exposed flats at low tide.
@@ -8105,6 +8184,7 @@ function respawnOne(t) {
     const g = heightAt(x, z), band = waterLevel - g;
     const ok = (t === "crab" || t === "hopper") ? (band < 0.2 && band > -3.2) :
                (t === "seaduck" || t === "seal") ? (band < 1.5 && band > -8) :
+               (t === "turtle") ? (band < -0.1 && band > -2.4 && surfaceAt(x,z).slope < 0.3) :   // §turtle hauls out on gentle dry sand just above the tide line
                (band > -0.5 && band < 4);                    // pool / shallow life wants water
     if (!ok) continue;
     spawnCreature(t, x, z, { hx: x, hz: z, hr: 6, timer: rng()*2 }); return true;
@@ -8336,7 +8416,39 @@ const CRIT_SPD = {
   seaduck: { cruise: 1.3, flee: 3.4 }, seal:    { cruise: 0.0, flee: 5.0 },
   snail:   { cruise: 0.25, flee: 0.25 }, hermit: { cruise: 0.5, flee: 0.5 }, shrimp:  { cruise: 1.8, flee: 5.0 },
   hopper:  { cruise: 0.5, flee: 2.0 },
+  turtle:  { cruise: 0.38, flee: 1.9 },
 };
+// §turtle a sea turtle basking on the beach: a slow graze along the dry sand near home; startled, it lumbers down
+// to the water and paddles just offshore, then hauls back out onto the sand once the coast is clear. Never vanishes.
+function behaveTurtle(e, dt, d, dx, dz) {
+  const depth = waterDepthAt(e.x, e.z), grad = groundGradient(e.x, e.z), band = waterLevel - heightAt(e.x, e.z);  // grad points downhill → toward deeper water
+  const gm = Math.hypot(grad.dx, grad.dz) || 1e-3, gux = grad.dx/gm, guz = grad.dz/gm;   // unit downhill (toward the sea), so gentle beaches still steer firmly
+  if (d < 13) {                                                 // startled: head for the sea and paddle offshore
+    e.cdState = "flee";
+    if (depth < 0.5) { e.x += gux*dt*CRIT_SPD.turtle.flee; e.z += guz*dt*CRIT_SPD.turtle.flee; e.yaw = Math.atan2(guz, gux); }
+    else { const r = Math.hypot(dx,dz)||1; let mx = dx/r, mz = dz/r; if (depth > 2.2) { mx = -gux; mz = -guz; }   // in the water: away from the player, but don't dive deep
+      e.x += mx*dt*CRIT_SPD.turtle.flee; e.z += mz*dt*CRIT_SPD.turtle.flee; e.yaw = Math.atan2(mz, mx); }
+    e.swimming = depth > 0.45; return;
+  }
+  if (depth > 0.45) {                                           // calm but offshore: haul back up onto the beach
+    e.cdState = "haul"; e.swimming = true;
+    e.x -= gux*dt*CRIT_SPD.turtle.cruise*2.4; e.z -= guz*dt*CRIT_SPD.turtle.cruise*2.4; e.yaw = Math.atan2(-guz, -gux);
+    if (depth < 0.2) e.swimming = false; return;
+  }
+  // basking / slow graze on the DRY sand near home, kept a comfortable step up from the waterline
+  e.cdState = "bask"; e.swimming = false;
+  e.timer -= dt; if (e.timer < 0) { e.timer = 3 + rng()*5; e.wdir = rng()*6.283; e.rest = rng() < 0.5; }
+  if (e.rest) return;                                           // sometimes just sit and bask
+  let wx = Math.cos(e.wdir||0), wz = Math.sin(e.wdir||0), bx = 0, bz = 0;
+  const toHX = e.hx - e.x, toHZ = e.hz - e.z, homeDist = Math.hypot(toHX, toHZ);   // its spawn spot is guaranteed dry sand
+  if (band > -0.3 || homeDist > (e.hr||7)) { bx = toHX; bz = toHZ; }   // creeping into the water, or strayed → head back to the dry home patch
+  else if (band < -2.6) { bx = gux; bz = guz; }                        // very high up the dry sand → drift back down toward the sea
+  const bm = Math.hypot(bx, bz); if (bm > 1e-3) { bx /= bm; bz /= bm; }
+  let dxD = wx*0.5 + bx*2.0, dzD = wz*0.5 + bz*2.0; const m = Math.hypot(dxD,dzD)||1; dxD/=m; dzD/=m;   // the homeward bias dominates near the edges so it never drifts into the sea
+  if (e.hdx === undefined) { e.hdx = dxD; e.hdz = dzD; }
+  const k = Math.min(1, dt*2); e.hdx += (dxD-e.hdx)*k; e.hdz += (dzD-e.hdz)*k; const hm = Math.hypot(e.hdx,e.hdz)||1;
+  e.x += e.hdx/hm * CRIT_SPD.turtle.cruise * dt; e.z += e.hdz/hm * CRIT_SPD.turtle.cruise * dt; e.yaw = Math.atan2(e.hdz, e.hdx);
+}
 // §lob5 reef lobster: tucked near its crevice by day, ranging over the shallows after dark, and bolting tail-first with a hard flick.
 function behaveLobster(e, dt, d, dx, dz) {
   const night = (typeof isNightNow === "function") ? isNightNow() : false;
@@ -8369,6 +8481,7 @@ function behave(e, dt, d, dx, dz) {
   if ((CREATURES[e.t] && CREATURES[e.t].stoneCritter) || (e.fromStone && e.t === "crab")) { behaveStoneCritter(e, dt, d, dx, dz); return; }   // §21C life from under a stone; §weak7 shore crab emerges here then reverts to a normal crab
   if (e.t === "horseshoe") { behaveHorseshoe(e, dt, d, dx, dz); return; }   // §41 horseshoe crab plows the shallows / waits to be turned over
   if (e.t === "lobster") { behaveLobster(e, dt, d, dx, dz); return; }       // §lob5 reef lobster, lurks by day, forages at night, tail-flicks away
+  if (e.t === "turtle") { behaveTurtle(e, dt, d, dx, dz); return; }         // §turtle basks on the beach, paddles offshore when startled, hauls back out
   if (e.returning) {                                           // poured onto dry land → head for the nearest water
     if (waterDepthAt(e.x, e.z) > 0.12) { e.returning = false; e.exposed = 0; e.hx = e.x; e.hz = e.z; return; }
     if (creatureExposureDry(e, dt)) return;                    // §13.3 too slow → dries out and dies
@@ -8503,6 +8616,7 @@ function drawLife(view) {
         else if (e.t === "lobster") { y = g + 0.1; if (e.flick > 0) { lean = Math.sin((e.flick/0.5)*Math.PI) * 0.6; ld = ry; } }   // §lob5 sits on the seabed; a quick backward lurch on the tail-flick
         else if (e.t === "anemone") sc = e.scale * (1 - 0.6*e.closed);
         else if (e.t === "seaduck") y = waterSurfaceAt(e.x, e.z) + 0.03 + Math.sin(e.phase*2)*0.03;   // §16.1 bobs on the water
+        else if (e.t === "turtle" && e.swimming) y = waterSurfaceAt(e.x, e.z) - 0.12 + Math.sin((e.phase||0)*2)*0.04;   // §turtle floats at the surface while paddling just offshore
         if (e.t === "star" || e.t === "anemone" || e.t === "urchin" || e.t === "snail") y += 0.02;
         else if (e.t === "shrimp") y += 0.06;
       } else {   // §A2 a dropped find: hover + bob a few cm above the ground, spin slowly, upright (no tilt)
@@ -10992,7 +11106,7 @@ const bucketRingMesh = makeDynamic((function () { const m = Mesh(); const c = [0
 const CRAWLER = { crab:1, hermit:1, star:1, anemone:1, urchin:1, hopper:1, snail:1, nudibranch:1 };    // live on the floor, not mid-water
 // §models land/floor crawlers that get a fake "walk" wobble (a slight roll + heading wiggle + bob keyed to
 // distance travelled) so they read as walking head-first instead of sliding. Advanced in updateLife, applied in drawLife.
-const WALKER = { pillbug:1, beetle:1, centipede:1, slug:1, snail:1, salamander:1, nudibranch:1, crab:1, hermit:1 };
+const WALKER = { pillbug:1, beetle:1, centipede:1, slug:1, snail:1, salamander:1, nudibranch:1, crab:1, hermit:1, turtle:1 };
 const BOTTOM = { star:1, anemone:1, urchin:1 };                                 // §13.3 mostly stay put on the bottom
 // §13.3 calmer motion: gentle, capped speeds, nothing darts or spins in a pail
 const BUCKET_SPEED = { fish:0.14, jelly:0.06, crab:0.10, hermit:0.07, star:0.015, hopper:0.11, anemone:0, urchin:0, minnow:0.16, shrimp:0.13, snail:0.03, nudibranch:0.03 };
