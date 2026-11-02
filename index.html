@@ -3058,7 +3058,7 @@ void main() {
     c += vec3(0.02, 0.035, 0.075) * (1.0 - lum) * uNightGrade;      // crushed blacks become dark blue
     c = mix(c, c * vec3(0.92, 0.97, 1.08), uNightGrade * 0.5);      // a cool cast
   }
-  if (uBrightness != 1.0) c = clamp(pow(c, vec3(1.0 / uBrightness)), 0.0, 1.0);   // §18 brightness/gamma
+  c = clamp(c * uBrightness, 0.0, 1.0);   // §bright master output brightness (linear); default 0.25 dims the over-bright scene
   if (uHungerFx > 0.001) { float g = dot(c, vec3(0.299, 0.587, 0.114)); c = mix(c, vec3(g), uHungerFx * 0.7); }  // desaturate when starving
   float levels = 8.0;
   ivec2 p = ivec2(vUv * uSceneSize);            // low-res texel → chunky pattern
@@ -4207,14 +4207,14 @@ let showFps = false;
 try { showFps = localStorage.getItem("bc_showfps") === "1"; } catch (e) {}
 function setShowFps(v) { showFps = !!v; try { localStorage.setItem("bc_showfps", showFps ? "1" : "0"); } catch (e) {}
   const el = document.getElementById("fpscounter"); if (el && !showFps) el.style.display = "none"; }
-// §18 brightness / gamma, a standalone comfort setting (helps on dark, new-moon nights)
-// §brightremap the slider had too much effect, so its range is narrowed: the OLD middle (1.2) is the new
-// maximum and the new minimum (0.5) is a touch darker than the old minimum (0.6). The default stays 1.0,
-// which sits inside the new range so it looks like the old default.
-const BRIGHT_MIN = 0.5, BRIGHT_MAX = 1.2;
-let nightBrightness = Math.min(BRIGHT_MAX, 1.0);
-try { const b = parseFloat(localStorage.getItem("bc_bright")); if (!isNaN(b)) nightBrightness = Math.max(BRIGHT_MIN, Math.min(BRIGHT_MAX, b)); } catch (e) {}
-function setBrightness(v) { nightBrightness = Math.max(BRIGHT_MIN, Math.min(BRIGHT_MAX, v)); try { localStorage.setItem("bc_bright", nightBrightness.toFixed(2)); } catch (e) {} }
+// §bright master output brightness (a linear multiply in the post pass). The scene used to render
+// too bright, so the default is now a QUARTER of the old neutral (1.0 -> 0.25) and the slider tops
+// out at HALF the old (0.5). 0.25 sits near the middle of [BRIGHT_MIN, BRIGHT_MAX]. Old saved values
+// lived in a different range/meaning, so they're reset (new localStorage key) rather than loaded.
+const BRIGHT_MIN = 0.4, BRIGHT_DEFAULT = 0.6, BRIGHT_MAX = 0.8;
+let nightBrightness = BRIGHT_DEFAULT;
+try { const b = parseFloat(localStorage.getItem("bc_bright2")); if (!isNaN(b)) nightBrightness = Math.max(BRIGHT_MIN, Math.min(BRIGHT_MAX, b)); } catch (e) {}
+function setBrightness(v) { nightBrightness = Math.max(BRIGHT_MIN, Math.min(BRIGHT_MAX, v)); try { localStorage.setItem("bc_bright2", nightBrightness.toFixed(2)); } catch (e) {} }
 // §R4 screen-shake amount (0..1), default low. Scales the one remaining (hard-landing) shake.
 let screenShake = 0.25;
 try { const s = parseFloat(localStorage.getItem("bc_shake")); if (!isNaN(s)) screenShake = Math.max(0, Math.min(1, s)); } catch (e) {}
