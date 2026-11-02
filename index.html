@@ -250,11 +250,6 @@
   #card span { opacity: .8; font-size: 13px; }
   /* field journal (§13.5 redesigned: compact, tabbed, 3D-icon cards) */
   /* §B5 findable events: a quiet direction line at the top + a subtle edge chevron pointing to the site */
-  #eventline { position: fixed; top: 54px; left: 50%; transform: translateX(-50%); z-index: 15; display: none;
-    font-size: 15px; letter-spacing: .02em; color: #ecdfc4; text-shadow: 0 1px 3px rgba(0,0,0,.7); background: rgba(10,16,20,.42);
-    padding: 7px 16px; border-radius: 20px; pointer-events: none; white-space: nowrap; transition: opacity .6s; opacity: 0; }
-  #eventchev { position: fixed; z-index: 14; display: none; color: rgba(236,223,196,.7); pointer-events: none;
-    filter: drop-shadow(0 1px 3px rgba(0,0,0,.6)); transition: opacity .3s; }
   /* §capt5 Minecraft-style sound captions, bottom-right (debug toggle) */
   #soundsubs { position: fixed; right: 12px; bottom: 90px; z-index: 16; display: none; pointer-events: none;
     text-align: right; font-size: 12px; letter-spacing: .01em; }
@@ -445,26 +440,6 @@
   #soundtest button { display: block; width: 100%; font-size: 10px; padding: 3px 5px; margin: 1px 0; text-align: left;
     background: rgba(40,60,80,.5); color: #cfe; cursor: pointer; border: none; border-radius: 2px; clip-path: none; letter-spacing: 0; }
   #soundtest button:hover { background: rgba(60,100,130,.7); }
-  /* §17.5 goblin trade panel */
-  #tradepanel { position: fixed; z-index: 13; display: none; left: 50%; top: 50%; transform: translate(-50%,-50%);
-    width: 300px; max-width: 92vw; max-height: 82vh; overflow-y: auto; padding: 14px 16px 12px; color: #f3e9d6; text-align: center;
-    background-color: #4e5a38; box-shadow: 0 8px 30px rgba(0,0,0,.6), inset 0 0 40px rgba(24,32,12,.5);
-    clip-path: polygon(16px 0,calc(100% - 16px) 0,100% 16px,100% calc(100% - 16px),calc(100% - 16px) 100%,16px 100%,0 calc(100% - 16px),0 16px); }
-  #tradepanel .ihead { display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px; }
-  #tradepanel h2 { font-size: 19px; margin: 0; color: #f6eccb; }
-  #tradepanel .ihead button { font-size: 12px; padding: 4px 10px; }
-  #tradepanel .tsub { font-size: 12px; font-style: italic; opacity: .8; margin: 2px 0 12px; }
-  .tlist { display: flex; flex-direction: column; gap: 7px; }
-  .trow { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 8px;
-    background: rgba(30,36,18,.4); border: 1px solid rgba(20,26,10,.5); }
-  .trow .tgive, .trow .tget { display: flex; align-items: center; gap: 4px; }
-  .trow .ti { display: inline-flex; align-items: center; gap: 2px; background: rgba(18,22,10,.45); border-radius: 6px; padding: 3px 5px; }
-  .trow .ti img { width: 30px; height: 30px; image-rendering: pixelated; }
-  .trow .ti b { font-size: 13px; }
-  .trow .tplus { opacity: .6; } .trow .tarrow { opacity: .75; font-size: 16px; margin: 0 2px; }
-  .trow .tget { margin-left: auto; }
-  .trow .tbtn { flex: 0 0 auto; font-size: 12px; font-weight: 600; padding: 7px 12px; cursor: pointer; }
-  .trow .tbtn:disabled { opacity: .4; cursor: default; }
   .clabel { display: flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
     color: #e6d2a6; opacity: .85; margin: 0 2px 5px; text-shadow: 0 1px 1px rgba(0,0,0,.5); }
   .clabel:before, .clabel:after { content:""; flex:1; height:1px; background: repeating-linear-gradient(90deg,#c8a86e 0 4px,transparent 4px 8px); opacity:.5; }
@@ -499,8 +474,6 @@
   #bagBtn { position: fixed; z-index: 9; right: 14px; bottom: 74px; width: 54px; height: 54px; display: none;
     border-radius: 50%; border: 2px solid #6e4a2a; background: rgba(60,40,22,.8); color:#f0d9b0; font-size: 22px;
     align-items: center; justify-content: center; pointer-events: auto; }
-  #bucketpanel { position: fixed; z-index: 12; right: 16px; top: 50%; transform: translateY(-50%); display: none;
-    width: 150px; height: 174px; image-rendering: pixelated; cursor: pointer; filter: drop-shadow(0 3px 10px rgba(0,0,0,.5)); }
   #dragGhost { position: fixed; z-index: 30; width: 48px; height: 48px; pointer-events: none; display: none;
     image-rendering: pixelated; filter: drop-shadow(0 2px 4px rgba(0,0,0,.6)); transform: translate(-50%,-50%); }
   #dragGhost span { position: absolute; right: 2px; bottom: 0; font-size: 12px; font-weight: 700; text-shadow: 0 1px 2px #000; }
@@ -565,22 +538,6 @@
   #inspectview button:hover:not(:disabled) { filter: brightness(1.22); }
   #inspectview button:disabled { opacity: .4; cursor: default; }
   #inspRelease { background: linear-gradient(150deg, #3f9a86 0 46%, #2b7866 46% 100%); color: #eefaf4; }
-  /* §13.3 "Look inside", a large top-down close-up of the bucket */
-  #bucketlook { position: fixed; inset: 0; z-index: 24; display: none; align-items: center; justify-content: center;
-    background: var(--dim); }
-  #bucketlookbox .bl-btns { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
-  #bucketlookbox { background: #16282a var(--ditherbg, var(--facet)); background-size: 100% 100%; image-rendering: pixelated; padding: 18px; box-shadow: 0 12px 40px rgba(0,0,0,.55); text-align: center;
-    clip-path: polygon(16px 0, calc(100% - 16px) 0, 100% 16px, 100% calc(100% - 16px), calc(100% - 16px) 100%, 16px 100%, 0 calc(100% - 16px), 0 16px); }
-  #bucketlookbox h2 { font-size: 20px; margin: 0 0 4px; letter-spacing: .03em; }
-  #bucketlookbox .bl-sub { font-size: 12px; opacity: .7; margin-bottom: 12px; }
-  #bucketlookcanvas { width: 340px; height: 340px; max-width: 80vw; max-height: 80vw; background: #0d1418; image-rendering: pixelated;
-    cursor: pointer; touch-action: manipulation;
-    clip-path: polygon(12px 0, calc(100% - 12px) 0, 100% 12px, 100% calc(100% - 12px), calc(100% - 12px) 100%, 12px 100%, 0 calc(100% - 12px), 0 12px); }
-  #bucketlookbox .bl-hint { font-size: 12px; opacity: .6; margin-top: 10px; }
-  #bucketlookbox button { font: inherit; font-size: 13px; font-weight: 600; letter-spacing: .04em; padding: 8px 18px; margin-top: 12px; cursor: pointer;
-    border: none; background: var(--facet); color: var(--ink); text-shadow: 0 1px 1px var(--ink-shadow); filter: brightness(1.15);
-    clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 8px, 100% calc(100% - 8px), calc(100% - 8px) 100%, 8px 100%, 0 calc(100% - 8px), 0 8px); }
-  #bucketlookbox button:hover { filter: brightness(1.35); }
   /* §P2 #help (bottom-of-screen controls/seed text) removed */
   /* §music a small, quiet speaker toggle in the title's corner (drawn glyph, no emoji) */
   #musicToggle { position: absolute; top: calc(16px + env(safe-area-inset-top)); right: calc(18px + env(safe-area-inset-right)); width: 38px; height: 38px; display: flex; align-items: center; justify-content: center;
@@ -829,13 +786,10 @@
 <div id="hotbar"></div>
 <div id="journal"></div>
 <div id="invpanel"></div>
-<div id="eventline"></div>
-<div id="eventchev"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></div>
 <div id="soundsubs"></div>
 <div id="menutabs"></div>
 <div id="combined"></div>
 <div id="pausemenu"></div>
-<div id="tradepanel"></div>
 <canvas id="ygraph" width="260" height="96"></canvas>
 <canvas id="critcanvas"></canvas>
 <canvas id="fishcanvas"></canvas>
@@ -843,21 +797,7 @@
 <div id="catchpop"></div>
 <div id="fxflash"></div>
 <div id="soundtest"></div>
-<canvas id="bucketpanel" width="125" height="145"></canvas>
 <div id="ctxmenu"></div>
-<div id="bucketlook">
-  <div id="bucketlookbox">
-    <h2>Inside the bucket</h2>
-    <div class="bl-sub" id="bucketlookcount"></div>
-    <canvas id="bucketlookcanvas" width="340" height="340"></canvas>
-    <div class="bl-hint">Tap a creature for a close look</div>
-    <div class="bl-btns">
-      <button id="blReleaseAll">Release all</button>
-      <button id="blPourWater">Pour out water</button>
-      <button id="bucketlookclose">Close</button>
-    </div>
-  </div>
-</div>
 <div id="inspectview">
   <div id="inspectbox">
     <canvas id="inspectcanvas" width="300" height="300"></canvas>
@@ -883,6 +823,11 @@
 
 <script>
 "use strict";
+/* ===================================================================== *
+ *  NEW HERE?  Read CODEMAP.md first — it maps every system to its
+ *  searchable `// @system X` / `// @section X/part` tags and has a
+ *  "where to change X" index (brightness, tides, water, terrain, …).
+ * ===================================================================== */
 /* ===================================================================== *
  *  BEACHCOMBER, Milestone 2  (the "vibe engine")
  *  Low-res FBO + nearest upscale · Bayer dither + palette quantization
@@ -932,6 +877,7 @@
 /* --------------------------------------------------------------------- *
  * § PRNG  (one seeded stream for ALL procedural generation)
  * --------------------------------------------------------------------- */
+// @system GEN  @section GEN/prng
 
 // xmur3: hash an arbitrary string into a well-mixed 32-bit integer seed.
 function xmur3(str) {
@@ -984,6 +930,7 @@ function subStream() { return mulberry32((rng() * 4294967296) >>> 0); }
 /* --------------------------------------------------------------------- *
  * § NOISE  (seeded value noise + fbm)
  * --------------------------------------------------------------------- */
+// @system GEN  @section GEN/noise
 
 function makeNoise(rand) {
   // Permutation table + per-lattice random values, both seeded.
@@ -1031,6 +978,7 @@ function makeNoise(rand) {
 /* --------------------------------------------------------------------- *
  * § WORLD CONFIG
  * --------------------------------------------------------------------- */
+// @system GEN  @section GEN/config
 
 const GRID = 384;             // heightmap resolution (GRID x GRID)
 const WORLD = 1200.0;         // island spans WORLD world-units (big, so you feel small)
@@ -1046,6 +994,7 @@ const SEA_LEVEL = 0.0;        // water sits at y = 0
  *   basin/pool noise for inland lakes, lagoons & tide pools. A tidal-shelf
  *   profile keeps wide gentle intertidal margins near the waterline.)
  * --------------------------------------------------------------------- */
+// @system TERRAIN  @section TERRAIN/character
 
 // §island9 the per-seed parameter draws are named functions so New Island can
 // recompute them in the exact same draw order as the initial page load.
@@ -1112,6 +1061,7 @@ let CAUSEWAY = causewayOf(subStream());
  *   angular segments (soft-blended), each with its own look, props,
  *   critters, loot weights, dig-tell density and walking feel.
  * --------------------------------------------------------------------- */
+// @system TERRAIN  @section TERRAIN/coastal-biomes
 // mat ids are the fixed MAT.* values (grass1 dirt2 sand3 gravel4 stone5 mud6), hardcoded
 // here because MAT is declared further down; keep in sync with the MAT block.
 const COAST_BIOMES = {
@@ -1344,6 +1294,7 @@ function findHighPoint() {
  *   tide pool up to its rim when the sea drops below it. Also extracts
  *   discrete pools for seeding contents and the debug view.)
  * --------------------------------------------------------------------- */
+// @system TERRAIN  @section TERRAIN/basins
 
 const filled = new Float32Array(GRID * GRID);
 let pools = [];     // { cx, cz, rim, floor, n, x, z }  (world-space centroid)
@@ -1439,6 +1390,7 @@ function buildFilledTexture() {
  * § ATMOSPHERE  (sun + sky/fog palette driven by one timeOfDay value;
  *                Phase 5 will animate timeOfDay, nothing else changes.)
  * --------------------------------------------------------------------- */
+// @system ATMO  @section ATMO/sky-palette
 
 // ONE shared game clock drives tides, day/night, creatures and spawns.
 const clock = { t: 0, speed: 1, paused: false };
@@ -1513,6 +1465,7 @@ updateSun();
  * § TIDES  (waterLevel oscillates on a slow cycle with slack at the
  *   extremes; wetLevel is a lagging high-water mark that dries back.)
  * --------------------------------------------------------------------- */
+// @system TIDES  @section TIDES/cycle
 
 let TIDE_PERIOD = 720;          // seconds for a full high→low→high cycle (~12 min; slower, calmer tide)
 // §tide a gentle global trim to how far the tide rises/falls (1.0 = archetype default). The sandbar cap
@@ -1676,6 +1629,7 @@ function drawHungerShells() {   // (name kept; now draws the fish row)
  *   to buffers, a data-driven registry, spatial panning + distance, a voice cap,
  *   and an underwater lowpass. Built lazily on the first user gesture.
  * ===================================================================== */
+// @system AUDIO  @section AUDIO/engine
 // A compact ZzFX-style synth: renders one short mono buffer from a param object.
 // (in the spirit of ZzFX by Frank Force, MIT, reimplemented small and dependency-free)
 function synthRender(ctx, p) {
@@ -1894,6 +1848,7 @@ function soundCategory(id, bus) {
  *   any NPC type: drop clips in voices/<npc>/<mood>/ and call VOICE.say({npc...}).
  *   Every tuning number lives in VOICE_CFG at the top of this module.
  * ===================================================================== */
+// @system AUDIO  @section AUDIO/voice
 const VOICE_CFG = {
   base: "assets/audio/voices",                          // folder holding <npc>/<mood>/*.wav
   manifest: "assets/audio/voices/manifest.json",        // the generated index (refresh with tools/build-voice-manifest.js)
@@ -1901,14 +1856,6 @@ const VOICE_CFG = {
   gapMs: { idle: [60, 130], happy: [30, 80], huff: [20, 70], _default: [50, 100] },   // pause between the two clips, per mood
   pitch: { min: 0.88, max: 1.15, perSentence: 0.02 },   // playbackRate: a fixed per-npc pitch (seeded) + a small +/- jitter each sentence
   panner: { refDistance: 2.6, maxDistance: 48, rolloff: 1.1, model: "inverse", panning: "HRTF" },   // 3D distance falloff
-  // --- kappa "when they talk" behaviour (first pass, all easy to retune) ---
-  kappa: {
-    headY: 1.05,                                        // speak from head height (in KAPPA_SCALE units above the feet)
-    clickHappyChance: 0.20,                             // a plain poke plays 'happy' instead of 'idle' this often
-    annoyCount: 4, annoyWindowMs: 3000,                 // 4+ pokes within 3s -> 'huff'
-    huffCooldownMs: 2500,                               // after a huff, stay quiet (no idle/happy) this long
-    ambient: { near: 10, everyMs: [8000, 20000], volume: 0.5, maxConcurrent: 2 },   // nearby kappas mumble idle on their own
-  },
 };
 const VOICE = {
   ready: false, loading: null, disabled: false, banks: {}, bags: {}, live: [],
@@ -2092,31 +2039,11 @@ const VOICE = {
   D("discover",   { freq:800, freq2:1200, shape:"sine", atk:0.004, sus:0.03, rel:0.18, gain:0.3 }, { vol:0.35, bus:"ui" });
   D("womp",       { freq:245, freq2:92, shape:"saw", atk:0.015, sus:0.42, rel:0.3, vib:7, vibf:5.5, lpf:0.26, gain:0.4 }, { vol:0.5, bus:"ui", cd:0.05 });   // §catch5 sad descending trombone for snagged junk
   // bucket
-  D("glug",       { freq:300, freq2:180, shape:"sine", atk:0.005, sus:0.05, rel:0.12, noise:0.2, gain:0.4, vib:60, vibf:12 }, { vol:0.38 });
-  D("pour",       { shape:"noise", lpf:0.28, atk:0.02, sus:0.15, rel:0.1, gain:0.4 }, { vol:0.38 });
   // chest
-  D("creak",      { freq:220, freq2:160, shape:"saw", atk:0.03, sus:0.2, rel:0.2, gain:0.3, vib:20, vibf:8 }, { vol:0.35 });
   D("thunder",    { shape:"noise", lpf:0.08, atk:0.03, sus:0.4, rel:2.2, gain:0.6 }, { vol:0.6, bus:"ambience" });   // §20 a deep, rolling rumble
-  D("key",        { freq:1600, freq2:1200, shape:"square", atk:0.0005, sus:0.008, rel:0.05, gain:0.3 }, { vol:0.32 });
-  D("smash",      { shape:"noise", lpf:0.4, atk:0.001, sus:0.06, rel:0.2, gain:0.6, crush:20 }, { vol:0.5 });
   // creatures (day)
-  D("skitter",    { shape:"noise", lpf:0.55, atk:0.001, sus:0.015, rel:0.03, gain:0.3, crush:12 }, { vol:0.22, cd:0.08 });
-  D("squirt",     { freq:1400, freq2:600, shape:"sine", atk:0.001, sus:0.01, rel:0.05, noise:0.3, gain:0.3 }, { vol:0.28 });
-  D("seal_bark",  { freq:300, freq2:220, shape:"saw", atk:0.01, sus:0.08, rel:0.1, gain:0.4, vib:30, vibf:10 }, { vol:0.4, cd:0.2 });
-  D("otter_tap",  { freq:800, freq2:700, shape:"square", atk:0.0005, sus:0.006, rel:0.04, gain:0.25 }, { vol:0.25, cd:0.1 });
-  D("goat_bleat", [{ freq:360, freq2:300, shape:"saw", atk:0.01, sus:0.12, rel:0.1, gain:0.4, vib:40, vibf:16 },
-                    { freq:420, freq2:260, shape:"saw", atk:0.01, sus:0.1, rel:0.12, gain:0.4, vib:70, vibf:22 },
-                    { freq:300, freq2:340, shape:"saw", atk:0.02, sus:0.14, rel:0.1, gain:0.38, vib:30, vibf:10 }], { vol:0.4, cd:0.2, pv:0.14 });
-  D("goat_bell",  { freq:1500, freq2:1500, shape:"sine", atk:0.0005, sus:0.01, rel:0.2, gain:0.25 }, { vol:0.28, cd:0.1 });
-  D("goat_thump", { freq:90, freq2:60, shape:"sine", atk:0.001, sus:0.03, rel:0.14, noise:0.4, gain:0.6 }, { vol:0.5 });
   D("fish_splash", { shape:"noise", lpf:0.3, atk:0.001, sus:0.025, rel:0.1, gain:0.5 }, { vol:0.38 });
-  D("jet",        { shape:"noise", lpf:0.22, atk:0.003, sus:0.05, rel:0.12, gain:0.4, freq:1 }, { vol:0.34 });
   // creatures (night)
-  D("owl",        { freq:420, freq2:380, shape:"sine", atk:0.03, sus:0.1, rel:0.2, gain:0.3, vib:20, vibf:6 }, { vol:0.34, cd:0.3 });
-  D("bat",        { freq:5000, freq2:6500, shape:"sine", atk:0.001, sus:0.008, rel:0.02, gain:0.18 }, { vol:0.2, cd:0.1 });
-  D("raccoon",    { freq:600, freq2:900, shape:"saw", atk:0.005, sus:0.04, rel:0.06, gain:0.28, vib:120, vibf:30 }, { vol:0.3, cd:0.15 });
-  D("hcrab_scrape",{ shape:"noise", lpf:0.4, atk:0.01, sus:0.08, rel:0.06, gain:0.3, crush:40 }, { vol:0.26, cd:0.1 });
-  D("hcrab_flip", { freq:260, freq2:180, shape:"tri", atk:0.001, sus:0.02, rel:0.08, noise:0.3, gain:0.4 }, { vol:0.35 });
   // ambience one-shots
   D("flame",      { shape:"noise", lpf:0.5, atk:0.001, sus:0.01, rel:0.04, gain:0.25, crush:16 }, { vol:0.14, bus:"ambience", cd:0.1 });
   D("birdsong",   [{ freq:2400, freq2:2800, shape:"sine", atk:0.003, sus:0.02, rel:0.05, gain:0.22, vib:120, vibf:30 },
@@ -2290,6 +2217,7 @@ function eventMood() {
  *   the seed, with smooth transitions. Drives fog, light, wind, waves, rain,
  *   storms, after-storm wash-up, and light gameplay effects. Never damages.
  * ===================================================================== */
+// @system WEATHER  @section WEATHER/state
 const WEATHER_STATES = ["clear", "overcast", "fog", "rain", "storm"];
 // §20 odds per in-game day (sum = 1.00). Clear is most common; storm is rare.
 const WEATHER_ODDS = { clear: 0.46, overcast: 0.22, fog: 0.12, rain: 0.15, storm: 0.05 };
@@ -2505,6 +2433,7 @@ function updateWeatherGameplay(dt) {
 /* --------------------------------------------------------------------- *
  * § MATH  (column-major mat4)
  * --------------------------------------------------------------------- */
+// @system RENDER  @section RENDER/math
 
 const M4 = {
   perspective(fovy, aspect, near, far) {
@@ -2573,6 +2502,7 @@ const M4 = {
 /* --------------------------------------------------------------------- *
  * § GL  helpers
  * --------------------------------------------------------------------- */
+// @system RENDER  @section RENDER/gl
 
 const canvas = document.getElementById("gl");
 const gl = canvas.getContext("webgl2", { antialias: false, alpha: false });
@@ -2634,6 +2564,7 @@ vec3 skyColor(vec3 dir, vec3 sunDir, vec3 zen, vec3 hor, vec3 warm, float dusk) 
 /* --------------------------------------------------------------------- *
  * § TERRAIN  (indexed mesh; flat shading, banded color, fog → sky)
  * --------------------------------------------------------------------- */
+// @system TERRAIN  @section TERRAIN/mesh-shader
 
 const terrainVS = `#version 300 es
 precision highp float;
@@ -2829,6 +2760,7 @@ function drawTerrainChunks() {
 /* --------------------------------------------------------------------- *
  * § HEIGHT TEXTURE  (heightmap sampled by the ocean shaders)
  * --------------------------------------------------------------------- */
+// @system TERRAIN  @section TERRAIN/height-texture
 
 function buildHeightTexture() {
   const tex = gl.createTexture();
@@ -2871,6 +2803,7 @@ function buildMaterialTexture() {
 /* --------------------------------------------------------------------- *
  * § WATER  (dense grid, summed-sine waves, shoreline foam, transparency)
  * --------------------------------------------------------------------- */
+// @system WATER  @section WATER/surface-mesh
 
 const HALF_F = HALF.toFixed(1);
 const WORLD_F = WORLD.toFixed(1);
@@ -3007,6 +2940,7 @@ function buildWaterMesh() {
 /* --------------------------------------------------------------------- *
  * § SKY  (fullscreen view-ray gradient, drawn as scene background)
  * --------------------------------------------------------------------- */
+// @system RENDER  @section RENDER/sky
 
 const fsTriVS = `#version 300 es
 precision highp float;
@@ -3078,6 +3012,7 @@ function buildFsTri() {
 /* --------------------------------------------------------------------- *
  * § POST  (nearest upscale + Bayer dither + palette quantization)
  * --------------------------------------------------------------------- */
+// @system RENDER  @section RENDER/post
 
 const postFS = `#version 300 es
 precision highp float;
@@ -3177,6 +3112,7 @@ function ensureFBO() {
 /* --------------------------------------------------------------------- *
  * § CAMERA  (free-fly; walker + head-bob come in Phase 3)
  * --------------------------------------------------------------------- */
+// @system PLAYER  @section PLAYER/camera
 
 const cam = { pos: [0, 150, 700], yaw: 0, pitch: -0.14, speed: 120 };
 
@@ -3204,6 +3140,7 @@ function camForward() {
  * § PLAYER  (first-person walker: follows the terrain with a gentle head
  *   bob and can't wade into deep water, so the sea bounds the island.)
  * --------------------------------------------------------------------- */
+// @system PLAYER  @section PLAYER/walker
 
 const EYE = 1.7;             // eye height above the ground
 // §camfix keep the camera clear of the terrain, and a hysteresis band for the underwater tint (so neither flickers)
@@ -3362,6 +3299,7 @@ function enterWalk() {
 /* ===================================================================== *
  * § 14A  SWIMMING, BREATH & DROWNING
  * ===================================================================== */
+// @system PLAYER  @section PLAYER/swimming
 let onSplash = null, onHeartbeat = null, onDrown = null;   // sound hooks (Phase 18)
 function startSwim() {
   if (player.swimming) return;
@@ -3454,8 +3392,9 @@ function updateFade(dt) {
 const BIG_FALL = 14;   // kept: the big-fall threshold for the DEATH_ENABLED failsafe in landJump
 
 /* ===================================================================== *
- * § 14C  THE SPEAR, thrust (quick click) or throw (hold to charge).
- *   Only fish can be killed; everything else startles and flees unharmed.
+ * § 14C  (removed) THE SPEAR — spear/spearfishing gone with the creatures.
+ *   Only `fishRecord` survives, load-only, so old saves still show their
+ *   journal "record cm"; nothing writes it any more.
  * ===================================================================== */
 // §strip the spear and spearfishing are removed. fishRecord is kept load-only so old saves still show their
 // "record cm" in the journal; nothing writes it any more. onSpear stays: it's the generic hit/jab/thud sound
@@ -3471,6 +3410,7 @@ try { fishRecord = JSON.parse(localStorage.getItem("bc_fishrec") || "{}"); } cat
  *   runs). Reveal the catch's species & weight, keep or release it.
  *   Mobile: a Cast / Reel hold-button; desktop: hold left-mouse (or F).
  * ===================================================================== */
+// @system GAMEPLAY  @section GAMEPLAY/fishing
 let relaxedFishing = false;
 // §climb optional modes (persisted): climbing on/off, never run out of bait, never starve
 let infiniteWorms = false, noStarvation = false;   // §strip climbing removed
@@ -4026,6 +3966,7 @@ function teleportToDeepWater() {
 /* --------------------------------------------------------------------- *
  * § SAFETY  (never fall out of the world)
  * --------------------------------------------------------------------- */
+// @system PLAYER  @section PLAYER/safety
 
 const lastSafe = { x: 0, z: 0 };
 let safeTimer = 0;
@@ -4138,6 +4079,7 @@ function stepsPerSec() { const t = (typeof clock !== "undefined" ? clock.t : 0);
  * § COLLISION  (circle colliders, trunks, boulders, POIs, in a spatial
  *   hash so the player can slide around them cheaply. Props/POIs fill it.)
  * --------------------------------------------------------------------- */
+// @system PLAYER  @section PLAYER/collision
 
 const PLAYER_R = 0.45;
 const colliders = [];           // { x, z, r }
@@ -4178,6 +4120,7 @@ function slideCircles(x, z) {
 /* --------------------------------------------------------------------- *
  * § INPUT
  * --------------------------------------------------------------------- */
+// @system INPUT  @section INPUT/keyboard-mouse
 
 const keys = Object.create(null);
 let ditherOn = true;
@@ -4186,6 +4129,7 @@ let ditherOn = true;
  *   The flat-shaded low-poly style is kept at every level; higher settings
  *   just make it crisper (resolution, AA), add shadows and show more world.
  * ===================================================================== */
+// @system SETTINGS  @section SETTINGS/graphics
 // resScale is a fraction of the native target width → the low-res FBO width (the chunky↔crisp knob).
 // The flat-shaded low-poly style stays at every level; higher presets just make it crisper.
 const GFX_PRESETS = {
@@ -4221,6 +4165,7 @@ function saveGFX() { try { const o = { preset: GFX.preset }; for (const k of GFX
  *              big flat sand/grass bands aren't a single dead tone.
  *     #9 vignette  a subtle focus darkening at the frame edge.
  * ===================================================================== */
+// @system ATMO  @section ATMO/effects
 const ATMO = {
   tonemap: true, exposure: 1.1,
   hemi: true,
@@ -4390,6 +4335,7 @@ addEventListener("wheel", (e) => {
 /* --------------------------------------------------------------------- *
  * § UI
  * --------------------------------------------------------------------- */
+// @system UI  @section UI/hud
 
 const overlay = document.getElementById("overlay");
 let lookSensMobile = 0.0045;   // look sensitivity (Settings slider; used by mobile look)
@@ -4416,6 +4362,7 @@ let lookSensMobile = 0.0045;   // look sensitivity (Settings slider; used by mob
 /* --------------------------------------------------------------------- *
  * § 12A  TITLE SCREEN, seeded island name, faceted wordmark, menu, swoop
  * --------------------------------------------------------------------- */
+// @system UI  @section UI/title
 const GOLDEN_HOUR = 0.53;                 // a warm, low evening sun for the title orbit
 
 // A deterministic, evocative island name per seed (never touches the world rng stream).
@@ -4939,7 +4886,7 @@ function finishEat() {
 
 /* ---- the interaction target, independent of the equipped tool (§11.2 / §11.3) ---- */
 // Which tool performs the primary action on each target kind.
-const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", crop: "hand", goblin: "hand", goat: "hand", salt: "hand", creature: "hand", nest: "hand", chest: "hand", openchest: "hand", storagebox: "hand", driftwood: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
+const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", crop: "hand", salt: "hand", driftwood: "hand", storagebox: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
 function aimInfo() {
   if (mode !== "walk") return null;
   if (curTarget) return { kind: curTarget.kind, obj: curTarget.obj, x: curTarget.x, z: curTarget.z, need: TOOL_FOR_KIND[curTarget.kind] || "hand" };
@@ -5011,6 +4958,7 @@ function drawBounds(view) {
  *   screen = floating joystick; right half = drag to look; on-screen
  *   Pick up / Journal / Pause buttons. Blocks page scroll / zoom / menus.
  * ===================================================================== */
+// @system INPUT  @section INPUT/touch
 if (IS_TOUCH) (function mobileControls() {
   // lookSensMobile is a module-scope setting (Settings slider), declared once above
 
@@ -5197,6 +5145,7 @@ if (IS_TOUCH) (function mobileControls() {
  * § PROP & POI MESH BUILDER  (tiny procedural models; triangle soup, flat
  *   shaded in the fragment shader like everything else)
  * --------------------------------------------------------------------- */
+// @system PROPS  @section PROPS/meshes
 
 function Mesh() { return { pos: [], col: [] }; }
 function mV(m, x, y, z, c) { m.pos.push(x, y, z); m.col.push(c[0], c[1], c[2]); }
@@ -5387,7 +5336,6 @@ function broadleafMesh() {
   }
   return m;
 }
-function boulderMesh() { const m = Mesh(); mRock(m, mulberry32(0x9e37 ^ SEED_INT), [0.46, 0.44, 0.41]); return m; }
 // §13.7 a richer boulder: a jittered lumpy hull with per-face colour variation, moss on the
 // upward faces, lichen spots, a flattened sunk base and a few pebbles around the foot.
 // style ∈ "rounded" | "slab" | "jagged"; base colour sets the biome feel.
@@ -5475,14 +5423,6 @@ function wildflowerMesh() {
   }
   return m;
 }
-function cloverMesh() {
-  const m = Mesh(), g = [0.3, 0.5, 0.26], g2 = [0.35, 0.55, 0.3], n = 5;
-  for (let k = 0; k < n; k++) { const a = (k / n) * 6.2832 + 0.3, dx = Math.cos(a)*0.1, dz = Math.sin(a)*0.1, hh = 0.1 + (k % 2) * 0.06, c = k % 2 ? g : g2;
-    mBox(m, dx*0.5, hh/2, dz*0.5, 0.008, hh/2, 0.008, g2);
-    for (let l = 0; l < 3; l++) { const la = l/3*6.2832; mTri(m, [dx, hh, dz], [dx+Math.cos(la)*0.05, hh+0.012, dz+Math.sin(la)*0.05], [dx+Math.cos(la+2.1)*0.05, hh+0.012, dz+Math.sin(la+2.1)*0.05], c); }
-  }
-  return m;
-}
 // §veg5 a harvestable tall-grass clump (strip it for Plant Fiber). "cut" = the short stubble left behind.
 function tallGrassMesh(cut) {
   // §veg5 a fuller tuft: more blades, each a wider creased blade (two triangles folded along a centre ridge)
@@ -5508,6 +5448,7 @@ function fenceMesh() { const m = Mesh(); mBox(m, 0, 0.45, 0, 0.05, 0.45, 0.05, [
 /* --------------------------------------------------------------------- *
  * § INSTANCED PROP RENDERER  (one draw call per prop type)
  * --------------------------------------------------------------------- */
+// @system RENDER  @section RENDER/instanced-props
 
 const propVS = `#version 300 es
 precision highp float;
@@ -5680,6 +5621,7 @@ function makeInstanced(mesh, inst) {
 /* --------------------------------------------------------------------- *
  * § POINTS OF INTEREST  (2–4 per island, chosen & placed by seed)
  * --------------------------------------------------------------------- */
+// @system WORLD  @section WORLD/poi
 
 let POIS = [];
 const POI_R = { tidepools: 9, seacave: 7, cairn: 3, pier: 5 };
@@ -5761,6 +5703,7 @@ function emitPOI(m, poi) {
 /* --------------------------------------------------------------------- *
  * § PLACEMENT  (jittered grid ≈ Poisson; bands by height & slope)
  * --------------------------------------------------------------------- */
+// @system WORLD  @section WORLD/placement
 
 let propTypes = [];
 let kelpStalks = [];             // §P3 harvestable bull-kelp: parallel to the kelp instance buffer (ii = instance index)
@@ -6158,6 +6101,7 @@ function drawContactShadows(view) {
 /* ===================================================================== *
  * § LIFE  (creatures & finds, instanced, animated, tide/time aware)
  * ===================================================================== */
+// @system WORLD  @section WORLD/finds
 
 // Dynamic instanced type: static base mesh + a per-frame instance buffer.
 function makeDynamic(mesh, maxN) {
@@ -6214,36 +6158,6 @@ function crabMesh(col) {
 }
 // §lob5 low-poly lobster, built PALE so the entity tint sets the hue (brick-red by default, electric-blue for the rare morph).
 // Faces +X: head/claws/antennae forward, segmented abdomen + tail-fan trailing at −X.
-function lobsterMesh(colIgnored) {
-  const m = Mesh();
-  const sh = [0.92,0.86,0.82], dk = [0.74,0.68,0.66], cl = [1.0,0.9,0.84], eye = [0.12,0.12,0.14];
-  // cephalothorax (head + body)
-  mBox(m, 0.14, 0.13, 0, 0.26, 0.11, 0.15, sh);
-  mBox(m, 0.36, 0.17, 0, 0.1, 0.07, 0.11, sh);                     // raised rostrum/head
-  // segmented abdomen curling up & narrowing toward the tail
-  let tx = -0.12, ty = 0.13, hw = 0.14, seg = 0.1;
-  for (let i = 0; i < 5; i++) { mBox(m, tx - seg, ty, 0, seg, 0.095 - i*0.01, hw, i % 2 ? dk : sh); tx -= seg*1.8; ty += 0.016*i; hw *= 0.86; }
-  // tail fan (telson + uropods), flat spreading plates
-  for (const s of [-1.3, -0.45, 0.45, 1.3]) mTri(m, [tx+0.04, ty, 0], [tx-0.18, ty+0.03, s*0.1], [tx-0.16, ty+0.03, s*0.03], dk);
-  // two big claws reaching forward (±z)
-  for (const s of [-1, 1]) {
-    mBox(m, 0.42, 0.11, s*0.17, 0.14, 0.035, 0.035, sh);           // arm
-    mBox(m, 0.6, 0.1, s*0.22, 0.11, 0.08, 0.09, cl);               // claw body (heavy)
-    mBox(m, 0.74, 0.13, s*0.22, 0.06, 0.028, 0.03, cl);            // upper pincer
-    mBox(m, 0.74, 0.07, s*0.22, 0.06, 0.028, 0.03, cl);            // lower pincer
-  }
-  // long antennae sweeping forward & out
-  for (const s of [-1, 1]) {
-    mBox(m, 0.5, 0.2, s*0.08, 0.12, 0.012, 0.012, dk);
-    mBox(m, 0.72, 0.22, s*0.15, 0.14, 0.01, 0.01, dk);
-    mBox(m, 0.95, 0.25, s*0.22, 0.17, 0.008, 0.008, dk);
-  }
-  // eyes on short stalks
-  for (const s of [-1, 1]) mBox(m, 0.42, 0.21, s*0.06, 0.03, 0.045, 0.03, eye);
-  // walking legs tucked under
-  for (const s of [-1, 1]) for (let k = 0; k < 3; k++) mBox(m, 0.12 - k*0.12, 0.02, s*0.16, 0.02, 0.055, 0.02, dk);
-  return m;
-}
 // §fishpolish detailed low-poly fish: rounded body (6-sided lathe) + forked tail, dorsal, paired pectorals, eye, mouth.
 // Convention: nose at +x, tail at -x, back = +y. All species share this builder so icons, in-hand and swimming models match.
 function finFishMesh(col, o) {
@@ -6288,33 +6202,11 @@ function finFishMesh(col, o) {
   return m;
 }
 function fishMesh(col) { return finFishMesh(col || [0.7,0.75,0.8], { h: 0.15, wz: 0.08 }); }
-function anemoneMesh(col) { const m = Mesh(); mCyl(m,0,0.2,0.28,0.24,7,[col[0]*0.7,col[1]*0.7,col[2]*0.7]); for(let i=0;i<9;i++){const a=i/9*6.283; mTri(m,[Math.cos(a)*0.2,0.2,Math.sin(a)*0.2],[Math.cos(a)*0.32,0.52,Math.sin(a)*0.32],[Math.cos(a+0.35)*0.2,0.2,Math.sin(a+0.35)*0.2],col);} return m; }
 function starMesh(col) { const m = Mesh(); for(let i=0;i<5;i++){const a0=i/5*6.283,a1=(i+0.5)/5*6.283,a2=(i+1)/5*6.283; mTri(m,[0,0.06,0],[Math.cos(a0)*0.2,0.05,Math.sin(a0)*0.2],[Math.cos(a1)*0.5,0.08,Math.sin(a1)*0.5],col); mTri(m,[0,0.06,0],[Math.cos(a1)*0.5,0.08,Math.sin(a1)*0.5],[Math.cos(a2)*0.2,0.05,Math.sin(a2)*0.2],col);} return m; }
-function urchinMesh(col) { const m = discMesh(0.1,0.3,6,0.15,col); const sp=[col[0]*1.3,col[1]*1.3,col[2]*1.3]; for(let i=0;i<10;i++){const a=i/10*6.283; mTri(m,[Math.cos(a)*0.25,0.1,Math.sin(a)*0.25],[Math.cos(a)*0.5,0.45,Math.sin(a)*0.5],[Math.cos(a+0.25)*0.25,0.1,Math.sin(a+0.25)*0.25],sp);} return m; }
 // §models a chunky low-poly hermit crab: a big rounded shell at the back, an orange body peeking out the front
 // with two big black stalk-eyes, splayed legs and a pair of front claws.
-function hermitMesh(col) { const m = Mesh(); col = col || [0.82,0.72,0.52];
-  const body=[0.92,0.42,0.14], body2=[0.8,0.34,0.11], eye=[0.05,0.05,0.07], claw=[0.95,0.5,0.2];
-  // --- borrowed coiled shell: a solid spiral (no cracks/holes), swirl to the side, dark opening facing forward ---
-  const shell = spiralShellMesh({ turns:2.5, r0:0.055, growth:1.72, tubeF:0.82, aperture:false, c1:[0.92,0.86,0.68], c2:[0.8,0.64,0.46], apertureAtOrigin:true });
-  rotMeshZ(shell, 1.9);                                        // aperture faces forward-down so the crab emerges from it and the shell sits up/back
-  mergeAt(m, shell, 0.04, 0.18, 0);                            // raised so the shell bottom is flush with the body, not hanging past the feet
-  // --- orange body tucked INTO the shell opening at the front ---
-  mergeAt(m, scaleMeshXYZ(sphM(0.12, body, 8, 4), 1.1, 0.9, 1.0), 0.14, 0.09, 0);
-  // --- small eyes on short stalks, forward ---
-  for (const s of [-1,1]) { mBox(m, 0.23, 0.14, s*0.05, 0.014, 0.05, 0.014, body2); mergeAt(m, sphM(0.025, eye, 6, 3), 0.26, 0.18, s*0.05); }
-  // --- walking legs, three per side (femur out, foot down) ---
-  for (const s of [-1,1]) for (let i=0;i<3;i++){ const fx=0.08+i*0.072;
-    mBox(m, fx, 0.065, s*(0.09+i*0.02), 0.05, 0.02, 0.02, body);
-    mBox(m, fx+0.04, 0.028, s*(0.14+i*0.03), 0.02, 0.055, 0.02, body2); }
-  // --- two front claws ---
-  for (const s of [-1,1]) { mBox(m, 0.24, 0.08, s*0.1, 0.06, 0.025, 0.03, body); mergeAt(m, scaleMeshXYZ(sphM(0.055, claw, 7, 4), 1.2, 0.8, 0.9), 0.34, 0.08, s*0.11); }
-  return m; }
 // §14C huntable fish, distinct silhouettes so each reads at a glance
-function flounderMesh(col) { const m = Mesh(); col = col||[0.62,0.56,0.42];   // flat oval, camouflaged on sand
-  mergeMesh(m, discMesh(0.02, 0.5, 9, 0.04, col)); mergeMesh(m, discMesh(0.0, 0.5, 9, -0.03, [col[0]*0.8,col[1]*0.8,col[2]*0.8]));
-  mTri(m, [-0.42,0.02,0.12], [-0.42,0.02,-0.12], [-0.62,0.02,0], [col[0]*0.9,col[1]*0.9,col[2]*0.9]);   // tail
-  mBox(m, 0.3, 0.07, 0.12, 0.03, 0.03, 0.03, [0.1,0.1,0.1]); return m; }   // an eye on top
+// an eye on top
 // bright orange-red, deep body, spiny dorsal, pale belly, the classic rockfish
 function rockfishMesh(col) { col = col || [0.84,0.3,0.18];
   return finFishMesh(col, { len: 0.52, tail: -0.5, h: 0.22, wz: 0.1, top: 1.12, belly: 0.6,
@@ -6328,10 +6220,6 @@ function lingcodMesh(col) { col = col || [0.4,0.44,0.34];
     dorsalN: 9, dorFront: 0.78, dorBack: 0.16, spineH: 0.12, spineL: 0.04, dorBase: 0.82, spineCol: [col[0]*0.82,col[1]*0.82,col[2]*0.72],
     tailH: 0.3, tlen: 0.26, fork: 0.05, pecT: 0.64, stripes: [0.3,0.0,-0.34], stripeW: 0.07, stripeCol: [col[0]*0.6,col[1]*0.58,col[2]*0.45], eyeCol: [0.9,0.85,0.55] }); }
 // small silvery schooling fish, slim, forked tail, bright flank
-function minnowMesh(col) { col = col || [0.72,0.77,0.84];
-  return finFishMesh(col, { len: 0.42, tail: -0.4, h: 0.1, wz: 0.05, top: 1.16, belly: 0.82,
-    prof: [[1,0.14,0.14],[0.8,0.6,0.64],[0.55,1,1],[0.3,0.78,0.72],[0.08,0.3,0.22],[0,0.12,0.08]],
-    tailH: 0.17, tlen: 0.16, fork: 0.07, dorFront: 0.58, dorBack: 0.34, finH: 0.08, eyeCol: [0.95,0.95,0.95] }); }
 // §fish5 five new rod species, each a distinct silhouette
 function eelMesh(col) { col = col || [0.3,0.42,0.3];
   return finFishMesh(col, { len: 0.88, tail: -0.92, h: 0.08, wz: 0.065, top: 1.1, belly: 0.82,
@@ -6370,74 +6258,9 @@ function ghostfishMesh(col) { col = col || [0.74,0.84,0.92];
     prof: [[1,0.16,0.16],[0.82,0.66,0.7],[0.56,1,0.95],[0.3,0.78,0.72],[0.08,0.34,0.26],[0,0.14,0.1]],
     tailH: 0.24, tlen: 0.24, fork: 0.08, dorFront: 0.66, dorBack: 0.2, finH: 0.12, eyeCol: [0.3,0.9,0.95] }); }
 // §12B bigger, high-contrast gull: white body, grey wings, dark wingtips, yellow beak.
-function sealMesh() { const m = Mesh(); const c=[0.4,0.4,0.42]; for(let i=0;i<7;i++){const a0=i/7*6.283,a1=(i+1)/7*6.283,r1=0.35; mTri(m,[1.3,0.3,0],[0.2,0.3+Math.sin(a0)*r1,Math.cos(a0)*r1*0.8],[0.2,0.3+Math.sin(a1)*r1,Math.cos(a1)*r1*0.8],c); mTri(m,[-0.9,0.25,0],[0.2,0.3+Math.sin(a0)*r1,Math.cos(a0)*r1*0.8],[0.2,0.3+Math.sin(a1)*r1,Math.cos(a1)*r1*0.8],[c[0]*0.9,c[1]*0.9,c[2]*0.9]);} return m; }
-function jellyMesh() { const m = discMesh(0.3,0.4,8,0.25,[0.75,0.7,0.85]); for(let i=0;i<6;i++){const a=i/6*6.283; mTri(m,[Math.cos(a)*0.3,0.3,Math.sin(a)*0.3],[Math.cos(a)*0.3,-0.3,Math.sin(a)*0.3],[Math.cos(a+0.25)*0.3,0.1,Math.sin(a+0.25)*0.3],[0.7,0.65,0.8]);} return m; }
 // §turtle a sea turtle, authored in Blender and baked to {pos,col} (flat-shaded vertex colours, 182 tris). The raw model
 // is normalized here: centred on XZ, belly rested on y=0, scaled so its longest footprint is 1 unit, and yawed so it
 // faces +X (the creature-draw convention) so e.yaw points head-first like the other walkers.
-function turtleMeshRaw() {
-  const P = [
-    .7279,-.3714,-.1611,1.0259,-.1379,-.1379,.6891,-.2483,.9805,.6594,-.3354,-.6964,.8257,-.2253,-.6399,
-    .2802,-.2061,-1.718,.1867,.2269,-1.9341,.1599,.2476,-1.4235,.7488,.4975,.4089,.562,-.0205,1.3478,1.0833,
-    -.0707,.4013,.9534,-.1147,.4014,.7147,-.0231,.8561,.4659,.2085,-1.2885,.4807,.0845,-.9347,.2451,.2639,
-    -1.2628,1.1197,-.0923,-.1816,.8471,-.0113,-.6832,0,.8099,.3089,-.0005,.6562,.8319,.7851,.4913,-.1363,
-    .2918,.7001,-.5792,0,.3673,1.3421,.1782,.3195,-1.6293,.0023,-.1866,-1.9957,.0087,.0873,-2.201,0,.6277,
-    -.9502,0,.7667,-.5834,.2727,-.1223,-1.2515,.4994,-.2403,-.9915,.0012,-.3746,-1.0625,-.0012,-.2496,
-    -1.2989,0,.8038,-.1611,.0004,-.4959,-.1918,-.2438,.2604,-1.2659,.5188,-.1878,1.2786,.0031,-.1816,1.4343,
-    0,-.3614,.8091,-.1443,.3136,-1.4204,.0021,-.0627,1.4311,.5158,-.0613,1.2743,0,-.0338,1.5378,.9247,-.1509,
-    1.0581,.7227,-.275,1.7013,1.125,-.3208,1.2762,1.0877,-.3425,1.6769,.7286,-.1918,-1.2077,.9665,-.3741,
-    -.8009,1.0268,-.2216,-.8069,1.0634,-.3722,-1.2209,1.8499,-.3587,-.537,1.3959,-.4274,-1.1241,1.5914,-.313,
-    -.1206,1.9347,-.3188,-.0057,-.7186,-.1818,.8594,-1.0238,-.1542,-.1369,-.6344,-.3868,-.6924,-.8087,-.2884,
-    -.6362,-.1658,.234,-1.9356,-.2786,-.1948,-1.7204,-1.0833,-.0707,.4013,-.562,-.0205,1.3478,-.7488,.4975,
-    .4089,-.4566,.1832,1.3161,-.7171,-.0262,.8556,-.9538,-.1187,.4018,-.8463,-.0626,-.6806,-1.1212,-.0959,
-    -.1812,-.9258,.0206,-.7437,-.2918,.7001,-.5792,-.7851,.4913,-.1363,-.5173,-.1844,1.2785,-.1562,.3262,
-    -1.6307,-.4659,.2085,-1.2885,-.2707,-.1209,-1.2529,-.4819,-.2868,-.984,-.5161,-.0578,1.2732,-.6971,-.252,
-    1.709,-.9236,-.1738,1.0655,-1.1025,-.3527,1.2984,-1.0534,-.3509,1.6989,-.4883,.0534,-.9387,-.7144,-.2647,
-    -1.2017,-.925,-.4881,-.8076,-.9981,-.3443,-.7952,-1.3609,-.5464,-1.12,-1.513,-.5958,-.1081,-1.848,-.6505,
-    .018
-  ];
-  const C = [ .0395,.169,.0465, .0838,.0356,.0182 ];
-  const I = [
-    0,1,2,3,4,1,1,0,3,5,6,7,8,9,10,2,11,12,13,14,15,16,1,17,1,16,10,10,11,1,18,19,8,8,20,21,21,18,8,9,8,19,
-    19,22,9,7,6,23,20,13,21,24,25,5,6,5,25,26,27,21,28,29,30,30,31,28,27,32,21,3,0,33,23,34,7,2,35,36,36,37,
-    2,0,2,33,25,23,6,15,7,34,37,33,2,18,21,32,38,26,13,5,28,31,39,40,9,9,41,39,42,40,43,40,42,12,2,12,42,35,
-    2,42,44,43,35,35,42,44,44,42,45,43,45,42,43,44,45,29,3,33,33,30,29,21,13,26,14,13,17,29,14,46,4,3,47,48,
-    46,14,14,17,48,49,47,3,3,29,49,48,50,46,50,51,49,49,46,50,51,52,47,47,49,51,50,48,52,52,51,50,52,50,53,
-    50,52,53,9,22,41,16,20,8,8,10,16,17,13,20,20,16,17,9,40,12,9,12,11,11,10,9,5,7,15,28,5,15,38,13,15,48,47,
-    52,47,48,17,17,4,47,46,49,29,40,35,43,36,35,40,40,39,36,4,17,1,11,2,1,28,15,14,14,29,28,19,22,30,30,18,
-    19,41,39,33,54,55,56,55,57,56,34,58,59,60,61,62,63,62,61,64,65,54,66,55,67,67,68,66,55,65,60,60,67,55,62,
-    19,18,62,18,69,69,70,62,37,54,56,19,62,63,54,37,71,72,58,34,69,73,70,25,59,58,23,58,72,69,27,26,74,31,30,
-    30,75,74,24,59,25,69,32,27,23,72,34,59,24,5,36,71,37,63,22,19,33,37,56,58,23,25,32,69,18,59,5,31,31,74,
-    59,39,41,61,61,76,39,77,76,78,64,78,76,78,64,54,78,54,71,79,78,71,71,77,79,80,78,79,78,80,77,80,79,77,75,
-    30,33,26,38,69,73,69,38,33,56,75,81,66,68,68,73,81,82,81,75,83,56,57,84,66,81,81,82,84,82,75,56,56,83,82,
-    82,85,84,85,82,83,83,86,85,86,84,85,85,87,86,87,85,86,27,30,26,41,22,63,63,61,41,67,60,62,62,70,67,68,67,
-    70,70,73,68,64,76,61,61,60,65,65,64,61,30,32,18,30,27,32,41,30,22,59,74,34,38,15,34,81,34,74,86,83,84,83,
-    57,66,66,84,83,77,71,76,36,39,76,76,71,36,55,66,57,55,54,65,39,37,33,36,37,39,33,30,41,34,81,73,73,38,34,
-    74,75,81
-  ];
-  const J = [
-    0,0,0,0,1,0,1,1,1,1,1,1,1,1,1,0,1,0,0,1,0,0,1,0,0,0,0,0,0,0,0,1,1,0,1,1,0,0,0,0,0,0,0,0,0,0,0,1,1,0,0,0,
-    0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,1,1,1,1,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,1,1,1,1,1,0,1,
-    0,0,1,0,0,1,0,0,0,1,0,0,0,1,0,0,1,0,0,1,1,0,0,0,0,0,0,0,0,0,0,1,1,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,
-    1,1,1,1,1,1,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,1,1,0
-  ];
-  const pos = [], col = [];
-  for (let n = 0; n < I.length; n++) { const p = I[n]*3, c = J[(n/3)|0]*3;
-    pos.push(P[p], P[p+1], P[p+2]); col.push(C[c], C[c+1], C[c+2]); }
-  return { pos, col };
-}
-function turtleMesh() {
-  const m = turtleMeshRaw(), pos = m.pos;
-  // yaw about Y so the model's head (the raised, centred point at raw -Z) points +X, matching the creature-draw heading convention
-  for (let i = 0; i < pos.length; i += 3) { const x = pos[i], z = pos[i+2]; pos[i] = -z; pos[i+2] = x; }
-  // normalize: centre on XZ, rest the belly on y=0, scale so the longest horizontal span is 1 unit
-  let minX=1e9,maxX=-1e9,minY=1e9,maxY=-1e9,minZ=1e9,maxZ=-1e9;
-  for (let i=0;i<pos.length;i+=3){ const x=pos[i],y=pos[i+1],z=pos[i+2];
-    if(x<minX)minX=x; if(x>maxX)maxX=x; if(y<minY)minY=y; if(y>maxY)maxY=y; if(z<minZ)minZ=z; if(z>maxZ)maxZ=z; }
-  const cx=(minX+maxX)/2, cz=(minZ+maxZ)/2, s=1/Math.max(maxX-minX, maxZ-minZ);
-  for (let i=0;i<pos.length;i+=3){ pos[i]=(pos[i]-cx)*s; pos[i+1]=(pos[i+1]-minY)*s; pos[i+2]=(pos[i+2]-cz)*s; }
-  return m;
-}
 // finds
 // §shells a spiral whelk: a coiled horn swept along a shrinking helix, big body-whorl at the base, pointed spire on top.
 function shellMesh() { return spireShell(0.64, 0.2, 0.72, 4.2, [0.93,0.86,0.75], [0.82,0.72,0.6], 0.021); }   // §shells a tall whelk/turret
@@ -6461,7 +6284,6 @@ function scallopMesh() { const m = Mesh(); const c=[0.96,0.82,0.74], c2=[0.87,0.
   for (const s of [-1,1]) { const a=s*span/2; mBox(m, Math.cos(a)*0.09, 0.015, Math.sin(a)*0.09, 0.09,0.012,0.045, umbo); }   // big flat wing-ears at the hinge
   mergeAt(m, sphM(0.045, umbo, 6, 3), 0, 0.018, 0);                      // hinge umbo
   return m; }
-function glassMesh(col) { const m = Mesh(); mRock(m, mulberry32(7), col); return m; }
 // §models sea glass: a rounded, wave-tumbled pebble (not a jagged shard) with a brighter inner facet to fake
 // the frosted shine / translucency. Vibrant by default; variants pass their own colour (red, end-of-day).
 function seaGlassMesh(col) { col = col || [0.3,0.84,0.5]; const m = Mesh();
@@ -6599,11 +6421,6 @@ function porcelainMesh() { const m = Mesh(); const w=[0.92,0.9,0.86], bl=[0.3,0.
 function compassMesh() { const m = Mesh(); const br=[0.7,0.6,0.3], fc=[0.88,0.86,0.8];
   mCyl(m,0,0.1,0.42,0.42,12,br); mergeMesh(m, discMesh(0.11,0.36,12,0,fc)); mBox(m,0,0.13,0,0.22,0.02,0.05,[0.7,0.2,0.2]); return m; }
 function loreMesh() { const m = Mesh(); const pa=[0.82,0.74,0.56]; mCyl(m,-0.4,0.4,0.12,0.12,8,pa); mCyl(m,-0.42,0.42,0.14,0.14,8,[0.6,0.5,0.35]); return m; }
-function keyMesh() { const m = Mesh(); const br=[0.72,0.6,0.28];
-  mCyl(m,-0.5,0.3,0.05,0.05,6,br); for (let i=0;i<6;i++){ const a=i/6*6.283; mBox(m,Math.cos(a)*0.14,0.42,Math.sin(a)*0.14,0.05,0.05,0.05,br); }
-  mBox(m,0.06,-0.5,0,0.1,0.04,0.05,br); mBox(m,0.1,-0.42,0,0.06,0.04,0.05,br); return m; }
-function mapPieceMesh() { const m = Mesh(); const pa=[0.82,0.73,0.54], e=[0.66,0.56,0.4];
-  mBox(m,0,0.02,0,0.34,0.02,0.26,pa); mBox(m,0.3,0.02,0,0.06,0.025,0.26,e); mBox(m,-0.3,0.02,0,0.06,0.025,0.26,e); return m; }
 function shardMesh() { const m = Mesh(); const w=[0.9,0.88,0.84]; mTri(m,[-0.2,0,-0.1],[0.25,0.02,0.05],[0,0.03,0.22],w); mTri(m,[-0.2,0,-0.1],[0,0.03,0.22],[-0.25,0.01,0.12],w); return m; }
 // §R4 chest body: plank walls with gaps, iron corner brackets & bands, a lock plate + hasp, and rope handles.
 const CHEST_H = 0.26, CHEST_W = 0.5, CHEST_D = 0.34;        // half-extents; lid hinges at y = 2*CHEST_H, z = -CHEST_D
@@ -6686,29 +6503,7 @@ function pickaxeMesh() { const m = Mesh();
   mBox(m, 0.03, 0.88, 0.04, 0.05, 0.045, 0.012, TM_HI);                       // highlight face
   return m; }
 // §tools a classic tin pail: tapered body (wider at the top), a smooth rolled rim, and a swinging arc handle
-function bucketItemMesh() { const m = Mesh(); const tin = [0.6,0.64,0.7], dk = [0.4,0.43,0.49], hi = [0.73,0.77,0.82];
-  mCyl(m, -0.32, 0.3, 0.24, 0.34, 12, tin);                         // tapered body
-  mergeMesh(m, discMesh(-0.32, 0.24, 12, -0.04, dk));               // bottom
-  mCyl(m, -0.03, 0.01, 0.305, 0.312, 12, dk);                       // a seam band for the tin look
-  mCyl(m, 0.3, 0.37, 0.355, 0.35, 12, hi);                          // rolled rim (a smooth wider lip, not crenellations)
-  // §bucket OPEN TOP: no top face, so you see inside. The interior walls + floor read solid because
-  // nothing is back-face culled (the body/rim are tubes, the bottom disc stays). A darker inner-wall
-  // skin keeps the inside from looking identical to the lit outside.
-  mCyl(m, -0.3, 0.34, 0.225, 0.325, 12, dk);                        // inner wall skin (just inside the body), darker
-  mergeMesh(m, discMesh(-0.3, 0.23, 12, 0.0, [0.34,0.37,0.42]));    // inner floor, sits on top of the real bottom
-  // swing handle: one smooth curved tube arcing over the top (not broken cubes)
-  mArcTube(m, 0, 0.33, 0.35, 0.028, 0, Math.PI, 18, 8, dk);
-  for (const s of [-1,1]) mBox(m, s*0.35, 0.33, 0, 0.03, 0.03, 0.055, dk);   // pivot lugs where the handle meets the rim
-  return m; }
 // §A1 the water surface that sits just below the pail's rim when it holds water, the game's water tint, lighter in the middle
-function bucketWaterFPMesh() { const m = Mesh(); const edge = [0.13,0.36,0.46], mid = [0.22,0.52,0.6];
-  const y = 0.24, r = 0.29;
-  for (let i = 0; i < 16; i++) { const a0 = i/16*6.2832, a1 = (i+1)/16*6.2832;
-    mTri(m, [0,y,0], [Math.cos(a0)*r,y,Math.sin(a0)*r], [Math.cos(a1)*r,y,Math.sin(a1)*r], mid); }
-  // a darker ring just inside the rim for depth
-  for (let i = 0; i < 16; i++) { const a0 = i/16*6.2832, a1 = (i+1)/16*6.2832;
-    mQuad(m, [Math.cos(a0)*r,y,Math.sin(a0)*r], [Math.cos(a1)*r,y,Math.sin(a1)*r], [Math.cos(a1)*(r*0.7),y+0.004,Math.sin(a1)*(r*0.7)], [Math.cos(a0)*(r*0.7),y+0.004,Math.sin(a0)*(r*0.7)], edge); }
-  return m; }
 function stumpMesh() { const m = Mesh(); mCyl(m,0,0.4,0.32,0.28,7,BARK); mergeMesh(m, discMesh(0.4,0.28,7,0.03,[0.72,0.6,0.42])); return m; }
 function logMesh() { const m = Mesh(); mCyl(m,-0.45,0.45,0.15,0.15,7,BROWN); mergeMesh(m, discMesh(0.45,0.15,7,0.02,[0.66,0.56,0.42])); mergeMesh(m, discMesh(-0.45,0.15,7,-0.02,[0.66,0.56,0.42])); return m; }
 // §models a whole coconut: a smooth, slightly oval husk-brown nut (many faces, no seams) with the three small dark
@@ -6723,28 +6518,8 @@ function coneMesh2() { const m = Mesh(); mCyl(m,0,0.34,0.13,0,6,[0.44,0.32,0.2])
 function nutMesh() { const m = Mesh(); mCyl(m,-0.1,0.14,0.14,0.14,7,[0.5,0.36,0.22]); mCyl(m,0.14,0.26,0.13,0,6,[0.4,0.3,0.2]); mergeMesh(m, discMesh(-0.1,0.14,7,-0.05,[0.55,0.4,0.26])); return m; }
 function stoneMesh() { const m = Mesh(); mRock(m, mulberry32(0x51a3 ^ SEED_INT), [0.52, 0.5, 0.47]); return m; }
 // A derpy goat, facing +Z, origin at the feet. Oversized eyes with horizontal pupils.
-function goatMesh() {
-  const m = Mesh(); const coat=[0.74,0.70,0.62], dark=[0.1,0.1,0.12], white=[0.96,0.96,0.94], horn=[0.42,0.38,0.3], snout=[0.8,0.77,0.7];
-  mBox(m, 0, 0.52, 0, 0.21, 0.19, 0.4, coat);                 // body
-  for (const sx of [-0.15, 0.15]) for (const sz of [-0.28, 0.28]) mBox(m, sx, 0.2, sz, 0.045, 0.2, 0.045, coat); // legs
-  mBox(m, 0, 0.74, 0.46, 0.16, 0.16, 0.17, coat);             // head
-  mBox(m, 0, 0.67, 0.62, 0.1, 0.09, 0.09, snout);             // snout
-  for (const sx of [-0.13, 0.13]) { mBox(m, sx, 0.83, 0.56, 0.075, 0.09, 0.05, white);  // big eyes
-    mBox(m, sx, 0.83, 0.605, 0.06, 0.02, 0.015, dark); }       // horizontal pupil
-  for (const sx of [-0.17, 0.17]) mBox(m, sx, 0.84, 0.44, 0.05, 0.03, 0.08, coat);      // ears
-  for (const sx of [-0.08, 0.08]) { mBox(m, sx, 0.9, 0.4, 0.028, 0.08, 0.028, horn); mBox(m, sx, 0.98, 0.34, 0.025, 0.05, 0.05, horn); }  // horns, curving back
-  mBox(m, 0, 0.6, -0.44, 0.03, 0.05, 0.08, coat);             // tail
-  return m;
-}
 function saltMesh() { const m = Mesh(); for (let i = 0; i < 6; i++) { const a = i/6*6.283; mBox(m, Math.cos(a)*0.13, 0.05+(i%2)*0.07, Math.sin(a)*0.13, 0.07, 0.07, 0.07, [0.93,0.95,0.97]); } mBox(m,0,0.1,0,0.09,0.09,0.09,[0.96,0.97,0.99]); return m; }
 // §saltfix the salt pan as it sits on the ground: a dried-mud rim with a low, faceted salt crust mounded in it (reads as salt, not a flat white plate)
-function saltPanMesh() { const m = Mesh();
-  mergeMesh(m, discMesh(-0.02, 0.5, 9, 0.02, [0.44,0.4,0.34]));                    // the dried, cracked mud rim
-  mergeMesh(m, discMesh(0.0, 0.4, 9, 0.015, [0.54,0.49,0.41]));
-  for (let i = 0; i < 11; i++) { const a = i/11*6.283, r = 0.05 + (i%3)*0.1;       // a low crust of salt crystals, catching the light
-    mBox(m, Math.cos(a)*r, 0.02 + (i%2)*0.035, Math.sin(a)*r, 0.07, 0.045, 0.07, i%2 ? [0.95,0.96,0.99] : [0.86,0.89,0.93]); }
-  mBox(m, 0, 0.07, 0, 0.1, 0.06, 0.1, [0.97,0.98,1.0]);
-  return m; }
 // §models a forked twig: a tapering main shaft with a gentle bend and a little Y-branch near the thin end.
 function stickMesh() { const m = Mesh(); const c=[0.42,0.3,0.19];
   mPathTube(m, [[-0.4,0.03,0,0.03],[-0.1,0.045,0.02,0.028],[0.12,0.06,0.0,0.024],[0.3,0.06,-0.03,0.019],[0.42,0.07,-0.05,0.013]], 5, c);   // main shaft
@@ -6988,27 +6763,8 @@ function barnacleMesh() { const m = Mesh(); const sh=[0.94,0.92,0.87], sh2=[0.86
   }
   return m; }
 // §16.1 new creatures
-function seaSnailMesh() { const m = Mesh(); const s=[0.74,0.6,0.4], b=[0.52,0.46,0.42];
-  mCyl(m,0.05,0.18,0.16,0.11,7,s); mCyl(m,0.18,0.28,0.11,0.06,7,s); mergeMesh(m, discMesh(0.28,0.06,6,0.03,s));
-  mCyl(m,0,0.06,0.17,0.15,7,[0.6,0.5,0.36]);
-  mergeAt(m, (()=>{const d=Mesh(); mBox(d,0,0,0,0.08,0.025,0.12,b); return d;})(), 0.02, 0.025, 0.17);
-  for (const s2 of [-1,1]) mergeAt(m, (()=>{const d=Mesh(); mBox(d,0,0,0,0.006,0.05,0.006,b); return d;})(), 0.08, 0.1, s2*0.04);   // eye-stalks
-  return m; }
-function shrimpMesh() { const m = Mesh(); const c=[0.92,0.62,0.52];
-  for (let i=0;i<5;i++){ const a=i*0.42; mBox(m, i*0.065, 0.1+Math.sin(a)*0.045, 0, 0.05, 0.05-i*0.006, 0.05, [c[0], c[1]-i*0.03, c[2]]); }
-  mBox(m,-0.08,0.12,0,0.045,0.05,0.055,c);
-  for (const s of [-1,1]) mBox(m,-0.13,0.13,s*0.03,0.045,0.004,0.018,[0.35,0.3,0.3]);
-  mBox(m,0.33,0.11,0,0.04,0.015,0.08,[0.86,0.5,0.42]); return m; }
-function seaDuckMesh() { const m = Mesh(); const body=[0.26,0.27,0.31], head=[0.14,0.14,0.17], bill=[0.32,0.3,0.3], white=[0.86,0.86,0.9];
-  mergeMesh(m, discMesh(0.12,0.22,8,0.1,body)); mCyl(m,0.04,0.16,0.22,0.16,8,body);
-  mBox(m,0.17,0.15,0,0.08,0.03,0.1,body);
-  mCyl(m,0.15,0.3,0.075,0.07,6,head); mergeAt(m, (()=>{const d=Mesh(); mergeMesh(d, discMesh(0,0.09,7,0.07,head)); return d;})(), 0.22,0.28,0);
-  mBox(m,0.32,0.28,0,0.05,0.02,0.035,bill);
-  for (const s of [-1,1]) mBox(m,0.2,0.2,s*0.11,0.05,0.004,0.06,white);
-  return m; }
 // §17 small shape helpers returning a sub-mesh (for mergeAt)
 function cylM(y0,y1,r0,r1,c){ const d=Mesh(); mCyl(d,y0,y1,r0,r1,5,c); return d; }
-function boxM(hx,hy,hz,c){ const d=Mesh(); mBox(d,0,0,0,hx,hy,hz,c); return d; }
 // §17 a growing crop plant: type × stage ("sprout" | "grow" | "ripe")
 // §4 a tapering sword/blade leaf that arches out from (bx,bz) toward `dir`, via the wavy-ribbon builder
 function bladeLeaf(m, bx, bz, dir, len, wide, droop, c0, c1, twist) {
@@ -7249,60 +7005,12 @@ function redAlgaeMesh(){ const m=Mesh(); const base=[0.5,0.2,0.3], tip=[0.74,0.3
   for(let i=0;i<4;i++){ const a=i/4*6.283+0.3; wavyRibbon(m,{h:0.5+(i%2)*0.28, w0:0.06, w1:0.02, seg:6, dir:a, amp:0.16, freq:1.5, phase:i*1.1, droop:0.1, bx:Math.cos(a)*0.04, bz:Math.sin(a)*0.04, twist:0.6, c0:base, c1:tip}); }
   return m; }
 // §17.5/§17.6 a cute chibi goblin trader, big round eyes, rounded head, loincloth. Faces +z (eyes forward).
-function goblinMesh(v){ const m=Mesh();
-  const skin=v.skin, skin2=[skin[0]*0.85,skin[1]*0.85,skin[2]*0.83], inner=[0.55,0.4,0.5],  // purplish inner ear
-        cloth=[0.44,0.31,0.2], cloth2=[0.35,0.24,0.16], belt=[0.3,0.22,0.14], buckle=[0.62,0.5,0.26], boot=[0.28,0.22,0.17],
-        white=[0.97,0.97,0.95], pupil=[0.12,0.1,0.1], mouth=[0.32,0.18,0.18], hair=[0.22,0.18,0.14];
-  // short legs + little boots
-  for(const sx of [-0.1,0.1]){ mergeAt(m, cylM(0.12,0.36,0.062,0.055,skin), sx,0,0);
-    mergeAt(m, (()=>{const d=Mesh(); mergeMesh(d, discMesh(0.1,0.085,8,0.04,boot)); mCyl(d,0,0.1,0.075,0.08,8,boot); mBox(d,0,0.04,0.05,0.07,0.045,0.07,boot); return d;})(), sx,0,0.015); }
-  // brown loincloth wrap + belt
-  mCyl(m,0.3,0.52,0.16,0.21,10,cloth); mergeMesh(m, discMesh(0.3,0.21,10,-0.03,cloth2));
-  mBox(m,0,0.12,0.18,0.07,0.16,0.02,cloth2);                                   // front flap
-  mBox(m,0,0.52,0,0.19,0.035,0.18,belt); mergeAt(m, boxM(0.05,0.045,0.03,buckle), 0,0.52,0.18);
-  // compact bare torso
-  mCyl(m,0.52,0.74,0.17,0.145,10,skin); mergeMesh(m, discMesh(0.74,0.145,10,0.03,skin));
-  mCyl(m,0.74,0.8,0.09,0.11,8,skin);                                           // neck
-  // big rounded head
-  mergeAt(m, (()=>{const d=Mesh(); mergeMesh(d, discMesh(0.02,0.31,10,0.26,skin)); mCyl(d,-0.16,0.05,0.29,0.31,10,skin); mergeMesh(d, discMesh(-0.16,0.29,10,-0.14,skin)); return d;})(), 0,0.84,0);
-  // pointy ears, up-and-out, purple inner
-  for(const sx of [-1,1]){ const e=v.ear; mergeAt(m, (()=>{const d=Mesh();
-    mTri(d,[0,0,0.06],[0.05,0.24*e,-0.02],[0,-0.03,-0.1*e],skin); mTri(d,[0,0,0.06],[0,-0.03,-0.1*e],[0.05,0.24*e,-0.02],skin2);
-    mTri(d,[0.015,0.03,0.05],[0.04,0.2*e,-0.01],[0.015,0.0,-0.06*e],inner); return d;})(), sx*0.31,0.94,0.02); }
-  // BIG cute eyes, large white, dark pupils, a bright glint
-  for(const sx of [-1,1]){ mergeAt(m, (()=>{const d=Mesh();
-    mBox(d,0,0,0,0.085,0.1,0.05,white); mBox(d,sx*0.01,-0.005,0.05,0.05,0.058,0.025,pupil); mBox(d,sx*0.02,0.03,0.07,0.02,0.022,0.012,white);
-    return d;})(), sx*0.12,0.88,0.21); }
-  mergeAt(m, boxM(0.03,0.035,0.045,skin2), 0,0.82,0.3);                        // tiny nose
-  for(let i=-1;i<=1;i++) mergeAt(m, boxM(0.028,0.013,0.01,mouth), i*0.045,0.74-Math.abs(i)*0.012,0.29);   // small smile
-  for(let i=0;i<3;i++){ const a=i/3*6.283; mergeAt(m, boxM(0.014,0.05,0.014,hair), Math.cos(a)*0.07,1.1,Math.sin(a)*0.07); }   // scruff
-  return m; }
 // an arm hanging from the shoulder (origin = shoulder); swings via the instance lean
-function goblinArmMesh(skin){ const m=Mesh(); const skin2=[skin[0]*0.86,skin[1]*0.86,skin[2]*0.84];
-  mCyl(m,-0.36,0.0,0.052,0.058,5,skin); mergeMesh(m, discMesh(-0.36,0.06,6,-0.03,skin2));   // arm + palm
-  for(let i=-1;i<=1;i++) mBox(m, i*0.035,-0.42,0.0, 0.018,0.05,0.018, skin2);   // three stubby fingers
-  return m; }
 // generic storm flotsam (§11.1)
 function crateMesh() { const m = Mesh(); const w = [0.5,0.37,0.24], e = [0.4,0.29,0.18]; mBox(m,0,0.2,0,0.22,0.2,0.22,w);
   for (const s of [-0.21,0.21]) { mBox(m,s,0.2,0,0.02,0.22,0.22,e); mBox(m,0,0.2,s,0.22,0.22,0.02,e); } mBox(m,0,0.2,0,0.23,0.04,0.23,e); mBox(m,0,0.38,0,0.23,0.04,0.23,e); return m; }
-function hopperMesh() { const m = Mesh(); mBox(m,0,0.05,0,0.08,0.05,0.06,[0.72,0.68,0.55]); mBox(m,-0.05,0.04,0.03,0.015,0.06,0.015,[0.6,0.55,0.4]); mBox(m,-0.05,0.04,-0.03,0.015,0.06,0.015,[0.6,0.55,0.4]); return m; }
 // §21C critters that hide under stones (scaled up ~2-3x so they read at a glance)
-function gunnelMesh() { const m = Mesh(), c = [0.44,0.54,0.4], c2 = [0.37,0.46,0.33];
-  for (let i=0;i<6;i++){ const x=(i-2.5)*0.11, w=0.055*(1-Math.abs(i-2.5)/4)+0.02; mBox(m, x, 0.03, Math.sin(i*1.1)*0.05, 0.055, 0.03, w, i%2?c:c2); }
-  mBox(m, 0.34, 0.04, 0, 0.045, 0.04, 0.04, c); mBox(m, 0.38, 0.055, 0.02, 0.012,0.012,0.012,[0.1,0.1,0.1]); mBox(m, 0.38, 0.055, -0.02, 0.012,0.012,0.012,[0.1,0.1,0.1]); return m; }
 // §fix a roly-poly (pill bug / woodlouse): a rounded, ribbed capsule of overlapping armour segments that taper at both ends
-function chitonMesh() { const m = Mesh();
-  const base = [0.46,0.43,0.4], seg = [0.55,0.52,0.48];
-  const L = 8;
-  for (let i = 0; i < L; i++) {
-    const t = i/(L-1), prof = Math.sin(Math.PI*(0.1 + 0.8*t));   // small at the head/tail → rounds the capsule
-    const w = 0.2*prof + 0.01, hh = 0.13*prof + 0.012, xw = 0.075;
-    const x = (t-0.5)*0.5;
-    const d = Mesh(); mergeMesh(d, discMesh(0, 1, 9, 0.75, i%2 ? seg : base));   // a unit arched plate
-    for (let v = 0; v < d.pos.length; v += 3) { d.pos[v] *= xw; d.pos[v+1] *= hh; d.pos[v+2] *= w; }
-    mergeAt(m, d, x, 0.0, 0);
-  }
-  return m; }
 // §models a pill bug / woodlouse: an oval armour of overlapping transverse plates, tiny legs and antennae (head at +X).
 function pillbugMesh() { const m = Mesh(), c=[0.47,0.48,0.52], c2=[0.39,0.4,0.44], dk=[0.3,0.31,0.35], ant=[0.34,0.35,0.39], eye=[0.05,0.05,0.07];
   // closed rounded underbody so there's no hollow shell when seen low or tipped
@@ -7356,26 +7064,8 @@ function slugBody(col, col2, noEyes) {
 function slugMesh() { return slugBody([0.57,0.46,0.3]); }
 // §models a snail: a cream foot with eye-stalks and a rounded coiled shell standing upright on the back,
 // its spiral facing sideways (the classic look). The coil is in a vertical plane with its axis across the body.
-function snailMesh(col) { col = col || [0.55,0.4,0.26];
-  const m = slugBody([0.9,0.86,0.78], [0.82,0.78,0.7]);
-  const shell = spiralShellMesh({ turns:2.4, r0:0.05, growth:1.7, tubeF:0.78, aperture:false, c1:[Math.min(1,col[0]*1.15),col[1]*1.1,col[2]*1.1], c2:[col[0]*0.82,col[1]*0.82,col[2]*0.82], apertureAtOrigin:true });
-  rotMeshZ(shell, 2.3);                                   // aperture faces down-forward so the body emerges from it
-  mergeAt(m, shell, 0.07, 0.13, 0);                       // seat the opening just over the foot, behind the head
-  return m;
-}
 // §models a nudibranch (sea slug): a clean vivid body (no eye-stalks) with a crest of colourful cerata down
 // the back and two small rhinophores. Kept simple up front so the face doesn't read as busy.
-function nudibranchMesh(col) { col = col || [0.96,0.42,0.14];
-  const tip = [0.22,0.52,0.96];
-  const m = slugBody(col, [Math.min(1,col[0]*0.9),col[1]*0.7,col[2]*0.6], true);
-  for (let i=0;i<6;i++){ const x=(i/5-0.5)*0.26; for (const s of [-1,1]){ const d=Mesh(); mCyl(d,0,0.085,0.02,0.0,5,tip); mergeAt(m, d, x, 0.1, s*0.03); } }   // cerata crest
-  for (const s of [-1,1]) { const d=Mesh(); mCyl(d,0,0.06,0.016,0.004,5,tip); mergeAt(m, d, 0.22, 0.1, s*0.03); }   // two simple rhinophores
-  return m;
-}
-function salamanderMesh() { const m = Mesh(), body = [0.14,0.14,0.16], spot = [0.9,0.78,0.22];
-  mBox(m, 0, 0.045, 0, 0.14, 0.04, 0.05, body); mBox(m, -0.24, 0.035, 0, 0.11, 0.028, 0.03, body); mBox(m, 0.17, 0.05, 0, 0.05, 0.04, 0.045, body);
-  for (const s of [-1,1]) { mBox(m, 0.08, 0.0, s*0.07, 0.013, 0.02, 0.035, body); mBox(m, -0.07, 0.0, s*0.07, 0.013, 0.02, 0.035, body); }
-  for (let i=0;i<3;i++){ mBox(m, (i-1)*0.09, 0.085, 0.03, 0.02, 0.008, 0.02, spot); mBox(m, (i-1)*0.09, 0.085, -0.03, 0.02, 0.008, 0.02, spot); } return m; }
 function berryMesh() { const m = Mesh(); const c = [0.62,0.16,0.3]; for (let i = 0; i < 3; i++) { const a = i/3*6.283; mBox(m, Math.cos(a)*0.06, 0.08+(i%2)*0.04, Math.sin(a)*0.06, 0.07, 0.07, 0.07, [c[0]*(0.9+0.1*(i%2)),c[1],c[2]]); } mBox(m,0.0,0.16,0,0.02,0.05,0.02,[0.4,0.5,0.3]); return m; }
 // a low inland shrub; ripe=true studs it with berries
 // §13.7 three states: "ripe" (red clusters), "green" (small unripe berries), "bare" (just harvested, none)
@@ -7621,6 +7311,7 @@ function washUp(initial) {
  *      beaches itself into a wash-up, and can be scooped straight from the sea.
  *      A running "beach cleanup" tally climbs whenever you clear litter.
  * ===================================================================== */
+// @system WORLD  @section WORLD/flotsam
 let flotsam = [];            // { id, x, z, ph, yaw, spin, lat }
 let beachCleanup = 0;        // litter removed from shore & water (shown in the journal)
 const FLOTSAM_CAP = 16, FLOTSAM_R = 0.55;
@@ -7677,6 +7368,7 @@ function drawFlotsam(view) {
  * § 5  BARNACLES, acorn-barnacle crusts on intertidal rocks (below the high-tide
  *      line). Scrape them with the Tool Kit for bait; they regrow over a few days.
  * ===================================================================== */
+// @system WORLD  @section WORLD/barnacles
 let barnacles = [];          // { x, z, g, rsc, yaw, amt, max, regrowAt }, each is a little intertidal rock crusted with barnacles
 const BARNACLE_REGROW_DAYS = 3;
 let barnacleDyn = null, barnacleRockDyn = null;
@@ -7923,6 +7615,7 @@ let UPDATE_R = BASE_UPDATE_R, DRAW_R = BASE_DRAW_R;
  * Kelp, tall grass, barnacles and foliage keep their own in-place regrow timers;
  * fish and far-from-shore sea life keep the census top-up above. This const is
  * the single config for all of the beach restocking. */
+// @system WORLD  @section WORLD/eco
 const ECO = {
   zone: 150,                    // world units per zone → an 8×8 grid over the 1200-unit island
   tick: 3.0,                    // seconds between gentle restock attempts
@@ -8073,6 +7766,7 @@ function drawLife(view) {
 /* --------------------------------------------------------------------- *
  * § INVENTORY / JOURNAL / INTERACTION
  * --------------------------------------------------------------------- */
+// @system UI  @section UI/inventory
 
 const discovered = new Set();         // discovered creature/find/item keys
 // §UI "new to the journal" tracking: a discovery made during actual play is flagged unseen (red !)
@@ -9104,6 +8798,7 @@ function renderJournal() {
  * § CLICK-TO-WALK  (A* on a coarse nav grid; avoids deep water, prop
  *   colliders, and prefers gentle slopes via a slope cost)
  * --------------------------------------------------------------------- */
+// @system PLAYER  @section PLAYER/pathing
 
 let pathActive = false, pathPts = [], pendingEntity = null;
 let lastInvVP = null, lastVP = null;
@@ -9122,6 +8817,7 @@ function cancelPath() { pathActive = false; pathPts = []; pendingEntity = null; 
  * § TARGETING  (crosshair/tap raycast vs. the SAME objects we render,
  *   within reach and line of sight, no proximity phantoms, no click-to-walk)
  * --------------------------------------------------------------------- */
+// @system GAMEPLAY  @section GAMEPLAY/targeting
 const REACH = 5.1;   // §tool-reach interaction reach (was 4.6, +0.5m; tunable). Ray targeting already measures to an object's hit surface, not its centre.
 function rayFromNDC(ndcx, ndcy) {
   if (ndcx === 0 && ndcy === 0) return { o: cam.pos, d: camForward() };   // crosshair center = look dir
@@ -9363,6 +9059,7 @@ function propUniforms(view) {
 /* ===================================================================== *
  * § DIGGING  (the shovel, core feature)
  * ===================================================================== */
+// @system DIGGING  @section DIGGING/shovel
 
 let onDig = null;                 // sound hook: onDig(surfaceKind | "clang" | "clink" | "sift" | "splash")
 let onBreath = null;              // §13.2 sound hook: a heavy, tired exhale when an action is refused for low stamina
@@ -9523,6 +9220,7 @@ function rebuildRegion(x0, z0, x1, z1) {
  *   Every gameplay read/write of the ground goes through Terrain.* so the
  *   heightmap/dig/built/material arrays stay a swappable backend (→ voxels).
  * ===================================================================== */
+// @system TERRAIN  @section TERRAIN/api
 const Terrain = {
   heightAt,                                                   // effective ground height (base + dig + built)
   normalAt(wx, wz) { const s = surfaceAt(wx, wz); return [s.nx, s.ny, s.nz]; },
@@ -10000,6 +9698,7 @@ function removeBuiltAt(x, z) {
  *   the game's own prop pipeline into a low-res FBO, then blitted (with a
  *   light dither) to a 2D panel canvas. Rendered only while a panel is open.
  * ===================================================================== */
+// @system UI  @section UI/inspect
 const miniFBOs = {};
 function miniFBO(W, H) {
   const key = W + "x" + H; if (miniFBOs[key]) return miniFBOs[key];
@@ -10282,6 +9981,7 @@ function villagePushOut(x, z, feetY) { return [x, z]; }
 /* ===================================================================== *
  * § 17  FARMING, forage wild tropical plants, or plant seeds on dug soil
  * ===================================================================== */
+// @system GAMEPLAY  @section GAMEPLAY/farming
 let crops = [];     // { type, x, z, ripe, ripeAt, scale, yaw, wild, grown }
 const CROP_GROW_DAYS = 2.5;     // in-game days for a planted seed to first ripen (tunable)
 const CROP_REGROW_DAYS = 2;     // days to re-ripen after a harvest, crops are perennial (tunable)
@@ -10663,6 +10363,7 @@ function updateDigging(dt) {
 /* ===================================================================== *
  * § TOOLS  (Phase 6 Part B: chop trees, plant seeds, mine boulders)
  * ===================================================================== */
+// @system GAMEPLAY  @section GAMEPLAY/tools
 
 const SEED_TREE = { coconut: "palm", pinecone: "pine", nut: "broadleaf" };
 const GROW_DAYS = 3, SPROUT_DAYS = 2;             // seed→mature, stump→sapling (in in-game days)
@@ -11153,6 +10854,7 @@ const palmScratch = new Float32Array(48*10), pineScratch = new Float32Array(48*1
  *   to roll one over (critters scatter / an item / nothing), click again to
  *   put it back (counts in the journal). Refills after a day or two.
  * ===================================================================== */
+// @system GAMEPLAY  @section GAMEPLAY/flip-stones
 // §stonepick SMALL STONES. Little dome stones scattered on beaches and the forest floor. Clicking one PICKS
 // IT UP: it goes into the satchel as a Stone item and is removed from the world, revealing whatever was under
 // it (sometimes a bug scurries out). A picked spot grows a fresh stone again after a while, only out of view.
@@ -11246,6 +10948,7 @@ function weakStonePrompt(s) { return (IS_TOUCH ? "tap" : "click") + " to pick up
  *   a buried cache (coins + sometimes a sealed tin), a fossil, or rarer critters.
  *   Rolls back on its own after a few days; fresh loot after a couple more.
  * ===================================================================== */
+// @system GAMEPLAY  @section GAMEPLAY/heave
 const HEAVE_BOULDER_N = 14;                      // heavy boulders per island (tunable)
 const HEAVE_NEED = 5;                            // sweet-spot strikes to lever it over (tunable)
 const HEAVE_STRIKE_COST = 0.09;                  // stamina per strike, hit or miss (tunable)
@@ -11366,6 +11069,7 @@ function heaveBoulderPrompt(b) { const has = selectedTool()==="shovel"; return b
  *   tide. Pick oysters straight off a cluster into the satchel, like
  *   barnacles. A picked-clean bed seeds again in a day or two.
  * ===================================================================== */
+// @system GAMEPLAY  @section GAMEPLAY/oysters
 const OYSTER_BED_N = 10;                          // oyster beds per island (tunable)
 const OYSTER_PER_BED_MIN = 3, OYSTER_PER_BED_MAX = 6;   // live oysters a bed holds
 const OYSTER_REFILL_DAYS = 2.5;                   // days for a picked-clean bed to seed again
@@ -11485,6 +11189,7 @@ function oysterBedAction(b) {   // §strip oysters now pick straight off the clu
  *   pickaxe to a chime and a nest of crystal. Rare finds are also what now
  *   hides under stones and boulders (the §21/§36 stoneItemFind hook).
  * ===================================================================== */
+// @system GAMEPLAY  @section GAMEPLAY/geodes
 // --- meshes (function declarations: hoisted, so the FINDS dyn/icon build above can call them) ---
 function whelkMesh() { const m = Mesh(); const c=[0.86,0.78,0.6], c2=[0.7,0.6,0.46], ap=[0.78,0.55,0.4];
   // a right-leaning spire of shrinking whorls (sinistral, it leans the "wrong" way)
@@ -11617,10 +11322,9 @@ function geodeAction(g) { return crackGeode(g); }
 function geodePrompt(g) { const has = selectedTool()==="pickaxe"; return has ? (IS_TOUCH?"hold to crack it open":"crack it open") : "a dull nodule, try a pickaxe"; }
 
 /* ===================================================================== *
- * § 41  HORSESHOE CRABS, a living fossil plowing the sandy shallows day and
- *   night; scoopable into the bucket. Molted shells wash up. And on spring
- *   nights a knot of them comes ashore to spawn, some flipped onto their
- *   backs by the surge, waiting for a kind hand to turn them over.
+ * § 41  (removed) HORSESHOE CRABS — the living crabs + their spawning events
+ *   are gone with the creatures. Only `horseshoeMesh` (the "Horseshoe Molt"
+ *   wash-up find) and `isNightNow()` (used by fishing) are kept below.
  * ===================================================================== */
 // §B2 a proper horseshoe crab: one smooth domed horseshoe front shell, a hinged spined rear plate, a long tail spike,
 // two eyes on top, and legs tucked UNDERNEATH (only seen when it's flipped onto its back). Faces +x; tail trails -x.
@@ -11766,8 +11470,10 @@ function loadWorld() {
 }
 
 /* ===================================================================== *
- * § GOATS & SALT  (Phase 6 Part C)
+ * § SALT  (Phase 6 Part C) — harvestable sea-salt crystals on the sand (a
+ *   cooking item). Goats were removed with the other animals.
  * ===================================================================== */
+// @system GAMEPLAY  @section GAMEPLAY/salt
 
 
 /* ---- sea salt: rare crystals left just above the waterline as the tide recedes ---- */
@@ -11909,6 +11615,7 @@ function drawStorage(view) {
 /* --------------------------------------------------------------------- *
  * § BUILD + LOOP
  * --------------------------------------------------------------------- */
+// @system DRIVER  @section DRIVER/build-loop
 
 let frameDraws = 0, frameTris = 0;
 function countDraw(tris) { frameDraws++; frameTris += tris; }
@@ -11981,6 +11688,16 @@ function modelReport() {
   return md;
 }
 if (typeof window !== "undefined") window.modelReport = modelReport;
+// @section DEBUG/shoot  dev hook so tools/shoot.js can pose a static free-fly camera for reproducible screenshots.
+if (typeof window !== "undefined") window.__shoot = function (v) {
+  try { for (const id of ["overlay", "entergate"]) { const el = document.getElementById(id); if (el) el.style.display = "none"; } } catch (e) {}   // leave the title screens
+  if (mode === "preview" || mode === "intro") { intro = null; if (typeof enterWalk === "function") enterWalk(); }
+  if (!v) return;                                   // null → the on-foot spawn view
+  mode = "free";                                    // free-fly: the frame loop uses cam directly, so the pose sticks
+  cam.pos[0] = v.x; cam.pos[1] = v.y; cam.pos[2] = v.z;
+  if (v.yaw !== undefined) cam.yaw = v.yaw;
+  if (v.pitch !== undefined) cam.pitch = v.pitch;
+};
 
 buildHeightmap();
 paintBiomes();
@@ -12056,6 +11773,7 @@ validateFootprints();   // §P3 overlap self-check on the initial world (want 0)
  *   freeing the old island's GPU resources and resetting the world arrays
  *   the save-loaders don't clear themselves.
  * ===================================================================== */
+// @system DRIVER  @section DRIVER/new-island
 // Recompute every per-seed constant in the EXACT draw order of the page-load
 // init, so an in-place regen onto seed X is byte-identical to a fresh ?seed=X.
 function deriveSeedState(seedStr) {
