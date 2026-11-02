@@ -9822,7 +9822,8 @@ function digAt(x, z) {
   paintCells(x, z, DIG_R * 0.55, digMaterialMat(x, z), true);   // the floor of the hole shows the exposed material (grass regrows on heal). §matrm digging no longer yields earth-material items
   applyDig(x, z, amt, holeAng);
   removeFoliageAround(x, z, DIG_R);                          // clear grass/seaweed with a burst
-  spawnSand(x, sy + 0.3, z, 14, kind === "wet" ? [0.62, 0.56, 0.46] : kind === "gravel" ? [0.6, 0.58, 0.55] : [0.86, 0.78, 0.6]);
+  const dc = terrainColorAt(x, z);   // §hitcol chips match the ground struck (green on grass, tan on sand, …)
+  spawnSand(x, sy + 0.3, z, 14, kind === "wet" ? [dc[0]*0.72, dc[1]*0.72, dc[2]*0.74] : dc, player.x - x, player.z - z);
   if (wasAbove && waterSurfaceAt(x, z) >= surfaceAt(x, z).h - 0.02) spawnInflow(x, z);   // just hit the water table
   revealSpot(x, z, false);
 }
@@ -10276,7 +10277,32 @@ function paintCells(x, z, radius, mat, scar) {
 /* ---- sand particles ---- */
 const particles = [];
 const partDyn = makeDynamic((function () { const m = Mesh(); mBox(m, 0, 0, 0, 0.5, 0.5, 0.5, [1, 1, 1]); return m; })(), 220);
-function spawnSand(x, y, z, n, col) { for (let i = 0; i < n && particles.length < 200; i++) { const a = rng() * 6.283, s = 1 + rng() * 3; particles.push({ x, y, z, vx: Math.cos(a) * s, vy: 3 + rng() * 4, vz: Math.sin(a) * s, t: 0, life: 0.5 + rng() * 0.4, col }); } }
+// §hitcol approximate terrain surface colour at (x,z) — mirrors the terrain shader's height/slope bands
+// (plus any painted material) so dig/hit particles match the ground they were struck from.
+const _HIT_BANDS = [[0.40,0.52,0.44],[0.70,0.54,0.35],[0.91,0.77,0.47],[0.43,0.61,0.26],[0.26,0.45,0.22],[0.49,0.45,0.41]];
+function terrainColorAt(x, z) {
+  const i = cellIndex(x, z);
+  if (i >= 0 && typeof material !== "undefined" && material[i] > 0 && MAT_COL_JS[material[i]]) { const m = MAT_COL_JS[material[i]]; return [m[0], m[1], m[2]]; }
+  const s = surfaceAt(x, z), h = s.h, slope = s.slope || 0;
+  const ss = (a, b, v) => { let t = Math.max(0, Math.min(1, (v - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const c = [0.40, 0.52, 0.44];
+  const mix = (d, t) => { c[0] += (d[0] - c[0]) * t; c[1] += (d[1] - c[1]) * t; c[2] += (d[2] - c[2]) * t; };
+  mix(_HIT_BANDS[1], ss(-3.5, 0.6, h)); mix(_HIT_BANDS[2], ss(0.4, 4.6, h));
+  mix(_HIT_BANDS[3], ss(9, 21, h));     mix(_HIT_BANDS[4], ss(28, 60, h));
+  mix(_HIT_BANDS[5], ss(0.34, 0.74, slope));
+  return c;
+}
+// Pooled ground/hit particles (one draw via partDyn). col is [r,g,b]; optional (bx,bz) sprays the
+// burst back toward the player instead of straight up, for tool strikes.
+function spawnSand(x, y, z, n, col, bx, bz) {
+  const bias = (bx || bz) ? 1 : 0, bl = bias ? (Math.hypot(bx, bz) || 1) : 1, ux = bias ? bx / bl : 0, uz = bias ? bz / bl : 0;
+  for (let i = 0; i < n && particles.length < 200; i++) {
+    const a = rng() * 6.283, s = 1 + rng() * 3;
+    let vx = Math.cos(a) * s, vz = Math.sin(a) * s;
+    if (bias) { const push = 2.0 + rng() * 2.5; vx = vx * 0.45 + ux * push; vz = vz * 0.45 + uz * push; }   // spray toward the player
+    particles.push({ x, y, z, vx, vy: (bias ? 2.4 : 3) + rng() * 4, vz, t: 0, life: 0.5 + rng() * 0.4, col });
+  }
+}
 function updateParticles(dt) { for (let i = particles.length - 1; i >= 0; i--) { const p = particles[i]; p.t += dt;
   if (p.rise) { p.vy = Math.min(2.2, p.vy + 6*dt); p.vx *= 0.96; p.vz *= 0.96;
     // §menu a rising bubble pops the instant it reaches the LIVE water surface, it never keeps rising up into the air
@@ -10584,7 +10610,7 @@ function chopStanding(o) {                                     // one axe strike
   const right = toolMul("tree") === 1;                        // §P2 axe = right tool; anything else lands a dull thunk
   if (onDig) onDig(right ? "chop" : "thud");
   o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species));
-  spawnSand(o.x, surfaceAt(o.x, o.z).h + 1.0, o.z, right ? 6 : 3, barkCol(o.species));   // §P2 bark/wood chips at the trunk (fewer with the wrong tool)
+  spawnSand(o.x, surfaceAt(o.x, o.z).h + 1.0, o.z, right ? 6 : 3, barkCol(o.species), player.x - o.x, player.z - o.z);   // §P2/§hitcol bark/wood chips spraying back toward the player
   o.hp -= jobEffortMul() * toolMul("tree") * TUNE.HARVEST_SPEED;   // §P2/§P3 the axe fells fast; anything else ~3x; §P3 ~25% fewer hits overall
   if (o.hp <= 0.001) startFall(o);
 }
@@ -10796,7 +10822,7 @@ function mineObj(o) {                                           // one pickaxe s
   if (onDig) onDig(right ? "mine" : "thud");
   o.hp -= jobEffortMul() * toolMul("rock") * TUNE.HARVEST_SPEED;   // §P2/§P3 pickaxe fast; anything else ~3x; §P3 ~25% fewer hits
   const sy = surfaceAt(o.x, o.z).h + o.sc*0.3;
-  spawnSand(o.x, sy, o.z, right ? 7 : 3, [0.5, 0.48, 0.46]);   // §P2 grey rock chips (fewer with the wrong tool)
+  spawnSand(o.x, sy, o.z, right ? 7 : 3, [0.5, 0.48, 0.46], player.x - o.x, player.z - o.z);   // §P2/§hitcol grey stone chips spraying back toward the player
   if (!o.split && o.hp <= Math.ceil(o.maxhp/2)) {              // cracks apart, shedding pickable rubble
     o.split = true; o.scale *= 0.62;
     for (let i = 0; i < 2 + (rng()*2|0); i++) dropRubble(o.x+(rng()-0.5)*2.5, o.z+(rng()-0.5)*2.5, 0.5+rng()*0.5);
@@ -12359,10 +12385,16 @@ function frame(now) {
   // sky/fog colour to the undersea palette. Reds fade into blue-green, darker the deeper you go.
   // §water surface at the camera's x/z INCLUDING the live tide (in waterSurfaceAt) and wave height, so the
   // tint matches the water the shader actually draws — above the real surface there is no tint at all.
+  const camGround = surfaceAt(cam.pos[0], cam.pos[2]).h;
   const camSurf = waterSurfaceAt(cam.pos[0], cam.pos[2]) + waterWaveY(cam.pos[0], cam.pos[2], t);
+  // §slopefix ROOT CAUSE of the blue tint flickering on dry steep slopes: waterSurfaceAt returns the
+  // flood-fill level (filled[i]), which clings just above the terrain on the slopes feeding a basin, so
+  // the "surface" sat near eye height with NO actual water there, and head-bob/landing dips crossed it.
+  // Gate on REAL standing water at the camera (positive depth), not merely eye-below-surface.
+  const camHasWater = (camSurf - camGround) > (camUnderwaterNow ? 0.15 : 0.35);   // hysteresis on depth too
   // §camfix hysteresis around the water surface so the underwater tint can't flicker at the waterline: go under
   // only when the eye is clearly below the surface, and stay under until it's clearly above.
-  const camUnderwater = mode === "walk" && cam.pos[1] < camSurf + (camUnderwaterNow ? UW_EXIT : UW_ENTER);
+  const camUnderwater = mode === "walk" && camHasWater && cam.pos[1] < camSurf + (camUnderwaterNow ? UW_EXIT : UW_ENTER);
   camUnderwaterNow = camUnderwater;
   let _uwFogD, _uwFogN, _uwSky;
   if (camUnderwater) {
