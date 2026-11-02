@@ -1406,6 +1406,10 @@ const BASE_FOG_DENSITY = 0.0009, BASE_FOG_NEAR = 66.0;   // §13.6 base; graphic
 let FOG_DENSITY = BASE_FOG_DENSITY;   // see far across the big landscape, still hazy
 let FOG_NEAR = BASE_FOG_NEAR;         // clear band before fog ramps in
 let baseFogDensity = BASE_FOG_DENSITY, baseFogNear = BASE_FOG_NEAR;   // §20 GFX-scaled base; weather adds fog on top each frame
+// §night how far you can see at NIGHT (metres), independent of the fog slider so raising fog can't see past it.
+// Without a lantern only a small pool around the player is dimly lit; beyond NIGHT_VIEW_NEAR it fades to dark
+// by NIGHT_VIEW_FAR. A raised lantern pushes the far limit out (LANTERN_NIGHT_BONUS) so you see a bit further.
+const NIGHT_VIEW_NEAR = 34, NIGHT_VIEW_FAR = 140, NIGHT_POOL_R = 17, NIGHT_POOL_I = 0.55, LANTERN_NIGHT_BONUS = 70;
 
 // Day & night palettes; SKY is the blended current state (uploaded each frame).
 const SKY_DAY = { zenith: [0.30, 0.52, 0.80], horizon: [0.72, 0.81, 0.92], warm: [1.10, 0.96, 0.75] };   // §VIB a bluer sky (saturated zenith, clean light-blue horizon instead of cream-grey), warm sun
@@ -2598,6 +2602,7 @@ uniform vec3 uMoonDir, uMoonCol, uNightAmb;          // §night cool moon key li
 uniform float uNightRim;                             // §night rim strength toward the moon
 uniform float uFogDensity, uFogNear, uWaterLevel, uWetLevel;
 uniform float uNight, uDusk;                         // §look night ground lift (uNight); sunrise/sunset strength (uDusk)
+uniform float uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI;   // §night distance darkness + player light pool
 uniform float uTime; uniform int uUnderwater;        // §14B animated seabed caustics
 uniform float uGroundWet;                            // §20 rain darkens & slightly cools the ground (0 = dry)
 uniform vec3 uLanternPos; uniform float uLanternI, uLanternR;   // §18 lantern light pool (uLanternR = radius, tunable)
@@ -2728,6 +2733,8 @@ void main() {
     float latt = uLanternI * (1.0 - smoothstep(0.4, uLanternR, ld));
     col += vec3(1.0, 0.62, 0.32) * latt;
   }
+  // §night at night the world goes dark with distance (short view), with a faint pool around the player.
+  col = applyNight(col, vWorld, uCamPos, uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI);
   // Distance fog → the sky color for this fragment's own view direction.
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
@@ -2927,6 +2934,7 @@ out vec4 frag;
 uniform vec3 uCamPos, uSunDir, uZenith, uHorizon, uWarm;
 uniform float uTime, uFogDensity, uFogNear, uWaterLevel, uWaterQ;
 uniform float uNight, uDusk;                      // §look moonlit water (uNight); sunrise/sunset strength (uDusk)
+uniform float uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI;   // §night distance darkness
 uniform sampler2D uHeight, uFilled;
 ${SKY_GLSL}
 void main() {
@@ -2973,6 +2981,7 @@ void main() {
 
   alpha *= shore;               // §water dissolve the sheet into the beach so the shoreline isn't a hard edge
   col *= 1.0 - uNight * 0.40;   // §look sit the water down at night so it reads as dark moonlit sea, not a glowing neon sheet
+  col = applyNight(col, vWorld, uCamPos, uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI);   // §night dark sea at night, short view
   // Fog → sky; fully-fogged water becomes opaque sky so no far edge shows.
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
@@ -4243,10 +4252,10 @@ let ditherOn = true;
 // resScale is a fraction of the native target width → the low-res FBO width (the chunky↔crisp knob).
 // The flat-shaded low-poly style stays at every level; higher presets just make it crisper.
 const GFX_PRESETS = {
-  low:    { resScale: 0.34, dither: true, quantize: true, fog: 0.8, propDist: 0.7, foliage: 0.45, water: 0, shadows: false, aa: false, simRadius: 0.75, dprCap: 1, fpsCap: 30 },
-  medium: { resScale: 0.5, dither: true, quantize: true, fog: 1.0, propDist: 1.0, foliage: 0.8, water: 1, shadows: false, aa: false, simRadius: 1.0, dprCap: 1.5, fpsCap: 60 },
-  high:   { resScale: 0.78, dither: true, quantize: true, fog: 1.15, propDist: 1.2, foliage: 1.0, water: 1, shadows: true, aa: false, simRadius: 1.15, dprCap: 2, fpsCap: 60 },
-  ultra:  { resScale: 1.0, dither: false, quantize: false, fog: 1.3, propDist: 1.4, foliage: 1.0, water: 1, shadows: true, aa: true, simRadius: 1.35, dprCap: 2, fpsCap: 0 },
+  low:    { resScale: 0.34, dither: true, quantize: true, fog: 0.72, propDist: 0.7, foliage: 0.45, water: 0, shadows: false, aa: false, simRadius: 0.75, dprCap: 1, fpsCap: 30 },
+  medium: { resScale: 0.5, dither: true, quantize: true, fog: 0.82, propDist: 1.0, foliage: 0.8, water: 1, shadows: false, aa: false, simRadius: 1.0, dprCap: 1.5, fpsCap: 60 },
+  high:   { resScale: 0.78, dither: true, quantize: true, fog: 0.9, propDist: 1.2, foliage: 1.0, water: 1, shadows: true, aa: false, simRadius: 1.15, dprCap: 2, fpsCap: 60 },
+  ultra:  { resScale: 1.0, dither: false, quantize: false, fog: 0.98, propDist: 1.4, foliage: 1.0, water: 1, shadows: true, aa: true, simRadius: 1.35, dprCap: 2, fpsCap: 0 },
 };
 const GFX_CUSTOM_KEYS = ["resScale","dither","quantize","fog","propDist","foliage","water","shadows","aa","simRadius","dprCap","fpsCap"];
 // device-based default (computed here; IS_TOUCH's const is declared a little further down, so avoid its TDZ)
@@ -4256,6 +4265,7 @@ GFX.water = 0;                  // §settings water quality OFF by default (the 
 try { const s = JSON.parse(localStorage.getItem("bc_gfx") || "null");
   if (s && s.preset) { GFX.preset = s.preset; if (s.preset === "custom") for (const k of GFX_CUSTOM_KEYS) { if (s[k] !== undefined) GFX[k] = s[k]; }
     else Object.assign(GFX, GFX_PRESETS[s.preset] || {}); } } catch (e) {}
+GFX.fog = Math.max(0.5, Math.min(1.05, GFX.fog));   // §night clamp an old saved fog value into the new, lower range (max visibility was cut)
 function saveGFX() { try { const o = { preset: GFX.preset }; for (const k of GFX_CUSTOM_KEYS) o[k] = GFX[k]; localStorage.setItem("bc_gfx", JSON.stringify(o)); } catch (e) {} }
 /* ===================================================================== *
  * § ATMOSPHERE  lighting/atmosphere effects, each individually toggleable
@@ -4745,7 +4755,7 @@ function openSettings() {
       ${slider("resScale","Resolution", 0.25, 1, 0.01, GFX.resScale)}
       ${toggle("dither","Dithering", GFX.dither)}
       ${toggle("quantize","Palette quantize", GFX.quantize)}
-      ${slider("fog","Fog distance", 0.5, 1.6, 0.05, GFX.fog)}
+      ${slider("fog","Fog distance", 0.5, 1.05, 0.05, GFX.fog)}
       ${slider("propDist","Prop distance", 0.5, 1.5, 0.05, GFX.propDist)}
       ${slider("foliage","Foliage density", 0, 1, 0.05, GFX.foliage)}
       <div class="srow"><label>Water quality</label><button data-gc="water">${WATER_LBL[GFX.water>0?1:0]}</button></div>
@@ -5617,6 +5627,7 @@ uniform int uHemi;                                  // §ATMO #2 hemisphere ambi
 uniform float uDusk;                                // §sky sunrise/sunset strength (for fog colour)
 uniform vec3 uMoonDir, uMoonCol, uNightAmb;         // §night moon key light + dark-blue ambient floor
 uniform float uNightRim;                            // §night rim toward the moon
+uniform float uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI;   // §night distance darkness + player light pool
 ${SKY_GLSL}
 void main() {
   if (uDissolve > 0.0) {                              // §urgent5 ordered Bayer-4x4 dither dissolve, no shrink
@@ -5656,6 +5667,7 @@ void main() {
     col += vec3(1.0, 0.62, 0.32) * (uLanternI * (1.0 - smoothstep(0.4, uLanternR, ld)));
   }
   if (uEmissive > 0.001) col = mix(col, vCol, uEmissive);   // §nightlight village windows/lanterns glow from within (fog still applies below)
+  if (uEmissive < 0.5) col = applyNight(col, vWorld, uCamPos, uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI);   // §night (self-lit glows skip the darkening)
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
   float fd = max(dist - uFogNear, 0.0) * uFogDensity;
@@ -6115,6 +6127,7 @@ function drawProps(view) {
   gl.uniformMatrix4fv(propU.uProj, false, proj);
   gl.uniformMatrix4fv(propU.uView, false, view);
   setLanternUniform(propU);   // §18
+  setNightUniforms(propU);   // §night
   gl.uniform3fv(propU.uSunDir, SKY.sun);
   gl.uniform3fv(propU.uCamPos, cam.pos);
   gl.uniform3fv(propU.uZenith, SKY.zenith);
@@ -6793,7 +6806,7 @@ function seabeanMesh() { const m = Mesh(); mBox(m,0,0.06,0,0.14,0.08,0.1,[0.4,0.
 // §16 crafted goods
 // §18 a little belt lantern, metal frame, warm glass
 // §models a classic hurricane lantern: black-metal font + cage frame + bail handle, a warm glowing globe inside.
-function lanternMesh(){ const m=Mesh(); const mtl=[0.11,0.11,0.13], mtl2=[0.18,0.18,0.21], glass=[0.99,0.6,0.16];
+function lanternMesh(){ const m=Mesh(); const mtl=[0.11,0.11,0.13], mtl2=[0.18,0.18,0.21], glass=[1.0,0.66,0.22], flame=[1.0,0.92,0.58];
   // --- fuel font / base ---
   mergeMesh(m, discMesh(0.0, 0.17, 8, -0.02, mtl));             // octagonal foot
   mCyl(m, 0.0, 0.045, 0.17, 0.15, 8, mtl2);                     // foot rim
@@ -6803,6 +6816,7 @@ function lanternMesh(){ const m=Mesh(); const mtl=[0.11,0.11,0.13], mtl2=[0.18,0
   // --- glowing glass globe (barrel: pinched top & bottom, bulged waist) ---
   const gb=[[0.205,0.10],[0.25,0.125],[0.31,0.125],[0.37,0.10],[0.41,0.078]];
   for (let i=0;i<gb.length-1;i++) mCyl(m, gb[i][0], gb[i+1][0], gb[i][1], gb[i+1][1], 9, glass);
+  mCyl(m, 0.235, 0.355, 0.028, 0.012, 6, flame);               // §night bright flame core inside the globe (glows hot under the lantern's emissive)
   // --- burner cap + vented pagoda top ---
   mCyl(m, 0.41, 0.44, 0.078, 0.11, 8, mtl);                     // burner flare
   mergeMesh(m, discMesh(0.44, 0.115, 8, 0.0, mtl2));
@@ -7891,6 +7905,7 @@ function drawLife(view) {
   gl.uniformMatrix4fv(propU.uProj, false, proj);
   gl.uniformMatrix4fv(propU.uView, false, view);
   setLanternUniform(propU);   // §18 lantern lights creatures/finds too
+  setNightUniforms(propU);   // §night
   gl.uniform3fv(propU.uSunDir, SKY.sun);
   gl.uniform3fv(propU.uCamPos, cam.pos);
   gl.uniform3fv(propU.uZenith, SKY.zenith);
@@ -8101,6 +8116,18 @@ function activeLanternPos() {
   let bestP = best ? [best.x, best.y + 0.35, best.z] : null;
   return bestP;
 }
+// §night set the night-darkness uniforms on any program (terrain / props / water). Night sight is short;
+// a raised lantern pushes the far limit out so you can see a bit further by its light.
+function setNightUniforms(U) {
+  if (!U || U.uNightDark === undefined) return;
+  const nd = camUnderwaterNow ? 0 : (1 - (typeof dayFactor === "function" ? dayFactor() : 1));
+  const far = NIGHT_VIEW_FAR + (lanternLit() ? LANTERN_NIGHT_BONUS : 0);
+  gl.uniform1f(U.uNightDark, nd);
+  gl.uniform1f(U.uNightNear, NIGHT_VIEW_NEAR);
+  gl.uniform1f(U.uNightFar, far);
+  gl.uniform1f(U.uNightPoolR, NIGHT_POOL_R);
+  gl.uniform1f(U.uNightPoolI, NIGHT_POOL_I);
+}
 function setLanternUniform(U) {   // call after the program + its uniforms are bound
   if (!U || U.uLanternI === undefined) return;
   const p = activeLanternPos();
@@ -8153,7 +8180,12 @@ let placedLanternDyn = null; const _lanternArr = new Float32Array(64 * 10);
 function drawPlacedLanterns(view) {
   if (!placedLanterns.length) return;
   if (!placedLanternDyn) placedLanternDyn = makeDynamic(lanternMesh(), 64);
-  propUniforms(view); const a = _lanternArr; let n = 0;
+  propUniforms(view);
+  // §night the lantern GLOWS from its glass: a partial emissive so the bright glass/flame vertices read as lit
+  // while the dark metal frame keeps some shading. Emissive ≥ 0.5 also skips the night darkening, so a set-down
+  // lantern stays a warm beacon at night instead of melting into the dark.
+  if (propU.uEmissive !== undefined) gl.uniform1f(propU.uEmissive, 0.7);
+  const a = _lanternArr; let n = 0;
   const px = cam.pos[0], pz = cam.pos[2], gl2 = 0.6 + 0.4 * lanternFlicker();   // warm glow tint pulse
   for (const L of placedLanterns) { if ((L.x-px)**2 + (L.z-pz)**2 > DRAW_R*DRAW_R) continue;
     const o = n*10; a[o]=L.x; a[o+1]=L.y; a[o+2]=L.z; a[o+3]=1.5; a[o+4]=0; a[o+5]=0; a[o+6]=0;
@@ -8161,6 +8193,7 @@ function drawPlacedLanterns(view) {
     else { a[o+7]=1.0; a[o+8]=0.88*gl2+0.3; a[o+9]=0.6*gl2+0.2; }
     n++; if (n >= 64) break; }
   if (n) placedLanternDyn.draw(a, n);
+  if (propU.uEmissive !== undefined) gl.uniform1f(propU.uEmissive, 0);   // §night reset so later prop passes light normally
 }
 // §P2 buckets set down in the world: the pail, a little water surface if it holds water, and a
 // couple of its creatures peeking over the rim.
@@ -9217,6 +9250,7 @@ function propUniforms(view) {
   gl.uniform1i(propU.uHemi, ATMO.hemi ? 1 : 0);   // §ATMO #2 held tool / world props share the world lighting
   gl.uniformMatrix4fv(propU.uProj, false, proj); gl.uniformMatrix4fv(propU.uView, false, view);
   setLanternUniform(propU);   // §18
+  setNightUniforms(propU);   // §night
   gl.uniform3fv(propU.uSunDir, SKY.sun); gl.uniform3fv(propU.uCamPos, cam.pos);
   gl.uniform3fv(propU.uZenith, SKY.zenith); gl.uniform3fv(propU.uHorizon, SKY.horizon); gl.uniform3fv(propU.uWarm, SKY.warm);
   gl.uniform1f(propU.uFogDensity, FOG_DENSITY); gl.uniform1f(propU.uFogNear, FOG_NEAR);
@@ -10551,6 +10585,7 @@ function drawShovel(view) {
   }
   propUniforms(view);
   gl.uniform1f(propU.uFogDensity, 0);                          // §13.1 no fog on the held tool
+  if (held && id === "lantern" && propU.uEmissive !== undefined) gl.uniform1f(propU.uEmissive, 0.7);   // §night the held lantern's glass/flame glow
   gl.bindVertexArray(fp.vao);
   gl.bindBuffer(gl.ARRAY_BUFFER, fp.posBuf); gl.bufferSubData(gl.ARRAY_BUFFER, 0, world, 0, fp.vc * 3);
   gl.clear(gl.DEPTH_BUFFER_BIT);                               // own pass: depth cleared so it sits over the world
@@ -11920,6 +11955,7 @@ if (typeof window !== "undefined") window.__dbg = {
   player: () => ({ x: player.x, z: player.z, feetY: player.feetY, eyeY: player.eyeY, vy: player.vy, airborne: player.airborne, swimming: player.swimming, underwater: player.underwater, speedMul: (typeof _curSpeedMul !== "undefined" ? _curSpeedMul : 1), slopeDeg: (typeof _curSlopeDeg !== "undefined" ? _curSlopeDeg : 0) }),
   jump: () => { if (mode === "walk" && !player.swimming) jumpBuffer = TUNE.JUMP_BUFFER; },
   state: () => ({ mode, jumpBuffer, airborne: player.airborne, vy: player.vy, feetY: player.feetY }),
+  setTime: (t) => { dayNightEnabled = false; timeOfDay = t; updateSun(); },
 };
 
 buildHeightmap();
@@ -12153,8 +12189,10 @@ function applyGFX() {
   // Map it to a real VISIBILITY distance instead: ~30m (fog right on the player) at the minimum up to
   // ~2800m (the current far, effectively clear) at the maximum. Fog in the shaders is 1-exp(-fd*fd) with
   // fd=(dist-near)*density, so fog is ~opaque where (dist-near)*density ~ 1.73. Weather still adds on top.
-  { const t = Math.max(0, Math.min(1, (GFX.fog - 0.5) / 1.1));
-    const V = 30 + 2770 * t;                                   // visibility distance
+  // §night the slider's MAX visibility is cut to ~1050 m (was ~2800) so the island stays atmospheric and
+  // you can't see clear across it; the default lands around 620 m. Night sight is capped separately (shorter).
+  { const t = Math.max(0, Math.min(1, (GFX.fog - 0.5) / 0.55));
+    const V = 30 + 1020 * t;                                   // visibility distance (30 m at min → 1050 m at max)
     baseFogNear = V * 0.3; baseFogDensity = 1.73 / (V * 0.7); }
   FOG_DENSITY = baseFogDensity; FOG_NEAR = baseFogNear;
   DRAW_R = BASE_DRAW_R * GFX.propDist;
@@ -12461,6 +12499,10 @@ function frame(now) {
   // only when the eye is clearly below the surface, and stay under until it's clearly above.
   const camUnderwater = mode === "walk" && camHasWater && cam.pos[1] < camSurf + (camUnderwaterNow ? UW_EXIT : UW_ENTER);
   camUnderwaterNow = camUnderwater;
+  // §night at night, stop drawing props past where they've already melted into darkness (they'd be invisible
+  // anyway): a perf win and no pop-in, since the night fade (NIGHT_VIEW_FAR) completes before this cull edge.
+  { const nd = camUnderwater ? 0 : (1 - dayFactor()), base = BASE_DRAW_R * GFX.propDist;
+    DRAW_R = (nd > 0.35) ? Math.min(base, NIGHT_VIEW_FAR + (lanternLit() ? LANTERN_NIGHT_BONUS : 0) + 15) : base; }
   let _uwFogD, _uwFogN, _uwSky;
   if (camUnderwater) {
     const depthBelow = Math.max(0, camSurf - cam.pos[1]);
@@ -12507,6 +12549,7 @@ function frame(now) {
   gl.uniformMatrix4fv(terrainU.uProj, false, proj);
   gl.uniformMatrix4fv(terrainU.uView, false, view);
   setLanternUniform(terrainU);   // §18
+  setNightUniforms(terrainU);    // §night
   gl.uniform3fv(terrainU.uSunDir, SKY.sun);
   gl.uniform3fv(terrainU.uCamPos, cam.pos);
   gl.uniform3fv(terrainU.uZenith, SKY.zenith);
@@ -12583,6 +12626,7 @@ function frame(now) {
   gl.uniform3fv(waterU.uHorizon, SKY.horizon);
   gl.uniform3fv(waterU.uWarm, SKY.warm);
   gl.uniform1f(waterU.uNight, camUnderwater ? 0 : (1 - dayFactor()));   // §look moonlit (non-glowing) water at night
+  setNightUniforms(waterU);   // §night
   gl.uniform1f(waterU.uDusk, camUnderwater ? 0 : SKY.dusk);             // §sky water reflections pick up the sunset sky
   gl.uniform1f(waterU.uTime, t);
   gl.uniform1f(waterU.uFogDensity, FOG_DENSITY);

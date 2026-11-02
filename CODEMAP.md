@@ -37,6 +37,10 @@ says what it does. Supporting docs: `docs/model-report.md` (per-mesh memory/tria
 | I want to change… | Go to | Notes |
 |---|---|---|
 | **Brightness / exposure** | `@section RENDER/post` (post shader `uBrightness`) + `@section ATMO/effects` (`ATMO.exposure`) + `@section SETTINGS/graphics` (the slider) | Final gamma lift is in the post pass; exposure/grade in ATMO. |
+| **Night darkness / view distance** | `applyNight()` in `SKY_GLSL` (shared by terrain/props/water) + `setNightUniforms()` + the `NIGHT_VIEW_*` / `NIGHT_POOL_*` constants near the fog bases | Night is dark with a short view and a dim pool around the player; the limit is separate from fog. Search `§night`. |
+| **Fog distance / slider** | `applyGFX()` (maps `GFX.fog` → a visibility distance) + the `slider("fog", …)` in `@section SETTINGS/graphics` | Max visibility ≈ 1050 m, default ≈ 620 m (medium). Old saved values are clamped on load. |
+| **Lantern (pool + model glow)** | `setLanternUniform()` / `LANTERN_*` + `lanternMesh()` (bright glass/flame) + the `uEmissive` draws in `drawPlacedLanterns`/`drawShovel` | Light pool is a shader falloff from the flame; the glass glows via a partial emissive. |
+| **Jump feel / slope speed** | `const MOVE = {…}` at the top of `@section PLAYER/walker` (`doJump`, `stepVertical`, the walk speed block) | Named tunables: jump leap, landing dip, uphill slowdown curve, downhill stick. Search `§move`. |
 | **Terrain colors** | `@section TERRAIN/mesh-shader` | The height-band base colors (`cSand*`, `cGrass`, `cRock`…) live in the fragment shader `main()`. |
 | **Terrain material blending** | `@section TERRAIN/mesh-shader` (shader color logic) + `@section TERRAIN/api` (the baked material field) | Natural material = smooth height/slope bands in the shader; dug/placed material = `uMaterial` texture. |
 | **Water surface / shoreline / foam** | `@section WATER/surface-mesh` | `buildWaterMesh` (the grid) + `waterVS`/`waterFS` (height, waves, shoreline discard, foam). |
