@@ -3287,8 +3287,12 @@ function groundGradient(x, z) {
   const m = Math.hypot(gx, gz) || 1e-6;
   return { dx: -gx / m, dz: -gz / m, slope: Math.atan(m) };   // dx,dz point downhill
 }
-// Jump feel (§6): a snappy rise under lighter gravity, a faster, heavier fall.
-const GRAVITY_UP = 24, GRAVITY_DOWN = 42, COYOTE_TIME = 0.1;   // §strip jump removed; gravity/falling kept for walking off ledges
+// §jumpfix Jump feel — a Minecraft-style EVEN arc. The old model used asymmetric gravity (rise 24, fall 42
+// → the fall was 1.75× faster than the rise) plus an "apex float" that cut gravity near the top and then
+// snapped it back on the way down. Those two things WERE the jolt: a lopsided, hang-then-drop arc. Replaced
+// with ONE symmetric gravity so the camera rises and falls at the same, comfortable pace. Tuned with
+// JUMP_SPEED so the apex ≈ 1.25 m and airtime ≈ 0.6 s, matching Minecraft scaled to our ~1.7 m player.
+const GRAVITY = 28, COYOTE_TIME = 0.1;   // symmetric gravity (m/s²); JUMP_SPEED 8.4 → apex 8.4²/(2·28) ≈ 1.26 m, airtime 2·8.4/28 ≈ 0.60 s
 // §nodeath master switch for every death / respawn path (big-fall fade-to-black + wake-on-land, the
 // hard-landing stamina wipe, and drowning). Off for now; flip to true to bring the old death code back.
 const DEATH_ENABLED = false;
@@ -3308,8 +3312,8 @@ const MOVE = {
   SLOPE_STICK_DROP: 1.5,    // while moving, stay glued to the ground for drops up to this (no downhill hopping); a bigger instant drop is a real ledge/cliff → you fall
   JUMP_SPRINT_BOOST: 2.4,   // forward m/s added to a SPRINTING jump, decaying over the arc (a longer leaping stride)
   JUMP_BOOST_DECAY: 1.6,    // how fast that forward leap bonus bleeds off (per second)
-  LAND_DIP_PER_FALL: 0.016, // landing camera dip (spring impulse) per m/s of impact speed …
-  LAND_DIP_MAX: 0.45,       // … capped here, so even a big fall only dips a little, then the spring eases back (never snaps)
+  LAND_DIP_PER_FALL: 0.012, // §jumpfix landing camera dip (spring impulse) per m/s of impact speed — gentle …
+  LAND_DIP_MAX: 0.30,       // … capped here, so even a big fall only dips a little, then the soft spring eases back (never snaps)
 };
 function smooth01(v) { v = v < 0 ? 0 : v > 1 ? 1 : v; return v * v * (3 - 2 * v); }   // §move clamped smoothstep 0..1
 let physAcc = 0, camSit = 0;    // step accumulator; smoothed crouch/rest camera offset
@@ -3340,10 +3344,9 @@ let _jmpDirX = 0, _jmpDirZ = 0;   // §move last travel direction (unit), captur
 function stepVertical(standH, g, stick) {
   if (stick === undefined) stick = LEDGE_DROP;
   if (player.airborne) {
-    // §P2 apex float: ease gravity near the top of the arc (|vy| small) for a brief, lighter hang
-    let grav = player.vy > 0 ? GRAVITY_UP : GRAVITY_DOWN;
-    if (Math.abs(player.vy) < TUNE.APEX_SPEED) grav *= TUNE.APEX_GRAV_MUL;
-    player.vy -= grav * PHYS_STEP;
+    // §jumpfix symmetric gravity, no apex-float hack → an even, slightly floaty arc that rises and falls at
+    // the same pace. (The asymmetric up/down gravity + the apex gravity-cut were the cause of the jarring jolt.)
+    player.vy -= GRAVITY * PHYS_STEP;
     player.feetY += player.vy * PHYS_STEP;
     if (player.vy <= 0 && player.feetY <= standH) {                        // ground contact
       const fall = -player.vy;
@@ -3363,7 +3366,7 @@ function landJump(g, fall) {   // §strip jumping removed; this now only runs wh
   // §move landing dip: a small knee-bend scaled by the impact speed, capped, fed into the critically
   // damped camera spring (LAND_SPRING_*) so it eases in AND out — it never snaps back.
   camYVel = Math.min(camYVel, -Math.min(MOVE.LAND_DIP_MAX, fall * MOVE.LAND_DIP_PER_FALL) * 11);
-  camNudge = Math.max(camNudge, Math.min(0.14, 0.02 + fall * 0.01));          // a pitch nod on top
+  camNudge = Math.max(camNudge, Math.min(0.045, 0.006 + fall * 0.003));       // §jumpfix a soft, subtle landing nod (was up to 0.14 rad ≈ 8°, a hard jerk on every landing)
   if (onFootstep) onFootstep(surfaceType(g.h, g.slope), Math.min(1, 0.4 + fall * 0.08));   // landing thud
   if (fall > 6) camShake = Math.max(camShake, Math.min(0.3, (fall - 6) * 0.03));   // §R4 the one remaining shake: a subtle hard-landing jolt
   if (fall > 9) player.landStun = Math.min(0.8, (fall - 9) * 0.08);          // §15/§nodeath hard landing: just the stagger (always)
@@ -4379,11 +4382,11 @@ let showFps = false;
 try { showFps = localStorage.getItem("bc_showfps") === "1"; } catch (e) {}
 function setShowFps(v) { showFps = !!v; try { localStorage.setItem("bc_showfps", showFps ? "1" : "0"); } catch (e) {}
   const el = document.getElementById("fpscounter"); if (el && !showFps) el.style.display = "none"; }
-// §bright master output brightness (a linear multiply in the post pass). The scene used to render
-// too bright, so the default is now a QUARTER of the old neutral (1.0 -> 0.25) and the slider tops
-// out at HALF the old (0.5). 0.25 sits near the middle of [BRIGHT_MIN, BRIGHT_MAX]. Old saved values
-// lived in a different range/meaning, so they're reset (new localStorage key) rather than loaded.
-const BRIGHT_MIN = 0.4, BRIGHT_DEFAULT = 0.6, BRIGHT_MAX = 0.8;
+// §bright master output brightness (a linear multiply in the post pass). Raised a notch: the slider now
+// tops out higher so the default can sit brighter too. Still below 1.0, so it lifts exposure without
+// blowing the scene out or turning night into day (the night view-distance limit is separate from this).
+// A saved value is clamped into [BRIGHT_MIN, BRIGHT_MAX], so old values just carry over within the range.
+const BRIGHT_MIN = 0.4, BRIGHT_DEFAULT = 0.72, BRIGHT_MAX = 0.95;
 let nightBrightness = BRIGHT_DEFAULT;
 try { const b = parseFloat(localStorage.getItem("bc_bright2")); if (!isNaN(b)) nightBrightness = Math.max(BRIGHT_MIN, Math.min(BRIGHT_MAX, b)); } catch (e) {}
 function setBrightness(v) { nightBrightness = Math.max(BRIGHT_MIN, Math.min(BRIGHT_MAX, v)); try { localStorage.setItem("bc_bright2", nightBrightness.toFixed(2)); } catch (e) {} }
@@ -8968,8 +8971,6 @@ const TUNABLES = [
   { k: "BREAK_IGNORE_T", min: 0.0, max: 1.0, step: 0.05 },
   { k: "JUMP_SPEED", min: 4.0, max: 11.0, step: 0.1 },
   { k: "JUMP_CUT", min: 0.1, max: 1.0, step: 0.02 },
-  { k: "APEX_SPEED", min: 0.0, max: 6.0, step: 0.1 },
-  { k: "APEX_GRAV_MUL", min: 0.2, max: 1.0, step: 0.02 },
   { k: "EAT_TIME", min: 0.6, max: 3.0, step: 0.1 },
   { k: "FISH_DRAIN_MUL", min: 0.5, max: 5.0, step: 0.1 },
   { k: "FISH_REEL_MUL", min: 0.3, max: 1.5, step: 0.05 },
@@ -9353,10 +9354,8 @@ const TUNE = {
   WRONG_TOOL_MUL: 0.34,             // §P2 effort per strike with the wrong tool (≈ 1/3 → ~3x the hits). 1 = right tool.
   HARVEST_SPEED: 1.33,              // §P3 damage per strike on trees/stumps/boulders (1.33 ≈ 25% fewer hits). 1 = old pace.
   BREAK_IGNORE_T: 0.4,              // §P3 after an object breaks, ignore terrain hits until mouse-up or this long
-  JUMP_SPEED: 7.6,                  // §P2 take-off velocity (m/s). Peak height ≈ v²/(2·GRAVITY_UP) ≈ 1.2 m.
+  JUMP_SPEED: 8.6,                  // §jumpfix take-off velocity (m/s). Symmetric GRAVITY=28 → apex 1.25 m, airtime 0.60 s, perfectly symmetric rise/fall (Minecraft feel).
   JUMP_CUT: 0.42,                   // §P2 variable height: releasing Space while rising scales the remaining up-velocity.
-  APEX_SPEED: 3.2,                  // §P2 near the top of the arc (|vy| below this) gravity eases → a brief, lighter float.
-  APEX_GRAV_MUL: 0.55,             // §P2 gravity multiplier inside the apex-float window (floatier hang time).
   JUMP_BUFFER: 0.11,                // §P2 pressing Space this long before landing still fires the jump on touchdown.
   EAT_TIME: 1.0,                    // §P2 hold-to-eat duration (s): hold right-click on food this long to finish the meal.
   FISH_DRAIN_MUL: 1.6,              // §fishfix how fast the reel-gauge needle falls when you stop reeling (bigger = faster).
@@ -9792,7 +9791,7 @@ function drawYGraph() {
   line("f", "#9fe3a0"); line("c", "#9fd0ef");
   ctx.fillStyle = "#cfe"; ctx.font = "10px monospace"; ctx.fillText("feetY", 6, 12); ctx.fillStyle = "#9fd0ef"; ctx.fillText("camY", 50, 12);
 }
-const LAND_IMPACT_K = 0.028, LAND_IMPACT_CAP = 0.42, LAND_SPRING_K = 130, LAND_SPRING_C = 23;   // tunables
+const LAND_IMPACT_K = 0.028, LAND_IMPACT_CAP = 0.42, LAND_SPRING_K = 95, LAND_SPRING_C = 19.5;   // §jumpfix softer, slower knee-bend (still critically damped C≈2√K, so it eases in AND out, never overshoots/snaps)
 function springCamY(dt) {
   let left = dt;
   while (left > 1e-4) { const s = Math.min(0.02, left); left -= s;   // substep for stability at any frame rate
