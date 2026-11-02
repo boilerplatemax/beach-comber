@@ -69,3 +69,17 @@ extent plus a 1.5 m margin to cover wind sway, so on-screen foliage always submi
 
 _Measure FPS on real hardware (GTX 1650 / phone) with the F3 overlay — the SwiftShader
 frame-times above are not representative._
+
+## After the visual batch (terrain blending, water, barnacles)
+
+Re-measured seed `alpha`, busy spot: **draws 31, triangles ~1,208 k, heap ~14 MB** — i.e.
+unchanged from the frustum-culling numbers above (the ~2 k extra tris are the barnacle
+patches, still a single instanced draw). No draw-call or triangle regression.
+
+The new cost is **fragment-shader only** and not visible in these GPU-independent metrics:
+the terrain shader adds 4 height-texture taps (smooth slope) + a couple of value-noise
+calls per fragment for the unified material blend, and the water shader adds a small foam
+term. Terrain fills roughly half of the low-res FBO (resScale ≤ 1), so this is a few extra
+ALU/tap ops over ~100 k fragments — comfortably inside the 60 FPS budget on a GTX 1650.
+Model report regenerated (`docs/model-report.md`). Measure the real frame time with F3 on
+hardware; if ever needed, the height-tap slope could be precomputed into a normal texture.

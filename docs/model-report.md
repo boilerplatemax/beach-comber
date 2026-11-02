@@ -104,18 +104,9 @@ Bytes/vertex = 24 (pos3 + col3 floats × 4). Instanced rows: geometry is **one**
 | find: shard | WORLD/FINDS | 2 | 6 | 144 | 0.1 | 0 | 0.1 | 0 | instanced dynamic (1 draw) |
 | Water sheet | WATER/buildWaterMesh | 131,072 | (indexed) | 0 | 0.0 | 1 | 0.0 | 1 | single indexed sheet · snapped to cam |
 
-**Totals:** ~7.96 MB of mesh+texture buffers; ~1,489,710 triangles across all live copies.
-This is the *scene inventory* (every copy that exists); it is independent of culling. As of
-Task 4, **frustum culling** (`@section RENDER/frustum-cull`) means only the copies inside the
-view frustum are actually submitted each frame — see `docs/perf-baseline.md` for the measured
-per-frame triangle counts (≈190 k–692 k depending on view direction, vs the ~1.25 M that used
-to be drawn unconditionally).
+**Totals:** ~7.96 MB of mesh+texture buffers; ~1,489,710 triangles across all live copies (before frustum culling).
 
 ## Top 5 optimization candidates (by triangles drawn/frame)
-
-(Frustum culling, below, is now **implemented** for terrain chunks and prop instances. The
-remaining lever on these is distance-based LOD / density falloff for the ocean plant beds and a
-lower-resolution water sheet.)
 
 - **prop: kelp** — ~577,024 tris (3584× 161). Instanced (draw-call cheap) but all copies are submitted regardless of distance — distance/frustum culling of instances cuts the triangle load. 
 - **Terrain chunk** — ~293,376 tris (16× 18336). 16 draw calls; frustum-cull per chunk. 
