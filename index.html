@@ -1611,8 +1611,13 @@ function drawHungerShells() {   // (name kept; now draws the fish row)
   if (!hungerEnabled || mode !== "walk") { if (cv.style.display !== "none") cv.style.display = "none"; return; }
   cv.style.display = "block";
   const g = hungerCtx || (hungerCtx = cv.getContext("2d"));
-  g.clearRect(0, 0, cv.width, cv.height);
-  const n = 10, s = 0.46, gap = 15, x0 = 7.5, y = 7.5, filled = Math.max(0, hunger) * n, starving = hungerTier() === "starving";   // §pixui 10 icons across a low-res canvas
+  // §pixui render at the screen's real resolution so the bar is crisp, not a blur-upscaled low-res canvas.
+  // The draw code stays in a 150×15 logical space; the context is scaled to the device-pixel backing.
+  const dpr = Math.min(window.devicePixelRatio || 1, 3), BW = Math.round(300 * dpr), BH = Math.round(30 * dpr);
+  if (cv.width !== BW || cv.height !== BH) { cv.width = BW; cv.height = BH; }
+  g.setTransform(BW / 150, 0, 0, BH / 15, 0, 0); g.imageSmoothingEnabled = false;
+  g.clearRect(0, 0, 150, 15);
+  const n = 10, s = 0.46, gap = 15, x0 = 7.5, y = 7.5, filled = Math.max(0, hunger) * n, starving = hungerTier() === "starving";   // §pixui 10 icons across the logical 150-wide canvas
   // fx: detect a dropped step for the shake; decay pulse/shake
   const step = Math.ceil(filled - 1e-6);
   if (step < hungerFx.prevStep) hungerFx.shake = 1; hungerFx.prevStep = step;
@@ -4012,14 +4017,19 @@ function drawFishHUD() {
   const cv = document.getElementById("fishcanvas"); if (!cv) return;
   const showing = mode === "walk" && ["charging","casting","waiting","nibble","bite","fighting"].includes(rod.state);   // §playtest2 show the cast-power meter while charging
   if (!showing) { if (cv.style.display !== "none") cv.style.display = "none"; return; }
-  if (cv.width !== innerWidth || cv.height !== innerHeight) { cv.width = innerWidth; cv.height = innerHeight; }
+  // §pixui device-resolution backing (round to whole device pixels) so the HUD is CRISP on high-DPI screens
+  // instead of the browser blur-upscaling a CSS-pixel canvas. The chunky "pixel" size (PX) stays in CSS px.
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const W = Math.round(innerWidth * dpr), H = Math.round(innerHeight * dpr);
+  if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
   cv.style.display = "block";
-  // §fishdither draw the whole HUD into a low-res buffer, then blit it up pixelated, matching the dithered inventory look (PX=2 keeps the short labels readable)
+  // §fishdither draw the whole HUD into a low-res buffer (chunky pixel/dithered look), then blit it up to the
+  // device-resolution canvas with NO smoothing → crisp, palette-limited pixels at the screen's real resolution.
   const PX = 2;
   if (!_fishLo) _fishLo = document.createElement("canvas");
-  const lw = Math.max(1, Math.ceil(cv.width / PX)), lh = Math.max(1, Math.ceil(cv.height / PX));
+  const lw = Math.max(1, Math.ceil(innerWidth / PX)), lh = Math.max(1, Math.ceil(innerHeight / PX));
   if (_fishLo.width !== lw || _fishLo.height !== lh) { _fishLo.width = lw; _fishLo.height = lh; }
-  const g = _fishLo.getContext("2d"); g.setTransform(1/PX, 0, 0, 1/PX, 0, 0); g.imageSmoothingEnabled = false; g.clearRect(0, 0, cv.width, cv.height);
+  const g = _fishLo.getContext("2d"); g.setTransform(1/PX, 0, 0, 1/PX, 0, 0); g.imageSmoothingEnabled = false; g.clearRect(0, 0, innerWidth, innerHeight);
   // line + bobber + bite marker
   if (["casting","waiting","nibble","bite","fighting"].includes(rod.state)) {
     const bp = projectToScreen(rod.bob.x, rod.bob.y + 0.25, rod.bob.z);
@@ -4039,7 +4049,7 @@ function drawFishHUD() {
   g.textAlign = "left";
   // §fishdither blit the low-res HUD up to the screen with no smoothing → chunky, palette-limited pixels
   const realG = cv.getContext("2d"); realG.setTransform(1, 0, 0, 1, 0, 0); realG.imageSmoothingEnabled = false;
-  realG.clearRect(0, 0, cv.width, cv.height); realG.drawImage(_fishLo, 0, 0, lw, lh, 0, 0, cv.width, cv.height);
+  realG.clearRect(0, 0, cv.width, cv.height); realG.drawImage(_fishLo, 0, 0, lw, lh, 0, 0, cv.width, cv.height);   // §pixui blit low-res buffer → full device-res canvas, nearest-neighbour
 }
 // §fishui the fishing HUD wears the same oak / parchment / brass RPG skin as the menus
 const FHUD = { oak: "rgba(42,28,16,0.92)", rim: "rgba(150,110,60,0.95)", groove: "rgba(26,17,9,0.95)",
