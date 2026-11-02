@@ -191,6 +191,14 @@
     font-family: var(--ui); font-size: 13px; letter-spacing: .04em; font-variant-numeric: tabular-nums;
     color: #bdeee6; opacity: .9; text-shadow: 0 1px 2px var(--ink-shadow); display: none;
   }
+  /* @section DEBUG/perf-overlay  dev perf HUD, toggled with F3 (always available, independent of the hidden debug mode) */
+  #perfhud {
+    position: fixed; left: 12px; top: 12px; z-index: 7; pointer-events: none;
+    font-family: var(--ui); font-size: 12px; letter-spacing: .03em; font-variant-numeric: tabular-nums;
+    color: #ffe6a8; opacity: .92; line-height: 1.5; white-space: pre;
+    background: rgba(8,16,18,.55); padding: 6px 9px; border-radius: 5px;
+    text-shadow: 0 1px 2px var(--ink-shadow); display: none;
+  }
   /* creature/find name card */
   #card {
     position: fixed; left: 50%; bottom: 20%; transform: translateX(-50%);
@@ -809,6 +817,7 @@
 <canvas id="hungershells" width="150" height="15"></canvas>
 <div id="dbg"></div>
 <div id="fpscounter"></div>
+<div id="perfhud"></div>
 <div id="stamina"></div>
 <div id="hungerArc"></div>
 <div id="breathArc"></div>
@@ -4265,6 +4274,7 @@ function setBrightness(v) { nightBrightness = Math.max(BRIGHT_MIN, Math.min(BRIG
 let screenShake = 0.25;
 try { const s = parseFloat(localStorage.getItem("bc_shake")); if (!isNaN(s)) screenShake = Math.max(0, Math.min(1, s)); } catch (e) {}
 function setScreenShake(v) { screenShake = Math.max(0, Math.min(1, v)); try { localStorage.setItem("bc_shake", screenShake.toFixed(2)); } catch (e) {} }
+let perfHud = false, _perfMs = 16.7;   // @section DEBUG/perf-overlay  F3 toggles a lightweight always-available FPS/ms/draws/tris/heap HUD
 let debugOn = false;             // ` toggles the perf overlay (within debug mode)
 let ecoDbg = false;              // §living Z toggles the zoned-ecosystem (current vs target) overlay
 let debugMode = new URLSearchParams(location.search).get("debug") === "1";  // hidden in normal play
@@ -4276,6 +4286,7 @@ const analog = { x: 0, y: 0 };   // x = strafe, y = forward, each -1..1
 let mobileSprint = false;        // mobile "Run" toggle writes here
 addEventListener("keydown", (e) => {
   keys[e.code] = true;
+  if (e.code === "F3") { e.preventDefault(); perfHud = !perfHud; return; }   // @section DEBUG/perf-overlay  dev perf HUD toggle (always available)
   if (catchPop) {   // §catchcard modal: Enter / Space / E / Esc / F dismiss (after the input-ignore window); pointer stays locked
     if (e.code === "Enter" || e.code === "Space" || e.code === "KeyE" || e.code === "Escape" || e.code === "KeyF") { e.preventDefault(); if (catchPopT >= CATCH_DISMISS_DELAY) keepCatch(); return; }   // §catchcard dismiss only after the input-ignore window
     return;   // swallow every other key while the card is up (no pause, no hotbar, no movement toggles)
@@ -11902,6 +11913,75 @@ function drawStorage(view) {
 let frameDraws = 0, frameTris = 0;
 function countDraw(tris) { frameDraws++; frameTris += tris; }
 
+// @system DEBUG  @section DEBUG/model-report
+// Introspect the live render registries and emit a markdown model report (one row per
+// model/mesh, sorted by total GPU memory). Run after world generation. Callable from the
+// browser console as `modelReport()` and headlessly via tools/model-report.js, which writes
+// docs/model-report.md. { pos, col } layout = 6 floats/vertex × 4 bytes = 24 bytes/vertex.
+function modelReport() {
+  const BPV = 24;                                   // bytes per vertex (pos3 + col3 floats)
+  const INST_STRIDE = 40;                           // per-instance bytes (iOff3 + iSRL4 + iTint3 floats)
+  const kb = (b) => (b / 1024).toFixed(1);
+  const rows = [];
+  // terrain chunks (indexed grid; geometry is merged per chunk, 1 draw/chunk, frustum-cullable)
+  if (typeof terrainChunks !== "undefined" && terrainChunks.length) {
+    let verts = 0, tris = 0, n = 0;
+    for (const ch of terrainChunks) { if (!ch) continue; verts += ch.nx * ch.nz; tris += ch.count / 3; n++; }
+    const pv = Math.round(verts / n), pt = Math.round(tris / n);
+    rows.push({ model: "Terrain chunk", where: "TERRAIN/buildTerrainMesh", tris: pt, verts: pv, bytes: pv * BPV, copies: n, total: pv * BPV * n, draws: n, mode: "merged grid · 1 draw/chunk · cull per chunk" });
+  }
+  // water sheet (single indexed grid snapped to the camera)
+  if (typeof water !== "undefined" && water && water.count) {
+    const t = Math.round(water.count / 3);
+    rows.push({ model: "Water sheet", where: "WATER/buildWaterMesh", tris: t, verts: "(indexed)", bytes: 0, copies: 1, total: 0, draws: 1, mode: "single indexed sheet · snapped to cam" });
+  }
+  // instanced props (base geometry shared across all instances → total = base buffer + instances×stride)
+  if (typeof propTypes !== "undefined") for (const t of propTypes) {
+    const inst = t && t.inst; if (!inst || !inst.count) continue;
+    const base = inst.vertCount * BPV, total = base + inst.count * INST_STRIDE;
+    rows.push({ model: "prop: " + t.kind, where: "PROPS/propTypes", tris: Math.round(inst.tris / inst.count), verts: inst.vertCount, bytes: base, copies: inst.count, total, draws: 1, mode: "instanced (1 draw, " + inst.count + "×)" });
+  }
+  // dynamic instanced meshes (finds in life[], plus the per-feature dyn buffers)
+  const liveFind = {};
+  if (typeof life !== "undefined") for (const e of life) if (e.kind === "find") liveFind[e.t] = (liveFind[e.t] || 0) + 1;
+  if (typeof FINDS !== "undefined") for (const k in FINDS) {
+    const d = FINDS[k].dyn; if (!d || !d.vc) continue;
+    const base = d.vc * BPV;
+    rows.push({ model: "find: " + k, where: "WORLD/FINDS", tris: Math.round(d.vc / 3), verts: d.vc, bytes: base, copies: liveFind[k] || 0, total: base + (liveFind[k] || 0) * INST_STRIDE, draws: liveFind[k] ? 1 : 0, mode: "instanced dynamic (1 draw)" });
+  }
+  // R32F terrain data textures (GRID×GRID × 4 bytes) + the low-res scene FBO colour
+  if (typeof GRID !== "undefined") {
+    const texBytes = GRID * GRID * 4;
+    for (const name of ["heightTex", "filledTex", "freshTex", "materialTex"])
+      rows.push({ model: "texture: " + name, where: "TERRAIN/WATER data texture", tris: 0, verts: GRID + "×" + GRID, bytes: texBytes, copies: 1, total: texBytes, draws: 0, mode: "R32F sampled by shaders" });
+  }
+  if (typeof fbo !== "undefined" && fbo && fbo.w) {
+    const b = fbo.w * fbo.h * 4;
+    rows.push({ model: "texture: scene FBO", where: "POST/ensureFBO", tris: 0, verts: fbo.w + "×" + fbo.h, bytes: b, copies: 1, total: b, draws: 0, mode: "RGBA8 low-res render target" });
+  }
+  rows.sort((a, b) => b.total - a.total);
+  const totMem = rows.reduce((s, r) => s + r.total, 0);
+  const totTris = rows.reduce((s, r) => s + (typeof r.tris === "number" ? r.tris * (r.copies || 1) : 0), 0);
+  let md = "# Model report\n\n";
+  md += "Auto-generated by `modelReport()` (see tools/model-report.js). Seed `" + (typeof SEED_STR !== "undefined" ? SEED_STR : "?") + "`.\n";
+  md += "Bytes/vertex = 24 (pos3 + col3 floats × 4). Instanced rows: geometry is **one** shared buffer; `Total` = base buffer + instances × 40-byte stride, so many copies stay cheap.\n\n";
+  md += "| Model | Where defined | Triangles | Vertices | Bytes per copy | Source size (KB) | Copies on a typical island | Total memory (KB) | Draw calls | Instanced or merged? |\n";
+  md += "|---|---|--:|--:|--:|--:|--:|--:|--:|---|\n";
+  for (const r of rows)
+    md += `| ${r.model} | ${r.where} | ${typeof r.tris === "number" ? r.tris.toLocaleString() : r.tris} | ${r.verts} | ${r.bytes.toLocaleString()} | ${kb(r.bytes)} | ${r.copies} | ${kb(r.total)} | ${r.draws} | ${r.mode} |\n`;
+  md += `\n**Totals:** ~${(totMem / 1048576).toFixed(2)} MB of mesh+texture buffers; ~${totTris.toLocaleString()} triangles across all live copies (before frustum culling).\n`;
+  // Top optimization candidates, ranked by triangles actually submitted each frame (copies × tris/copy).
+  const drawn = rows.filter((r) => typeof r.tris === "number" && r.tris > 0)
+    .map((r) => ({ ...r, drawnTris: r.tris * (r.copies || 1) }))
+    .sort((a, b) => b.drawnTris - a.drawnTris).slice(0, 5);
+  md += `\n## Top 5 optimization candidates (by triangles drawn/frame)\n\n`;
+  for (const r of drawn)
+    md += `- **${r.model}** — ~${r.drawnTris.toLocaleString()} tris (${r.copies}× ${r.tris}). ${r.draws > 1 ? r.draws + " draw calls; frustum-cull per chunk. " : ""}${r.mode.indexOf("instanced") >= 0 ? "Instanced (draw-call cheap) but all copies are submitted regardless of distance — distance/frustum culling of instances cuts the triangle load. " : ""}${r.model.indexOf("Water") >= 0 ? "Dense static grid — lower resolution or LOD by distance. " : ""}\n`;
+  if (typeof console !== "undefined") console.log(md);
+  return md;
+}
+if (typeof window !== "undefined") window.modelReport = modelReport;
+
 buildHeightmap();
 paintBiomes();
 findHighPoint();
@@ -12151,6 +12231,7 @@ let last = performance.now();
 let fpsSmooth = 60, washedThisLow = false;
 const dbgEl = document.getElementById("dbg");
 const fpsEl = document.getElementById("fpscounter");   // §fps standalone readout, toggled in Settings
+const perfEl = document.getElementById("perfhud");     // @section DEBUG/perf-overlay
 let _fpsGate = 0;
 // §ATMO GPU frame-time probe (real GPUs only). SwiftShader has no timer-query
 // extension, so _gpuMs stays 0 and the overlay prints "n/a (SwiftShader)". On a
@@ -12181,6 +12262,7 @@ function frame(now) {
   last = now;
   const t = now * 0.001;
   if (raw > 0) fpsSmooth += (1 / raw - fpsSmooth) * 0.1;
+  _perfMs += (Math.min(raw, 0.25) * 1000 - _perfMs) * 0.1;   // @section DEBUG/perf-overlay  smoothed wall-clock frame time (ms)
   frameDraws = 0; frameTris = 0;
 
   if (typeof MUSIC !== "undefined") MUSIC.update(dt);   // §music8 background playlist runs on real time, in every mode (title, walk, paused)
@@ -12710,6 +12792,21 @@ function frame(now) {
   if (fpsEl) {   // §fps lightweight readout, independent of the full debug overlay; hidden on the title screen
     if (showFps && !titleUp) { fpsEl.style.display = "block"; fpsEl.textContent = `${fpsSmooth.toFixed(0)} fps`; }
     else if (fpsEl.style.display !== "none") fpsEl.style.display = "none";
+  }
+
+  // @section DEBUG/perf-overlay  F3 dev HUD: FPS, frame time, draw calls, triangles on screen, JS heap.
+  // frameDraws/frameTris were reset at the top of this frame and accumulated by countDraw() during the passes.
+  if (perfEl) {
+    if (perfHud) {
+      const mem = (typeof performance !== "undefined" && performance.memory) ? performance.memory : null;
+      perfEl.style.display = "block";
+      perfEl.textContent =
+        `FPS    ${fpsSmooth.toFixed(0)}\n` +
+        `frame  ${_perfMs.toFixed(1)} ms\n` +
+        `draws  ${frameDraws}\n` +
+        `tris   ${frameTris >= 1000 ? (frameTris / 1000).toFixed(1) + "k" : frameTris}\n` +
+        `heap   ${mem ? (mem.usedJSHeapSize / 1048576).toFixed(0) + " / " + (mem.jsHeapSizeLimit / 1048576).toFixed(0) + " MB" : "n/a (browser hides it)"}`;
+    } else if (perfEl.style.display !== "none") perfEl.style.display = "none";
   }
 
   if (debugMode) { const sr = document.getElementById("dbgStepRate"); if (sr) sr.textContent = `steps/sec: ${stepsPerSec()}  (${player.sprinting ? "sprinting" : "walking"})`; }   // §foot2 live cadence readout
