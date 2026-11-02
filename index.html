@@ -2560,6 +2560,18 @@ vec3 skyColor(vec3 dir, vec3 sunDir, vec3 zen, vec3 hor, vec3 warm, float dusk) 
   col += warm * pow(s, 48.0) * 0.9;    // tight sun glow
   col += warm * pow(s, 7.0)  * 0.12;   // broad glow
   return col;
+}
+// §night TRUE darkness: at night the world is dark and your sight is SHORT. A small cool pool right around
+// the player stays dimly lit (so you're not blind without a lantern); beyond it everything fades smoothly to
+// near-black by the night view distance. This limit is separate from fog — raising the fog slider can't see
+// past it. nd = night strength (0 day → 1 deep night); near/far = the fade band; poolR/poolI = the dim ring.
+vec3 applyNight(vec3 col, vec3 world, vec3 camPos, float nd, float nearD, float farD, float poolR, float poolI) {
+  if (nd <= 0.001) return col;
+  float d = length(world - camPos);
+  float pool = (1.0 - smoothstep(poolR * 0.35, poolR, d)) * poolI;      // faint cool moonlit ring around you
+  col += col * vec3(0.42, 0.50, 0.74) * pool * nd;
+  float fade = nd * smoothstep(nearD, farD, d);                         // melt to darkness with distance
+  return col * (1.0 - 0.95 * fade);
 }`;
 
 /* --------------------------------------------------------------------- *
@@ -3271,11 +3283,27 @@ const PHYS_STEP = 1 / 60;       // physics tick (s)
             // §playtest2 jumping is free, no energy cost (walk/sprint and jump freely)
         // ground probe tolerance (m), small bumps/slope changes don't count as airborne
 const LEDGE_DROP = 0.45;        // a drop bigger than this under your feet makes you fall (walk off a ledge)
+// §move MOVEMENT FEEL — jump + slope tuning (all named here so they're easy to tweak). Degrees are the
+// ground slope measured in the travel direction (from the smoothed groundGradient, so it won't flicker).
+const MOVE = {
+  SLOPE_SLOW_START: 15,     // deg: gentler than this, uphill barely slows
+  SLOPE_SLOW_FULL: 40,      // deg: at/above this, the slowest climb
+  SLOPE_SLOW_MIN: 0.40,     // slowest uphill speed fraction (never 0 → never fully blocked)
+  SLOPE_SPRINT_LOSS: 0.85,  // fraction of the sprint BONUS lost by a full-steep uphill (sprint ≈ walk on a cliff-climb)
+  SLOPE_DOWN_FAST: 0.14,    // extra speed fraction at full downhill steepness (a touch quicker downhill)
+  SLOPE_STICK_DROP: 1.5,    // while moving, stay glued to the ground for drops up to this (no downhill hopping); a bigger instant drop is a real ledge/cliff → you fall
+  JUMP_SPRINT_BOOST: 2.4,   // forward m/s added to a SPRINTING jump, decaying over the arc (a longer leaping stride)
+  JUMP_BOOST_DECAY: 1.6,    // how fast that forward leap bonus bleeds off (per second)
+  LAND_DIP_PER_FALL: 0.016, // landing camera dip (spring impulse) per m/s of impact speed …
+  LAND_DIP_MAX: 0.45,       // … capped here, so even a big fall only dips a little, then the spring eases back (never snaps)
+};
+function smooth01(v) { v = v < 0 ? 0 : v > 1 ? 1 : v; return v * v * (3 - 2 * v); }   // §move clamped smoothstep 0..1
 let physAcc = 0, camSit = 0;    // step accumulator; smoothed crouch/rest camera offset
 // §urgent7 individually-disableable camera/movement effects (for hunting the landing snap). raw = all off.
 const camFx = { interp: true, bob: true, eyeSmooth: true, crouch: true, landDip: true, raw: false };
 function camFxOn(k) { return !camFx.raw && camFx[k]; }
 const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, prevFeetY: 0, sprinting: false, scramble: 0, vy: 0, airborne: false, coyote: 0, landStun: 0,
+                 jumpImpulse: 0, jvx: 0, jvz: 0,                        // §move sprinting-jump forward leap (decays over the arc)
                  swimming: false, underwater: false, breath: 40 };     // §14A swimming/breath (BREATH_MAX)
 // §strip crouching removed (key, mobile button, creature-calm bonus, crouch-resting, camera dip).
    // kept as a constant-false so existing reads are harmless
@@ -3286,11 +3314,17 @@ let jumpBuffer = 0;
 // §P2 spring off the ground. Only the frame loop calls this (grounded or inside the coyote window).
 function doJump() {
   player.vy = TUNE.JUMP_SPEED; player.airborne = true; player.coyote = 0; jumpBuffer = 0;
-  camYVel = Math.min(camYVel, -2.4);        // §P2 a quick crouch-dip on take-off; the camera spring recovers it (springy feel)
+  // §move NO take-off dip any more (it read as a jarring crouch-then-snap). Instead, a SPRINTING jump
+  // launches a forward leap: a decaying horizontal boost in the current travel direction so the full
+  // jump carries momentum and covers ground (useful for clearing gaps and hopping up onto rocks).
+  if (player.sprinting && (_jmpDirX || _jmpDirZ)) { player.jumpImpulse = MOVE.JUMP_SPRINT_BOOST; player.jvx = _jmpDirX; player.jvz = _jmpDirZ; }
+  else { player.jumpImpulse = 0; player.jvx = 0; player.jvz = 0; }
   if (onDig) onDig("pat");                  // §P2 a soft take-off scuff
 }
+let _jmpDirX = 0, _jmpDirZ = 0;   // §move last travel direction (unit), captured each frame for the sprint-jump leap
 // §P1 ONE fixed physics step, the only place gravity + ground contact write player.feetY.
-function stepVertical(standH, g) {
+function stepVertical(standH, g, stick) {
+  if (stick === undefined) stick = LEDGE_DROP;
   if (player.airborne) {
     // §P2 apex float: ease gravity near the top of the arc (|vy| small) for a brief, lighter hang
     let grav = player.vy > 0 ? GRAVITY_UP : GRAVITY_DOWN;
@@ -3302,17 +3336,19 @@ function stepVertical(standH, g) {
       player.feetY = standH; player.vy = 0; player.airborne = false; player.coyote = COYOTE_TIME;
       landJump(g, fall);
     }
-  } else if (standH < player.feetY - LEDGE_DROP) {                          // ground fell away under you → step off the ledge
+  } else if (standH < player.feetY - stick) {                               // a drop bigger than the stick threshold → step off the ledge / cliff
     player.airborne = true; player.vy = 0;
   } else {
-    player.feetY = standH;                                                  // glued to the ground (small bumps/slopes)
+    player.feetY = standH;                                                  // §move glue to the ground (bumps, and whole slopes while moving → no downhill hopping)
   }
 }
 function landJump(g, fall) {   // §strip jumping removed; this now only runs when you land after walking off a ledge
   fall = fall || 0;
   // §strip the wet-sand landing burst (sand puff + stomp-reveal of dig spots) is removed with jumping.
   // §15 landing dip scaled up for real falls (not just hops)
-  camYVel = Math.min(camYVel, -Math.min(LAND_IMPACT_CAP * (1 + fall*0.06), fall * LAND_IMPACT_K * 1.4) * 11);
+  // §move landing dip: a small knee-bend scaled by the impact speed, capped, fed into the critically
+  // damped camera spring (LAND_SPRING_*) so it eases in AND out — it never snaps back.
+  camYVel = Math.min(camYVel, -Math.min(MOVE.LAND_DIP_MAX, fall * MOVE.LAND_DIP_PER_FALL) * 11);
   camNudge = Math.max(camNudge, Math.min(0.14, 0.02 + fall * 0.01));          // a pitch nod on top
   if (onFootstep) onFootstep(surfaceType(g.h, g.slope), Math.min(1, 0.4 + fall * 0.08));   // landing thud
   if (fall > 6) camShake = Math.max(camShake, Math.min(0.3, (fall - 6) * 0.03));   // §R4 the one remaining shake: a subtle hard-landing jolt
@@ -5077,6 +5113,7 @@ if (IS_TOUCH) (function mobileControls() {
      <div id="mBtns">
        <div class="mBtn" data-act="pause">Pause</div>
        <div class="mBtn" data-key="KeyE">Bag</div>
+       <div class="mBtn" data-act="jump" data-hold="1">Jump</div>
        <div class="mBtn" data-act="swimup" data-hold="1" style="display:none">▲ Up</div>
        <div class="mBtn" data-act="swimdown" data-hold="1" style="display:none">▼ Down</div>
        <div class="mBtn mrod" data-act="rod" data-hold="1" style="display:none">Cast / Reel</div>
@@ -5119,6 +5156,7 @@ if (IS_TOUCH) (function mobileControls() {
       unlockAudio();
       if (btn.dataset.act === "pause") openPause();
       else if (btn.dataset.act === "run") { mobileSprint = !mobileSprint; btn.style.background = mobileSprint ? "rgba(60,120,130,.8)" : ""; }
+      else if (btn.dataset.act === "jump") { if (mode === "walk" && !player.swimming && !isPanelOpen()) jumpBuffer = TUNE.JUMP_BUFFER; btn.style.background = "rgba(60,120,130,.8)"; }   // §move touch jump (hold for a higher jump, release to cut — same as Space)
       else if (btn.dataset.act === "swimup") { mobileSwimUp = true; btn.style.background = "rgba(60,120,130,.8)"; }   // §14A hold to swim up
       else if (btn.dataset.act === "swimdown") { mobileSwimDown = true; btn.style.background = "rgba(60,120,130,.8)"; }
       else if (btn.dataset.act === "rod") { rodPressStart(); btn.style.background = "rgba(60,120,130,.8)"; }   // §Fishing hold to charge cast / reel in a fight
@@ -5127,6 +5165,7 @@ if (IS_TOUCH) (function mobileControls() {
     if (btn.dataset.hold) {   // §14A release hold-buttons (swim up/down)
       const rel = (e) => { e.preventDefault();
         if (btn.dataset.act === "swimup") mobileSwimUp = false; else if (btn.dataset.act === "swimdown") mobileSwimDown = false;
+        else if (btn.dataset.act === "jump") { if (player.airborne && player.vy > 0) player.vy *= TUNE.JUMP_CUT; }   // §move release early → cut the jump short (variable height)
         else if (btn.dataset.act === "rod") rodPressEnd();   // §Fishing release → cast / stop reeling
         btn.style.background = ""; };
       btn.addEventListener("touchend", rel, { passive: false });
@@ -11878,6 +11917,9 @@ if (typeof window !== "undefined") window.__dbg = {
   rocks: () => (typeof rockObjs !== "undefined" ? rockObjs.filter(o => !o.gone).map(o => ({ x: o.x, z: o.z, sc: o.sc, barn: !!(o.barn && o.barn.amt > 0) })) : []),
   ground: (x, z) => surfaceAt(x, z).h,
   water: () => waterLevel,
+  player: () => ({ x: player.x, z: player.z, feetY: player.feetY, eyeY: player.eyeY, vy: player.vy, airborne: player.airborne, swimming: player.swimming, underwater: player.underwater, speedMul: (typeof _curSpeedMul !== "undefined" ? _curSpeedMul : 1), slopeDeg: (typeof _curSlopeDeg !== "undefined" ? _curSlopeDeg : 0) }),
+  jump: () => { if (mode === "walk" && !player.swimming) jumpBuffer = TUNE.JUMP_BUFFER; },
+  state: () => ({ mode, jumpBuffer, airborne: player.airborne, vy: player.vy, feetY: player.feetY }),
 };
 
 buildHeightmap();
@@ -12282,12 +12324,26 @@ function frame(now) {
 
     if (wl > 0.01) {
       wx /= wl; wz /= wl;
-      _curSpeedMul = 1;   // §strip no slope slowdown
+      _jmpDirX = wx; _jmpDirZ = wz;   // §move remember travel direction for a sprint-jump leap
       const depth = waterLevel - here.h;
       let surfMul = 1;
       if (depth > 0.05) surfMul = Math.max(0.25, 1 - depth * 0.45); // deeper wading, slower
       else if (here.h < 12) surfMul = 0.9;                          // soft sand
-      const speed = WALK_SPEED * (player.sprinting ? SPRINT : 1) * surfMul * (player.landStun > 0 ? 0.5 : 1) * matSpeedMul(Terrain.materialAt(player.x, player.z));
+      // §move slope on speed: uphill is slower the steeper the ground in the travel direction (gentle
+      // barely changes, steep is a slow climb, never fully blocked); downhill a touch faster. Sprinting
+      // loses most of its edge on a steep climb. fwdGrade is from the smoothed gradient, so it won't flicker.
+      const fwdDeg = fwdGrade * 180 / Math.PI;                      // + uphill, − downhill
+      let slopeMul = 1, effSprint = player.sprinting ? SPRINT : 1;
+      if (fwdDeg > 0) {
+        const f = smooth01((fwdDeg - MOVE.SLOPE_SLOW_START) / (MOVE.SLOPE_SLOW_FULL - MOVE.SLOPE_SLOW_START));
+        slopeMul = 1 - f * (1 - MOVE.SLOPE_SLOW_MIN);
+        if (player.sprinting) effSprint = 1 + (SPRINT - 1) * (1 - f * MOVE.SLOPE_SPRINT_LOSS);
+      } else if (fwdDeg < 0) {
+        const f = smooth01((-fwdDeg - MOVE.SLOPE_SLOW_START) / (MOVE.SLOPE_SLOW_FULL - MOVE.SLOPE_SLOW_START));
+        slopeMul = 1 + f * MOVE.SLOPE_DOWN_FAST;
+      }
+      _curSpeedMul = slopeMul;
+      const speed = WALK_SPEED * effSprint * surfMul * slopeMul * (player.landStun > 0 ? 0.5 : 1) * matSpeedMul(Terrain.materialAt(player.x, player.z));
       const dist = speed * dt;
       // Simple, robust movement: slide X and Z independently (so you glide along walls), blocking only
       // deep water or a near-vertical rise per frame (prevents climbing cliff faces without snagging on bumps).
@@ -12312,6 +12368,14 @@ function frame(now) {
         _stepLog.push(clock.t);   // §foot2 for the debug steps/sec readout
       }
     }
+    // §move sprint-jump forward leap: carries momentum through the whole arc (independent of steering),
+    // decaying as it goes. Blocked by deep water / walls like ordinary movement. Cleared on landing.
+    if (player.airborne && player.jumpImpulse > 0.01) {
+      const jd = player.jumpImpulse * dt;
+      let jnx = player.x + player.jvx * jd, jnz = player.z + player.jvz * jd;
+      if (waterLevel - groundStandAt(jnx, jnz, player.feetY) <= SWIM_START + 0.7) { [jnx, jnz] = slideCircles(jnx, jnz); player.x = jnx; player.z = jnz; }
+      player.jumpImpulse = Math.max(0, player.jumpImpulse - MOVE.JUMP_BOOST_DECAY * dt);
+    } else if (!player.airborne) { player.jumpImpulse = 0; }
     player.scramble += (scrambleTarget - player.scramble) * Math.min(1, dt * 4);
     if (player.landStun > 0) player.landStun = Math.max(0, player.landStun - dt);
     const standH = groundStandAt(player.x, player.z, player.feetY);   // terrain, a fallen trunk, or a village deck/ramp underfoot
@@ -12325,7 +12389,8 @@ function frame(now) {
     if (jumpBuffer > 0 && canJump) doJump();
     // §P1 fixed-timestep vertical sim (feetY is the single owner of player Y); render interpolates between steps
     physAcc += dt; let nSteps = 0;
-    while (physAcc >= PHYS_STEP && nSteps < 5) { player.prevFeetY = player.feetY; stepVertical(standH, g); physAcc -= PHYS_STEP; nSteps++; }
+    const stickDrop = (wl > 0.01) ? MOVE.SLOPE_STICK_DROP : LEDGE_DROP;   // §move while moving, stay glued to slopes/bumps (no downhill bounce); standing still, a real ledge still drops you
+    while (physAcc >= PHYS_STEP && nSteps < 5) { player.prevFeetY = player.feetY; stepVertical(standH, g, stickDrop); physAcc -= PHYS_STEP; nSteps++; }
     if (physAcc > PHYS_STEP) physAcc = PHYS_STEP;   // clamp (tab was hidden / big hitch), avoids spiral of death
     if (Math.abs(player.feetY - player.prevFeetY) > 3) player.prevFeetY = player.feetY;   // a teleport happened (respawn/climb), don't interpolate across it
     const alpha = Math.min(1, physAcc / PHYS_STEP);
@@ -12607,6 +12672,8 @@ function frame(now) {
   } else bArc.style.display = "none";
   if (IS_TOUCH) { const sw = (mode === "walk" && player.swimming) ? "flex" : "none";   // §14A swim up/down only while swimming
     document.querySelectorAll('.mBtn[data-act="swimup"], .mBtn[data-act="swimdown"]').forEach(b => { if (b.style.display !== sw) b.style.display = sw; });
+    const jd = (mode === "walk" && !player.swimming) ? "flex" : "none";   // §move the Jump button is for walking, hidden while swimming (swim up/down take over)
+    const jb = document.querySelector('.mBtn[data-act="jump"]'); if (jb && jb.style.display !== jd) jb.style.display = jd;
   }
   document.getElementById("hotbar").style.display = (mode === "walk") ? "flex" : "none";
   { const sc = document.getElementById("scrim"); if (sc) { const show = menuModalOpen() ? "block" : "none"; if (sc.style.display !== show) sc.style.display = show; } }   // §A6 shared dim behind any open modal
