@@ -384,7 +384,7 @@
   #ygraph { position: fixed; left: 10px; top: 120px; z-index: 20; display: none; background: rgba(8,12,16,.72);
     border: 1px solid rgba(160,200,230,.3); border-radius: 4px; image-rendering: pixelated; }
   #critcanvas { position: fixed; inset: 0; z-index: 7; display: none; pointer-events: none; }
-  #fishcanvas { position: fixed; inset: 0; z-index: 7; display: none; pointer-events: none; }
+  #fishcanvas { position: fixed; inset: 0; z-index: 7; display: none; pointer-events: none; image-rendering: pixelated; }
   #fishreveal { position: fixed; inset: 0; z-index: 14; display: none; align-items: center; justify-content: center; pointer-events: auto; }
   #fishrevealbox { background: rgba(10,16,20,.92); border: 1px solid rgba(160,200,230,.35); border-radius: 8px;
     padding: 22px 30px; text-align: center; min-width: 260px; box-shadow: 0 10px 40px rgba(0,0,0,.5); }
@@ -3544,8 +3544,21 @@ function saveRodRec() { try { localStorage.setItem("bc_rodrec", JSON.stringify(r
 // §fishpolish bait is worms only for now (other baits removed). q = quality (0 = basic).
 const ROD_BAIT = [ ["worm", 0, "Earthworm"], ["bug", 0, "Bug"],   // §stonebug/§P3 bugs work as bait like worms; each species is its own item now
   ["pillbug", 0, "Pill Bug"], ["beetle", 0, "Ground Beetle"], ["centipede", 0, "Centipede"], ["slug", 0, "Slug"] ];
-// §fishpolish tunables, bite timing, how a hotspot speeds it up, and how far you can wander before the cast cancels
-const BITE_MIN = 4, BITE_MAX = 40;     // seconds to a bite in plain water (wide variance)
+// §fishrework ALL the fishing feel in one place — a short, snappy fight that reacts in step with the mouse.
+// Tweak these to taste.
+const FISH_TUNE = {
+  BITE_MIN: 1.4, BITE_MAX: 6.5,     // §fishrework much shorter wait before something happens (was 4–40 s)
+  NIBBLES_MIN: 1, NIBBLES_MAX: 3,   // teasing nibbles before the real bite — strike on one and you spook the fish
+  NIBBLE_GAP: [0.45, 0.95],         // seconds between nibble twitches
+  STRIKE_WINDOW: 0.9,               // seconds you have to set the hook once the bobber plunges (relaxed adds more)
+  FIGHT_SCALE: 0.5,                 // overall fight-length multiplier (smaller = quicker catches)
+  REEL_RISE: 1.7,                   // how hard holding-to-reel drives tension up (bigger = snappier, more 1:1)
+  REEL_CAP: 2.6,                    // max tension climb rate (lets a burst + reel spike fast)
+  DRAIN_FALL: 1.9,                  // how fast tension falls the instant you let go (immediate slack)
+  BURST_PUSH: 1.15,                 // extra tension a fish's run/burst adds
+  SLACK_SLIP: 0.3,                  // progress lost per second while the line is too slack (punishing)
+  PROGRESS_LOW_DRAG: 0.9,           // progress also bleeds this fast when fully slack (fish shakes loose)
+};
 const CANCEL_DIST = 30;                // walk this far from the bobber and the cast reels itself in
 // rod species, weights in kg, strength drives the fight, rare steers the odds, dmin = min water depth it favours
 // §fish5 each species carries a `mini` descriptor so the reel-in mini-game plays differently:
@@ -3637,7 +3650,7 @@ function onBobberLanded() {
   rod.spotQ = Math.max(0, spotQuality(rod.bob.tx, rod.bob.tz));
   const q = rod.spotQ;
   // wide bite variance (§strip hotspot bite bonus removed)
-  let delay = fishForceBite ? 0.4 : (BITE_MIN + Math.random() * (BITE_MAX - BITE_MIN)) * (1 - 0.25 * q) * (typeof weatherBiteMul === "function" ? weatherBiteMul() : 1);   // §20 fish bite sooner in rain/overcast
+  let delay = fishForceBite ? 0.4 : (FISH_TUNE.BITE_MIN + Math.random() * (FISH_TUNE.BITE_MAX - FISH_TUNE.BITE_MIN)) * (1 - 0.25 * q) * (typeof weatherBiteMul === "function" ? weatherBiteMul() : 1);   // §fishrework short wait; §20 sooner in rain/overcast
   rod.biteAt = clock.t + Math.max(0.4, delay);
   if (typeof SND !== "undefined") SND.play("plop", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz] });
   if (typeof spawnSand === "function") spawnSand(rod.bob.tx, rod.bob.surf, rod.bob.tz, 6, [0.8,0.86,0.92]);
@@ -3694,12 +3707,24 @@ function beginBite() {                                         // fish takes the
     const vr = rng();                                                         // §22 a giant catch counts as a record; colour morphs for the journal
     if (vr < 0.03) { rod.fish.variant = "giant"; rod.fish.weight = +(rod.fish.weight * (1.9 + rng()*0.6)).toFixed(2); }
     else if (vr < 0.03 + 0.03) rod.fish.variant = VARIANT_MORPHS[(rng()*VARIANT_MORPHS.length)|0]; }
-  rod.state = "nibble"; rod.nibbleUntil = clock.t + (0.5 + Math.random() * 0.5);
+  // §fishrework a run of teasing nibbles first — small twitches meant to bait an early strike (which spooks it)
+  rod.state = "nibble";
+  rod.nibblesLeft = FISH_TUNE.NIBBLES_MIN + Math.floor(Math.random() * (FISH_TUNE.NIBBLES_MAX - FISH_TUNE.NIBBLES_MIN + 1));
+  rod.nibbleUntil = clock.t + FISH_TUNE.NIBBLE_GAP[0] + Math.random() * (FISH_TUNE.NIBBLE_GAP[1] - FISH_TUNE.NIBBLE_GAP[0]);
+  rod.nibbleTwitch = 1;
   if (typeof SND !== "undefined") SND.play("tick", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz] });
 }
-function toBite() {
-  rod.state = "bite"; rod.hookUntil = clock.t + (relaxedFishing ? 1.7 : 1.05); rod.bob.sink = 1;
-  if (typeof SND !== "undefined") SND.play("plop", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz] });
+function nibbleTwitch() {   // §fishrework one more little tease: a tick, a dimple on the water, the bobber jiggles
+  rod.nibbleTwitch = 1; rod.bob.sink = 0.3;
+  if (typeof SND !== "undefined") SND.play("tick", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz], volume: 0.7 });
+  if (typeof spawnSand === "function") spawnSand(rod.bob.x, rod.bob.surf + 0.02, rod.bob.z, 2, [0.8, 0.86, 0.92]);
+  rod.nibbleUntil = clock.t + FISH_TUNE.NIBBLE_GAP[0] + Math.random() * (FISH_TUNE.NIBBLE_GAP[1] - FISH_TUNE.NIBBLE_GAP[0]);
+}
+function toBite() {   // §fishrework THE real bite: the bobber plunges under with a splash and a thud — clearly different
+  rod.state = "bite"; rod.hookUntil = clock.t + FISH_TUNE.STRIKE_WINDOW + (relaxedFishing ? 0.8 : 0); rod.bob.sink = 1; rod.bob.splash = 1;
+  hintText = "Strike!"; hintT = FISH_TUNE.STRIKE_WINDOW + 0.2;   // §fishrework a clear cue for the short strike window
+  if (typeof SND !== "undefined") { SND.play("plop", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz], volume: 1 }); SND.play("whoosh", { volume: 0.4 }); }
+  if (typeof spawnSand === "function") spawnSand(rod.bob.x, rod.bob.surf + 0.05, rod.bob.z, 10, [0.85, 0.9, 0.96]);
 }
 function missBite() {                                          // struck during the nibble, or let the bite window lapse
   showCard("It got away", "The fish spat the hook. Wait for the full bite next time.");
@@ -3709,7 +3734,7 @@ function setHook() {
   const f = rod.fish; const meta = f.species === "junk" ? JUNK_META : FISH_SPECIES[f.species];
   const mini = meta.mini || {}, wLand = meta.wLand != null ? meta.wLand : 1.3;   // §fish5 per-species mini-game feel + weight→length scaling
   rod.fight = { progress: 0, tension: 0.42, strain: 0, slack: 0, run: 0, runActive: false, runUntil: 0,
-    runCd: (mini.runCd || 1.6) + Math.random() * 2, land: (meta.fight + f.weight * wLand) * (relaxedFishing ? 0.75 : 1), str: meta.strength + f.weight * 0.04,
+    runCd: (mini.runCd || 1.6) + Math.random() * 2, land: (meta.fight + f.weight * wLand) * (relaxedFishing ? 0.75 : 1) * FISH_TUNE.FIGHT_SCALE, str: meta.strength + f.weight * 0.04,
     snaps: 0, snapFlash: 0, zoneGlow: 0,
     mini, quirk: mini.quirk || null, zoneVis: 1, puffT: 1 + Math.random() * 1.5, jitter: 0 };
   rod.state = "fighting"; rod.bend = 0.5;
@@ -3735,15 +3760,25 @@ function updateFight(dt) {
   if (fg.quirk === "puff") { fg.puffT -= dt; if (fg.puffT <= 0) { fg.puffT = 1.6 + Math.random() * 2; fg.tension = Math.min(1, fg.tension + 0.32); if (typeof SND !== "undefined") SND.play("plop", { volume: 0.4 }); } }
   // §fishfix the needle: reeling raises tension (gentler + rate-capped so one eager click can't throw it way off),
   // letting go drops it faster than before. A run surge still pushes it up.
-  let dTens = (reeling ? (mini.reel || 0.85) * TUNE.FISH_REEL_MUL : -(mini.drain || 0.72) * TUNE.FISH_DRAIN_MUL) + fg.run * 0.75;
-  dTens = Math.min(dTens, TUNE.FISH_MAX_RISE);   // cap the climb rate only (falling stays fast)
+  // §fishrework reeling drives tension up HARD and immediately (reacts in step with the mouse), letting go
+  // drops it fast; a burst spikes it. Only the climb rate is capped so a run + reel can still snap you.
+  let dTens = (reeling ? (mini.reel || 0.85) * FISH_TUNE.REEL_RISE : -(mini.drain || 0.72) * FISH_TUNE.DRAIN_FALL) + fg.run * FISH_TUNE.BURST_PUSH;
+  dTens = Math.min(dTens, FISH_TUNE.REEL_CAP);
   fg.tension += dTens * dt;
   fg.tension = Math.max(0, Math.min(1, fg.tension));
   if (fg.snapFlash > 0) fg.snapFlash = Math.max(0, fg.snapFlash - dt);
+  // §fishrework reeling draws the bobber slowly toward the player (never up onto land — depth-gated at the
+  // shoreline); a run makes it dart side to side and kick up splashes, more for a bigger/stronger fish.
+  { const dxp = player.x - rod.bob.x, dzp = player.z - rod.bob.z, dd = Math.hypot(dxp, dzp) || 1;
+    if (reeling && dd > 2.4) { const step = (fg.runActive ? 0.5 : 1.5) * dt, nx = rod.bob.x + dxp/dd*step, nz = rod.bob.z + dzp/dd*step;
+      if (waterDepthAt(nx, nz) > 0.4) { rod.bob.x = nx; rod.bob.z = nz; } }                              // stop at the shoreline
+    if (fg.runActive) { const amp = Math.sin(clock.t * 13) * (0.6 + (mini.runStr||1) * 0.9) * dt, px = -dzp/dd, pz = dxp/dd, nx = rod.bob.x + px*amp, nz = rod.bob.z + pz*amp;
+      if (waterDepthAt(nx, nz) > 0.4) { rod.bob.x = nx; rod.bob.z = nz; }
+      if (typeof spawnSand === "function" && Math.random() < dt * 16) spawnSand(rod.bob.x, rod.bob.surf + 0.05, rod.bob.z, 2 + Math.round((mini.runStr||1) * 2), [0.85, 0.9, 0.96]); } }
   const inZone = fg.tension >= lo && fg.tension <= hi;
   fg.zoneGlow += ((inZone ? 1 : 0) - fg.zoneGlow) * Math.min(1, dt * 10);        // zone glows while the needle is inside
   if (fg.tension > hi)      { fg.strain += (fg.tension - hi) * (relaxed ? 1.5 : 3.4) * dt; fg.slack = Math.max(0, fg.slack - 0.5 * dt); }
-  else if (fg.tension < lo) { fg.slack  += (lo - fg.tension) * (relaxed ? 1.2 : 2.2) * dt; fg.strain = Math.max(0, fg.strain - 0.8 * dt); fg.progress = Math.max(0, fg.progress - dt * 0.12); }   // fish pulls line → the icon slips back
+  else if (fg.tension < lo) { fg.slack  += (lo - fg.tension) * (relaxed ? 1.2 : 2.2) * dt; fg.strain = Math.max(0, fg.strain - 0.8 * dt); fg.progress = Math.max(0, fg.progress - dt * (FISH_TUNE.SLACK_SLIP + (lo - fg.tension) * FISH_TUNE.PROGRESS_LOW_DRAG)); }   // §fishrework slack line → the catch slips back fast (punishing)
   else                      { fg.progress += dt / fg.land; fg.strain = Math.max(0, fg.strain - 1.3 * dt); fg.slack = Math.max(0, fg.slack - 1.0 * dt); }
   // §fishpolish a full strain snaps one knot (not an instant loss); three snapped knots breaks the line
   if (fg.strain >= 1) { fg.strain = 0; if (!relaxed) { fg.snaps++; fg.snapFlash = 0.5; if (typeof SND !== "undefined") SND.play("crack", { volume: 0.6 }); if (fg.snaps >= 3) return lineSnap(); } }
@@ -3803,7 +3838,7 @@ function updateFishing(dt) {
     if (Math.hypot(player.x - rod.bob.x, player.z - rod.bob.z) > CANCEL_DIST) { hintText = "Too far, line reeled in"; hintT = 1.4; if (typeof SND !== "undefined") SND.play("plop"); endCast(0.4); return; }
   }
   if (rod.state === "waiting") { if (clock.t >= rod.biteAt) beginBite(); }
-  else if (rod.state === "nibble") { if (clock.t >= rod.nibbleUntil) toBite(); }
+  else if (rod.state === "nibble") { if (clock.t >= rod.nibbleUntil) { rod.nibblesLeft--; if (rod.nibblesLeft <= 0) toBite(); else nibbleTwitch(); } }
   else if (rod.state === "bite") { if (clock.t >= rod.hookUntil) missBite(); }
   else if (rod.state === "fighting") updateFight(dt);
   // bobber bob / sink settle
@@ -4043,9 +4078,16 @@ function hudHook(g, x, y) {
   g.restore();
 }
 function drawReelGauge(g) {
-  const fg = rod.fight; const w = 400, cx = innerWidth / 2, x = cx - w / 2;   // §fishbig a bigger mini-game on screen
-  const yT = innerHeight - 220, yL = innerHeight - 164, h = 24;
+  const fg = rod.fight; const w = 380, cx = innerWidth / 2, x = cx - w / 2;
+  // §fishrework compact and near the CENTRE of the screen (eyes stay by the bobber), not way down at the bottom.
+  const yT = Math.round(innerHeight * 0.56), yL = yT + 56, h = 24;
   g.save();
+  // §fishrework critical shake + red flash when the line is about to snap (tension over the zone / a strain)
+  const crit = fg.snapFlash > 0 ? 1 : (fg.tension > fg.hi ? Math.min(1, (fg.tension - fg.hi) * 5) : 0);
+  if (crit > 0.01) {
+    const sh = crit * 5; g.translate(Math.round((Math.random() - 0.5) * sh), Math.round((Math.random() - 0.5) * sh));
+    g.fillStyle = `rgba(200,50,40,${0.14 * crit})`; g.fillRect(0, 0, innerWidth, innerHeight);   // red danger flash over the screen
+  }
   g.fillStyle = FHUD.oak; hudChamfer(g, x - 22, yT - 18, w + 44, 104, 11); g.fill();              // oak panel
   g.strokeStyle = FHUD.rim; g.lineWidth = 2; hudChamfer(g, x - 22, yT - 18, w + 44, 104, 11); g.stroke();   // brass rim
   // --- tension track with a zone that GLOWS inside and flashes red on a strain ---
