@@ -1394,6 +1394,7 @@ function buildFilledTexture() {
 
 // ONE shared game clock drives tides, day/night, creatures and spawns.
 const clock = { t: 0, speed: 1, paused: false };
+let _waveClock = 0;   // §water real-time seconds (now*0.001) the water shader uses for waves; mirrored so JS wave height matches
 const MORNING_TIME = 0.15;           // §13.9 mid-morning (0.05 sunrise · 0.3 noon · 0.55 sunset)
 let timeOfDay = MORNING_TIME;        // 0..1 across a day; the game opens in the morning
 const DAY_PERIOD = 600;              // seconds per full day (~10 min)
@@ -2898,7 +2899,7 @@ void main() {
   float local = max(uWaterLevel, rim);           // isolated pools hold water to the rim
   float pool = (rim > uWaterLevel + 0.05 && rim > terr + 0.02) ? 1.0 : 0.0;
   float depth = local - terr;
-  float damp = pool > 0.5 ? 0.05 : smoothstep(0.0, 2.0, max(0.0, depth)); // pools are still
+  float damp = pool > 0.5 ? 0.05 : smoothstep(0.0, 3.0, max(0.0, depth)); // pools are still; waves ramp in slowly from the shore so the waterline never lifts/exposes an edge
   float wy = waveH(xz, uTime) * damp * uWaterQ;
   vDepth = depth; vPool = pool;
   vWorld = vec3(xz.x, local + wy, xz.y);
@@ -2921,8 +2922,12 @@ void main() {
   float terr = texture(uHeight, uv).r;
   float rim = texture(uFilled, uv).r;
   float local = max(uWaterLevel, rim);
-  if (terr > local - 0.02) discard;               // ground above the local surface
   float depth = local - terr;
+  // §water SOFT shoreline: the sheet extends UNDER the beach, so the terrain clips it via the depth
+  // buffer (no exposed sheet edge). Only skip fragments well inside dry land; right at the waterline
+  // the water fades to zero alpha so the meeting line dissolves into wet sand, not a hard polygon edge.
+  if (depth < -0.8) discard;
+  float shore = smoothstep(-0.25, 0.7, depth);    // 0 at/above the sand → 1 just offshore
 
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));  // faceted wave normals
   if (n.y < 0.0) n = -n;
@@ -2944,13 +2949,17 @@ void main() {
     vec3 refl = reflect(-v, n);
     col = mix(col, skyColor(refl, uSunDir, uZenith, uHorizon, uWarm, uDusk), pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.5);
     col += uWarm * pow(max(dot(v, reflect(-normalize(uSunDir), n)), 0.0), 48.0) * 0.6 * (1.0 - uNight);   // §look no hot sun-spec at night
-    // foam band that follows the shoreline as the tide moves (dialled down at low water quality)
+    // foam band that follows the shoreline as the tide moves (dialled down at low water quality).
+    // A soft wet-edge foam sits right at the waterline (depth → 0) so the shore reads as surf, not a line.
     float lap = sin(vWorld.x * 0.6 + uTime * 2.0) * sin(vWorld.z * 0.55 - uTime * 1.6);
-    float foam = clamp((1.0 - smoothstep(0.0, 1.3, depth)) * (0.5 + 0.5 * lap), 0.0, 1.0) * smoothstep(0.1, 0.6, uWaterQ);
+    float foam = clamp((1.0 - smoothstep(0.0, 1.6, depth)) * (0.45 + 0.55 * lap), 0.0, 1.0);
+    float edge = (1.0 - smoothstep(0.0, 0.5, depth));             // bright lacy fringe hugging the sand
+    foam = clamp(max(foam, edge * 0.7), 0.0, 1.0) * smoothstep(0.1, 0.6, uWaterQ);
     col = mix(col, vec3(0.92, 0.95, 0.95), foam * 0.85);
     alpha = max(mix(0.4, 0.9, dmix), foam * 0.9);
   }
 
+  alpha *= shore;               // §water dissolve the sheet into the beach so the shoreline isn't a hard edge
   col *= 1.0 - uNight * 0.40;   // §look sit the water down at night so it reads as dark moonlit sea, not a glowing neon sheet
   // Fog → sky; fully-fogged water becomes opaque sky so no far edge shows.
   vec3 viewVec = vWorld - uCamPos;
@@ -3209,6 +3218,7 @@ const EYE = 1.7;             // eye height above the ground
 const CAM_MIN_CLEAR = 0.35;  // the eye never sits closer than this above the ground surface
 const UW_ENTER = -0.3;       // go underwater only when the eye is this far BELOW the water surface
 const UW_EXIT = 0.05;        // stay underwater until the eye rises this far ABOVE it
+const SURFACE_RIDE = 0.22;   // §water how far the eye floats ABOVE the waterline when resting at the surface (head out of the water, clear view, no tint)
 // §foot stride lengths: one footstep (and one head-bob) per this many metres travelled (tunable)
 // §foot2 stride length = metres per footstep (and per head-bob). ROOT CAUSE of the machine-gun steps: the map
 // speed is high (WALK_SPEED 9.5 m/s), so the old 0.7 m stride fired ~13 steps/sec. Size the stride from the
@@ -3410,12 +3420,14 @@ function swimStep(dt, right) {
   if (cd > edge) { const k = Math.min(1, (cd - edge) / (HALF*0.12)); player.x -= (player.x/cd) * k * 5 * dt; player.z -= (player.z/cd) * k * 5 * dt; }
   // vertical: input + gentle buoyancy toward the surface unless actively diving; tired players can't sink fast
   const surf = waterSurfaceAt(player.x, player.z), floor = surfaceAt(player.x, player.z).h;
+  const wv = waterWaveY(player.x, player.z, _waveClock);   // §water the live wave surface the shader renders
+  const ride = surf + wv + SURFACE_RIDE;                   // §water rest height: head clearly out of the water, no tint
   let ny = player.eyeY + wy*dist;
   if (!diving) ny += (outOfAir ? 2.6 : (tired ? 0.9 : 0.5)) * dt;   // §nodeath bob up; a firm, gentle rise when out of air
-  ny = Math.max(floor + 0.5, Math.min(surf + 0.12, ny));
-  if (ny >= surf - 0.04) ny = surf + Math.sin(clock.t*1.3 + player.x*0.1)*0.05;   // ride the surface with a bob
+  ny = Math.max(floor + 0.5, Math.min(ride + 0.05, ny));
+  if (ny >= ride - 0.04) ny = ride;   // §water ride the wave crests so the eye stays a fixed bit above the surface (no boundary flicker)
   player.eyeY = ny; player.feetY = ny - 1.0;
-  player.underwater = player.eyeY < surf - 0.1;
+  player.underwater = player.eyeY < surf + wv - 0.1;   // §water submerged = eye below the live (wave) surface
   player.bob += dist;
   // bubbles while swimming underwater
   if (player.underwater && moving && Math.random() < dt*6) bubbleParticle(player.x + (rng()-0.5)*0.6, player.eyeY + 0.2, player.z + (rng()-0.5)*0.6);
@@ -7551,18 +7563,44 @@ function raycastRockDown(basePos, s, yaw, lean, ld, ox, oy, oz, qx, qz) {
   }
   return bestY === -Infinity ? null : { y: bestY, nx, ny, nz };
 }
+// §barnpatch barnacles grow in PATCHES across a rock, not one knot on the crown. Scatter a few attach
+// points over the rock's footprint, biased OUTWARD (the sloping sides / lower faces near the waterline),
+// each raycast straight down onto the real rock surface so every patch sits flush — none float. Uses a
+// per-rock local PRNG (seeded from the rock's identity) so the layout is stable and never touches the
+// world rng() stream (determinism preserved).
+const BARN_PATCHES = 4;            // §barnpatch TUNABLE max clusters scattered per rock
+const BARN_PATCH_SPREAD = 0.95;    // §barnpatch how far across the footprint patches reach (× instance scale)
+function computeClusterPatches(basePos, s, yaw, lean, ld, ox, oy, oz, seed) {
+  const R = mulberry32(seed >>> 0), out = [];
+  const crown = raycastRockDown(basePos, s, yaw, lean, ld, ox, oy, oz, ox, oz);   // rock-top, to avoid piling on the flat crown
+  const topY = crown ? crown.y : oy;
+  for (let k = 0; k < BARN_PATCHES; k++) {
+    const a = R() * 6.283, rr = (0.35 + 0.65 * R()) * BARN_PATCH_SPREAD * s;       // biased outward → the sides, lower down
+    const qx = ox + Math.cos(a) * rr, qz = oz + Math.sin(a) * rr;
+    const hit = raycastRockDown(basePos, s, yaw, lean, ld, ox, oy, oz, qx, qz);
+    if (!hit) continue;                                                            // outside the footprint
+    if (hit.ny > 0.85 && hit.y > topY - 0.14 * s) continue;                        // skip the flat top: barnacles like the sides/low faces
+    out.push({ x: qx, z: qz, y: hit.y - CLUSTER_SINK * hit.ny,
+      lean: Math.acos(Math.max(-1, Math.min(1, hit.ny))), ld: Math.atan2(hit.nz, hit.nx), sc: 0.45 + R() * 0.4 });
+  }
+  if (!out.length && crown)   // fallback: at least one patch so a barnacle rock is never bare-looking
+    out.push({ x: ox, z: oz, y: topY - CLUSTER_SINK * crown.ny,
+      lean: Math.acos(Math.max(-1, Math.min(1, crown.ny))), ld: Math.atan2(crown.nz, crown.nx), sc: 0.7 });
+  return out;
+}
 // compute & cache a rockObj cluster's attach point (its true rock-top surface + tilt), sunk slightly into the rock
 function attachRockCluster(o) {
   const inst = o && o.t && o.t.inst;
-  if (!inst || !inst.basePos || !inst.data) { o.clAttach = null; return; }
+  if (!inst || !inst.basePos || !inst.data) { o.clAttach = null; o.clPatches = null; return; }
   const b = o.i*10, d = inst.data;
   const hit = raycastRockDown(inst.basePos, d[b+3], d[b+4], d[b+5], d[b+6], d[b], d[b+1], d[b+2], o.x, o.z);
-  if (!hit) { o.clAttach = null; return; }
-  o.clAttach = { y: hit.y - CLUSTER_SINK * hit.ny, lean: Math.acos(Math.max(-1, Math.min(1, hit.ny))), ld: Math.atan2(hit.nz, hit.nx) };
+  o.clAttach = hit ? { y: hit.y - CLUSTER_SINK * hit.ny, lean: Math.acos(Math.max(-1, Math.min(1, hit.ny))), ld: Math.atan2(hit.nz, hit.nx) } : null;
+  o.clPatches = o.barn ? computeClusterPatches(inst.basePos, d[b+3], d[b+4], d[b+5], d[b+6], d[b], d[b+1], d[b+2], (Math.imul(o.i + 1, 2654435761)) >>> 0) : null;
 }
 function attachBarnacle(b) {
   const hit = raycastRockDown(barnRockMesh().pos, b.rsc, b.yaw, 0, 0, b.x, b.g, b.z, b.x, b.z);
   b.clAttach = hit ? { y: hit.y - CLUSTER_SINK * hit.ny, lean: Math.acos(Math.max(-1, Math.min(1, hit.ny))), ld: Math.atan2(hit.nz, hit.nx) } : null;
+  b.clPatches = computeClusterPatches(barnRockMesh().pos, b.rsc, b.yaw, 0, 0, b.x, b.g, b.z, ((Math.round(b.x * 131.1) ^ Math.round(b.z * 977.7)) >>> 0));
 }
 // recompute every cluster's attachment (after world load, or a rock being damaged / the terrain healing)
 function recomputeClusterAttach() {
@@ -7628,7 +7666,7 @@ function scrapeBarnacle(b) {
 }
 function drawBarnacles(view) {
   if (!barnacles.length) return;
-  if (!barnacleDyn) barnacleDyn = makeDynamic(barnacleMesh(), 200);
+  if (!barnacleDyn) barnacleDyn = makeDynamic(barnacleMesh(), 400);   // §barnpatch several small patches per rock
   if (!barnacleRockDyn) barnacleRockDyn = makeDynamic(rockMesh((SEED_INT^0x5b)>>>0, "rounded", [0.4,0.4,0.42]), 64);   // dark wet intertidal rock
   propUniforms(view);
   const px = cam.pos[0], pz = cam.pos[2];
@@ -7641,18 +7679,24 @@ function drawBarnacles(view) {
   const hl = dbgClusterHighlight;   // §clust8 debug: tint each cluster green if it sits on its rock, red if it floats
   // does a cluster drawn at `drawY` actually sit on the rock here? (used only when the highlight is on)
   const floats = (basePos,s,yaw,lean,ld,ox,oy,oz,qx,qz,drawY) => { const h = raycastRockDown(basePos,s,yaw,lean,ld,ox,oy,oz,qx,qz); return !h || Math.abs((drawY + CLUSTER_SINK) - h.y) > CLUSTER_DRIFT_TOL; };
-  let n = 0; for (const b of barnacles) { if (b.amt <= 0 || n >= 200) continue; const dx = b.x-px, dz = b.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const sc = (0.55 + 0.6*(b.amt/Math.max(1,b.max))) * (0.7+b.rsc*0.3), o = n*10, at = b.clAttach, ty = barnClusterTop(b);
-    digScratch[o]=b.x; digScratch[o+1]=ty; digScratch[o+2]=b.z; digScratch[o+3]=sc; digScratch[o+4]=b.yaw*1.7; digScratch[o+5]=at?at.lean:0; digScratch[o+6]=at?at.ld:0;   // §clust8 tilt flat onto the rock face
-    let tr=1,tg=1,tb=1; if (hl) { const bad = floats(barnRockMesh().pos,b.rsc,b.yaw,0,0,b.x,b.g,b.z,b.x,b.z,ty); tr=bad?1:0.2; tg=bad?0.2:1; tb=0.2; }
-    digScratch[o+7]=tr; digScratch[o+8]=tg; digScratch[o+9]=tb; n++; }
+  // §barnpatch each rock draws its scattered patches (clPatches), biased to the sides/lower faces, all flush.
+  const CAP = 400;
+  let n = 0; for (const b of barnacles) { if (b.amt <= 0 || n >= CAP) continue; const dx = b.x-px, dz = b.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
+    if (!b.clPatches) attachBarnacle(b);
+    const base = (0.55 + 0.6*(b.amt/Math.max(1,b.max))) * (0.7+b.rsc*0.3);
+    for (const p of (b.clPatches || [])) { if (n >= CAP) break; const o = n*10;
+      digScratch[o]=p.x; digScratch[o+1]=p.y; digScratch[o+2]=p.z; digScratch[o+3]=base*p.sc; digScratch[o+4]=b.yaw*1.7 + p.ld; digScratch[o+5]=p.lean; digScratch[o+6]=p.ld;   // §clust8 tilt flat onto the rock face
+      let tr=1,tg=1,tb=1; if (hl) { const bad = floats(barnRockMesh().pos,b.rsc,b.yaw,0,0,b.x,b.g,b.z,p.x,p.z,p.y); tr=bad?1:0.2; tg=bad?0.2:1; tb=0.2; }
+      digScratch[o+7]=tr; digScratch[o+8]=tg; digScratch[o+9]=tb; n++; } }
   // §barnrock crusts on the shore rocks, same shared instance buffer
-  if (typeof rockObjs !== "undefined") for (const o of rockObjs) { const bn = o.barn; if (!bn || bn.amt <= 0 || o.gone || n >= 200) continue;
+  if (typeof rockObjs !== "undefined") for (const o of rockObjs) { const bn = o.barn; if (!bn || bn.amt <= 0 || o.gone || n >= CAP) continue;
     const dx = o.x-px, dz = o.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const sc = (0.42 + 0.45*(bn.amt/Math.max(1,bn.max))) * (0.6 + (o.scale||o.sc)*0.24), q = n*10, at = o.clAttach, top = rockClusterTop(o);   // tighter crust so it hugs the rock top
-    digScratch[q]=o.x; digScratch[q+1]=top; digScratch[q+2]=o.z; digScratch[q+3]=sc; digScratch[q+4]=o.x*1.7; digScratch[q+5]=at?at.lean:0; digScratch[q+6]=at?at.ld:0;
-    let tr=1,tg=1,tb=1; if (hl) { const inst=o.t.inst, d=inst.data, bb=o.i*10, bad=floats(inst.basePos,d[bb+3],d[bb+4],d[bb+5],d[bb+6],d[bb],d[bb+1],d[bb+2],o.x,o.z,top); tr=bad?1:0.2; tg=bad?0.2:1; tb=0.2; }
-    digScratch[q+7]=tr; digScratch[q+8]=tg; digScratch[q+9]=tb; n++; }
+    if (!o.clPatches) attachRockCluster(o);
+    const base = (0.42 + 0.45*(bn.amt/Math.max(1,bn.max))) * (0.6 + (o.scale||o.sc)*0.24);
+    for (const p of (o.clPatches || [])) { if (n >= CAP) break; const q = n*10;
+      digScratch[q]=p.x; digScratch[q+1]=p.y; digScratch[q+2]=p.z; digScratch[q+3]=base*p.sc; digScratch[q+4]=o.x*1.7 + p.ld; digScratch[q+5]=p.lean; digScratch[q+6]=p.ld;
+      let tr=1,tg=1,tb=1; if (hl) { const inst=o.t.inst, d=inst.data, bb=o.i*10, bad=floats(inst.basePos,d[bb+3],d[bb+4],d[bb+5],d[bb+6],d[bb],d[bb+1],d[bb+2],p.x,p.z,p.y); tr=bad?1:0.2; tg=bad?0.2:1; tb=0.2; }
+      digScratch[q+7]=tr; digScratch[q+8]=tg; digScratch[q+9]=tb; n++; } }
   if (n) barnacleDyn.draw(digScratch, n);
   // §menu oyster clusters on shore rocks, a clump of oysters that thins as they're picked
   if (typeof rockObjs !== "undefined") {
@@ -9265,6 +9309,20 @@ function waterSurfaceAt(x, z) {
   return Math.max(waterLevel, rim);
 }
 function waterDepthAt(x, z) { return waterSurfaceAt(x, z) - surfaceAt(x, z).h; }
+// §water Live wave height at a point — mirrors the water VS (waveH × damp × uWaterQ) so the
+// underwater check and the floating camera ride the SAME surface the shader actually renders.
+function waterWaveY(x, z, t) {
+  const q = (GFX.water <= 0 ? 0.2 : 1) * (weather ? weather.waveMul : 1);
+  if (q <= 0) return 0;
+  const i = cellIndex(x, z);
+  const pool = i >= 0 && filled[i] > waterLevel + 0.05 && filled[i] > heightmap[i] + 0.02;
+  let damp;
+  if (pool) damp = 0.05;
+  else { let d = Math.max(0, Math.min(1, (waterSurfaceAt(x, z) - surfaceAt(x, z).h) / 3)); damp = d * d * (3 - 2 * d); }
+  const h = Math.sin(x * 0.18 + t * 0.9) * 0.35 + Math.sin(z * 0.15 - t * 0.7) * 0.30
+          + Math.sin((x + z) * 0.09 + t * 1.3) * 0.18 + Math.sin((x - z) * 0.22 - t * 1.7) * 0.10;
+  return h * damp * q;
+}
 
 // texture updates so water/pathfinding see the new ground
 function updateHeightTex(x0, z0, x1, z1) {
@@ -12069,6 +12127,7 @@ function frame(now) {
   const dt = Math.min(0.05, raw);
   last = now;
   const t = now * 0.001;
+  _waveClock = t;   // §water keep the JS wave height (floating camera, underwater check) in sync with the water shader
   if (raw > 0) fpsSmooth += (1 / raw - fpsSmooth) * 0.1;
   _perfMs += (Math.min(raw, 0.25) * 1000 - _perfMs) * 0.1;   // @section DEBUG/perf-overlay  smoothed wall-clock frame time (ms)
   frameDraws = 0; frameTris = 0;
@@ -12291,7 +12350,9 @@ function frame(now) {
 
   // §14B underwater view: deepen & blue-shift the fog so visibility shortens with depth, and swap the
   // sky/fog colour to the undersea palette. Reds fade into blue-green, darker the deeper you go.
-  const camSurf = waterSurfaceAt(cam.pos[0], cam.pos[2]);
+  // §water surface at the camera's x/z INCLUDING the live tide (in waterSurfaceAt) and wave height, so the
+  // tint matches the water the shader actually draws — above the real surface there is no tint at all.
+  const camSurf = waterSurfaceAt(cam.pos[0], cam.pos[2]) + waterWaveY(cam.pos[0], cam.pos[2], t);
   // §camfix hysteresis around the water surface so the underwater tint can't flicker at the waterline: go under
   // only when the eye is clearly below the surface, and stay under until it's clearly above.
   const camUnderwater = mode === "walk" && cam.pos[1] < camSurf + (camUnderwaterNow ? UW_EXIT : UW_ENTER);
