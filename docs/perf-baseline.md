@@ -42,4 +42,30 @@ after holding forward (`W`) ~5 s, walking inland through foliage/terrain.
   batches. Props and finds are already instanced (1 draw each).
 - **Memory** ~8 MB of mesh+texture buffers; heap ~15 MB. Not a concern.
 
-_Re-run after Task 4 and update the "after" numbers here._
+## After Task 4 — frustum culling (per-chunk terrain + per-instance props)
+
+Terrain chunks now carry an AABB and are skipped when fully outside the view frustum
+(`@section RENDER/frustum-cull`, `aabbOutside` in `drawTerrainChunks`). Instanced props
+(all foliage + trees/rocks) are compacted per frame into a reused scratch buffer holding
+only the copies whose bounding sphere intersects the frustum, then drawn in one call
+(`drawProps`). Both reuse 6 frustum planes extracted once per frame from the view-projection
+(`computeFrustum`), with **no per-frame allocation** (scratch arrays are module-level).
+
+Triangles submitted are now **view-dependent** — the whole island is no longer drawn every
+frame. Measured headless (seed `alpha`, software GL, so only tris/draws are trustworthy):
+
+| Camera direction | Triangles | Draw calls | vs 1,246 k baseline |
+|---|--:|--:|--:|
+| Straight up (sky) | ~190 k | 27 | −85 % |
+| Straight down | ~191 k | 28 | −85 % |
+| Horizon, facing inland | ~311 k | 33 | −75 % |
+| Horizon, facing the offshore kelp bay | ~692 k | 43 | −44 % |
+
+The offshore view is the worst case (the dense kelp/seamoss beds fill the frustum); even
+there it's a 44 % cut, and looking any other direction roughly halves it again. Draw-call
+count varies only because dynamic finds in view differ by vantage — prop culling can only
+remove draws, never add them. No visible pop: the per-instance sphere uses a loose mesh
+extent plus a 1.5 m margin to cover wind sway, so on-screen foliage always submits.
+
+_Measure FPS on real hardware (GTX 1650 / phone) with the F3 overlay — the SwiftShader
+frame-times above are not representative._

@@ -2717,6 +2717,14 @@ const CHUNKS = 4;                                  // CHUNKS × CHUNKS tiles
 const chunkCells = Math.ceil((GRID - 1) / CHUNKS);
 const terrainChunks = [];
 function chunkRange(c) { return [c * chunkCells, Math.min(GRID - 1, (c + 1) * chunkCells)]; }
+// @section RENDER/frustum-cull  world AABB of a chunk (from its filled positions), for frustum culling.
+function chunkAABB(ch) {
+  ch.bx0 = ch.x0 * CELL - HALF; ch.bx1 = ch.x1 * CELL - HALF;
+  ch.bz0 = ch.z0 * CELL - HALF; ch.bz1 = ch.z1 * CELL - HALF;
+  const s = ch.scratch; let miny = 1e9, maxy = -1e9;
+  for (let p = 1; p < s.length; p += 3) { const y = s[p]; if (y < miny) miny = y; if (y > maxy) maxy = y; }
+  ch.by0 = miny - 3; ch.by1 = maxy + 3;   // pad for digging/waves so chunks near the frustum edge never pop
+}
 function fillChunkPositions(ch, out) {
   let p = 0;
   for (let z = ch.z0; z <= ch.z1; z++)
@@ -2747,14 +2755,46 @@ function buildTerrainMesh() {
       gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
       const ibo = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
       gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
-      ch.count = indices.length; ch.scratch = positions;
+      ch.count = indices.length; ch.scratch = positions; chunkAABB(ch);
       terrainChunks[cz * CHUNKS + cx] = ch;
     }
   gl.bindVertexArray(null);
   return { count: terrainChunks.reduce((a, c) => a + c.count, 0) };
 }
+// @section RENDER/frustum-cull  Frustum culling: skip geometry the camera can't see. One set of 6
+// planes is extracted from the view-projection each frame (allocation-free, written into _fplanes);
+// terrain chunks test their AABB, prop instances test a bounding sphere. Off-screen things aren't
+// visible, so culling them can't cause visible pop.
+const _fplanes = new Float32Array(24);                 // 6 planes × (a,b,c,d), normalized
+function computeFrustum(M) {                            // M = column-major view-projection (lastVP)
+  const o = _fplanes;
+  for (let i = 0; i < 6; i++) {
+    const s = (i & 1) ? -1 : 1, row = i >> 1;           // L,R (x) · B,T (y) · N,F (z); + then −
+    let a = M[3] + s * M[row], b = M[7] + s * M[4 + row], c = M[11] + s * M[8 + row], d = M[15] + s * M[12 + row];
+    const inv = 1 / (Math.hypot(a, b, c) || 1);
+    o[i * 4] = a * inv; o[i * 4 + 1] = b * inv; o[i * 4 + 2] = c * inv; o[i * 4 + 3] = d * inv;
+  }
+}
+function sphereOutside(x, y, z, r) {
+  const o = _fplanes;
+  for (let i = 0; i < 6; i++) if (o[i*4]*x + o[i*4+1]*y + o[i*4+2]*z + o[i*4+3] < -r) return true;
+  return false;
+}
+function aabbOutside(x0, y0, z0, x1, y1, z1) {
+  const o = _fplanes;
+  for (let i = 0; i < 6; i++) {
+    const a = o[i*4], b = o[i*4+1], c = o[i*4+2];
+    if (a*(a >= 0 ? x1 : x0) + b*(b >= 0 ? y1 : y0) + c*(c >= 0 ? z1 : z0) + o[i*4+3] < 0) return true;  // p-vertex behind plane → fully outside
+  }
+  return false;
+}
+let _chunksDrawn = 0;
 function drawTerrainChunks() {
-  for (const ch of terrainChunks) { gl.bindVertexArray(ch.vao); gl.drawElements(gl.TRIANGLES, ch.count, gl.UNSIGNED_INT, 0); countDraw(ch.count / 3); }
+  _chunksDrawn = 0;
+  for (const ch of terrainChunks) {
+    if (ch.bx0 !== undefined && aabbOutside(ch.bx0, ch.by0, ch.bz0, ch.bx1, ch.by1, ch.bz1)) continue;   // frustum cull
+    gl.bindVertexArray(ch.vao); gl.drawElements(gl.TRIANGLES, ch.count, gl.UNSIGNED_INT, 0); countDraw(ch.count / 3); _chunksDrawn++;
+  }
 }
 
 /* --------------------------------------------------------------------- *
@@ -5615,8 +5655,12 @@ function makeInstanced(mesh, inst) {
   gl.enableVertexAttribArray(propLoc.iTint); gl.vertexAttribPointer(propLoc.iTint, 3, gl.FLOAT, false, ST, 28); gl.vertexAttribDivisor(propLoc.iTint, 1);
   gl.bindVertexArray(null);
   const vc = pos.length / 3, n = inst.length / 10;
-  return { vao, vertCount: vc, count: n, tris: (vc / 3) * n, ibo: ib, pb, cb, data: idata, basePos: pos };   // §clust8 keep the base triangles so clusters can raycast onto the real rock; §island9 pb/cb so New Island can free them
+  let ext = 0.5;   // §cull loose bounding extent of the base mesh, for the per-instance frustum sphere test
+  for (let i = 0; i < pos.length; i += 3) { const e = Math.max(Math.abs(pos[i]), pos[i+1], Math.abs(pos[i+2])); if (e > ext) ext = e; }
+  return { vao, vertCount: vc, count: n, tris: (vc / 3) * n, ibo: ib, pb, cb, data: idata, basePos: pos, ext };   // §clust8 keep the base triangles so clusters can raycast onto the real rock; §island9 pb/cb so New Island can free them
 }
+// @section RENDER/frustum-cull  shared scratch for compacting frustum-visible instances (reused, no per-frame alloc).
+const _instScratch = new Float32Array(6144 * 10);
 
 /* --------------------------------------------------------------------- *
  * § POINTS OF INTEREST  (2–4 per island, chosen & placed by seed)
@@ -6020,9 +6064,33 @@ function drawProps(view) {
     const isTree = (t.kind === "palm" || t.kind === "pine" || t.kind === "broadleaf");   // §P2 trees sway ~40% less than the grass/kelp
     gl.uniform1f(propU.uSway, rigid ? 0 : (isTree ? TREE_SWAY_MUL : 1));   // §14B plants & trees sway, rocks/fences stay put
     gl.uniform1i(propU.uClampTop, (t.kind === "eelgrass" || t.kind === "kelp" || t.kind === "seamoss" || t.kind === "redalgae") ? 1 : 0);   // §14B/§17.2 ocean plants can't breach the surface
+    // @section RENDER/frustum-cull  compact the on-screen instances into scratch and draw only those.
+    // Off-screen copies can't be seen, so skipping them is free of visible pop; the big win is the
+    // dense ocean plants (kelp/seamoss/redalgae/eelgrass) which otherwise submit every copy every frame.
+    const data = t.inst.data, ext = t.inst.ext, cap = 6144;
+    let vis = 0;
+    for (let i = 0; i < cnt; i++) {
+      const o = i * 10, s = data[o + 3];
+      if (s <= 0.001) continue;                                                  // harvested/cut instance (scale 0) draws nothing
+      if (sphereOutside(data[o], data[o + 1], data[o + 2], ext * s + 1.5)) continue;   // outside the frustum → skip
+      if (vis >= cap) { vis = -1; break; }                                       // scratch full (no current content hits this) → fall back
+      const d = vis * 10;
+      _instScratch[d] = data[o]; _instScratch[d + 1] = data[o + 1]; _instScratch[d + 2] = data[o + 2];
+      _instScratch[d + 3] = s;   _instScratch[d + 4] = data[o + 4]; _instScratch[d + 5] = data[o + 5]; _instScratch[d + 6] = data[o + 6];
+      _instScratch[d + 7] = data[o + 7]; _instScratch[d + 8] = data[o + 8]; _instScratch[d + 9] = data[o + 9];
+      vis++;
+    }
     gl.bindVertexArray(t.inst.vao);
-    gl.drawArraysInstanced(gl.TRIANGLES, 0, t.inst.vertCount, cnt);
-    countDraw(Math.round(t.inst.tris * cnt / t.inst.count));
+    gl.bindBuffer(gl.ARRAY_BUFFER, t.inst.ibo);
+    if (vis < 0) {                                                               // overflow fallback: restore the full in-order array and draw all
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, data, 0, cnt * 10);
+      gl.drawArraysInstanced(gl.TRIANGLES, 0, t.inst.vertCount, cnt);
+      countDraw(Math.round(t.inst.tris * cnt / t.inst.count));
+    } else if (vis > 0) {
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, _instScratch, 0, vis * 10);
+      gl.drawArraysInstanced(gl.TRIANGLES, 0, t.inst.vertCount, vis);
+      countDraw(Math.round(t.inst.tris / t.inst.count * vis));
+    }
   }
   gl.uniform1i(propU.uWetBand, 0);                         // §13.7 reset so creatures / tools / icons aren't affected
   gl.uniform1f(propU.uSway, 0);                            // §14B reset sway
@@ -9211,7 +9279,7 @@ function rebuildRegion(x0, z0, x1, z1) {
     const ch = terrainChunks[cz * CHUNKS + cx];
     if (x1 < ch.x0 || x0 > ch.x1 || z1 < ch.z0 || z0 > ch.z1) continue;
     const c = cz * CHUNKS + cx; if (done.has(c)) continue; done.add(c);
-    fillChunkPositions(ch, ch.scratch); gl.bindBuffer(gl.ARRAY_BUFFER, ch.vbo); gl.bufferSubData(gl.ARRAY_BUFFER, 0, ch.scratch);
+    fillChunkPositions(ch, ch.scratch); chunkAABB(ch); gl.bindBuffer(gl.ARRAY_BUFFER, ch.vbo); gl.bufferSubData(gl.ARRAY_BUFFER, 0, ch.scratch);
   }
 }
 
@@ -11843,7 +11911,7 @@ function resetWorldState() {
 function rebuildTerrainInPlace() {
   for (const ch of terrainChunks) {
     if (!ch) continue;
-    fillChunkPositions(ch, ch.scratch);
+    fillChunkPositions(ch, ch.scratch); chunkAABB(ch);
     gl.bindBuffer(gl.ARRAY_BUFFER, ch.vbo);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, ch.scratch);
   }
@@ -12194,6 +12262,7 @@ function frame(now) {
   if (catchCine && catchCine.fov) proj = M4.perspective(catchCine.fov, canvas.width / canvas.height, 0.1, 3200);   // §fishpolish camera punch-in during the catch
   const view = M4.lookAt(cam.pos, [cam.pos[0]+f[0], cam.pos[1]+f[1], cam.pos[2]+f[2]], [0, 1, 0]);
   lastVP = M4.multiply(proj, view);
+  computeFrustum(lastVP);       // §cull refresh the 6 frustum planes for terrain-chunk + prop-instance culling this frame
   updateSoundSubs();            // §capt5 Minecraft-style sound captions (debug)
   const invVP = M4.invert(lastVP);
   lastInvVP = invVP;
