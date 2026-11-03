@@ -2632,6 +2632,7 @@ float vnoise(vec2 p) {   // §ATMO #7 cheap value noise (smoothed), for low-freq
   float d = fract(sin(dot(i + vec2(1.0, 1.0), vec2(12.9898, 78.233))) * 43758.5453);
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
+float fbm(vec2 p) { float f = 0.0, a = 0.5; for (int i = 0; i < 3; i++) { f += a * vnoise(p); p = p * 2.07 + 11.0; a *= 0.5; } return f; }   // §organic 3-octave value noise ~0..1 (richer, non-repetitive; 3 octaves keeps it cheap)
 void main() {
   // Flat shading: face normal from screen-space derivatives of world pos.
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
@@ -2656,10 +2657,16 @@ void main() {
   // (heightTex includes dig/built, so sn follows the real surface.) Props keep their flat low-poly shading.
   vec3 ln = normalize(mix(n, sn, 0.82));
 
-  // low-freq border wander (two octaves, world-space so it's seed-stable and view-independent)
-  float bn = vnoise(vWorld.xz * 0.035) * 0.7 + vnoise(vWorld.xz * 0.11) * 0.3 - 0.5;   // ~ -0.5..+0.5
-  float hb = h + bn * 3.2;                    // height bands wander ±~1.6 world units
-  float sb = slope + bn * 0.16;               // slope band wanders too
+  // §organic DOMAIN WARP — the heart of the organic look. Before deciding any material, push the sample
+  // position around with low-frequency fbm so NOTHING follows the cell grid: every boundary between
+  // sand / grass / dirt / stone wanders like a real coastline instead of snapping to tiles. Two noise scales
+  // give large sweeps plus finer wobble; it's organic, not blurry.
+  vec2 wq = vWorld.xz;
+  vec2 warp = vec2(fbm(wq * 0.016 + 3.0), fbm(wq * 0.016 + 37.0)) - 0.5;      // low-freq flow field (-0.5..0.5)
+  vec2 wp = wq + warp * 18.0;                                                 // displace the whole field up to ~9 m
+  float bn = (fbm(wp * 0.028) - 0.5) + (fbm(wp * 0.085) - 0.5) * 0.5;          // organic boundary offset, two scales
+  float hb = h + bn * 6.0;                     // height bands wander ±~3 m, organically
+  float sb = slope + bn * 0.24;
 
   // §VIB richer, warmer base colours (tuned to read right after lighting + tone-map + grade)
   vec3 cSeafloor = vec3(0.40, 0.52, 0.44);
@@ -2669,28 +2676,27 @@ void main() {
   vec3 cForest   = vec3(0.26, 0.45, 0.22);   // deep natural green
   vec3 cRock     = vec3(0.49, 0.45, 0.41);
 
-  // Bands rescaled for the big world: a wide sand beach before the dunes. Each boundary uses the
-  // noise-wandered height/slope, and the ranges are widened so colours cross-fade over a soft zone.
+  // Bands over the big world, each boundary fed the organically-warped height/slope and cross-fading over a
+  // soft zone so the transitions are wide and natural, never a hard contour line.
   vec3 col = cSeafloor;
-  col = mix(col, cSandWet, smoothstep(-3.5, 0.6, hb));
-  col = mix(col, cSandDry, smoothstep(0.4, 4.6, hb));
-  col = mix(col, cGrass,  smoothstep(9.0, 21.0, hb));
+  col = mix(col, cSandWet, smoothstep(-3.5, 0.8, hb));
+  col = mix(col, cSandDry, smoothstep(0.3, 5.0, hb));
+  col = mix(col, cGrass,  smoothstep(8.5, 22.0, hb));
   col = mix(col, cForest, smoothstep(28.0, 60.0, hb));
-  col = mix(col, cRock,   smoothstep(0.34, 0.74, sb));   // smooth slope + wander → stone borders no longer stair-step
+  col = mix(col, cRock,   smoothstep(0.32, 0.76, sb));
 
-  // §matsoft Painted surface material (dug or player-placed) overrides the height bands. The ids can't be
-  // linearly filtered, so to avoid an ANGULAR GRID edge we build a SMOOTH coverage ourselves: bilinearly
-  // interpolate the binary "is this cell painted?" mask across the four surrounding cells (anti-aliased, no
-  // hard cell boundary) and wander the sample point with low-frequency noise so the border is organic and
-  // rounded, not a straight grid line. The colour comes from the strongest (painted) neighbour id.
-  vec2 mw = muv + vec2(vnoise(vWorld.xz * 0.06 + 11.0) - 0.5, vnoise(vWorld.xz * 0.06 + 43.0) - 0.5) * (texel * 3.0);
+  // §matsoft Painted material (dug / player-placed) overrides the bands. Sampled around a moderately-warped
+  // position (so its border wanders with everything else, but small dug patches aren't torn apart), with a
+  // SMOOTH bilinear coverage of the "is painted?" mask so the edge is anti-aliased and organic — no cell grid.
+  vec2 mwarp = (vec2(fbm(wq * 0.05 + 9.0), fbm(wq * 0.05 + 61.0)) - 0.5) * (texel * 5.0);
+  vec2 mw = muv + mwarp;
   vec2 tc = mw * ${GRID.toFixed(1)} - 0.5;
   vec2 fr = clamp(fract(tc), 0.0, 1.0);
   vec2 b0 = (floor(tc) + 0.5) * texel;
   float m00 = texture(uMaterial, b0).r, m10 = texture(uMaterial, b0 + vec2(texel, 0.0)).r;
   float m01 = texture(uMaterial, b0 + vec2(0.0, texel)).r, m11 = texture(uMaterial, b0 + vec2(texel, texel)).r;
   float cov = mix(mix(step(0.5, m00), step(0.5, m10), fr.x), mix(step(0.5, m01), step(0.5, m11), fr.x), fr.y);   // smooth 0..1 coverage
-  cov = smoothstep(0.15, 0.85, cov);                 // tighten the soft band a touch so it still reads as a patch, not a haze
+  cov = smoothstep(0.12, 0.9, cov);
   float m = max(max(m00, m10), max(m01, m11));        // the painted id for the colour
   if (m > 0.5 && cov > 0.003) {
     vec3 mc = cGrass;
@@ -2703,10 +2709,12 @@ void main() {
     col = mix(col, mc, cov * 0.82);                   // blend by the SMOOTH coverage → soft, rounded border
   }
 
-  // Wet sand: darker from the waterline up to the recent high-water mark,
-  // drying back toward dry sand above it (wetLevel lags the tide).
-  float wet = (1.0 - smoothstep(uWaterLevel, uWetLevel + 0.6, h)) * (1.0 - smoothstep(0.55, 0.72, slope));
-  col = mix(col, col * 0.62, clamp(wet, 0.0, 1.0));
+  // §water Wet sand: a soft, ORGANIC damp band from the waterline up to the recent high-water mark (wetLevel
+  // lags the tide), darkening the ground so shallow water → wet sand → dry sand reads as a smooth gradient, not
+  // a hard line. Uses the domain-warped height (hb) so the damp line wanders with the shoreline, and fades in
+  // over a wider range for a gentle transition.
+  float wet = (1.0 - smoothstep(uWaterLevel - 0.4, uWetLevel + 1.1, hb)) * (1.0 - smoothstep(0.55, 0.72, slope));
+  col = mix(col, col * 0.6, clamp(wet, 0.0, 1.0));
   if (uGroundWet > 0.001) col = mix(col, col * vec3(0.66, 0.68, 0.74), clamp(uGroundWet, 0.0, 1.0));   // §20 rain-darkened, slightly cool wet ground
 
   // Fresh-dug soil is darker and browner, fading back as the ground heals.
@@ -2965,9 +2973,16 @@ uniform float uNight, uDusk;                      // §look moonlit water (uNigh
 uniform float uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI;   // §night distance darkness
 uniform sampler2D uHeight, uFilled;
 ${SKY_GLSL}
+float wvn(vec2 p) { vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);   // §water cheap value noise for an organic shoreline + foam
+  float a = fract(sin(dot(i, vec2(12.9898,78.233)))*43758.5453), b = fract(sin(dot(i+vec2(1,0), vec2(12.9898,78.233)))*43758.5453);
+  float c = fract(sin(dot(i+vec2(0,1), vec2(12.9898,78.233)))*43758.5453), d = fract(sin(dot(i+vec2(1,1), vec2(12.9898,78.233)))*43758.5453);
+  return mix(mix(a,b,f.x), mix(c,d,f.x), f.y); }
 void main() {
   vec2 uv = clamp((vWorld.xz + ${HALF_F}) / ${WORLD_F}, 0.0, 1.0);
-  float terr = texture(uHeight, uv).r;
+  // §water ORGANIC shoreline: wander the height sample a little with noise so the waterline curves like a real
+  // coast instead of following the terrain grid. (heightTex is LINEAR, so the base contour is already smooth.)
+  vec2 swarp = (vec2(wvn(vWorld.xz * 0.07 + 5.0), wvn(vWorld.xz * 0.07 + 29.0)) - 0.5) * (4.0 / ${WORLD_F});
+  float terr = texture(uHeight, uv + swarp).r;
   float rim = texture(uFilled, uv).r;
   float local = max(uWaterLevel, rim);
   float depth = local - terr;
@@ -2975,7 +2990,7 @@ void main() {
   // buffer (no exposed sheet edge). Only skip fragments well inside dry land; right at the waterline
   // the water fades to zero alpha so the meeting line dissolves into wet sand, not a hard polygon edge.
   if (depth < -0.8) discard;
-  float shore = smoothstep(-0.25, 0.7, depth);    // 0 at/above the sand → 1 just offshore
+  float shore = smoothstep(-0.25, 0.9, depth);    // 0 at/above the sand → 1 just offshore (wider, softer fade)
 
   // §smoothwater SMOOTH wave normal computed analytically from the wave function's gradient (per-pixel),
   // replacing the faceted cross(dFdx,dFdy) per-triangle normal — so the surface, its reflections and the
@@ -3006,13 +3021,15 @@ void main() {
     vec3 refl = reflect(-v, n);
     col = mix(col, skyColor(refl, uSunDir, uZenith, uHorizon, uWarm, uDusk), pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.35);
     col += uWarm * pow(max(dot(v, reflect(-normalize(uSunDir), n)), 0.0), 48.0) * 0.5 * (1.0 - uNight);   // §look no hot sun-spec at night
-    // soft wet-edge foam at the waterline (depth → 0) so the shore reads as surf, not a hard line.
-    float lap = sin(vWorld.x * 0.6 + uTime * 2.0) * sin(vWorld.z * 0.55 - uTime * 1.6);
-    float foam = clamp((1.0 - smoothstep(0.0, 1.6, depth)) * (0.45 + 0.55 * lap), 0.0, 1.0);
-    float edge = (1.0 - smoothstep(0.0, 0.5, depth));            // bright lacy fringe hugging the sand
-    foam = clamp(max(foam, edge * 0.7), 0.0, 1.0) * smoothstep(0.1, 0.6, uWaterQ);
-    col = mix(col, vec3(0.92, 0.95, 0.95), foam * 0.85);
-    alpha = max(mix(0.72, 0.95, dmix), foam * 0.9);             // §wateronecol more opaque (shallow 0.72 → deep 0.95) so the seabed's hard facets are hidden
+    // §water LACY, organic shoreline foam: noise-broken bands that hug the waterline and drift with the tide,
+    // so the surf reads as natural broken foam rather than a solid line or sine stripes.
+    float fn = wvn(vWorld.xz * 0.85 + vec2(uTime*0.5, -uTime*0.35)) * 0.62 + wvn(vWorld.xz * 2.1 - uTime*0.25) * 0.38;
+    float band = 1.0 - smoothstep(0.0, 1.9, depth);              // strongest at the waterline, fading offshore
+    float foam = clamp(band * (0.35 + 1.0 * fn) - 0.18, 0.0, 1.0);   // noise threshold → broken lace, not a solid band
+    float edge = 1.0 - smoothstep(0.0, 0.45, depth);             // a brighter wet fringe hugging the sand
+    foam = clamp(max(foam, edge * (0.45 + 0.55 * fn)), 0.0, 1.0) * smoothstep(0.1, 0.6, uWaterQ);
+    col = mix(col, vec3(0.92, 0.95, 0.96), foam * 0.9);
+    alpha = max(mix(0.72, 0.95, dmix), foam * 0.95);           // §wateronecol more opaque (shallow 0.72 → deep 0.95) so the seabed's hard facets are hidden
   }
 
   alpha *= shore;               // §water dissolve the sheet into the beach so the shoreline isn't a hard edge
