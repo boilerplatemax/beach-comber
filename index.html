@@ -1408,8 +1408,9 @@ let FOG_NEAR = BASE_FOG_NEAR;         // clear band before fog ramps in
 let baseFogDensity = BASE_FOG_DENSITY, baseFogNear = BASE_FOG_NEAR;   // §20 GFX-scaled base; weather adds fog on top each frame
 // §night how far you can see at NIGHT (metres), independent of the fog slider so raising fog can't see past it.
 // Without a lantern only a small pool around the player is dimly lit; beyond NIGHT_VIEW_NEAR it fades to dark
-// by NIGHT_VIEW_FAR. A raised lantern pushes the far limit out (LANTERN_NIGHT_BONUS) so you see a bit further.
-const NIGHT_VIEW_NEAR = 34, NIGHT_VIEW_FAR = 140, NIGHT_POOL_R = 17, NIGHT_POOL_I = 0.55, LANTERN_NIGHT_BONUS = 70;
+// by NIGHT_VIEW_FAR. The lantern does NOT extend this (that lit up the whole far landscape) — it adds a local
+// warm pool (LANTERN_R) instead, so it genuinely helps you see what's near you on a dark night.
+const NIGHT_VIEW_NEAR = 22, NIGHT_VIEW_FAR = 92, NIGHT_POOL_R = 15, NIGHT_POOL_I = 0.32;
 
 // Day & night palettes; SKY is the blended current state (uploaded each frame).
 const SKY_DAY = { zenith: [0.30, 0.52, 0.80], horizon: [0.72, 0.81, 0.92], warm: [1.10, 0.96, 0.75] };   // §VIB a bluer sky (saturated zenith, clean light-blue horizon instead of cream-grey), warm sun
@@ -2574,13 +2575,19 @@ vec3 skyColor(vec3 dir, vec3 sunDir, vec3 zen, vec3 hor, vec3 warm, float dusk) 
 // the player stays dimly lit (so you're not blind without a lantern); beyond it everything fades smoothly to
 // near-black by the night view distance. This limit is separate from fog — raising the fog slider can't see
 // past it. nd = night strength (0 day → 1 deep night); near/far = the fade band; poolR/poolI = the dim ring.
+const float NIGHT_FLOOR = 0.5;   // §night how dark the NEAR scene gets at full night (×), ≈ the lowest brightness setting
 vec3 applyNight(vec3 col, vec3 world, vec3 camPos, float nd, float nearD, float farD, float poolR, float poolI) {
   if (nd <= 0.001) return col;
   float d = length(world - camPos);
-  float pool = (1.0 - smoothstep(poolR * 0.35, poolR, d)) * poolI;      // faint cool moonlit ring around you
-  col += col * vec3(0.42, 0.50, 0.74) * pool * nd;
-  float fade = nd * smoothstep(nearD, farD, d);                         // melt to darkness with distance
-  return col * (1.0 - 0.95 * fade);
+  // Everything DIMS at night toward NIGHT_FLOOR (so even nearby ground is genuinely dark, not just moonlit),
+  // then fades further to near-black with distance — your sight is short. The lantern is added AFTER this, so
+  // it reads as a real local light on a dark world rather than lifting the whole far landscape.
+  float fade = smoothstep(nearD, farD, d);
+  col *= mix(1.0, NIGHT_FLOOR, nd) * (1.0 - nd * 0.97 * fade);
+  // a faint cool moonlit floor right around the player so you're never totally blind without a lantern
+  float pool = (1.0 - smoothstep(poolR * 0.3, poolR, d)) * poolI * nd;
+  col += col * vec3(0.40, 0.48, 0.70) * pool;
+  return col;
 }`;
 
 /* --------------------------------------------------------------------- *
@@ -2643,6 +2650,10 @@ void main() {
   float hD = texture(uHeight, muv - vec2(0.0, texel)).r, hU = texture(uHeight, muv + vec2(0.0, texel)).r;
   vec3 sn = normalize(vec3(hL - hR, ${(2.0 * CELL).toFixed(3)}, hD - hU));   // gradient over ±1 texel (= 2·CELL world spacing)
   float slope = 1.0 - clamp(sn.y, 0.0, 1.0);
+  // §smoothterrain light the terrain with the SMOOTH heightmap normal (mostly), not the flat per-triangle
+  // normal — so slopes and especially DUG craters shade smoothly and rounded instead of as hard facets.
+  // (heightTex includes dig/built, so sn follows the real surface.) Props keep their flat low-poly shading.
+  vec3 ln = normalize(mix(n, sn, 0.82));
 
   // low-freq border wander (two octaves, world-space so it's seed-stable and view-independent)
   float bn = vnoise(vWorld.xz * 0.035) * 0.7 + vnoise(vWorld.xz * 0.11) * 0.3 - 0.5;   // ~ -0.5..+0.5
@@ -2701,9 +2712,9 @@ void main() {
 
   // Directional light. §ATMO #2 hemisphere ambient: cool sky fill from above, warm
   // ground bounce from below that takes on the surface's own hue (warm sand, green grass).
-  float diff = max(dot(n, normalize(uSunDir)), 0.0);
+  float diff = max(dot(ln, normalize(uSunDir)), 0.0);   // §smoothterrain smooth normal → no hard facet lines
   if (uHemi == 1) {
-    float up = clamp(n.y * 0.5 + 0.5, 0.0, 1.0);
+    float up = clamp(ln.y * 0.5 + 0.5, 0.0, 1.0);
     vec3 sky = mix(uHorizon, uZenith, up);               // sky-blue dome fill (zenith is a saturated blue, never grey)
     vec3 gnd = mix(uWarm * 0.95, col * 1.3, 0.5);         // warm bounce, tinted by the ground colour
     vec3 amb = mix(gnd, sky, up) * 0.70;                  // §VIB hemisphere ambient
@@ -2716,9 +2727,9 @@ void main() {
   // §night fake GI: a cool directional moon key (lit side vs shaded side), a dark-blue ambient floor so shadows never
   // go black, and a faint rim on edges facing the moon so silhouettes read against the sky.
   if (uMoonCol.b > 0.0001 || uNightAmb.b > 0.0001) {
-    float md = max(dot(n, normalize(uMoonDir)), 0.0);
-    col += col * uMoonCol * md;                                  // moonlit side
-    col += uNightAmb * (0.55 + 0.45 * clamp(n.y*0.5+0.5, 0.0, 1.0));   // deep-blue up, slightly cooler bounce below
+    float md = max(dot(ln, normalize(uMoonDir)), 0.0);
+    col += col * uMoonCol * md;                                  // moonlit side (smooth normal)
+    col += uNightAmb * (0.55 + 0.45 * clamp(ln.y*0.5+0.5, 0.0, 1.0));   // deep-blue up, slightly cooler bounce below
     if (uNightRim > 0.0001) { vec3 vd = normalize(uCamPos - vWorld);
       col += vec3(0.42, 0.56, 0.82) * pow(1.0 - max(dot(n, vd), 0.0), 3.0) * md * uNightRim; }
   }
@@ -2732,14 +2743,15 @@ void main() {
     col += col * caust * shallow * 0.6;
   }
 
-  // §18/§tools lantern: a soft warm pool with a gentle (non-spiking) falloff, so it lifts dark ground without washing to white.
+  // §night at night the world goes dark (toward a floor) with a short view; the faint pool is the only ambient.
+  col = applyNight(col, vWorld, uCamPos, uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI);
+  // §18/§tools lantern: a soft warm pool with a gentle falloff, applied AFTER the night darkening so it reads as
+  // a real local light — it brightens what's NEAR you, not the whole far landscape.
   if (uLanternI > 0.001) {
     float ld = length(vWorld - uLanternPos);
     float latt = uLanternI * (1.0 - smoothstep(0.4, uLanternR, ld));
     col += vec3(1.0, 0.62, 0.32) * latt;
   }
-  // §night at night the world goes dark with distance (short view), with a faint pool around the player.
-  col = applyNight(col, vWorld, uCamPos, uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI);
   // Distance fog → the sky color for this fragment's own view direction.
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
@@ -2954,8 +2966,15 @@ void main() {
   if (depth < -0.8) discard;
   float shore = smoothstep(-0.25, 0.7, depth);    // 0 at/above the sand → 1 just offshore
 
-  vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));  // faceted wave normals
-  if (n.y < 0.0) n = -n;
+  // §smoothwater SMOOTH wave normal computed analytically from the wave function's gradient (per-pixel),
+  // replacing the faceted cross(dFdx,dFdy) per-triangle normal — so the surface, its reflections and the
+  // sun glint read as smooth, rounded swell instead of hard polygon facets. Scaled by the local wave
+  // amplitude (flat near the shore, choppier offshore), matching the vertex shader's displacement.
+  float wamp = uWaterQ * (vPool > 0.5 ? 0.05 : smoothstep(0.0, 3.0, max(0.0, depth)));
+  vec2 wp = vWorld.xz;
+  float dhx = 0.063 * cos(wp.x*0.18 + uTime*0.9) + 0.0162 * cos((wp.x+wp.y)*0.09 + uTime*1.3) + 0.022 * cos((wp.x-wp.y)*0.22 - uTime*1.7);
+  float dhz = 0.045 * cos(wp.y*0.15 - uTime*0.7) + 0.0162 * cos((wp.x+wp.y)*0.09 + uTime*1.3) - 0.022 * cos((wp.x-wp.y)*0.22 - uTime*1.7);
+  vec3 n = normalize(vec3(-dhx * wamp, 1.0, -dhz * wamp));
   vec3 v = normalize(uCamPos - vWorld);
   vec3 col; float alpha;
 
@@ -5717,12 +5736,14 @@ void main() {
     // §gulls removed the procedural splash-zone speckle, it painted white SQUARES on wet rock that read as fake
     // barnacles. Real barnacles are their own crust objects (drawBarnacles), which look nothing like this.
   }
-  if (uLanternI > 0.001) {   // §18/§tools soft warm lantern pool on props (gentle falloff, no white spike)
-    float ld = length(vWorld - uLanternPos);
-    col += vec3(1.0, 0.62, 0.32) * (uLanternI * (1.0 - smoothstep(0.4, uLanternR, ld)));
-  }
   if (uEmissive > 0.001) col = mix(col, vCol, uEmissive);   // §nightlight village windows/lanterns glow from within (fog still applies below)
-  if (uEmissive < 0.5) col = applyNight(col, vWorld, uCamPos, uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI);   // §night (self-lit glows skip the darkening)
+  if (uEmissive < 0.5) {
+    col = applyNight(col, vWorld, uCamPos, uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI);   // §night darken first…
+    if (uLanternI > 0.001) {   // §18/§tools …then add the local warm lantern pool on top (brightens near props, not the far ones)
+      float ld = length(vWorld - uLanternPos);
+      col += vec3(1.0, 0.62, 0.32) * (uLanternI * (1.0 - smoothstep(0.4, uLanternR, ld)));
+    }
+  }
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
   float fd = max(dist - uFogNear, 0.0) * uFogDensity;
@@ -8159,12 +8180,14 @@ function selectedItem() { const c = Inv.hotbar[Inv.selected]; return c ? c.id : 
 function lanternLit() { return mode === "walk" && !isPanelOpen() && selectedItem() === "lantern"; }
 function lanternPos() { return [player.x, player.eyeY - 0.55, player.z]; }
 function lanternFlicker() { const t = clock.t; return 0.84 + 0.12*Math.sin(t*18.0) + 0.06*Math.sin(t*7.3 + 1.0) + 0.04*Math.sin(t*33.0); }
-const LANTERN_I = 0.62;   // §18/§tools lantern brightness, lower, warm, soft (tunable)
-let LANTERN_R = 13.6;     // §look lantern light radius in metres (tunable); ~60% wider than the old 8.5
+const LANTERN_I = 0.8;    // §night lantern brightness (warm, soft) — a touch brighter now it's the main night light
+let LANTERN_R = 26;       // §night lantern light radius in metres — a wide LOCAL pool so it's the useful "see" tool at night
    // §3 indoor multiplier so the lantern doesn't wash the close walls to white (tunable)
 let placedLanterns = [];   // §tools lit lanterns set down in the world, saved per seed: { x, y, z }
 // the one lantern that lights the scene this frame: the held one if raised, else the nearest placed lantern to the camera
+let _dbgLantern = false;   // §night debug: force the lantern lit at the camera for headless QA screenshots
 function activeLanternPos() {
+  if (_dbgLantern) return [cam.pos[0], cam.pos[1] - 0.3, cam.pos[2]];
   if (lanternLit()) return lanternPos();
   let best = null, bd = 1e9;
   for (const L of placedLanterns) { if (L.out) continue; const d = (L.x-cam.pos[0])**2 + (L.z-cam.pos[2])**2; if (d < bd) { bd = d; best = L; } }   // §P2 a tide-snuffed lantern casts no light
@@ -8176,10 +8199,9 @@ function activeLanternPos() {
 function setNightUniforms(U) {
   if (!U || U.uNightDark === undefined) return;
   const nd = camUnderwaterNow ? 0 : (1 - (typeof dayFactor === "function" ? dayFactor() : 1));
-  const far = NIGHT_VIEW_FAR + (lanternLit() ? LANTERN_NIGHT_BONUS : 0);
   gl.uniform1f(U.uNightDark, nd);
   gl.uniform1f(U.uNightNear, NIGHT_VIEW_NEAR);
-  gl.uniform1f(U.uNightFar, far);
+  gl.uniform1f(U.uNightFar, NIGHT_VIEW_FAR);   // §night fixed short night view; the lantern is a LOCAL pool, it doesn't extend this
   gl.uniform1f(U.uNightPoolR, NIGHT_POOL_R);
   gl.uniform1f(U.uNightPoolI, NIGHT_POOL_I);
 }
@@ -12007,6 +12029,7 @@ if (typeof window !== "undefined") window.__dbg = {
   jump: () => { if (mode === "walk" && !player.swimming) jumpBuffer = TUNE.JUMP_BUFFER; },
   state: () => ({ mode, jumpBuffer, airborne: player.airborne, vy: player.vy, feetY: player.feetY }),
   setTime: (t) => { dayNightEnabled = false; timeOfDay = t; updateSun(); },
+  lantern: (on) => { _dbgLantern = !!on; },
 };
 
 buildHeightmap();
@@ -12553,7 +12576,7 @@ function frame(now) {
   // §night at night, stop drawing props past where they've already melted into darkness (they'd be invisible
   // anyway): a perf win and no pop-in, since the night fade (NIGHT_VIEW_FAR) completes before this cull edge.
   { const nd = camUnderwater ? 0 : (1 - dayFactor()), base = BASE_DRAW_R * GFX.propDist;
-    DRAW_R = (nd > 0.35) ? Math.min(base, NIGHT_VIEW_FAR + (lanternLit() ? LANTERN_NIGHT_BONUS : 0) + 15) : base; }
+    DRAW_R = (nd > 0.35) ? Math.min(base, NIGHT_VIEW_FAR + 15) : base; }
   let _uwFogD, _uwFogN, _uwSky;
   if (camUnderwater) {
     const depthBelow = Math.max(0, camSurf - cam.pos[1]);
