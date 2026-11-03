@@ -25,7 +25,7 @@ back to the nearest core clip.
 | `eat`     | Head-down pecking, grazing, nibbling        | `idle`                     |
 | `alert`   | Head up, frozen, looking (the "it noticed you" beat) | `idle` paused     |
 | `pulse`   | Simple scale/squash loop (anemones, jellies) | procedural scale sine     |
-| `fly` *(optional)*  | Gull / heron wings                | —                          |
+| `fly` *(optional)*  | Gull wings                         | —                          |
 | `swim` *(optional)* | Fish tail sway                    | `walk`                     |
 | `sleep` *(optional)*| Night rest                        | `idle` slowed to 0.3×      |
 | `attack` *(optional)*| Wolf lunge, gull snatch          | `run` one-shot             |
@@ -38,8 +38,8 @@ Two cheap tricks that go a long way:
 ### 1.2 The brain: a tiny state machine
 
 Every moving creature is a handful of states with a timer, e.g.
-`idle → wander → eat → idle`, plus an interrupt state (`flee`, `burrow`,
-`hide`) that any state can jump to. Each state picks one anim from the table
+`idle → wander → eat → idle`, plus an interrupt state (usually `flee`) that
+any state can jump to. Each state picks one anim from the table
 above. Keep states to ~3–6 per creature; the "personality" comes from the
 timings and thresholds, not from more states.
 
@@ -66,11 +66,12 @@ keeps crabs on the beach and fish in the water without any pathfinding.
 - **Spawn around the player, not across the whole island.** Keep a pool per
   species; spawn just outside view, despawn when far behind. Far creatures
   freeze (no brain, no anim); mid-range ones tick their brain at a low rate.
-- **Biomes already list critters** (`COAST_BIOMES[...].crit`: crab, hopper,
-  star, anemone, urchin). Reuse that as the spawn table.
+- **Biomes already list critters** (`COAST_BIOMES[...].crit`: crab, star,
+  anemone, urchin, plus a `hopper` entry to drop). Reuse that as the spawn table.
 - **Tide + time of day + weather** drive *where* and *how many*: crabs out at
-  low tide, gulls fewer at night, everything hides in a storm. These are the
-  cheapest ways to make the beach feel alive across a day.
+  low tide, gulls fewer at night, fewer of everything in a storm. These are the
+  cheapest ways to make the beach feel alive across a day. Creatures leave by
+  walking, swimming or flying off, never by digging in.
 - **Determinism:** live creatures shouldn't pull from the world-gen `rng()`
   stream. Give them their own stream (or seed per spawn from position + time)
   so adding/removing an animal never reshuffles anyone's island.
@@ -98,29 +99,23 @@ almost no work.
 ### Crab
 The signature beach animal; worth getting right.
 - **States:** `idle` → `wander` (sideways!) → `eat` (claws to mouth) → back.
-  Interrupts: `flee`, `burrow`.
+  Interrupt: `flee`.
 - **Anims:** `idle`, `walk` (played while moving sideways), `eat`, `alert`
   (claws raised).
 - **Behaviour:**
-  - Notices player → `alert`, claws up. Closer → scuttles sideways **to the
-    nearest burrow or the waterline**, not just "away".
-  - `burrow`: sinks into the sand over ~0.5s and disappears; re-emerges later
-    if the player leaves. Leaves a visible hole/bubbles = a dig spot.
-  - High tide / rain / night → most crabs burrowed. Low tide at dusk → crab
-    party.
+  - Notices player → `alert`, claws up. Closer → scuttles sideways **toward
+    the waterline or the nearest rock**, not just straight away. If it reaches
+    water it walks in and despawns once out of sight.
+  - Tide and time set the numbers: lots of crabs out at low tide around dusk,
+    only a few at high tide, at night or in rain.
 - **Interaction:** catchable if you corner one or approach slowly; gives
   `crabmeat` (already an item).
 
 ### Hermit crab
-- Like the crab but slow, and its **`hide` state** is retreating into the shell
-  (stop + `idle` on the shell only). Pick one up and it's an empty-looking
-  shell until it peeks out. Swaps shells with a nearby empty `coiledshell`
-  occasionally — a cute rare moment.
-
-### Sand hoppers
-- Tiny swarm, no individual brains. They burst up and scatter when you **dig or
-  step on kelp piles**, then settle. One particle-like system, `idle` + a hop
-  arc. Pure feel.
+- A slower, calmer crab that wears a shell. Wanders and picks at the sand
+  (`walk`, `eat`); when the player comes near it just stops and goes `alert`
+  instead of running. Easy to watch up close.
+- Rare moment: it swaps shells with a nearby empty `coiledshell`.
 
 ### Seagull
 - **States:** `idle` (stand on sand/rocks), `walk` (strutting), `eat` (peck),
@@ -147,13 +142,6 @@ The signature beach animal; worth getting right.
   - Ties into fishing: a visible school nearby = better bite odds there.
 - Variants for free: small silver schools in shallows, a couple of bigger
   solitary fish in deeper tide pools.
-
-### Optional extras in this tier
-- **Heron** (marsh, mudflat): stands perfectly still in the shallows
-  (`idle`), slow `walk`, sudden `attack` strike at a fish. Flies off if you
-  get close. Works as a "patience" animal.
-- **Seal** (rocky reef): hauls out on rocks at low tide (`sleep`), slides into
-  the water (`swim`) if approached; pops its head up to watch you.
 
 ---
 
@@ -206,10 +194,8 @@ idea is a small predator/prey loop the player can watch or disturb.
   still near the herd lets you watch the whole thing play out.
 
 ### Other tier-2 pairings if you want more later
-- **Gulls vs. crabs**: gulls pick off crabs caught away from their burrows at
+- **Gulls vs. crabs**: gulls pick off crabs caught far from the waterline at
   low tide — gives crabs a reason to flee from something other than you.
-- **Heron vs. fish**: heron strikes reduce a nearby school, school avoids the
-  heron's spot afterwards.
 - **Fox vs. gulls/rabbits** inland as a smaller-scale version of wolves/deer.
 
 ---
@@ -219,7 +205,7 @@ idea is a small predator/prey loop the player can watch or disturb.
 1. **Shared:** anim mapping, state machine helper, player-distance + noise
    senses, habitat check, spawn pool + LOD.
 2. **Anemone, urchin, sea star** — proves the anim import + placement.
-3. **Crab** — proves the brain, flee/burrow, tide/time rules.
+3. **Crab** — proves the brain, flee, tide/time rules.
 4. **Gulls** — group panic + flying; then the item-thief gag.
 5. **Fish schools** — boids + tie-in to fishing.
 6. **Deer**, then **wolves** — once inland habitat exists.
@@ -232,13 +218,10 @@ idea is a small predator/prey loop the player can watch or disturb.
 | Urchin       | `idle`                          | —                    |
 | Sea star     | `idle`                          | —                    |
 | Jellyfish    | `pulse`                         | —                    |
-| Crab         | `idle`, `walk`, `alert`         | `eat`, burrow        |
-| Hermit crab  | `idle`, `walk`                  | hide-in-shell        |
-| Sand hoppers | `idle` (+ procedural hop)       | —                    |
+| Crab         | `idle`, `walk`, `alert`         | `eat`                |
+| Hermit crab  | `idle`, `walk`                  | `eat`, `alert`       |
 | Seagull      | `idle`, `walk`, `fly`           | `eat`, `attack`      |
 | Fish         | `swim`                          | —                    |
-| Heron        | `idle`, `walk`, `fly`           | `attack`             |
-| Seal         | `idle`, `swim`                  | `sleep`              |
 | Deer         | `idle`, `walk`, `run`, `eat`, `alert` | `sleep`        |
 | Wolf         | `idle`, `walk`, `run`           | `eat`, `sleep`, `attack` |
 
