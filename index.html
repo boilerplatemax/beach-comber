@@ -2678,20 +2678,21 @@ void main() {
   col = mix(col, cForest, smoothstep(28.0, 60.0, hb));
   col = mix(col, cRock,   smoothstep(0.34, 0.74, sb));   // smooth slope + wander → stone borders no longer stair-step
 
-  // Painted surface material (dug or player-placed) overrides the height bands. Sampled NEAREST (ids must not
-  // interpolate); a SMALL noise jitter softens the outer edge. A fragment that reads unpainted but is surrounded
-  // by painted cells is treated as painted (the strongest neighbour), so small unpainted gaps BETWEEN dig
-  // strokes don't show as grass "blobs" inside a dirt patch — only the outer edge stays a soft transition.
-  vec2 mjit = vec2(vnoise(vWorld.xz * 0.85 + 11.0) - 0.5, vnoise(vWorld.xz * 0.85 + 43.0) - 0.5) * (texel * 0.6);
-  vec2 mu = muv + mjit;
-  float m = texture(uMaterial, mu).r;
-  if (m < 0.5) {   // §matfill unpainted here — fill an interior gap from painted neighbours (don't grow the outer edge)
-    float ma = texture(uMaterial, mu + vec2(texel, 0.0)).r, mb = texture(uMaterial, mu - vec2(texel, 0.0)).r;
-    float mcn = texture(uMaterial, mu + vec2(0.0, texel)).r, md = texture(uMaterial, mu - vec2(0.0, texel)).r;
-    float painted = step(0.5, ma) + step(0.5, mb) + step(0.5, mcn) + step(0.5, md);
-    if (painted >= 3.0) m = max(max(ma, mb), max(mcn, md));   // surrounded on 3+ sides → interior gap → fill it
-  }
-  if (m > 0.5) {
+  // §matsoft Painted surface material (dug or player-placed) overrides the height bands. The ids can't be
+  // linearly filtered, so to avoid an ANGULAR GRID edge we build a SMOOTH coverage ourselves: bilinearly
+  // interpolate the binary "is this cell painted?" mask across the four surrounding cells (anti-aliased, no
+  // hard cell boundary) and wander the sample point with low-frequency noise so the border is organic and
+  // rounded, not a straight grid line. The colour comes from the strongest (painted) neighbour id.
+  vec2 mw = muv + vec2(vnoise(vWorld.xz * 0.06 + 11.0) - 0.5, vnoise(vWorld.xz * 0.06 + 43.0) - 0.5) * (texel * 3.0);
+  vec2 tc = mw * ${GRID.toFixed(1)} - 0.5;
+  vec2 fr = clamp(fract(tc), 0.0, 1.0);
+  vec2 b0 = (floor(tc) + 0.5) * texel;
+  float m00 = texture(uMaterial, b0).r, m10 = texture(uMaterial, b0 + vec2(texel, 0.0)).r;
+  float m01 = texture(uMaterial, b0 + vec2(0.0, texel)).r, m11 = texture(uMaterial, b0 + vec2(texel, texel)).r;
+  float cov = mix(mix(step(0.5, m00), step(0.5, m10), fr.x), mix(step(0.5, m01), step(0.5, m11), fr.x), fr.y);   // smooth 0..1 coverage
+  cov = smoothstep(0.15, 0.85, cov);                 // tighten the soft band a touch so it still reads as a patch, not a haze
+  float m = max(max(m00, m10), max(m01, m11));        // the painted id for the colour
+  if (m > 0.5 && cov > 0.003) {
     vec3 mc = cGrass;
     if      (m < 1.5) mc = vec3(0.43, 0.61, 0.26);   // grass (matches the lush band)
     else if (m < 2.5) mc = vec3(0.42, 0.31, 0.20);   // dirt
@@ -2699,7 +2700,7 @@ void main() {
     else if (m < 4.5) mc = vec3(0.56, 0.55, 0.51);   // gravel
     else if (m < 5.5) mc = vec3(0.47, 0.44, 0.41);   // stone
     else              mc = vec3(0.34, 0.28, 0.20);   // mud
-    col = mix(col, mc, 0.80);
+    col = mix(col, mc, cov * 0.82);                   // blend by the SMOOTH coverage → soft, rounded border
   }
 
   // Wet sand: darker from the waterline up to the recent high-water mark,
@@ -2889,8 +2890,9 @@ function buildFreshTexture() {
   gl.bindTexture(gl.TEXTURE_2D, tex);
   gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.R32F, GRID, GRID, 0, gl.RED, gl.FLOAT, fresh);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  const ff = floatLinear ? gl.LINEAR : gl.NEAREST;   // §matsoft freshness is continuous → LINEAR smooths the dug-soil darkening (no hard cell edge)
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, ff);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, ff);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   return tex;
@@ -2996,20 +2998,21 @@ void main() {
     col = mix(col, skyColor(refl, uSunDir, uZenith, uHorizon, uWarm, uDusk), pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.3);
     alpha = clamp(0.3 + depth * 0.25, 0.25, 0.72);
   } else {
-    vec3 deep = vec3(0.12, 0.44, 0.55), shallow = vec3(0.25, 0.76, 0.79);   // §VIB bright turquoise ~#3fc1c9 → deep ~#1f6f8b
-    float dmix = smoothstep(0.0, 6.0, depth);
+    // §wateronecol a near-UNIFORM turquoise — only a gentle shallow→deep shift so it reads as one smooth sheet,
+    // and it turns MORE OPAQUE with depth so the angular seabed facets don't show through as hard lines.
+    vec3 deep = vec3(0.14, 0.47, 0.56), shallow = vec3(0.22, 0.62, 0.66);
+    float dmix = smoothstep(0.0, 5.0, depth);
     col = mix(shallow, deep, dmix);
     vec3 refl = reflect(-v, n);
-    col = mix(col, skyColor(refl, uSunDir, uZenith, uHorizon, uWarm, uDusk), pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.5);
-    col += uWarm * pow(max(dot(v, reflect(-normalize(uSunDir), n)), 0.0), 48.0) * 0.6 * (1.0 - uNight);   // §look no hot sun-spec at night
-    // foam band that follows the shoreline as the tide moves (dialled down at low water quality).
-    // A soft wet-edge foam sits right at the waterline (depth → 0) so the shore reads as surf, not a line.
+    col = mix(col, skyColor(refl, uSunDir, uZenith, uHorizon, uWarm, uDusk), pow(1.0 - max(dot(n, v), 0.0), 3.0) * 0.35);
+    col += uWarm * pow(max(dot(v, reflect(-normalize(uSunDir), n)), 0.0), 48.0) * 0.5 * (1.0 - uNight);   // §look no hot sun-spec at night
+    // soft wet-edge foam at the waterline (depth → 0) so the shore reads as surf, not a hard line.
     float lap = sin(vWorld.x * 0.6 + uTime * 2.0) * sin(vWorld.z * 0.55 - uTime * 1.6);
     float foam = clamp((1.0 - smoothstep(0.0, 1.6, depth)) * (0.45 + 0.55 * lap), 0.0, 1.0);
-    float edge = (1.0 - smoothstep(0.0, 0.5, depth));             // bright lacy fringe hugging the sand
+    float edge = (1.0 - smoothstep(0.0, 0.5, depth));            // bright lacy fringe hugging the sand
     foam = clamp(max(foam, edge * 0.7), 0.0, 1.0) * smoothstep(0.1, 0.6, uWaterQ);
     col = mix(col, vec3(0.92, 0.95, 0.95), foam * 0.85);
-    alpha = max(mix(0.4, 0.9, dmix), foam * 0.9);
+    alpha = max(mix(0.72, 0.95, dmix), foam * 0.9);             // §wateronecol more opaque (shallow 0.72 → deep 0.95) so the seabed's hard facets are hidden
   }
 
   alpha *= shore;               // §water dissolve the sheet into the beach so the shoreline isn't a hard edge
@@ -5522,9 +5525,20 @@ function rockMesh(seed, style, base) {
   const rand = mulberry32(seed >>> 0), m = Mesh();
   base = base || [0.46, 0.44, 0.41];
   const flat = style === "slab" ? 0.5 : style === "rounded" ? 0.82 : 0.66;   // vertical squash
-  const jag  = style === "jagged" ? 0.48 : style === "rounded" ? 0.12 : 0.27; // radius jitter
-  const LAT = 5, LON = 8, R = [];
+  const jag  = style === "jagged" ? 0.26 : style === "rounded" ? 0.08 : 0.16; // §rocksmooth radius jitter, dialled way down (no spikes)
+  // §rocksmooth higher-res lat/lon ball, then SMOOTH the per-vertex radius field (a few neighbour-averaging
+  // passes) so there are no isolated spikes — just soft lumps — and give each pole ONE averaged radius so the
+  // top/bottom close to a clean point instead of a spiky cluster of axis vertices.
+  const LAT = 7, LON = 11, R = [];
   for (let i = 0; i <= LAT; i++) { R[i] = []; for (let j = 0; j < LON; j++) R[i][j] = 1 + (rand()*2 - 1) * jag; R[i][LON] = R[i][0]; }
+  for (let pass = 0; pass < 2; pass++) {
+    const S = R.map(row => row.slice());
+    for (let i = 1; i < LAT; i++) for (let j = 0; j < LON; j++) { const jm = (j-1+LON)%LON, jp = (j+1)%LON;
+      S[i][j] = (R[i][j]*2 + R[i-1][j] + R[i+1][j] + R[i][jm] + R[i][jp]) / 6; }
+    for (let i = 1; i < LAT; i++) { for (let j = 0; j < LON; j++) R[i][j] = S[i][j]; R[i][LON] = R[i][0]; }
+  }
+  { let rt = 0, rb = 0; for (let j = 0; j < LON; j++) { rt += R[0][j]; rb += R[LAT][j]; } rt /= LON; rb /= LON;
+    for (let j = 0; j <= LON; j++) { R[0][j] = rt; R[LAT][j] = rb; } }
   const moss = [0.33, 0.42, 0.24], lichen = [0.78, 0.8, 0.72];
   const vert = (i, j) => { const th = i/LAT*Math.PI, ph = j/LON*6.283, r = R[i][j];
     return [Math.cos(ph)*Math.sin(th)*r, Math.cos(th)*flat*r, Math.sin(ph)*Math.sin(th)*r]; };
@@ -12013,6 +12027,8 @@ if (typeof window !== "undefined") window.__dbg = {
   state: () => ({ mode, jumpBuffer, airborne: player.airborne, vy: player.vy, feetY: player.feetY }),
   setTime: (t) => { dayNightEnabled = false; timeOfDay = t; updateSun(); },
   lantern: (on) => { _dbgLantern = !!on; },
+  paint: (x, z, r, mat) => { if (typeof paintCells === "function") { paintCells(x, z, r, mat, true); const mn = (x - r), mx = (x + r), zn = (z - r), zx = (z + r);
+    const c0 = cellIndex(mn, zn), c1 = cellIndex(mx, zx); if (typeof updateHeightTex === "function") updateHeightTex((mn + HALF) / CELL - 2, (zn + HALF) / CELL - 2, (mx + HALF) / CELL + 2, (zx + HALF) / CELL + 2); } },
 };
 
 buildHeightmap();
