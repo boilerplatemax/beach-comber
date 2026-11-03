@@ -1402,6 +1402,14 @@ const DAY_PERIOD = 600;              // seconds per full day (~10 min)
 let dayNightEnabled = true;   // §P1 on by default now (debug panel can still pause/scrub time)
 try { const v = localStorage.getItem("bc_daynight"); if (v !== null) dayNightEnabled = v === "1"; } catch (e) {}
 function setDayNight(on) { dayNightEnabled = on; if (!on) { timeOfDay = MORNING_TIME; updateSun(); } try { localStorage.setItem("bc_daynight", on ? "1" : "0"); } catch (e) {} }
+// §lantern quick testing override: Cycle → Day → Night → Cycle. Forcing a time pauses the cycle and freezes the
+// sun there (handy for checking the lantern); restoring "Cycle" re-enables the moving sun.
+const DEBUG_NIGHT_TIME = 0.80;   // deep night (isNightNow() is true for t > 0.62 || t < 0.03)
+function cycleTimeDebug() {
+  if (dayNightEnabled) { dayNightEnabled = false; timeOfDay = MORNING_TIME; updateSun(); try { localStorage.setItem("bc_daynight", "0"); } catch (e) {} }  // Cycle → Day
+  else if (!isNightNow()) { timeOfDay = DEBUG_NIGHT_TIME; updateSun(); }   // Day → Night
+  else { setDayNight(true); }                                             // Night → Cycle
+}
 const BASE_FOG_DENSITY = 0.0009, BASE_FOG_NEAR = 66.0;   // §13.6 base; graphics settings scale these live · §VIB thinner + pushed back so it's less hazy/pastel and colour holds to the horizon
 let FOG_DENSITY = BASE_FOG_DENSITY;   // see far across the big landscape, still hazy
 let FOG_NEAR = BASE_FOG_NEAR;         // clear band before fog ramps in
@@ -2591,6 +2599,37 @@ vec3 applyNight(vec3 col, vec3 world, vec3 camPos, float nd, float nearD, float 
   float pool = (1.0 - smoothstep(poolR * 0.3, poolR, d)) * poolI * nd;
   col += col * vec3(0.40, 0.48, 0.70) * pool;
   return col;
+}
+// §lantern A real handheld point light — NOT a flat brightness bump. Shared by the terrain and prop shaders so
+// ground, trees, rocks and buildings all respond the same way. Three physical factors multiply together:
+//   (1) DISTANCE — a windowed inverse-square falloff that is strong at the flame and reaches EXACTLY 0 at R,
+//       so nothing past the radius is touched (distant trees/rocks get no light) and there is no hard edge.
+//   (2) SURFACE ORIENTATION — N·L against the direction to the lantern, so only faces turned toward the light
+//       are lit; the side of a tree facing you glows while its back stays dark, and the shading rounds off the
+//       low-poly facets. N is flipped to face the viewer first so the lit side is deterministic regardless of
+//       winding (the held lantern sits at the eye, so "toward the viewer" ≈ "toward the light").
+//   (3) AIM — a soft forward cone along the lantern's facing (ldir); surfaces ahead get the full beam, those
+//       behind keep only a dim spill, so turning away from an object removes most of its direct light. A placed
+//       lantern passes a zero ldir and is omnidirectional.
+vec3 lanternLight(vec3 col, vec3 world, vec3 N, vec3 camPos, vec3 lpos, float I, float R, vec3 ldir) {
+  if (I <= 0.001) return col;
+  vec3 toL = lpos - world;
+  float ld = length(toL);
+  float x = clamp(ld / R, 0.0, 1.0);
+  float win = 1.0 - x * x * x * x; win *= win;              // smooth window → 0 at the radius (finite range, no cutoff)
+  float dist = win / (1.0 + 0.055 * ld * ld);               // rapid inverse-square falloff, bright near → weak far
+  vec3 Ldir = toL / max(ld, 1e-4);
+  vec3 nl = N; if (dot(nl, camPos - world) < 0.0) nl = -nl; // orient to the viewer so the facing side is the lit side
+  float ndl = max(dot(nl, Ldir), 0.0);                      // directional: back/edge faces fall off to dark
+  float cone = 1.0;
+  if (dot(ldir, ldir) > 0.0001) {                           // held lantern aims along ldir; placed lantern (0) = omni
+    vec2 bn = normalize((world - lpos).xz + vec2(1e-5));
+    float c = mix(0.30, 1.0, smoothstep(-0.8, 0.45, dot(bn, normalize(ldir.xz))));
+    // Upright surfaces (tree trunks, rocks, walls — horizontal normal) obey the aim, so turning away darkens them.
+    // Flat ground (normal up) ignores the aim, so the pool around your feet stays a full circle, not a wedge.
+    cone = mix(1.0, c, clamp(1.0 - abs(nl.y), 0.0, 1.0));
+  }
+  return col + vec3(1.0, 0.62, 0.32) * (I * dist * ndl * cone);
 }`;
 
 /* --------------------------------------------------------------------- *
@@ -2621,6 +2660,7 @@ uniform float uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI;   // 
 uniform float uTime; uniform int uUnderwater;        // §14B animated seabed caustics
 uniform float uGroundWet;                            // §20 rain darkens & slightly cools the ground (0 = dry)
 uniform vec3 uLanternPos; uniform float uLanternI, uLanternR;   // §18 lantern light pool (uLanternR = radius, tunable)
+uniform vec3 uLanternDir;                             // §lantern horizontal aim of a held lantern (0 = placed/omni)
 uniform int uHemi, uGroundNoise, uFogSun;            // §ATMO per-effect toggles
 uniform sampler2D uFresh;
 uniform sampler2D uMaterial;
@@ -2765,17 +2805,9 @@ void main() {
 
   // §night at night the world goes dark (toward a floor) with a short view; the faint pool is the only ambient.
   col = applyNight(col, vWorld, uCamPos, uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI);
-  // §18/§tools lantern: a soft warm pool with a gentle falloff, applied AFTER the night darkening so it reads as
-  // a real local light — it brightens what's NEAR you, not the whole far landscape.
-  if (uLanternI > 0.001) {
-    float ld = length(vWorld - uLanternPos);
-    // §night rapid inverse-square falloff (bright right at the flame, dropping off fast), windowed smoothly to
-    // exactly 0 at uLanternR so nothing past the pool is touched — no hard cutoff, no reaching the far trees.
-    float x = ld / uLanternR;
-    float win = clamp(1.0 - x * x * x * x, 0.0, 1.0); win *= win;
-    float latt = uLanternI * win / (1.0 + 0.08 * ld * ld);
-    col += vec3(1.0, 0.62, 0.32) * latt;
-  }
+  // §lantern directional handheld point light (distance × surface orientation × aim), applied AFTER the night
+  // darkening so it reads as a real local light on a dark world — see lanternLight() in SKY_GLSL.
+  col = lanternLight(col, vWorld, ln, uCamPos, uLanternPos, uLanternI, uLanternR, uLanternDir);
   // Distance fog → the sky color for this fragment's own view direction.
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
@@ -4891,6 +4923,7 @@ function openSettings() {
       <div class="srow"><label>Auto-pickup</label><button data-k="autopick">${onoff(autoPickup)}</button></div>
       <div class="srow"><label>Hunger</label><button data-k="hunger">${onoff(hungerEnabled)}</button></div>
       <div class="srow"><label>Day/night cycle</label><button data-k="daynight">${onoff(dayNightEnabled)}</button></div>
+      <div class="srow"><label>Time of day (debug)</label><button data-k="timedbg">${dayNightEnabled ? "Cycle" : (isNightNow() ? "Night" : "Day")}</button></div>
       <div class="srow"><label>Relaxed fishing</label><button data-k="relaxfish">${onoff(relaxedFishing)}</button></div>
       <div class="srow"><label>Infinite worms</label><button data-k="infworms">${onoff(infiniteWorms)}</button></div>
       <div class="srow"><label>No starvation</label><button data-k="nostarve">${onoff(noStarvation)}</button></div>`,
@@ -4913,6 +4946,7 @@ function openSettings() {
     else if (k === "autopick") { autoPickup = !autoPickup; saveAutoPick(); }
     else if (k === "hunger") { setHungerEnabled(!hungerEnabled); }   // §13.8
     else if (k === "daynight") { setDayNight(!dayNightEnabled); }     // §13.9
+    else if (k === "timedbg") { cycleTimeDebug(); }                   // §lantern quick day↔night override for testing the lantern
     else if (k === "relaxfish") { setRelaxedFishing(!relaxedFishing); }   // §Fishing forgiving reel mini-game
     else if (k === "infworms") { infiniteWorms = !infiniteWorms; try { localStorage.setItem("bc_infworms", infiniteWorms ? "1" : "0"); } catch (e) {} }   // §climb never run out of bait
     else if (k === "nostarve") { noStarvation = !noStarvation; try { localStorage.setItem("bc_nostarve", noStarvation ? "1" : "0"); } catch (e) {} }   // §climb hunger never reaches starving
@@ -5742,6 +5776,7 @@ uniform float uWetLevel, uWaterLevel;               // §13.7 wet band near the 
 uniform int uWetBand;                               // 1 only for the world prop pass (rocks, trees)
 uniform float uGhost; uniform vec3 uGhostCol;       // §16B building-placement ghost
 uniform vec3 uLanternPos; uniform float uLanternI, uLanternR;  // §18 lantern light pool (uLanternR = radius, tunable)
+uniform vec3 uLanternDir;                            // §lantern horizontal aim of a held lantern (0 = placed/omni)
 uniform float uDissolve;                            // §urgent5 0 = solid; >0 = dithered dissolve (dying creatures)
 uniform float uEmissive;                            // §nightlight self-lit glow (village windows/lanterns): 1 = ignore lighting, use vCol directly
 uniform int uHemi;                                  // §ATMO #2 hemisphere ambient on/off (0 = flat, for icon/inspect renders)
@@ -5786,13 +5821,9 @@ void main() {
   if (uEmissive > 0.001) col = mix(col, vCol, uEmissive);   // §nightlight village windows/lanterns glow from within (fog still applies below)
   if (uEmissive < 0.5) {
     col = applyNight(col, vWorld, uCamPos, uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI);   // §night darken first…
-    if (uLanternI > 0.001) {   // §18/§tools …then add the local warm lantern pool on top (brightens near props, not the far ones)
-      float ld = length(vWorld - uLanternPos);
-      // §night rapid inverse-square falloff windowed to 0 at uLanternR — near props glow, distant trees get nothing.
-      float x = ld / uLanternR;
-      float win = clamp(1.0 - x * x * x * x, 0.0, 1.0); win *= win;
-      col += vec3(1.0, 0.62, 0.32) * (uLanternI * win / (1.0 + 0.08 * ld * ld));
-    }
+    // §lantern …then the directional handheld point light: only the near, lantern-facing side of each prop lights
+    // (N·L × distance × aim). Distant props get nothing; the back of a tree stays dark. See lanternLight().
+    col = lanternLight(col, vWorld, n, uCamPos, uLanternPos, uLanternI, uLanternR, uLanternDir);
   }
   vec3 viewVec = vWorld - uCamPos;
   float dist = length(viewVec);
@@ -8230,8 +8261,8 @@ function selectedItem() { const c = Inv.hotbar[Inv.selected]; return c ? c.id : 
 function lanternLit() { return mode === "walk" && !isPanelOpen() && selectedItem() === "lantern"; }
 function lanternPos() { return [player.x, player.eyeY - 0.55, player.z]; }
 function lanternFlicker() { const t = clock.t; return 0.84 + 0.12*Math.sin(t*18.0) + 0.06*Math.sin(t*7.3 + 1.0) + 0.04*Math.sin(t*33.0); }
-const LANTERN_I = 0.85;   // §night lantern brightness (warm, soft)
-let LANTERN_R = 13;       // §night lantern light radius — a SMALL bright ring right around the player (not a wide pool that lights mid-distance trees)
+const LANTERN_I = 1.2;    // §night lantern brightness (warm, soft) — a touch brighter now that N·L + the aim cone shape it
+let LANTERN_R = 16;       // §night lantern light radius — the finite reach; beyond it props/terrain get NO lantern light
    // §3 indoor multiplier so the lantern doesn't wash the close walls to white (tunable)
 let placedLanterns = [];   // §tools lit lanterns set down in the world, saved per seed: { x, y, z }
 // the one lantern that lights the scene this frame: the held one if raised, else the nearest placed lantern to the camera
@@ -8265,6 +8296,14 @@ function setLanternUniform(U) {   // call after the program + its uniforms are b
   gl.uniform1f(U.uLanternI, p ? LANTERN_I * lanternFlicker() * nf : 0);
   if (U.uLanternR !== undefined) gl.uniform1f(U.uLanternR, LANTERN_R);   // §look tunable, ~60% wider radius
   if (p) gl.uniform3f(U.uLanternPos, p[0], p[1], p[2]);
+  if (U.uLanternDir !== undefined) {   // §lantern a HELD lantern aims along the player's horizontal facing; a placed one is omnidirectional (zero dir)
+    if (p && (lanternLit() || _dbgLantern)) {
+      const f = camForward(); let dx = f[0], dz = f[2]; const m = Math.hypot(dx, dz) || 1;
+      gl.uniform3f(U.uLanternDir, dx / m, 0, dz / m);
+    } else {
+      gl.uniform3f(U.uLanternDir, 0, 0, 0);
+    }
+  }
 }
 // §P2 you can only set a bucket / lantern down on dry ground (not in water, not on a tide-pool floor)
 function isDryGround(x, z) { return waterDepthAt(x, z) < 0.04; }
@@ -12074,6 +12113,7 @@ if (typeof window !== "undefined") window.__shoot = function (v) {
 if (typeof window !== "undefined") window.__dbg = {
   barnacles: () => (typeof barnacles !== "undefined" ? barnacles.map(b => ({ x: b.x, z: b.z, g: b.g, amt: b.amt })) : []),
   rocks: () => (typeof rockObjs !== "undefined" ? rockObjs.filter(o => !o.gone).map(o => ({ x: o.x, z: o.z, sc: o.sc, barn: !!(o.barn && o.barn.amt > 0) })) : []),
+  trees: () => (typeof treeObjs !== "undefined" ? treeObjs.filter(o => !o.gone && !o.fallen).map(o => ({ x: o.x, z: o.z, species: o.species, scale: o.scale || 1 })) : []),
   ground: (x, z) => surfaceAt(x, z).h,
   water: () => waterLevel,
   player: () => ({ x: player.x, z: player.z, feetY: player.feetY, eyeY: player.eyeY, vy: player.vy, airborne: player.airborne, swimming: player.swimming, underwater: player.underwater, speedMul: (typeof _curSpeedMul !== "undefined" ? _curSpeedMul : 1), slopeDeg: (typeof _curSlopeDeg !== "undefined" ? _curSlopeDeg : 0) }),
