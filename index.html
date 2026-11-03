@@ -1408,10 +1408,12 @@ let FOG_NEAR = BASE_FOG_NEAR;         // clear band before fog ramps in
 let baseFogDensity = BASE_FOG_DENSITY, baseFogNear = BASE_FOG_NEAR;   // §20 GFX-scaled base; weather adds fog on top each frame
 // §night how far you can see at NIGHT (metres), independent of the fog slider so raising fog can't see past it.
 // Night view: near NIGHT_VIEW_NEAR the ground is dimly visible; it fades to dark by NIGHT_VIEW_FAR (not pure
-// black — "less darkness fog"). The lantern adds a SMALL bright ring (LANTERN_R) around the player AND pushes
-// the view distance out a modest amount (LANTERN_VIEW_BONUS) so you see a bit further — DIMLY, never spotlighting
-// distant objects (the bright light is only the small ring).
-const NIGHT_VIEW_NEAR = 28, NIGHT_VIEW_FAR = 112, NIGHT_POOL_R = 15, NIGHT_POOL_I = 0.3, LANTERN_VIEW_BONUS = 28;
+// black — "less darkness fog"). The lantern is ONLY a small local pool (LANTERN_R) around the player; it does
+// NOT push the night view distance out. Extending the view band lifts the darkness fade on the WHOLE far
+// landscape, which lit up distant ridge trees the instant you raised the lantern — a handheld light can't do
+// that. So LANTERN_VIEW_BONUS is 0: the far scene stays equally dark whether or not the lantern is held, and the
+// lantern reveals only what's genuinely near it.
+const NIGHT_VIEW_NEAR = 28, NIGHT_VIEW_FAR = 112, NIGHT_POOL_R = 15, NIGHT_POOL_I = 0.3, LANTERN_VIEW_BONUS = 0;
 
 // Day & night palettes; SKY is the blended current state (uploaded each frame).
 const SKY_DAY = { zenith: [0.30, 0.52, 0.80], horizon: [0.72, 0.81, 0.92], warm: [1.10, 0.96, 0.75] };   // §VIB a bluer sky (saturated zenith, clean light-blue horizon instead of cream-grey), warm sun
@@ -2767,7 +2769,11 @@ void main() {
   // a real local light — it brightens what's NEAR you, not the whole far landscape.
   if (uLanternI > 0.001) {
     float ld = length(vWorld - uLanternPos);
-    float latt = uLanternI * (1.0 - smoothstep(0.4, uLanternR, ld));
+    // §night rapid inverse-square falloff (bright right at the flame, dropping off fast), windowed smoothly to
+    // exactly 0 at uLanternR so nothing past the pool is touched — no hard cutoff, no reaching the far trees.
+    float x = ld / uLanternR;
+    float win = clamp(1.0 - x * x * x * x, 0.0, 1.0); win *= win;
+    float latt = uLanternI * win / (1.0 + 0.08 * ld * ld);
     col += vec3(1.0, 0.62, 0.32) * latt;
   }
   // Distance fog → the sky color for this fragment's own view direction.
@@ -5782,7 +5788,10 @@ void main() {
     col = applyNight(col, vWorld, uCamPos, uNightDark, uNightNear, uNightFar, uNightPoolR, uNightPoolI);   // §night darken first…
     if (uLanternI > 0.001) {   // §18/§tools …then add the local warm lantern pool on top (brightens near props, not the far ones)
       float ld = length(vWorld - uLanternPos);
-      col += vec3(1.0, 0.62, 0.32) * (uLanternI * (1.0 - smoothstep(0.4, uLanternR, ld)));
+      // §night rapid inverse-square falloff windowed to 0 at uLanternR — near props glow, distant trees get nothing.
+      float x = ld / uLanternR;
+      float win = clamp(1.0 - x * x * x * x, 0.0, 1.0); win *= win;
+      col += vec3(1.0, 0.62, 0.32) * (uLanternI * win / (1.0 + 0.08 * ld * ld));
     }
   }
   vec3 viewVec = vWorld - uCamPos;
