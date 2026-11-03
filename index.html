@@ -856,7 +856,9 @@
  *   WORLD CONTENT
  *     § PROP & POI MESH BUILDER · § INSTANCED PROP RENDERER ·
  *     § POINTS OF INTEREST · § PLACEMENT · § LIFE · § 5 FLOATING DEBRIS ·
- *     § 5 BARNACLES
+ *     § 5 BARNACLES · § LIVING BEACH
+ *   CREATURES
+ *     § CREATURE RUNTIME (Tri Soup runtime, WebGL2 port) · § CRABS & GULLS
  *   INTERACTION
  *     § INVENTORY / JOURNAL / INTERACTION · § CLICK-TO-WALK · § TARGETING ·
  *     § DIGGING · § TERRAIN API · § BUCKET · § 11.6 MINI 3D VIEWS ·
@@ -1857,7 +1859,7 @@ function soundCategory(id, bus) {
   if (bus === "ui") return "ui";
   if (bus === "ambience") return "ambience";
   if (/^dig_|chop|timber|clang|clink|scrape|sift|crack|thud|fail_thud|snap|hitflesh|^pat$|whoosh|crash|mine|crumble/.test(id)) return "tools";
-  if (/peep|skitter|seal_bark|^jet$|squirt|owl|^bat$|raccoon|hcrab|chirp|cricket|frog|toad|^duck|heron|seal|growl/.test(id)) return "creatures";
+  if (/gull|wingflap|peep|skitter|seal_bark|^jet$|squirt|owl|^bat$|raccoon|hcrab|chirp|cricket|frog|toad|^duck|heron|seal|growl/.test(id)) return "creatures";
   return "other";
 }
 /* ===================================================================== *
@@ -2070,6 +2072,12 @@ const VOICE = {
   D("flame",      { shape:"noise", lpf:0.5, atk:0.001, sus:0.01, rel:0.04, gain:0.25, crush:16 }, { vol:0.14, bus:"ambience", cd:0.1 });
   D("birdsong",   [{ freq:2400, freq2:2800, shape:"sine", atk:0.003, sus:0.02, rel:0.05, gain:0.22, vib:120, vibf:30 },
                     { freq:2000, freq2:2600, shape:"sine", atk:0.004, sus:0.03, rel:0.06, gain:0.2, vib:200, vibf:20 }], { vol:0.22, bus:"ambience", cd:0.3 });
+  // §creatures gulls: a falling "kee-ow" (three variants) and the whump of wings on takeoff
+  D("gull_cry",   [{ freq:1650, freq2:950, shape:"saw", atk:0.02, sus:0.16, rel:0.18, gain:0.16, vib:40, vibf:24, noise:0.06, crush:2 },
+                    { freq:1400, freq2:1050, shape:"tri", atk:0.015, sus:0.1, rel:0.12, gain:0.22, vib:60, vibf:30, noise:0.05 },
+                    { freq:1900, freq2:1250, shape:"saw", atk:0.01, sus:0.08, rel:0.1, gain:0.14, vib:30, vibf:22, crush:2 }], { vol:0.3, bus:"ambience", cd:1.2, pv:0.08, max:2 });
+  D("wingflap",   [{ shape:"noise", lpf:0.22, atk:0.005, sus:0.04, rel:0.09, gain:0.5 },
+                    { shape:"noise", lpf:0.16, atk:0.004, sus:0.05, rel:0.11, gain:0.55 }], { vol:0.32, bus:"sfx", cd:0.15 });
   D("debris_knock",{ freq:180, freq2:150, shape:"tri", atk:0.001, sus:0.02, rel:0.1, noise:0.2, gain:0.35 }, { vol:0.28, bus:"ambience", cd:0.2 });
 })();
 SND.loadVol();   // reflect saved volumes in Settings before the first gesture unlocks audio
@@ -5778,6 +5786,7 @@ uniform float uGhost; uniform vec3 uGhostCol;       // §16B building-placement 
 uniform vec3 uLanternPos; uniform float uLanternI, uLanternR;  // §18 lantern light pool (uLanternR = radius, tunable)
 uniform vec3 uLanternDir;                            // §lantern horizontal aim of a held lantern (0 = placed/omni)
 uniform float uDissolve;                            // §urgent5 0 = solid; >0 = dithered dissolve (dying creatures)
+uniform float uDissolveInv;                         // §creatures 1 = keep the pixels a uDissolve fade would cut (the other half of a bird's ground↔flight model swap)
 uniform float uEmissive;                            // §nightlight self-lit glow (village windows/lanterns): 1 = ignore lighting, use vCol directly
 uniform int uHemi;                                  // §ATMO #2 hemisphere ambient on/off (0 = flat, for icon/inspect renders)
 uniform float uDusk;                                // §sky sunrise/sunset strength (for fog colour)
@@ -5789,7 +5798,7 @@ void main() {
   if (uDissolve > 0.0) {                              // §urgent5 ordered Bayer-4x4 dither dissolve, no shrink
     const float B[16] = float[16](0.,8.,2.,10., 12.,4.,14.,6., 3.,11.,1.,9., 15.,7.,13.,5.);
     int ix = int(mod(gl_FragCoord.x, 4.0)), iy = int(mod(gl_FragCoord.y, 4.0));
-    if (uDissolve > (B[iy*4+ix] + 0.5) / 16.0) discard;
+    if ((uDissolve > (B[iy*4+ix] + 0.5) / 16.0) != (uDissolveInv > 0.5)) discard;
   }
   vec3 n = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
   float diff = abs(dot(n, normalize(uSunDir)));      // abs → foliage lit both sides
@@ -8108,6 +8117,1819 @@ function drawLife(view) {
   gl.uniform1f(propU.uDissolve, 0);
 }
 
+/* ===================================================================== *
+ * § CREATURE RUNTIME  (the Tri Soup creature runtime, ported to this engine)
+ *
+ *   Tri Soup's own runtime is built on three.js. This game is raw WebGL2 with
+ *   no libraries, so this is a port of the parts it uses: the SAME animation
+ *   GLSL (verbatim, TS_GLSL below), the same state/transition logic (track),
+ *   the same bird poses and travel maths, and the same config format. A
+ *   creature's .creature.js config drops in as-is; only `model` must be inline
+ *   { pos, col } data (or a function returning it), since this game loads no
+ *   asset files (no .glb).
+ *
+ *   Supported methods: 'shader' (swim, undulate, pulse, sway, crawl, slither)
+ *   and 'bird' (idle, walk, takeoff, flap, glide, landing). 'skeletal' and
+ *   'clip' need three.js bones and are not ported yet: they throw on load.
+ *
+ *   Data the .glb normally carries is derived on load when the inline model
+ *   lacks it:
+ *     crawl  → tsLeg / tsLegReach from the mesh's separate parts (tsDeriveCrawlRig)
+ *     bird   → tsBird wing / leg / head weights from config.mask rules (tsDeriveBirdMask)
+ *   If a model supplies tsLeg, tsLegReach or tsBird arrays they are used instead.
+ *
+ *   API (mirrors Tri Soup's):
+ *     CREATURE_RT.register(config); CREATURE_RT.load(id);   // load is synchronous here
+ *     const c = CREATURE_RT.spawn(id, { animation, phase, speed, intensity, onFinish });
+ *     c.setState(name, o) · c.play(name, o) · c.setSpeed(s) · c.setIntensity(v)
+ *     c.pause() · c.resume() · c.dispose()
+ *     c.groundSpeed / c.climb  (MODEL units per second; multiply by c.scale)
+ *     c.matchGroundSpeed(v)    (set the playback rate so the feet travel v model units/s)
+ *     Placement (instead of a three.js Group): c.x c.y c.z c.yaw c.scale c.bank
+ *     c.tilt c.tiltDir c.legDir (crawl: +1 / -1 walks along / against body.legs.dir)
+ *     c.tint [r,g,b] c.visible.  CREATURE_RT.update(dt) once per frame (sim time),
+ *     CREATURE_RT.draw(view) in the opaque world pass.
+ *   Lighting, fog, night and the lantern come from the shared prop fragment
+ *   shader (propFS), so creatures sit in the world like every other prop.
+ * ===================================================================== */
+// @system CREATURES  @section CREATURES/runtime
+
+// ---- Animation GLSL, verbatim from the Tri Soup runtime (its `GLSL` constant) ----
+const TS_GLSL = `
+uniform int tsAnimType;      // 0 = off, otherwise the behaviour's code
+uniform float tsAnimPhase;   // position in the cycle, 0..1
+uniform float tsAnimAmount;  // intensity; 0 gives the rest pose
+uniform vec3 tsAnimCenter;   // centre of the model's bounding box
+uniform vec3 tsAnimFwd;      // unit axis pointing to the head
+uniform vec3 tsAnimSide;     // unit sideways axis
+uniform vec3 tsAnimUp;       // unit up axis
+uniform vec3 tsAnimHalf;     // half size along fwd, side, up
+
+const float TS_TAU = 6.283185307179586;
+
+vec3 tsToBody(vec3 p) {
+  vec3 q = p - tsAnimCenter;
+  return vec3(tsAnimHalf.x - dot(q, tsAnimFwd), dot(q, tsAnimSide), dot(q, tsAnimUp));
+}
+vec3 tsFromBody(vec3 b) {
+  return tsAnimCenter + tsAnimFwd * (tsAnimHalf.x - b.x) + tsAnimSide * b.y + tsAnimUp * b.z;
+}
+
+// Sideways offset of the spine (x) and its slope (y) for a wave travelling head to tail.
+// shape 0: amplitude grows toward the tail. shape 1: nearly even along the body.
+vec2 tsSpine(float x, float len, float amp, float k, float w, float headAmp, float shape) {
+  float s = clamp(x / len, 0.0, 1.0);
+  float r = 1.0 - s;
+  float env = mix(headAmp + (1.0 - headAmp) * s * s, 1.0 - (1.0 - headAmp) * r * r * r, shape);
+  float denv = mix(2.0 * (1.0 - headAmp) * s, 3.0 * (1.0 - headAmp) * r * r, shape) / len;
+  float a = k * x - w;
+  float sn = sin(a);
+  float cs = cos(a);
+  return vec2(amp * env * sn, amp * (denv * sn + env * k * cs));
+}
+
+// Bends the body along the wave. Cross-sections stay square to the curved spine and the
+// spine keeps its length, so the body doesn't shear or stretch as it bends.
+vec3 tsWaveBend(vec3 b, float amp, float k, float w, float headAmp, float shape) {
+  float len = 2.0 * tsAnimHalf.x;
+  float x = clamp(b.x, 0.0, len);
+  vec2 sp = tsSpine(x, len, amp, k, w, headAmp, shape);
+  float extra = 0.0;
+  float dx = x / 8.0;
+  for (int i = 0; i < 8; i++) {
+    float sl = tsSpine((float(i) + 0.5) * dx, len, amp, k, w, headAmp, shape).y;
+    extra += (sqrt(1.0 + sl * sl) - 1.0) * dx;
+  }
+  float n = sqrt(1.0 + sp.y * sp.y);
+  return vec3(b.x - extra - b.y * sp.y / n, sp.x + b.y / n, b.z);
+}
+
+vec3 tsSwim(vec3 p) {
+  float len = 2.0 * tsAnimHalf.x;
+  float amp = 0.10 * len * tsAnimAmount;       // tail swing: 10% of body length at 100%
+  float k = TS_TAU / (1.1 * len);              // a little more than one wave along the body
+  return tsFromBody(tsWaveBend(tsToBody(p), amp, k, TS_TAU * tsAnimPhase, 0.06, 0.0));
+}
+
+vec3 tsUndulate(vec3 p) {
+  float len = 2.0 * tsAnimHalf.x;
+  float amp = 0.07 * len * tsAnimAmount;
+  float k = TS_TAU / (0.55 * len);             // about two waves along the body
+  return tsFromBody(tsWaveBend(tsToBody(p), amp, k, TS_TAU * tsAnimPhase, 0.3, 1.0));
+}
+
+vec3 tsPulse(vec3 p) {
+  vec3 q = p - tsAnimCenter;
+  float u = dot(q, tsAnimUp);
+  vec3 r = q - tsAnimUp * u;                   // offset from the vertical centre line
+  float h = clamp((u + tsAnimHalf.z) / (2.0 * tsAnimHalf.z), 0.0, 1.0);
+  float g = 0.5 - 0.5 * cos(TS_TAU * (tsAnimPhase - 0.2 * (1.0 - h)));   // top leads, base lags
+  g = g * g * (3.0 - 2.0 * g);
+  float c = 0.14 * tsAnimAmount * g;
+  float rx = dot(r, tsAnimFwd);
+  float ry = dot(r, tsAnimSide);
+  float wob = 2.0 * rx * ry / max(rx * rx + ry * ry, 1e-12);            // sin(2 * angle)
+  float sr = (1.0 - c) * (1.0 + 0.04 * tsAnimAmount * wob * sin(TS_TAU * tsAnimPhase));
+  float base = -tsAnimHalf.z;
+  return tsAnimCenter + r * sr + tsAnimUp * (base + (u - base) * (1.0 + 1.3 * c));
+}
+
+vec3 tsSway(vec3 p) {
+  vec3 q = p - tsAnimCenter;
+  float u = dot(q, tsAnimUp) + tsAnimHalf.z;   // height above the base
+  float h = clamp(u / (2.0 * tsAnimHalf.z), 0.0, 1.0);
+  float sd = dot(q, tsAnimSide);
+  float fw = dot(q, tsAnimFwd);
+  // Higher parts lean further and slightly later, like a stem bending in a current.
+  float a1 = 0.12 * tsAnimAmount * h * sin(TS_TAU * (tsAnimPhase - 0.15 * h));
+  float a2 = 0.05 * tsAnimAmount * h * sin(TS_TAU * (2.0 * tsAnimPhase - 0.15 * h) + 1.3);
+  float sd2 = sd * cos(a1) + u * sin(a1);
+  float u2 = -sd * sin(a1) + u * cos(a1);
+  float fw2 = fw * cos(a2) + u2 * sin(a2);
+  float u3 = -fw * sin(a2) + u2 * cos(a2);
+  return tsAnimCenter + tsAnimFwd * fw2 + tsAnimSide * sd2 + tsAnimUp * (u3 - tsAnimHalf.z);
+}
+
+uniform vec4 tsLegMove;      // crawl: stride, lift, body bob, body surge (model units)
+uniform vec3 tsLegDir;       // crawl: unit direction it walks in
+uniform float tsLegShow;     // crawl: 1 tints each leg its own colour (masks view)
+attribute vec4 tsLeg;        // crawl, per vertex: gait offset, step amount, hip (0) to tip (1), leg number / count (-1 body)
+attribute vec2 tsLegReach;   // crawl, per vertex: its leg seen from above, hip to tip (x, z)
+
+vec3 tsCrawl(vec3 p) {
+  float g = TS_TAU * tsAnimPhase;
+  float ph = TS_TAU * (tsAnimPhase + tsLeg.x);
+  float u = -cos(ph);                          // the tip's place in the stride: -1 back .. 1 front
+  float s = max(sin(ph), 0.0);                 // lifted while it swings forward, planted while it pushes back
+  float along = tsLeg.z;
+  // The stride splits into a swing across the leg and a pull along it. Along the leg the tip only
+  // ever pulls in toward the hip (so the leg never stretches), and the middle of the leg rises as
+  // it does, like a knee bending.
+  float len = length(tsLegReach);
+  vec3 h = len > 1e-6 * tsAnimHalf.z ? vec3(tsLegReach.x, 0.0, tsLegReach.y) / len : tsLegDir;
+  float wr = dot(tsLegDir, h), most = 2.0 * abs(wr) * tsLegMove.x;
+  float pull = 0.5 * most * (u * sign(wr) - 1.0);                         // 0 .. -most
+  float knee = 0.8 * sqrt(0.375 * len * most) * (-pull / max(most, 1e-9 * tsAnimHalf.z));
+  vec3 leg = ((tsLegDir - h * wr) * (u * tsLegMove.x) + h * pull + tsAnimUp * (s * s * (3.0 - 2.0 * s) * tsLegMove.y)) * along
+           + tsAnimUp * (knee * sin(3.14159265 * along));
+  // The body dips as each set of feet lands (less right at the ground, so nothing sinks below it),
+  // and surges a little.
+  float above = dot(p - tsAnimCenter, tsAnimUp) + tsAnimHalf.z;
+  float dip = tsLegMove.z * (0.5 + 0.5 * cos(2.0 * g)) * clamp(above / max(2.0 * tsLegMove.z, 1e-6 * tsAnimHalf.z), 0.0, 1.0);
+  vec3 body = tsAnimUp * -dip + tsLegDir * (tsLegMove.w * sin(2.0 * g));
+  // Hips ride with the body while planted tips stay put; the body and held claws ride along fully.
+  float ride = 1.0 - along * step(0.5, tsLeg.y);
+  return p + (leg * tsLeg.y + body * ride) * tsAnimAmount;
+}
+
+// Masks view: the body grey, each leg its own hue, brighter toward the tip; legs that don't move are dim.
+vec3 tsLegTint() {
+  if (tsLeg.w < 0.0) return vec3(0.36);
+  vec3 h = clamp(abs(fract(vec3(tsLeg.w) + vec3(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+  return mix(vec3(0.12), h, 0.35 + 0.65 * tsLeg.z) * (tsLeg.y > 0.0 ? 1.0 : 0.5);
+}
+
+vec3 tsSlither(vec3 p) {
+  float len = 2.0 * tsAnimHalf.x;
+  float amp = 0.09 * len * tsAnimAmount;
+  float k = TS_TAU / (0.7 * len);              // about one and a half S-bends along the body
+  return tsFromBody(tsWaveBend(tsToBody(p), amp, k, TS_TAU * tsAnimPhase, 0.85, 1.0));
+}
+uniform vec4 tsBirdWing;     // bird: wing raise, sweep back, turn in (radians), chord scale
+uniform vec4 tsBirdLegs;     // bird: swing of the legs on the + and - side (radians, + forward), their lift
+uniform vec4 tsBirdBody;     // bird: body pitch (+ nose up), roll, lift, surge
+uniform vec4 tsBirdHead;     // bird: head yaw, head pitch (+ down), push forward
+uniform vec4 tsBirdPivot;    // bird: shoulder distance to the side, height, forward position (from the body centre)
+uniform vec4 tsBirdPivot2;   // bird: hip forward and height, neck forward and height (from the body centre)
+attribute vec4 tsBird;       // bird, per vertex: wing weight × side, leg weight × side, head weight
+
+vec2 tsTurn(vec2 v, float a) {
+  float c = cos(a);
+  float s = sin(a);
+  return vec2(c * v.x - s * v.y, s * v.x + c * v.y);
+}
+
+vec3 tsBirdMove(vec3 p) {
+  vec3 q = p - tsAnimCenter;
+  vec3 b = vec3(dot(q, tsAnimFwd), dot(q, tsAnimSide), dot(q, tsAnimUp));
+  float w = abs(tsBird.x);
+  if (w > 0.0) {
+    float ws = tsBird.x < 0.0 ? -1.0 : 1.0;
+    vec3 h = vec3(tsBirdPivot.z, ws * tsBirdPivot.x, tsBirdPivot.y);
+    vec3 r = b - h;
+    r.x *= 1.0 + (tsBirdWing.w - 1.0) * w;            // the feathers slide together as it folds
+    r.yz = tsTurn(r.yz, ws * tsBirdWing.x * w);        // raise
+    r.xy = tsTurn(r.xy, ws * tsBirdWing.y * w);        // sweep back
+    r.yz = tsTurn(r.yz, ws * tsBirdWing.z * w);        // turn in against the body
+    b = h + r;
+  }
+  float l = abs(tsBird.y);
+  if (l > 0.0) {
+    b.xz = tsBirdPivot2.xy + tsTurn(b.xz - tsBirdPivot2.xy, (tsBird.y > 0.0 ? tsBirdLegs.x : tsBirdLegs.y) * l);
+    b.z += (tsBird.y > 0.0 ? tsBirdLegs.z : tsBirdLegs.w) * l;
+  }
+  float hd = tsBird.z;
+  if (hd > 0.0) {
+    vec3 r = vec3(b.x - tsBirdPivot2.z, b.y, b.z - tsBirdPivot2.w);
+    r.xy = tsTurn(r.xy, tsBirdHead.x * hd);
+    r.xz = tsTurn(r.xz, -tsBirdHead.y * hd);
+    b = vec3(r.x + tsBirdPivot2.z + tsBirdHead.z * hd, r.y, r.z + tsBirdPivot2.w);
+  }
+  b.xz = tsTurn(b.xz, tsBirdBody.x);
+  b.yz = tsTurn(b.yz, tsBirdBody.y);
+  b.z += tsBirdBody.z;
+  b.x += tsBirdBody.w;
+  return tsAnimCenter + tsAnimFwd * b.x + tsAnimSide * b.y + tsAnimUp * b.z;
+}
+vec3 tsAnimate(vec3 p) {
+  if (tsAnimType == 1) return tsSwim(p);
+  if (tsAnimType == 2) return tsUndulate(p);
+  if (tsAnimType == 3) return tsPulse(p);
+  if (tsAnimType == 4) return tsSway(p);
+  if (tsAnimType == 5) return tsCrawl(p);
+  if (tsAnimType == 6) return tsSlither(p);
+  if (tsAnimType == 7) return tsBirdMove(p);
+  return p;
+}
+`;
+// Instancing: the per-creature uniforms become per-instance values (set in main() from instance
+// attributes), so every creature of a kind draws in ONE call. Only the declarations change.
+function tsInstancedGLSL(src) {
+  const swaps = [
+    ["uniform int tsAnimType;", "int tsAnimType;"], ["uniform float tsAnimPhase;", "float tsAnimPhase;"],
+    ["uniform float tsAnimAmount;", "float tsAnimAmount;"], ["uniform vec3 tsLegDir;", "vec3 tsLegDir;"],
+    ["uniform vec4 tsBirdWing;", "vec4 tsBirdWing;"], ["uniform vec4 tsBirdLegs;", "vec4 tsBirdLegs;"],
+    ["uniform vec4 tsBirdBody;", "vec4 tsBirdBody;"], ["uniform vec4 tsBirdHead;", "vec4 tsBirdHead;"],
+  ];
+  for (const [a, b] of swaps) { if (src.indexOf(a) < 0) throw new Error("TS_GLSL changed shape: missing " + a); src = src.replace(a, b); }
+  return src.replace(/\battribute\b/g, "in");   // GLSL ES 3.00 spelling
+}
+
+// ---- Tables, verbatim from the Tri Soup runtime ----
+const TS_BEHAVIOURS = {"swim":{"code":1,"freq":1,"blend":[0.5,0]},"undulate":{"code":2,"freq":0.7,"blend":[0.5,0]},"pulse":{"code":3,"freq":0.5,"blend":[0.5,0]},"sway":{"code":4,"freq":0.35,"blend":[0.5,0]},"crawl":{"code":5,"freq":1.1,"blend":[0.5,0],"legs":true},"slither":{"code":6,"freq":0.6,"blend":[0.5,0],"wave":0.7},"bird-idle":{"code":7,"freq":0.18,"blend":[0.35,0],"bird":true,"whole":true},"bird-walk":{"code":7,"freq":1.1,"blend":[0.35,0],"bird":true,"whole":true},"bird-takeoff":{"code":7,"freq":0.8,"blend":[0.35,0],"bird":true,"whole":true,"then":"bird-flap"},"bird-flap":{"code":7,"freq":2.4,"blend":[0.3,0],"bird":true,"whole":true},"bird-glide":{"code":7,"freq":0.2,"blend":[0.6,0],"bird":true,"whole":true},"bird-landing":{"code":7,"freq":0.7,"blend":[0.35,0],"bird":true,"whole":true,"then":"bird-idle"},"idle":{"code":0,"freq":0.25,"blend":[0.4,0]},"walk":{"code":0,"freq":0.9,"blend":[0.35,0],"gait":true},"run":{"code":0,"freq":1.7,"blend":[0.3,0],"gait":true},"pounce":{"code":0,"freq":0.45,"blend":[0.3,0.3],"whole":true},"bound":{"code":0,"freq":1.25,"blend":[0.25,0]},"eat":{"code":0,"freq":0.125,"blend":[0.9,0.6]},"drink":{"code":0,"freq":0.16666666666666666,"blend":[1,0.8]},"look":{"code":0,"freq":0.1,"blend":[0.6,0.5]},"rest":{"code":0,"freq":0.25,"settle":[2,1.6]},"die":{"code":0,"freq":0.5,"blend":[0.2,1],"hold":true}};
+function tsTiming(def, transition, transitionOut) {
+  const num = (v, d) => (typeof v === 'number' && v >= 0 ? v : d);
+  if (def && def.settle) {
+    const down = num(transition, def.settle[0]), up = num(transitionOut, def.settle[1]);
+    return { blendIn: Math.min(0.4, down), blendOut: Math.min(0.25, up), settle: [down, up] };
+  }
+  const b = (def && def.blend) || [0.3, 0];
+  return { blendIn: num(transition, b[0]), blendOut: num(transitionOut, b[1] || 0), settle: null };
+}
+const tsOneShotWeight = (phase) => { const s = Math.sin(Math.PI * Math.min(Math.max(phase, 0), 1)); return s * s; };
+const tsSm = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+
+// ---- State track (Tri Soup's makeTrack). Same behaviour; shader() fills one reused object. ----
+function tsMakeTrack(info) {
+  const ease = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+  const out = { name: null, phase: 0, k: 0 };
+  const set = (name, phase, k) => { out.name = name; out.phase = phase; out.k = k; return out; };
+  return {
+    state: null, phase: 0, finished: false, params: null, rateScale: 1,
+    settle: 1, next: null, from: null, time: 0, duration: 0, blender: null, onStart: null,
+    get blending() { return this.time < this.duration; },
+    get weight() { return this.duration > 0 ? ease(this.time / this.duration) : 1; },
+    start(name, o = {}) {
+      const prev = this.state, pi = prev !== null ? info(prev) : null, ni = info(name);
+      const dur = prev === null ? 0 : o.duration !== undefined && o.duration !== null ? Math.max(0, o.duration) : Math.max(ni.blendIn, pi ? pi.blendOut : 0);
+      if (this.onStart) this.onStart(prev, name, 'before');
+      const shown = dur > 0 ? this.shader() : null;
+      this.from = shown && shown.name !== name && shown.k > 0 ? { name: shown.name, phase: shown.phase, k: shown.k } : null;
+      if (this.blender) { if (dur > 0) this.blender.capture(); else this.blender.cancel(); }
+      const keep = (o.phase === undefined || o.phase === null) && pi && pi.gait && ni.gait;
+      if (!keep) this.phase = o.phase || 0;
+      this.state = name; this.next = null; this.finished = false;
+      this.params = o.params || null;
+      this.rateScale = o.rateScale > 0 ? o.rateScale : 1;
+      this.time = 0; this.duration = dur;
+      this.settle = ni.settle && dur > 0 ? 0 : 1;
+      if (this.onStart) this.onStart(prev, name, 'after');
+    },
+    request(name, o = {}) {
+      if (name === this.state) { this.next = null; return; }
+      const ci = this.state !== null ? info(this.state) : null;
+      if (ci && ci.settle && this.settle > 0 && o.duration !== 0) {
+        if (info(name).hold) { this.start(name, { ...o, duration: o.duration ?? 0.5, phase: o.phase ?? 0.5 }); return; }
+        this.next = { name, o };
+        return;
+      }
+      this.start(name, o);
+    },
+    step(dt) {
+      if (this.state === null) return 0;
+      const ci = info(this.state);
+      if (ci.settle) {
+        if (this.next) {
+          this.settle -= dt / Math.max(ci.settle[1], 1e-3);
+          if (this.settle <= 0) { this.settle = 0; const nx = this.next; this.start(nx.name, nx.o); return 0; }
+        } else if (this.settle < 1) this.settle = Math.min(1, this.settle + dt / Math.max(ci.settle[0], 1e-3));
+      }
+      let ev = 0;
+      if (!this.finished && ci.rate > 0) {
+        this.phase += dt * ci.rate * this.rateScale;
+        if (this.phase >= 1) {
+          if (ci.loop) this.phase -= Math.floor(this.phase);
+          else { this.phase = 1; this.finished = true; ev = 1; }
+        }
+      }
+      if (this.from) {
+        const fi = info(this.from.name);
+        this.from.phase += dt * fi.rate;
+        if (this.from.phase >= 1) this.from.phase = fi.loop ? this.from.phase - Math.floor(this.from.phase) : 1;
+      }
+      if (this.time < this.duration) {
+        this.time = Math.min(this.duration, this.time + dt);
+        if (this.time >= this.duration) this.from = null;
+      }
+      return ev;
+    },
+    // The shader animation to show and how strongly ({ name, phase, k } in a reused object), or null.
+    shader() {
+      const cur = this.state !== null && info(this.state).kind === 'shader';
+      const x = this.duration > 0 ? this.time / this.duration : 1;
+      if (this.from && x < 1) {
+        if (!cur) return set(this.from.name, this.from.phase, this.from.k * (1 - ease(x)));
+        if (x < 0.5) return set(this.from.name, this.from.phase, this.from.k * (1 - ease(2 * x)));
+        return set(this.state, this.phase, ease(2 * x - 1));
+      }
+      if (!cur) return null;
+      return set(this.state, this.phase, x < 1 ? ease(x) : 1);
+    },
+  };
+}
+
+// ---- Birds (Tri Soup's birdPose / birdTravel / bird blender), allocation-free ----
+// A pose: { g, a } control sets for the ground and flight models, plus mix (0 ground .. 1 air).
+function tsCtl() { return { wing: [0, 0, 0, 1], legs: [0, 0, 0, 0], body: [0, 0, 0, 0], head: [0, 0, 0, 0] }; }
+function tsPoseNew() { return { g: tsCtl(), a: tsCtl(), mix: 0 }; }
+function tsCtlRest(c) { c.wing[0] = 0; c.wing[1] = 0; c.wing[2] = 0; c.wing[3] = 1; for (let i = 0; i < 4; i++) { c.legs[i] = 0; c.body[i] = 0; c.head[i] = 0; } }
+function tsCtlSet(v, a, b, c, d) { v[0] = a; v[1] = b; v[2] = c; v[3] = d; }
+const TS_ROLES = ["g", "a"], TS_KEYS = ["wing", "legs", "body", "head"];   // shared, so the per-frame pose maths allocates nothing
+function tsPoseCopy(d, s) { for (let r = 0; r < 2; r++) for (let q = 0; q < 4; q++) { const D = d[TS_ROLES[r]][TS_KEYS[q]], S = s[TS_ROLES[r]][TS_KEYS[q]]; for (let i = 0; i < 4; i++) D[i] = S[i]; } d.mix = s.mix; }
+function tsPoseDiff(d, x, y) { for (let r = 0; r < 2; r++) for (let q = 0; q < 4; q++) { const D = d[TS_ROLES[r]][TS_KEYS[q]], X = x[TS_ROLES[r]][TS_KEYS[q]], Y = y[TS_ROLES[r]][TS_KEYS[q]]; for (let i = 0; i < 4; i++) D[i] = X[i] - Y[i]; } d.mix = x.mix - y.mix; }
+function tsPoseAdd(p, d, k) { for (let r = 0; r < 2; r++) for (let q = 0; q < 4; q++) { const P = p[TS_ROLES[r]][TS_KEYS[q]], D = d[TS_ROLES[r]][TS_KEYS[q]]; for (let i = 0; i < 4; i++) P[i] += D[i] * k; } p.mix += d.mix * k; }
+const TS_TUCK = [-0.8, 1.3, 1.1, 0.45];               // flight model's wings swept back along the body
+function tsTuck(v, w) { v[0] = w * TS_TUCK[0]; v[1] = w * TS_TUCK[1]; v[2] = w * TS_TUCK[2]; v[3] = 1 + (TS_TUCK[3] - 1) * w; }
+// Ground model with its feet on the ground (k: 1 planted .. 0 airborne): see Tri Soup birdPose().
+function tsPlant(G, c, k, crouch) {
+  if (!G || !(k > 0)) return;
+  const pt = c.body[0], hf = G.hip[0], hu = G.hip[1], cs = Math.cos(pt), sn = Math.sin(pt), sink = crouch ? Math.min(0, c.body[2]) : 0;
+  c.body[3] += (hf - (cs * hf - sn * hu)) * k;
+  c.body[2] += (hu - (sn * hf + cs * hu)) * k;
+  c.legs[0] -= pt * k; c.legs[1] -= pt * k;
+  c.legs[2] -= sink * k; c.legs[3] -= sink * k;
+}
+const _tsStep = [0, 0], _tsStrong = [0, 0, 0, 1], _tsTuckV = [0, 0, 0, 1];
+// A tilted leg would dig its toes (tilted back) or heel (tilted forward) into the ground: that foot lifts by as much.
+function tsHeel(ang, toe, back) { return toe * Math.sin(Math.max(0, -ang)) + back * Math.sin(Math.max(0, ang)); }
+function tsWalkStep(ph, A0, toe, back, leg) {
+  const f = ph - Math.floor(ph);
+  if (f < 0.5) { const ang = A0 * (1 - 4 * f); _tsStep[0] = ang; _tsStep[1] = tsHeel(ang, toe, back); return; }   // planted: sweeps back evenly
+  const s = (f - 0.5) / 0.5, ang = -A0 + 2 * A0 * tsSm(0, 1, s);
+  _tsStep[0] = ang; _tsStep[1] = 0.12 * leg * Math.sin(Math.PI * s) + tsHeel(ang, toe, back);              // swings forward, lifted
+}
+function tsCtlScale(c, k) {
+  c.wing[0] *= k; c.wing[1] *= k; c.wing[2] *= k; c.wing[3] = 1 + (c.wing[3] - 1) * k;
+  for (let i = 0; i < 4; i++) { c.legs[i] *= k; c.body[i] *= k; c.head[i] *= k; }
+}
+function tsBirdPose(out, type, p, amt, B) {
+  const T = Math.PI * 2, sm = tsSm;
+  const G = B.ground, A = B.air, k = amt === undefined ? 1 : amt;
+  const Ug = G ? G.unit : A.unit, Ua = A ? A.unit : G.unit, leg = G ? G.leg : 0;
+  const dPitch = G && A ? G.pitch - A.pitch : 0;   // the ground model stands more upright
+  const g = out.g, a = out.a;
+  tsCtlRest(g); tsCtlRest(a);
+  let mix = G ? 0 : 1;
+  if (type === 'bird-idle' || type === 'bird-walk') {
+    tsTuck(a.wing, 1);
+    if (type === 'bird-idle') {
+      const br = Math.sin(T * 3 * p), q = p;   // slow looks around
+      const yaw = 0.55 * (sm(0.08, 0.16, q) - sm(0.3, 0.4, q)) - 0.5 * (sm(0.48, 0.58, q) - sm(0.72, 0.82, q));
+      const lp = 0.14 * (sm(0.6, 0.65, q) - sm(0.69, 0.75, q));
+      tsCtlSet(g.body, 0.012 * br, 0, 0.005 * Ug * br, 0);
+      tsCtlSet(g.head, yaw, lp, 0, 0);
+      tsPlant(G, g, 1, true);
+      tsCtlSet(a.body, 0, 0, 0.005 * Ua * br, 0);
+    } else {
+      const A0 = 0.3, toe = G ? G.toe : 0, back = G ? G.heel : 0;
+      tsWalkStep(p, A0, toe, back, leg); const L0 = _tsStep[0], L1 = _tsStep[1];
+      tsWalkStep(p + 0.5, A0, toe, back, leg); const R0 = _tsStep[0], R1 = _tsStep[1];
+      const planted = (p % 1) < 0.5 ? L0 : R0;
+      tsCtlSet(g.legs, L0, R0, L1, R1);
+      tsCtlSet(g.body, 0.02 * Math.sin(T * 2 * p), 0.04 * Math.sin(T * p), leg * (Math.cos(planted) - 1), 0);
+      tsCtlSet(g.head, 0, 0, 0.025 * Ug * Math.sin(T * 2 * p - 0.8), 0);
+      tsPlant(G, g, 1, false);
+    }
+  } else if (type === 'bird-flap') {
+    const c = Math.cos(T * (p + 0.06 * Math.sin(T * p)));
+    tsCtlSet(a.wing, -0.2 + 0.75 * c, -0.1 * Math.sin(T * p), 0, 1);
+    tsCtlSet(a.body, 0.03 * Math.sin(T * p), 0, 0.02 * Ua * Math.sin(T * p - 0.3), 0);
+    mix = A ? 1 : 0;
+  } else if (type === 'bird-glide') {
+    tsCtlSet(a.wing, -0.45 + 0.03 * Math.sin(T * 2 * p), 0.05, 0, 1);
+    tsCtlSet(a.body, 0.04 * Math.sin(T * p + 1.2), 0.12 * Math.sin(T * p), 0.01 * Ua * Math.sin(T * p), 0);
+    mix = A ? 1 : 0;
+  } else if (type === 'bird-takeoff') {
+    const lift = -0.05 * Ug * sm(0.02, 0.2, p) + 0.17 * Ug * sm(0.22, 0.4, p) - 0.12 * Ug * sm(0.45, 1, p);
+    tsCtlSet(g.body, -dPitch * sm(0.1, 0.36, p), 0, lift, 0);
+    tsCtlSet(g.legs, -0.25 * sm(0.22, 0.4, p), -0.25 * sm(0.22, 0.4, p), 0, 0);
+    tsCtlSet(g.head, 0, 0.2 * sm(0.05, 0.2, p) * (1 - sm(0.3, 0.4, p)), 0.03 * Ug * sm(0.1, 0.3, p), 0);
+    tsPlant(G, g, 1 - sm(0.22, 0.4, p), true);
+    const open = sm(0.36, 0.5, p), beat = p < 0.42 ? 1 : Math.cos(T * 2 * (p - 0.42) / 0.58);
+    tsCtlSet(_tsStrong, -0.2 + 0.95 * beat, -0.12 * Math.sin(T * 2 * Math.max(0, p - 0.42) / 0.58), 0, 1);
+    tsTuck(a.wing, 1 - open);
+    for (let i = 0; i < 4; i++) a.wing[i] += (_tsStrong[i] - (i === 3 ? 1 : 0)) * open;
+    tsCtlSet(a.body, p < 0.4 ? 0 : 0.18 * Math.sin(Math.PI * sm(0.4, 1, p)), 0, lift, 0);
+    mix = G && A ? sm(0.34, 0.46, p) : mix;
+  } else if (type === 'bird-landing') {
+    const fl = sm(0.1, 0.25, p), beat = Math.cos(T * 2 * Math.max(0, p - 0.2) / 0.4);
+    const fold = sm(0.5, 0.66, p);
+    tsCtlSet(a.wing, -0.45 + (0.45 + 0.1 + 0.6 * beat) * fl, -0.35 * sm(0.15, 0.3, p), 0, 1);   // flare
+    tsTuck(_tsTuckV, 1);
+    for (let i = 0; i < 4; i++) a.wing[i] += (_tsTuckV[i] - a.wing[i]) * fold;
+    tsCtlSet(a.body, dPitch * sm(0.1, 0.5, p) + 0.3 * Math.sin(Math.PI * sm(0.15, 0.55, p)), 0, 0.06 * Ua * sm(0.3, 0.55, p), 0);
+    const touch = 0.06 * Ug * sm(0.3, 0.55, p) * (1 - sm(0.6, 0.68, p)), absorb = -0.04 * Ug * Math.sin(Math.PI * sm(0.62, 0.9, p));
+    tsCtlSet(g.body, -0.06 * Math.sin(Math.PI * sm(0.62, 0.85, p)), 0, touch + absorb, 0);
+    tsCtlSet(g.head, 0, 0, 0.03 * Ug * Math.sin(Math.PI * sm(0.62, 0.85, p)), 0);
+    tsPlant(G, g, sm(0.6, 0.66, p), true);
+    mix = G && A ? 1 - sm(0.56, 0.66, p) : mix;
+  }
+  tsCtlScale(g, k); tsCtlScale(a, k);   // scale by intensity (k)
+  out.mix = mix;
+  return out;
+}
+// Model units per cycle the bird travels forward (out[0]) and up (out[1]) at phase p.
+function tsBirdTravel(out, type, p, amt, B) {
+  const k = amt === undefined ? 1 : amt, Ua = B.air ? B.air.unit : B.ground.unit, leg = B.ground ? B.ground.leg : 0, sm = tsSm;
+  out[0] = 0; out[1] = 0;
+  if (type === 'bird-walk') out[0] = B.ground ? 4 * leg * Math.sin(0.3 * k) : 0;
+  else if (type === 'bird-flap') out[0] = 1.3 * Ua * k;
+  else if (type === 'bird-glide') out[0] = 17 * Ua * k;
+  else if (type === 'bird-takeoff') {
+    const rise = p > 0.3 ? (Math.PI / 2 / 0.7) * Math.sin(Math.PI * (p - 0.3) / 0.7) : 0;   // climbs one unit in all
+    out[0] = 3.9 * Ua * k * sm(0.35, 1, p); out[1] = 1.0 * Ua * k * rise;
+  } else if (type === 'bird-landing') {
+    const drop = p < 0.6 ? (Math.PI / 2 / 0.6) * Math.sin(Math.PI * p / 0.6) : 0;          // drops 0.8 units in all
+    out[0] = 4.8 * Ua * k * (1 - sm(0, 0.62, p)); out[1] = -0.8 * Ua * k * drop;
+  }
+  return out;
+}
+function tsMakeBirdBlender() {
+  let stage = 0, hasLast = false;
+  const snap = tsPoseNew(), diff = tsPoseNew(), last = tsPoseNew();
+  return {
+    get active() { return stage !== 0; },
+    capture() { if (hasLast) { tsPoseCopy(snap, last); stage = 1; } else stage = 0; },
+    cancel() { stage = 0; },
+    clear() { stage = 0; hasLast = false; },
+    blend(pose, k) {                       // in place: pose + (captured − first new pose) × k
+      if (stage === 1) { tsPoseDiff(diff, snap, pose); stage = 2; }
+      if (stage === 2) { if (!(k > 0)) stage = 0; else tsPoseAdd(pose, diff, k); }
+      tsPoseCopy(last, pose); hasLast = true;
+      return pose;
+    },
+  };
+}
+
+// ---- Data the .glb would carry, derived from inline { pos, col } meshes ----
+// Crawl: per-vertex leg data from the mesh's separate parts. The part nearest the body centre (and
+// any small part inside its footprint, like eyes) is body; parts that reach the ground are walking
+// legs (alternating sets per side, front to back); other parts (claws) are held and ride along.
+// Along each leg, 0 at the hip (the end nearest the body) to 1 at the tip (lowest end), measured
+// along the part's own edges.
+function tsDeriveCrawlRig(pos, body) {
+  const nv = pos.length / 3, key = new Map(), uid = new Int32Array(nv), up = [];
+  let nu = 0;
+  for (let v = 0; v < nv; v++) {
+    const k = pos[v*3] + "," + pos[v*3+1] + "," + pos[v*3+2];
+    let u = key.get(k); if (u === undefined) { u = nu++; key.set(k, u); up.push(pos[v*3], pos[v*3+1], pos[v*3+2]); }
+    uid[v] = u;
+  }
+  const par = new Int32Array(nu); for (let i = 0; i < nu; i++) par[i] = i;
+  const find = (x) => { while (par[x] !== x) { par[x] = par[par[x]]; x = par[x]; } return x; };
+  const adj = Array.from({ length: nu }, () => []);
+  for (let t = 0; t < nv; t += 3) {
+    const a = uid[t], b = uid[t+1], c = uid[t+2];
+    par[find(b)] = find(a); par[find(c)] = find(a);
+    adj[a].push(b, c); adj[b].push(a, c); adj[c].push(a, b);
+  }
+  const F = body.fwd, S = body.side, U = body.up, C = body.center;
+  const dotv = (i, A) => (up[i*3]-C[0])*A[0] + (up[i*3+1]-C[1])*A[1] + (up[i*3+2]-C[2])*A[2];
+  const comps = new Map();
+  for (let u = 0; u < nu; u++) { const r = find(u); if (!comps.has(r)) comps.set(r, []); comps.get(r).push(u); }
+  let ground = Infinity, top = -Infinity; for (let u = 0; u < nu; u++) { const h = dotv(u, U); ground = Math.min(ground, h); top = Math.max(top, h); }
+  const H = Math.max(1e-6, top - ground), list = [];
+  for (const vs of comps.values()) {
+    let f = 0, s = 0, lo = Infinity, sMin = Infinity, sMax = -Infinity, fMin = Infinity, fMax = -Infinity;
+    for (const u of vs) { const a = dotv(u, F), b = dotv(u, S); f += a; s += b; lo = Math.min(lo, dotv(u, U)); sMin = Math.min(sMin, b); sMax = Math.max(sMax, b); fMin = Math.min(fMin, a); fMax = Math.max(fMax, a); }
+    list.push({ vs, f: f / vs.length, s: s / vs.length, lo, sMin, sMax, fMin, fMax });
+  }
+  let bodyC = list[0]; for (const c of list) if (Math.hypot(c.f, c.s) < Math.hypot(bodyC.f, bodyC.s)) bodyC = c;
+  const role = new Map();
+  for (const c of list) {
+    const ps = 0.1 * (bodyC.sMax - bodyC.sMin), pf = 0.1 * (bodyC.fMax - bodyC.fMin);
+    if (c === bodyC || (c.sMin >= bodyC.sMin - ps && c.sMax <= bodyC.sMax + ps && c.fMin >= bodyC.fMin - pf && c.fMax <= bodyC.fMax + pf)) { role.set(c, "body"); continue; }
+    role.set(c, c.lo - ground < 0.08 * H ? "leg" : "claw");
+  }
+  const limbs = list.filter((c) => role.get(c) !== "body"), count = Math.max(1, limbs.length);
+  const tsLeg = new Float32Array(nv * 4), tsLegReach = new Float32Array(nv * 2);
+  for (let v = 0; v < nv; v++) tsLeg[v*4+3] = -1;
+  const sides = { p: [], n: [] };
+  for (const c of limbs) if (role.get(c) === "leg") sides[c.s >= 0 ? "p" : "n"].push(c);
+  const gait = new Map();
+  for (const k in sides) { sides[k].sort((a, b) => b.f - a.f); sides[k].forEach((c, i) => gait.set(c, ((i + (k === "p" ? 0 : 1)) % 2) * 0.5)); }
+  const per = new Map();
+  limbs.forEach((c, idx) => {
+    const dIn = (u) => Math.hypot(dotv(u, F) - bodyC.f, dotv(u, S) - bodyC.s);
+    let dMin = Infinity, dMax = -Infinity; for (const u of c.vs) { const d = dIn(u); dMin = Math.min(dMin, d); dMax = Math.max(dMax, d); }
+    const hip = c.vs.filter((u) => dIn(u) <= dMin + 0.12 * (dMax - dMin));
+    let lo = Infinity; for (const u of c.vs) lo = Math.min(lo, dotv(u, U));
+    const tip = c.vs.filter((u) => dotv(u, U) <= lo + 0.06 * H);
+    const dist = new Map(); for (const u of c.vs) dist.set(u, Infinity);
+    for (const u of hip) dist.set(u, 0);
+    const open = new Set(c.vs);
+    while (open.size) {
+      let best = -1, bd = Infinity; for (const u of open) { const d = dist.get(u); if (d < bd) { bd = d; best = u; } }
+      if (best < 0) break; open.delete(best);
+      for (const w of adj[best]) { if (!open.has(w)) continue;
+        const e = Math.hypot(up[best*3]-up[w*3], up[best*3+1]-up[w*3+1], up[best*3+2]-up[w*3+2]);
+        if (bd + e < dist.get(w)) dist.set(w, bd + e); }
+    }
+    let tipD = 0; for (const u of tip) tipD += dist.get(u); tipD = Math.max(1e-6, tipD / tip.length);
+    const avg = (set) => { const o = [0, 0, 0]; for (const u of set) { o[0] += up[u*3]; o[1] += up[u*3+1]; o[2] += up[u*3+2]; } return o.map((x) => x / set.length); };
+    const h = avg(hip), t = avg(tip), isLeg = role.get(c) === "leg";
+    per.set(c, { idx, dist, tipD, reach: [t[0] - h[0], t[2] - h[2]], gait: isLeg ? gait.get(c) : 0, step: isLeg ? 1 : 0 });
+  });
+  const partOf = new Map(); for (const c of list) for (const u of c.vs) partOf.set(u, c);
+  for (let v = 0; v < nv; v++) {
+    const L = per.get(partOf.get(uid[v])); if (!L) continue;
+    tsLeg[v*4] = L.gait; tsLeg[v*4+1] = L.step; tsLeg[v*4+2] = Math.min(1, L.dist.get(uid[v]) / L.tipD); tsLeg[v*4+3] = L.idx / count;
+    tsLegReach[v*2] = L.reach[0]; tsLegReach[v*2+1] = L.reach[1];
+  }
+  return { tsLeg, tsLegReach, legs: sides.p.length + sides.n.length, held: limbs.length - sides.p.length - sides.n.length };
+}
+// Bird: the _TSBIRD mask from simple rules in model units (config.bird.<role>.mask):
+//   wings: { side: [from, to], above: [from, to] }  weight ramps up with distance to the side and height
+//   legs:  { below: [from, to] }                     weight ramps up as the vertex goes below `from`
+//   head:  { above: [from, to], fwdMin }             weight ramps up with height (only forward of fwdMin)
+// Wing and leg weights carry the sign of the vertex's side (dot with frame.side).
+function tsDeriveBirdMask(pos, frame, rules) {
+  const nv = pos.length / 3, out = new Float32Array(nv * 4), r = rules || {};
+  const F = frame.fwd, S = frame.side;
+  const ramp = (a, b, x) => tsSm(a, b, x);
+  for (let v = 0; v < nv; v++) {
+    const x = pos[v*3], y = pos[v*3+1], z = pos[v*3+2];
+    const side = x*S[0] + y*S[1] + z*S[2], fwd = x*F[0] + y*F[1] + z*F[2], sg = side < 0 ? -1 : 1;
+    if (r.wings) out[v*4] = sg * ramp(r.wings.side[0], r.wings.side[1], Math.abs(side)) * (r.wings.above ? ramp(r.wings.above[0], r.wings.above[1], y) : 1);
+    if (r.legs) out[v*4+1] = sg * ramp(r.legs.below[0], r.legs.below[1], y);
+    if (r.head && (r.head.fwdMin === undefined || fwd > r.head.fwdMin)) out[v*4+2] = ramp(r.head.above[0], r.head.above[1], y);
+  }
+  return out;
+}
+
+// ---- GL program: the animation GLSL + an instanced placement, lit by the shared prop shader ----
+const TS_INST = 32;   // floats per instance: iA x y z yaw · iB scale bank tilt tiltDir · iC type phase amount legDir · iW iL iBd iH bird · iT tint
+const tsVS = `#version 300 es
+precision highp float;
+uniform mat4 uProj, uView;
+uniform vec3 uOrigin;      // model point placed at the instance position (feet / body centre on the ground)
+uniform vec3 uAlignOff;    // bird flight model → ground model space (Tri Soup bird.align)
+uniform float uAlignYaw;
+uniform vec3 uBankAxis;    // model-space forward axis the bank rolls about…
+uniform float uBankY;      // …at this height above uOrigin
+uniform vec3 uLegDirBase;  // crawl: the config's body.legs.dir
+in vec3 aPos;
+in vec3 aCol;
+in vec4 iA, iB, iC, iW, iL, iBd, iH, iT;
+${tsInstancedGLSL(TS_GLSL)}
+out vec3 vWorld;
+out vec3 vCol;
+vec3 tsRot(vec3 v, vec3 a, float ang) { float c = cos(ang), s = sin(ang); return v * c + cross(a, v) * s + a * dot(a, v) * (1.0 - c); }
+void main() {
+  tsAnimType = int(iC.x + 0.5); tsAnimPhase = iC.y; tsAnimAmount = iC.z;
+  tsLegDir = uLegDirBase * iC.w;
+  tsBirdWing = iW; tsBirdLegs = iL; tsBirdBody = iBd; tsBirdHead = iH;
+  vec3 p = tsAnimate(aPos);
+  float ca = cos(uAlignYaw), sa = sin(uAlignYaw);
+  p = vec3(p.x * ca + p.z * sa, p.y, -p.x * sa + p.z * ca) + uAlignOff;
+  p -= uOrigin;
+  if (iB.y != 0.0) { p.y -= uBankY; p = tsRot(p, uBankAxis, iB.y); p.y += uBankY; }
+  p *= iB.x;
+  float cy = cos(iA.w), sy = sin(iA.w);
+  p = vec3(p.x * cy + p.z * sy, p.y, -p.x * sy + p.z * cy);      // yaw: same convention as the props
+  if (iB.z != 0.0) p = tsRot(p, vec3(cos(iB.w), 0.0, sin(iB.w)), iB.z);   // lean onto the ground slope
+  vec3 wp = p + iA.xyz;
+  vWorld = wp;
+  vCol = (tsLegShow > 0.5 ? tsLegTint() : aCol) * iT.rgb;
+  gl_Position = uProj * uView * vec4(wp, 1.0);
+}`;
+let tsProg = null, tsU = {};
+const tsLoc = {};
+try {   // a shader failure here must never take the game down: creatures just stay off
+  tsProg = program(tsVS, propFS);
+  tsU = uniforms(tsProg);
+  for (const n of ["aPos", "aCol", "tsLeg", "tsLegReach", "tsBird", "iA", "iB", "iC", "iW", "iL", "iBd", "iH", "iT"]) tsLoc[n] = gl.getAttribLocation(tsProg, n);
+} catch (e) { console.error("[creatures] shader failed:", e); tsProg = null; }
+const TS_MAX_INST = 64;
+const TS_Y = [0, 1, 0], TS_X = [1, 0, 0], TS_ONE3 = [1, 1, 1], TS_ZERO3 = [0, 0, 0], TS_ZERO4 = [0, 0, 0, 0], TS_ALIGN0 = { yaw: 0, offset: TS_ZERO3 };
+function tsU3(u, v) { if (u) gl.uniform3f(u, v[0], v[1], v[2]); }
+const TS_NO_BODY = { center: [0, 0, 0], fwd: [0, 0, 1], side: [1, 0, 0], up: [0, 1, 0], half: [1, 1, 1] };
+const _tsScratch = new Float32Array(TS_MAX_INST * TS_INST);
+let tsShowLegs = false;   // debug: Tri Soup's "masks" view (each crawl leg its own colour)
+
+// One drawable model: geometry + its own instance buffer, in one VAO.
+function tsMakeModelGL(data) {
+  const nv = data.pos.length / 3;
+  const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+  const bufs = [];
+  const attr = (name, arr, size) => {
+    const b = gl.createBuffer(); bufs.push(b); gl.bindBuffer(gl.ARRAY_BUFFER, b);
+    gl.bufferData(gl.ARRAY_BUFFER, arr, gl.STATIC_DRAW);
+    const l = tsLoc[name]; if (l >= 0) { gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, size, gl.FLOAT, false, 0, 0); }
+  };
+  attr("aPos", new Float32Array(data.pos), 3);
+  attr("aCol", new Float32Array(data.col), 3);
+  let leg = data.tsLeg; if (!leg) { leg = new Float32Array(nv * 4); for (let v = 0; v < nv; v++) leg[v*4+3] = -1; }
+  attr("tsLeg", new Float32Array(leg), 4);
+  attr("tsLegReach", new Float32Array(data.tsLegReach || nv * 2), 2);
+  attr("tsBird", new Float32Array(data.tsBird || nv * 4), 4);
+  const ib = gl.createBuffer(); bufs.push(ib); gl.bindBuffer(gl.ARRAY_BUFFER, ib);
+  gl.bufferData(gl.ARRAY_BUFFER, TS_MAX_INST * TS_INST * 4, gl.DYNAMIC_DRAW);
+  ["iA", "iB", "iC", "iW", "iL", "iBd", "iH", "iT"].forEach((n, k) => {
+    const l = tsLoc[n]; if (l < 0) return;
+    gl.enableVertexAttribArray(l); gl.vertexAttribPointer(l, 4, gl.FLOAT, false, TS_INST * 4, k * 16); gl.vertexAttribDivisor(l, 1);
+  });
+  gl.bindVertexArray(null);
+  let lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
+  for (let v = 0; v < nv; v++) for (let a = 0; a < 3; a++) { lo[a] = Math.min(lo[a], data.pos[v*3+a]); hi[a] = Math.max(hi[a], data.pos[v*3+a]); }
+  return { vao, ib, bufs, vc: nv, lo, hi };
+}
+
+// Object.assign would call the getters (state, groundSpeed, …) once and copy their values; keep them live.
+function tsMix(target, src) { return Object.defineProperties(target, Object.getOwnPropertyDescriptors(src)); }
+function createCreatureRuntimeGL() {
+  const configs = new Map(), assets = new Map(), instances = [], assetList = [];
+  const modelData = (cfgModel, label) => {
+    const src = typeof cfgModel === 'function' ? cfgModel() : cfgModel;
+    if (typeof src === 'string') throw new Error(`${label}: "${src}" is a .glb path. This game loads no asset files: give the config inline { pos, col } data (Tri Soup's mesh export) or a function returning it.`);
+    if (!src || !src.pos) throw new Error(`${label}: model must be { pos, col } mesh data or a function returning it.`);
+    if (!src.col) src.col = new Array(src.pos.length).fill(0.5);
+    return src;
+  };
+  function register(config) {
+    if (!config || !config.id) throw new Error('A creature config needs an id.');
+    if (!config.model && !config.bird) throw new Error(`Creature "${config.id}" has no model.`);
+    configs.set(config.id, config);
+    return config;
+  }
+  function load(id) {
+    if (assets.has(id)) return assets.get(id);
+    const cfg = configs.get(id);
+    if (!cfg) throw new Error(`Unknown creature "${id}". Call register(config) first.`);
+    for (const k in cfg.animations) { const m = cfg.animations[k].method; if (m === 'skeletal' || m === 'clip') throw new Error(`Creature "${id}": state "${k}" uses the ${m} method, which needs three.js bones and isn't ported to this engine yet.`); }
+    const asset = { id, cfg, bird: null, model: null, info: null };
+    if (cfg.bird) {
+      asset.bird = {};
+      for (const role of ['ground', 'air']) {
+        const part = cfg.bird[role]; if (!part) { asset.bird[role] = null; continue; }
+        const d = modelData(part.model, `Creature "${id}" (${role === 'air' ? 'flight' : 'ground'} model)`);
+        if (!d.tsBird) d.tsBird = tsDeriveBirdMask(d.pos, part.frame, part.mask);
+        const gm = tsMakeModelGL(d);
+        asset.bird[role] = { gl: gm, frame: part.frame };
+      }
+      const g = cfg.bird.ground && cfg.bird.ground.frame, a = cfg.bird.air && cfg.bird.air.frame;
+      asset.info = {   // Tri Soup birdPairInfo()
+        ground: g ? { pitch: g.pitch, unit: g.unit, leg: g.leg, hip: [g.pivot2[0], g.pivot2[1]], toe: g.toe || 0, heel: g.heel || 0 } : null,
+        air: a ? { pitch: a.pitch, unit: a.unit } : null,
+      };
+      const gg = asset.bird.ground ? asset.bird.ground.gl : asset.bird.air.gl;
+      asset.origin = cfg.origin || [g ? g.center[0] : 0, gg.lo[1], g ? g.center[2] : 0];
+      asset.bankY = g ? g.center[1] - asset.origin[1] : 0;   // birds bank about the body, not the feet
+      asset.radius = Math.max(...gg.hi.map((v, i) => Math.abs(v - asset.origin[i])), ...gg.lo.map((v, i) => Math.abs(v - asset.origin[i])));
+      if (asset.bird.air) { const ag = asset.bird.air.gl; asset.radius = Math.max(asset.radius, ...ag.hi.map(Math.abs), ...ag.lo.map(Math.abs)); }
+    } else {
+      const d = modelData(cfg.model, `Creature "${id}"`);
+      const crawl = Object.values(cfg.animations).find((s) => s.method === 'shader' && s.type === 'crawl' && s.body && s.body.legs);
+      if (crawl && !d.tsLeg) { const rig = tsDeriveCrawlRig(d.pos, crawl.body); d.tsLeg = rig.tsLeg; d.tsLegReach = rig.tsLegReach; asset.rig = rig; }
+      asset.model = tsMakeModelGL(d);
+      const m = asset.model, b = crawl ? crawl.body : null;
+      asset.origin = cfg.origin || [b ? b.center[0] : (m.lo[0] + m.hi[0]) / 2, m.lo[1], b ? b.center[2] : (m.lo[2] + m.hi[2]) / 2];
+      asset.radius = Math.max(...m.hi.map((v, i) => Math.abs(v - asset.origin[i])), ...m.lo.map((v, i) => Math.abs(v - asset.origin[i])));
+    }
+    assets.set(id, asset); assetList.push(asset);
+    return asset;
+  }
+  function spawn(id, opts = {}) {
+    const asset = assets.get(id) || load(id);
+    return asset.bird ? spawnBird(asset, opts) : spawnShader(asset, opts);
+  }
+  // Fields every instance carries (placement + bookkeeping).
+  function base(asset, opts) {
+    return {
+      id: asset.id, asset, config: asset.cfg, bird: !!asset.bird,
+      x: 0, y: 0, z: 0, yaw: 0, scale: 1, bank: 0, tilt: 0, tiltDir: 0, legDir: 1, tint: [1, 1, 1], visible: true,
+      speed: opts.speed !== undefined ? opts.speed : 1, intensity: opts.intensity !== undefined ? opts.intensity : 1,
+      paused: false, disposed: false, onFinish: opts.onFinish || null,
+      setSpeed(s) { this.speed = Math.max(0, Number(s) || 0); return this; },
+      setIntensity(v) { this.intensity = Math.max(0, Number(v) || 0); return this; },
+      pause() { this.paused = true; return this; },
+      resume() { this.paused = false; return this; },
+      dispose() { if (this.disposed) return; this.disposed = true; const i = instances.indexOf(this); if (i >= 0) instances.splice(i, 1); },
+      // Sets the playback rate so the feet cover v model units per second at the current
+      // intensity (no foot slide at any speed): slow walkers step slowly, fast ones quickly.
+      matchGroundSpeed(v) { const g1 = this.baseGroundSpeed(); this.speed = g1 > 1e-9 ? Math.max(0, v) / g1 : 0; return this; },
+    };
+  }
+  function check(cfg, name) {
+    if (!cfg.animations[name]) throw new Error(`Creature "${cfg.id}" has no animation "${name}". It has: ${Object.keys(cfg.animations).join(', ') || 'none'}.`);
+  }
+
+  function spawnShader(asset, opts) {
+    const cfg = asset.cfg, cache = {};
+    const info = (name) => {
+      let c = cache[name];
+      if (!c) {
+        const st = cfg.animations[name], def = TS_BEHAVIOURS[st.type] || {};
+        c = cache[name] = { kind: st.method, base: (def.freq || 0) * (st.speed ?? 1), rate: 0, loop: st.loop !== false && !def.hold, gait: !!def.gait, hold: !!def.hold, ...tsTiming(def, st.transition, st.transitionOut) };
+      }
+      c.rate = c.base * inst.speed;
+      return c;
+    };
+    const track = tsMakeTrack(info);
+    let groundFrom = 0;
+    track.onStart = (prev, name, when) => { if (when === 'before') groundFrom = inst.groundSpeed; };
+    // Model units per second for the current state at speed 1 (Tri Soup's groundSpeed maths).
+    const groundAt = (speed) => {
+      const st = cfg.animations[track.state], def = TS_BEHAVIOURS[st.type] || {};
+      if (st.method === 'shader' && st.body && st.body.legs) return 4 * st.body.legs.move[0] * (st.intensity ?? 1) * inst.intensity * def.freq * (st.speed ?? 1) * speed;
+      if (st.method === 'shader' && def.wave && st.body) return def.wave * 2 * st.body.half[0] * def.freq * (st.speed ?? 1) * speed;
+      return 0;
+    };
+    const inst = tsMix(base(asset, opts), {
+      track,
+      get state() { return track.state; },
+      get target() { return track.next ? track.next.name : track.state; },
+      get phase() { return track.phase; }, set phase(v) { track.phase = v; },
+      get finished() { return track.finished; },
+      get transitioning() { return track.blending || !!track.next || track.settle < 1; },
+      setState(name, o = {}) {
+        check(cfg, name);
+        if (o.speed !== undefined) this.speed = o.speed;
+        if (o.intensity !== undefined) this.intensity = o.intensity;
+        if (name === track.state && o.restart) track.start(name, { duration: o.duration, phase: o.phase });
+        else track.request(name, { duration: o.duration, phase: o.phase });
+        return this;
+      },
+      play(name, o = {}) {
+        check(cfg, name);
+        if (o.speed !== undefined) this.speed = o.speed;
+        if (o.intensity !== undefined) this.intensity = o.intensity;
+        if (!(name === track.state && o.restart === false && !track.next)) track.start(name, { duration: o.blend || 0, phase: o.phase || 0 });
+        return this;
+      },
+      baseGroundSpeed() { return track.state ? groundAt(1) : 0; },
+      get groundSpeed() {
+        if (this.paused || !track.state) return 0;
+        const g = groundAt(this.speed), w = track.weight;
+        return w < 1 ? groundFrom + (g - groundFrom) * w : g;
+      },
+      get climb() { return 0; },
+      update(dt) {
+        if (this.paused || this.disposed || !track.state) return;
+        if (track.step(dt) && this.onFinish) this.onFinish(this);
+      },
+      // Fills this instance's animation slots (type, phase, amount) for drawing; returns the
+      // state whose body frame the shader bends around (null when nothing animates).
+      animSlots(o) {
+        const sh = track.shader();
+        o[0] = 0; o[1] = 0; o[2] = 0;
+        if (!sh) return null;
+        const s2 = cfg.animations[sh.name], beh = TS_BEHAVIOURS[s2.type];
+        if (!s2.body || !beh || (beh.legs && !s2.body.legs)) return null;
+        const env = s2.loop === false ? tsOneShotWeight(sh.phase) : 1;
+        o[0] = beh.code; o[1] = sh.phase; o[2] = (s2.intensity ?? 1) * this.intensity * env * sh.k;
+        return sh.name;
+      },
+    });
+    instances.push(inst);
+    const first = opts.animation === undefined ? cfg.defaultAnimation : opts.animation;
+    if (first) inst.play(first, { phase: opts.phase || 0 });
+    if (opts.paused) inst.pause();
+    return inst;
+  }
+
+  function spawnBird(asset, opts) {
+    const cfg = asset.cfg, B = asset.info, cache = {};
+    const info = (name) => {
+      let c = cache[name];
+      if (!c) {
+        const st = cfg.animations[name], def = TS_BEHAVIOURS[st.type] || {};
+        c = cache[name] = { kind: 'bird', base: (def.freq || 0) * (st.speed ?? 1), rate: 0, loop: st.loop !== false && !def.then, gait: false, hold: false, ...tsTiming(def, st.transition, st.transitionOut) };
+      }
+      c.rate = c.base * inst.speed;
+      return c;
+    };
+    const blender = tsMakeBirdBlender();
+    const track = tsMakeTrack(info);
+    track.blender = blender;
+    const from = [0, 0], tr = [0, 0], pose = tsPoseNew();
+    track.onStart = (prev, name, when) => { if (when === 'before') { from[0] = inst.groundSpeed; from[1] = inst.climb; } };
+    const nextOf = (name) => { const then = (TS_BEHAVIOURS[cfg.animations[name].type] || {}).then; return then ? Object.keys(cfg.animations).find((k) => cfg.animations[k].type === then) || null : null; };
+    const travel = (k) => {
+      const st = cfg.animations[track.state], def = TS_BEHAVIOURS[st.type] || {};
+      tsBirdTravel(tr, st.type, track.phase, (st.intensity ?? 1) * inst.intensity, B);
+      const g = tr[k] * (def.freq || 0) * (st.speed ?? 1) * inst.speed, w = track.weight;
+      return w < 1 ? from[k] + (g - from[k]) * w : g;
+    };
+    const inst = tsMix(base(asset, opts), {
+      track, pose,
+      model: B.ground ? 'ground' : 'air',            // the model showing now
+      gVis: !!B.ground, aVis: false, gDither: 0, aDither: 0,
+      get state() { return track.state; },
+      get target() { return track.next ? track.next.name : track.state; },
+      get phase() { return track.phase; }, set phase(v) { track.phase = v; },
+      get finished() { return track.finished; },
+      get transitioning() { return track.blending; },
+      setState(name, o = {}) {
+        check(cfg, name);
+        if (o.speed !== undefined) this.speed = o.speed;
+        if (o.intensity !== undefined) this.intensity = o.intensity;
+        const was = track.state;
+        if (name === track.state && o.restart) track.start(name, { duration: o.duration, phase: o.phase });
+        else track.request(name, { duration: o.duration, phase: o.phase });
+        if (track.state !== was || o.restart) this.apply();
+        return this;
+      },
+      play(name, o = {}) {
+        check(cfg, name);
+        if (o.speed !== undefined) this.speed = o.speed;
+        if (o.intensity !== undefined) this.intensity = o.intensity;
+        track.start(name, { duration: o.blend || 0, phase: o.phase || 0 });
+        this.apply();
+        return this;
+      },
+      baseGroundSpeed() {
+        if (!track.state) return 0;
+        const st = cfg.animations[track.state], def = TS_BEHAVIOURS[st.type] || {};
+        return tsBirdTravel(tr, st.type, track.phase, (st.intensity ?? 1) * this.intensity, B)[0] * (def.freq || 0) * (st.speed ?? 1);
+      },
+      // Model units per second forward (along bird.fwd) and up.
+      get groundSpeed() { return this.paused || !track.state ? 0 : travel(0); },
+      get climb() { return this.paused || !track.state ? 0 : travel(1); },
+      update(dt) {
+        if (this.paused || this.disposed || !track.state) return;
+        if (track.step(dt)) {
+          const nx = nextOf(track.state);
+          if (nx) track.start(nx, { duration: 0.2 });
+          if (this.onFinish) this.onFinish(this);
+        }
+        if (this.visible) this.apply();
+      },
+      // Poses both models for the current moment and decides which one shows (Tri Soup birdShow).
+      apply() {
+        if (!track.state) return;
+        const st = cfg.animations[track.state];
+        tsBirdPose(pose, st.type, track.phase, (st.intensity ?? 1) * this.intensity, B);
+        blender.blend(pose, 1 - track.weight);
+        const m = Math.min(1, Math.max(0, pose.mix));
+        this.model = B.air && (!B.ground || pose.mix >= 0.5) ? 'air' : 'ground';
+        this.gVis = !!B.ground && 1 - m > 0.001; this.gDither = 1 - m >= 0.999 ? 0 : m;
+        this.aVis = !!B.air && m > 0.001;       this.aDither = m >= 0.999 ? 0 : m;
+      },
+    });
+    instances.push(inst);
+    const first = opts.animation === undefined ? cfg.defaultAnimation : opts.animation;
+    if (first) inst.play(first, { phase: opts.phase || 0 });
+    if (opts.paused) inst.pause();
+    return inst;
+  }
+
+  // ---- Drawing: one instanced call per (model, animation body), dithering birds one by one ----
+  function writeInst(o, c, type, phase, amount, ctl) {
+    const S = _tsScratch;
+    S[o] = c.x; S[o+1] = c.y; S[o+2] = c.z; S[o+3] = c.yaw;
+    S[o+4] = c.scale; S[o+5] = c.bank; S[o+6] = c.tilt; S[o+7] = c.tiltDir;
+    S[o+8] = type; S[o+9] = phase; S[o+10] = amount; S[o+11] = c.legDir;
+    for (let i = 0; i < 4; i++) {
+      S[o+12+i] = ctl ? ctl.wing[i] : (i === 3 ? 1 : 0); S[o+16+i] = ctl ? ctl.legs[i] : 0;
+      S[o+20+i] = ctl ? ctl.body[i] : 0; S[o+24+i] = ctl ? ctl.head[i] : 0;
+    }
+    S[o+28] = c.tint[0]; S[o+29] = c.tint[1]; S[o+30] = c.tint[2]; S[o+31] = 1;
+  }
+  function bindModelUniforms(asset, origin, frameBody, legs, bird) {
+    tsU3(tsU.tsAnimCenter, frameBody.center); tsU3(tsU.tsAnimFwd, frameBody.fwd); tsU3(tsU.tsAnimSide, frameBody.side);
+    tsU3(tsU.tsAnimUp, bird ? TS_Y : frameBody.up); tsU3(tsU.tsAnimHalf, frameBody.half || TS_ONE3);
+    if (tsU.tsLegMove) { const m = legs ? legs.move : TS_ZERO4; gl.uniform4f(tsU.tsLegMove, m[0], m[1], m[2], m[3]); }
+    tsU3(tsU.uLegDirBase, legs ? legs.dir : TS_X);
+    if (tsU.tsBirdPivot) { const p = bird ? frameBody.pivot : TS_ZERO4; gl.uniform4f(tsU.tsBirdPivot, p[0], p[1], p[2], p[3] || 0); }
+    if (tsU.tsBirdPivot2) { const p = bird ? frameBody.pivot2 : TS_ZERO4; gl.uniform4f(tsU.tsBirdPivot2, p[0], p[1], p[2], p[3]); }
+    tsU3(tsU.uOrigin, origin);
+    tsU3(tsU.uBankAxis, (asset.cfg.bird && asset.cfg.bird.fwd) || TS_X);
+    gl.uniform1f(tsU.uBankY, asset.bankY || 0);
+  }
+  function drawBatch(gm, n) {
+    if (n <= 0) return;
+    gl.bindBuffer(gl.ARRAY_BUFFER, gm.ib);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, _tsScratch, 0, n * TS_INST);
+    gl.bindVertexArray(gm.vao);
+    gl.drawArraysInstanced(gl.TRIANGLES, 0, gm.vc, n);
+    countDraw((gm.vc / 3) * n);
+  }
+  const inView = (c, asset, maxD) => {
+    if (!c.visible || c.disposed) return false;
+    const dx = c.x - cam.pos[0], dz = c.z - cam.pos[2];
+    if (dx*dx + dz*dz > maxD*maxD) return false;
+    const r = asset.radius * c.scale * 1.3;
+    return !sphereOutside(c.x, c.y + r * 0.5, c.z, r);
+  };
+  const groupNames = [], dith = [];
+  function draw(view, maxD) {
+    gl.useProgram(tsProg);
+    worldLitUniforms(tsU, view);
+    gl.uniform1i(tsU.uWetBand, 0); gl.uniform1f(tsU.uGhost, 0);
+    if (tsU.tsLegShow) gl.uniform1f(tsU.tsLegShow, tsShowLegs ? 1 : 0);
+    for (let ai = 0; ai < assetList.length; ai++) {
+      const asset = assetList[ai];
+      if (asset.bird) {
+        for (const role of ['ground', 'air']) {
+          const part = asset.bird[role]; if (!part) continue;
+          const isAir = role === 'air', al = asset.cfg.bird.align || TS_ALIGN0;
+          bindModelUniforms(asset, asset.origin, part.frame, null, true);
+          gl.uniform1f(tsU.uAlignYaw, isAir && asset.bird.ground ? al.yaw : 0);
+          const off = isAir && asset.bird.ground ? al.offset : TS_ZERO3;
+          gl.uniform3f(tsU.uAlignOff, off[0], off[1], off[2]);
+          let n = 0; dith.length = 0;
+          for (let i = 0; i < instances.length; i++) {
+            const c = instances[i];
+            if (c.asset !== asset || !inView(c, asset, maxD)) continue;
+            if (isAir ? !c.aVis : !c.gVis) continue;
+            if ((isAir ? c.aDither : c.gDither) > 0) { dith.push(c); continue; }
+            if (n >= TS_MAX_INST) break;
+            writeInst(n * TS_INST, c, 7, 0, 1, isAir ? c.pose.a : c.pose.g); n++;
+          }
+          gl.uniform1f(tsU.uDissolve, 0); gl.uniform1f(tsU.uDissolveInv, 0);
+          drawBatch(part.gl, n);
+          for (let i = 0; i < dith.length; i++) {   // mid-swap birds: the two models dissolve through the same dither pattern
+            const c = dith[i];
+            writeInst(0, c, 7, 0, 1, isAir ? c.pose.a : c.pose.g);
+            gl.uniform1f(tsU.uDissolve, isAir ? c.aDither : c.gDither); gl.uniform1f(tsU.uDissolveInv, isAir ? 1 : 0);
+            drawBatch(part.gl, 1);
+          }
+          gl.uniform1f(tsU.uDissolve, 0); gl.uniform1f(tsU.uDissolveInv, 0);
+        }
+      } else {
+        gl.uniform1f(tsU.uAlignYaw, 0); gl.uniform3f(tsU.uAlignOff, 0, 0, 0);
+        gl.uniform1f(tsU.uDissolve, 0); gl.uniform1f(tsU.uDissolveInv, 0);
+        groupNames.length = 0;
+        for (let i = 0; i < instances.length; i++) { const c = instances[i]; if (c.asset !== asset || !inView(c, asset, maxD)) continue;
+          c._grp = c.animSlots(c._slots || (c._slots = [0, 0, 0]));
+          if (groupNames.indexOf(c._grp) < 0) groupNames.push(c._grp); }
+        for (let gi = 0; gi < groupNames.length; gi++) {
+          const g = groupNames[gi];
+          const st = g ? asset.cfg.animations[g] : (asset.cfg.animations[asset.cfg.defaultAnimation] || Object.values(asset.cfg.animations)[0]);
+          const body = (st && st.body) || TS_NO_BODY;
+          bindModelUniforms(asset, asset.origin, body, body.legs, false);
+          let n = 0;
+          for (let i = 0; i < instances.length; i++) {
+            const c = instances[i];
+            if (c.asset !== asset || c._grp !== g || !inView(c, asset, maxD) || n >= TS_MAX_INST) continue;
+            const s = c._slots; writeInst(n * TS_INST, c, s[0], s[1], s[2], null); n++;
+          }
+          drawBatch(asset.model, n);
+        }
+      }
+    }
+    gl.bindVertexArray(null);
+  }
+  return {
+    register, load, spawn, draw,
+    update(dt) { for (let i = 0; i < instances.length; i++) instances[i].update(dt); },
+    clear() { for (const inst of instances.slice()) inst.dispose(); },
+    get instances() { return instances; },
+    configs, assets,
+  };
+}
+/* ===================================================================== *
+ * § CRABS & GULLS  (the first creatures on the creature runtime)
+ *
+ *   Models are Tri Soup's inline mesh exports (verbatim functions below);
+ *   configs are Tri Soup creature configs. Behaviour is a small state machine
+ *   per animal, and every moving state matches its animation rate to the
+ *   speed it actually travels (matchGroundSpeed): a crab dawdling sideways
+ *   steps slowly with small strides, a fleeing one scuttles fast with long
+ *   ones, and the feet never slide.
+ *
+ *   Crabs  live on the wet band just above the live waterline (sandy, cobble,
+ *          mudflat, marsh; a few on reef). idle → wander (sideways) → idle;
+ *          a near player makes them stop and face you (alert), closer and they
+ *          scuttle sideways to the water and walk in. More at low tide and at
+ *          night, fewer in rain, few in a storm. They never dig in.
+ *   Gulls  stand in loose flocks on the beach: idle, short strolls, walking
+ *          away from you when you get close; closer still and one takes off,
+ *          and the panic spreads through the flock. Airborne they circle,
+ *          gliding with bursts of flapping, then pick a quiet spot (away from
+ *          you, near other gulls) and land. A few circle the shore overhead.
+ *
+ *   Live creatures use their own seeded stream (critRng), never the world-gen
+ *   rng(), so they can't shift any island. Nothing here is saved.
+ * ===================================================================== */
+// @system CREATURES  @section CREATURES/crabs-gulls
+
+
+// ---- Models: Tri Soup mesh exports (compact form, verbatim) ----
+// Mesh_Crab.obj: 436 triangles
+function meshCrabMesh() {
+  // Compact form: expands to { pos, col } (436 triangles) each time it is called.
+  const P = [
+    0,-3.26,4.89,21.81,-1.23,1.46,29.45,3.22,5.49,0,3.22,10.08,21.81,6.67,1.46,0,7.12,4.89,26.64,8.19,-8.52,
+    0,10.78,-8.52,20.33,5.88,-16.58,0,6.44,-26.24,27.45,3.22,-20.62,0,3.22,-32.43,22.23,-.31,-20.74,0,-1.87,
+    -30.09,26.64,-2.79,-8.52,0,-4.34,-8.52,35.52,3.22,-8.52,-29.45,3.22,5.49,-21.81,-1.23,1.46,-21.81,6.67,
+    1.46,-26.64,8.19,-8.52,-20.33,5.88,-16.58,-27.45,3.22,-20.62,-22.23,-.31,-20.74,-26.64,-2.79,-8.52,
+    -35.52,3.22,-8.52,15.73,-.67,-14.62,35.01,-1.2,-9.81,35.01,3.14,-9.81,15.73,3.67,-14.62,36.4,3.14,-13.92,
+    17.13,3.67,-18.73,36.4,-1.2,-13.92,17.13,-.67,-18.73,42.92,-3.89,-6.19,38.73,-3.89,-4.85,42.92,.51,-6.19,
+    38.73,.51,-4.85,44.33,-6.63,4.13,39.94,-6.63,3.83,44.33,-2.23,4.13,39.94,-2.23,3.83,38.35,-8.34,14.22,
+    37.35,-7.18,13.63,-15.73,-.67,-14.62,-15.73,3.67,-14.62,-35.01,3.14,-9.81,-35.01,-1.2,-9.81,-17.13,3.67,
+    -18.73,-36.4,3.14,-13.92,-17.13,-.67,-18.73,-36.4,-1.2,-13.92,-38.73,-3.89,-4.85,-42.92,-3.89,-6.19,
+    -42.92,.51,-6.19,-38.73,.51,-4.85,-39.94,-6.63,3.83,-44.33,-6.63,4.13,-44.33,-2.23,4.13,-39.94,-2.23,
+    3.83,-37.35,-7.18,13.63,-38.35,-8.34,14.22,2.42,-1.2,-28.48,13.97,-.78,-30.81,13.97,2.71,-30.81,2.42,
+    3.14,-28.48,13.97,2.71,-35.03,2.42,3.14,-32.82,13.97,-.78,-35.03,2.42,-1.2,-32.82,27.44,-3.4,-35.36,
+    31.84,-3.4,-32.28,27.44,.99,-35.36,31.84,.99,-32.28,27.7,-6.48,-41.96,32.53,-6.48,-43.51,27.7,-1.41,
+    -41.96,32.53,-1.41,-43.51,20.61,-8.07,-46.75,20.97,-7.38,-47.33,2.61,3.14,-26.33,2.61,-1.2,-26.33,.31,
+    3.14,-30.02,.31,-1.2,-30.02,-2.42,-1.2,-28.48,-2.42,3.14,-28.48,-13.97,2.71,-30.81,-13.97,-.78,-30.81,
+    -2.42,3.14,-32.82,-13.97,2.71,-35.03,-2.42,-1.2,-32.82,-13.97,-.78,-35.03,-31.84,-3.4,-32.28,-27.44,-3.4,
+    -35.36,-27.44,.99,-35.36,-31.84,.99,-32.28,-32.53,-6.48,-43.51,-27.7,-6.48,-41.96,-27.7,-1.41,-41.96,
+    -32.53,-1.41,-43.51,-20.97,-7.38,-47.33,-20.61,-8.07,-46.75,-2.61,-1.2,-26.33,-2.61,3.14,-26.33,-.31,
+    3.14,-30.02,-.31,-1.2,-30.02,11.01,1.46,10.71,12.58,1.46,10.54,12.56,3.02,10.33,10.99,3.02,10.49,12.07,
+    2.38,5.71,10.5,2.38,5.87,10.52,.81,6.09,12.09,.81,5.92,-11.01,1.46,10.71,-10.99,3.02,10.49,-12.56,3.02,
+    10.33,-12.58,1.46,10.54,-10.5,2.38,5.87,-12.07,2.38,5.71,-10.52,.81,6.09,-12.09,.81,5.92,27.52,.83,6.75,
+    33.37,.95,3.22,26.49,2.75,-4.54,20.64,2.63,-1.01,20.43,-.12,-1.45,26.28,0,-4.99,33.16,-1.8,2.77,27.31,
+    -1.92,6.31,35.02,-5.01,16.24,26.01,-3.31,10.04,35.36,-.56,16.97,26.36,1.15,10.76,29.82,-4.85,19.03,30.14,
+    -.81,19.69,15.78,-5.13,24.85,20.13,-6.13,28.92,20.5,-1.27,29.71,16.16,-.27,25.64,11.43,-4.13,20.78,11.81,
+    .73,21.57,4.19,-2.28,25.54,3.62,-1.23,24.85,11.13,-4.13,27.82,11.34,-1.44,28.25,11.96,-4.71,31,12.17,
+    -2.02,31.43,3.26,-2.72,29.67,-27.52,.83,6.75,-20.64,2.63,-1.01,-26.49,2.75,-4.54,-33.37,.95,3.22,-20.43,
+    -.12,-1.45,-27.31,-1.92,6.31,-33.16,-1.8,2.77,-26.28,0,-4.99,-26.01,-3.31,10.04,-35.02,-5.01,16.24,
+    -35.36,-.56,16.97,-26.36,1.15,10.76,-29.82,-4.85,19.03,-30.14,-.81,19.69,-15.78,-5.13,24.85,-20.13,-6.13,
+    28.92,-20.5,-1.27,29.71,-16.16,-.27,25.64,-11.81,.73,21.57,-11.43,-4.13,20.78,-3.62,-1.23,24.85,-4.19,
+    -2.28,25.54,-11.34,-1.44,28.25,-11.13,-4.13,27.82,-11.96,-4.71,31,-12.17,-2.02,31.43,-3.26,-2.72,29.67,
+    2.9,-1.2,-25.49,16.48,-1.2,-26.21,16.48,3.14,-26.21,2.9,3.14,-25.49,16.48,3.14,-30.55,2.9,3.14,-29.83,
+    16.48,-1.2,-30.55,2.9,-1.2,-29.83,32.56,-3.4,-28.9,32.7,-3.4,-24.51,32.56,.99,-28.9,32.7,.99,-24.51,
+    37.74,-6.48,-30.48,40.49,-5.81,-27.05,38.17,-2.08,-29.95,40.92,-1.41,-26.52,41.74,-8.64,-35.04,46.01,
+    -8.64,-33.92,41.74,-4.23,-35.04,46.01,-4.23,-33.92,38.13,-8.36,-41.03,39.1,-7.16,-41.75,-2.9,-1.2,-25.49,
+    -2.9,3.14,-25.49,-16.48,3.14,-26.21,-16.48,-1.2,-26.21,-2.9,3.14,-29.83,-16.48,3.14,-30.55,-2.9,-1.2,
+    -29.83,-16.48,-1.2,-30.55,-32.7,-3.4,-24.51,-32.56,-3.4,-28.9,-32.56,.99,-28.9,-32.7,.99,-24.51,-40.49,
+    -5.81,-27.05,-37.74,-6.48,-30.48,-38.17,-2.08,-29.95,-40.92,-1.41,-26.52,-46.01,-8.64,-33.92,-41.74,
+    -8.64,-35.04,-41.74,-4.23,-35.04,-46.01,-4.23,-33.92,-39.1,-7.16,-41.75,-38.13,-8.36,-41.03,12.13,-1.2,
+    -18.31,34.9,-1.2,-18.31,34.9,3.14,-18.31,12.13,3.14,-18.31,34.9,3.14,-22.65,12.13,3.14,-22.65,34.9,-1.2,
+    -22.65,12.13,-1.2,-22.65,44.81,-3.89,-17.84,41.27,-3.89,-15.23,44.81,.51,-17.84,41.27,.51,-15.23,48.89,
+    -6.63,-8.65,44.84,-6.63,-6.95,48.89,-2.23,-8.65,44.84,-2.23,-6.95,50.13,-8.31,1.55,49.11,-7.21,1.98,
+    -12.13,-1.2,-18.31,-12.13,3.14,-18.31,-34.9,3.14,-18.31,-34.9,-1.2,-18.31,-12.13,3.14,-22.65,-34.9,3.14,
+    -22.65,-12.13,-1.2,-22.65,-34.9,-1.2,-22.65,-41.27,-3.89,-15.23,-44.81,-3.89,-17.84,-44.81,.51,-17.84,
+    -41.27,.51,-15.23,-44.84,-6.63,-6.95,-48.89,-6.63,-8.65,-48.89,-2.23,-8.65,-44.84,-2.23,-6.95,-49.11,
+    -7.21,1.98,-50.13,-8.31,1.55
+  ]; // unique positions (x, y, z)
+  const C = [
+    .8,.54,.46,.7,.2,.14,.95,.46,.26,.19,.1,.1
+  ]; // color palette (r, g, b)
+  const I = [
+    0,1,2,0,2,3,3,2,4,3,4,5,5,4,6,5,6,7,7,6,8,7,8,9,9,8,10,9,10,11,11,10,12,11,12,13,13,12,14,13,14,15,15,14,
+    1,15,1,0,1,14,16,1,16,2,14,12,10,14,10,16,16,10,8,16,8,6,2,16,6,2,6,4,0,3,17,0,17,18,3,5,19,3,19,17,5,7,
+    20,5,20,19,7,9,21,7,21,20,9,11,22,9,22,21,11,13,23,11,23,22,13,15,24,13,24,23,15,0,18,15,18,24,18,17,25,
+    18,25,24,24,25,22,24,22,23,25,20,21,25,21,22,17,19,20,17,20,25,26,27,28,26,28,29,29,28,30,29,30,31,31,30,
+    32,31,32,33,33,32,27,33,27,26,27,32,34,27,34,35,32,30,36,32,36,34,30,28,37,30,37,36,28,27,35,28,35,37,35,
+    34,38,35,38,39,34,36,40,34,40,38,36,37,41,36,41,40,37,35,39,37,39,41,39,38,42,39,42,43,38,40,42,40,41,43,
+    40,43,42,41,39,43,44,45,46,44,46,47,45,48,49,45,49,46,48,50,51,48,51,49,50,44,47,50,47,51,47,52,53,47,53,
+    51,51,53,54,51,54,49,49,54,55,49,55,46,46,55,52,46,52,47,52,56,57,52,57,53,53,57,58,53,58,54,54,58,59,54,
+    59,55,55,59,56,55,56,52,56,60,61,56,61,57,57,61,58,58,61,60,58,60,59,59,60,56,62,63,64,62,64,65,65,64,66,
+    65,66,67,67,66,68,67,68,69,69,68,63,69,63,62,63,68,70,63,70,71,68,66,72,68,72,70,66,64,73,66,73,72,64,63,
+    71,64,71,73,71,70,74,71,74,75,70,72,76,70,76,74,72,73,77,72,77,76,73,71,75,73,75,77,75,74,78,75,78,79,74,
+    76,78,76,77,79,76,79,78,77,75,79,62,65,80,62,80,81,65,67,82,65,82,80,67,69,83,67,83,82,69,62,81,69,81,83,
+    84,85,86,84,86,87,85,88,89,85,89,86,88,90,91,88,91,89,90,84,87,90,87,91,87,92,93,87,93,91,91,93,94,91,94,
+    89,89,94,95,89,95,86,86,95,92,86,92,87,92,96,97,92,97,93,93,97,98,93,98,94,94,98,99,94,99,95,95,99,96,95,
+    96,92,96,100,101,96,101,97,97,101,98,98,101,100,98,100,99,99,100,96,84,102,103,84,103,85,85,103,104,85,
+    104,88,88,104,105,88,105,90,90,105,102,90,102,84,106,107,108,106,108,109,109,108,110,109,110,111,112,113,
+    107,112,107,106,107,113,110,107,110,108,112,106,109,112,109,111,114,115,116,114,116,117,115,118,119,115,
+    119,116,120,114,117,120,117,121,117,116,119,117,119,121,120,118,115,120,115,114,122,123,124,122,124,125,
+    126,127,128,126,128,129,128,127,124,128,124,123,126,129,122,126,122,125,129,128,130,129,130,131,128,123,
+    132,128,132,130,123,122,133,123,133,132,122,129,131,122,131,133,131,130,134,130,132,135,130,135,134,132,
+    133,135,136,134,137,134,135,138,134,138,137,135,133,139,133,131,140,133,140,141,139,133,141,135,139,138,
+    131,136,140,131,134,136,140,136,142,140,142,143,136,139,142,139,141,143,139,143,142,141,140,143,139,136,
+    144,139,144,145,136,137,146,136,146,144,137,138,147,137,147,146,138,139,145,138,145,147,145,144,148,144,
+    146,148,146,147,148,147,145,148,149,150,151,149,151,152,153,154,155,153,155,156,155,152,151,155,151,156,
+    153,150,149,153,149,154,154,157,158,154,158,155,155,158,159,155,159,152,152,159,160,152,160,149,149,160,
+    157,149,157,154,157,161,158,158,161,162,158,162,159,159,162,160,163,164,161,161,164,165,161,165,162,162,
+    166,160,160,167,168,160,168,157,166,167,160,162,165,166,157,168,163,157,163,161,168,169,170,168,170,163,
+    163,170,166,166,170,169,166,169,167,167,169,168,166,171,172,166,172,163,163,172,173,163,173,164,164,173,
+    174,164,174,165,165,174,171,165,171,166,171,175,172,172,175,173,173,175,174,174,175,171,176,177,178,176,
+    178,179,179,178,180,179,180,181,181,180,182,181,182,183,183,182,177,183,177,176,177,182,184,177,184,185,
+    182,180,186,182,186,184,180,178,187,180,187,186,178,177,185,178,185,187,185,184,188,185,188,189,184,186,
+    190,184,190,188,186,187,191,186,191,190,187,185,189,187,189,191,189,188,192,189,192,193,188,190,194,188,
+    194,192,190,191,195,190,195,194,191,189,193,191,193,195,193,192,196,193,196,197,192,194,196,194,195,197,
+    194,197,196,195,193,197,198,199,200,198,200,201,199,202,203,199,203,200,202,204,205,202,205,203,204,198,
+    201,204,201,205,201,206,207,201,207,205,205,207,208,205,208,203,203,208,209,203,209,200,200,209,206,200,
+    206,201,206,210,211,206,211,207,207,211,212,207,212,208,208,212,213,208,213,209,209,213,210,209,210,206,
+    210,214,215,210,215,211,211,215,216,211,216,212,212,216,217,212,217,213,213,217,214,213,214,210,214,218,
+    219,214,219,215,215,219,216,216,219,218,216,218,217,217,218,214,220,221,222,220,222,223,223,222,224,223,
+    224,225,225,224,226,225,226,227,227,226,221,227,221,220,221,226,228,221,228,229,226,224,230,226,230,228,
+    224,222,231,224,231,230,222,221,229,222,229,231,229,228,232,229,232,233,228,230,234,228,234,232,230,231,
+    235,230,235,234,231,229,233,231,233,235,233,232,236,233,236,237,232,234,236,234,235,237,234,237,236,235,
+    233,237,238,239,240,238,240,241,239,242,243,239,243,240,242,244,245,242,245,243,244,238,241,244,241,245,
+    241,246,247,241,247,245,245,247,248,245,248,243,243,248,249,243,249,240,240,249,246,240,246,241,246,250,
+    251,246,251,247,247,251,252,247,252,248,248,252,253,248,253,249,249,253,250,249,250,246,250,254,255,250,
+    255,251,251,255,252,252,255,254,252,254,253,253,254,250
+  ]; // position index per vertex
+  const J = [
+    0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0,0,0,0,0,1,1,1,1,2,3,2,3,
+    0,1,0,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,3,2,3,2,1,0,1,0,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+    2,2,2,2,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,
+    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,1,1,1,1,1,1,1,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,1,1,1,1,1,1,1,1,2,2,2,2,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,2,2,2,1,1,1,1,1,1,1,1,2,2,2,2,1,1,1,1,1,1,1,1,2,2,2,2,
+    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,1,1,1,1,1,1,1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,
+    2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2,2
+  ]; // color index per triangle
+  const pos = [], col = [];
+  for (let n = 0; n < I.length; n++) {
+    const p = I[n] * 3, c = J[(n / 3) | 0] * 3;
+    pos.push(P[p], P[p + 1], P[p + 2]);
+    col.push(C[c], C[c + 1], C[c + 2]);
+  }
+  return { pos, col };
+}
+
+// Flying gull Texture 1.obj: 204 triangles
+function seagull_flying() {
+  // Compact form: expands to { pos, col } (204 triangles) each time it is called.
+  const P = [
+    -1.15,18.69,13.77,6.35,33.41,39.35,6.18,15.21,7.93,6.34,34.09,43.22,-6.36,16.9,19.27,13.71,10.36,7.43,
+    -.09,7.61,5.75,7.75,8.55,5.93,2.82,12.7,5.22,3.19,8.55,4.92,-7.41,8.46,7.73,-.86,14.58,8.03,3.07,13.29,
+    -5.39,-1.37,18.12,-14.44,-.75,14.6,-8.34,-6.79,8.02,-7.42,-6.42,15.39,-19.71,3.82,8.95,-4.66,-1.57,7.97,
+    -6,9.37,30.04,-42.31,4.91,30.91,-41.34,14.12,11.64,-7.45,6.22,15.8,-8.35,4.85,31.23,-45.25,-31.75,-4.49,
+    2.06,-1.42,-4.09,8.89,-27.21,1.87,2.65,1.81,1.7,10.17,-3.1,7.41,4.96,-5.81,9.7,.02,-12.31,7.05,4.67,
+    -13.62,7.71,-.24,-33.67,-2.89,-2.92,-28.12,1.87,-3.22,-1.13,-4.09,-8.66,-5.67,3.3,-8.98,-3.31,-4.7,-.12,
+    -9.5,-4.72,1.99,-34.31,-2.73,-.47,-9.53,-4.72,4.04,6.19,-4.7,.21,9.77,-1.37,7.7,-46.5,-3.82,-.76,-46.5,
+    -3.86,9.94,-45.16,-2,-.69,-45.16,-1.96,12.14,-12.15,7.05,-5.11,-3.26,8.1,-4.92,20.57,.26,.15,18.04,1.13,
+    7.45,-44.75,-1.96,-13.37,-46.15,-3.86,-11.29,-9.44,-4.72,-2,-9.4,-4.72,-3.92,10.01,-1.37,-7.45,18.28,
+    1.13,-7.22,2.05,2.07,-10.46,3,7.66,-8.89,-9.12,-6.66,-2.18,-9.14,-6.61,4.51,2.77,6.79,8.81,16.57,5.37,
+    5.6,12.47,9.47,4.15,23.33,4.25,4.84,27.04,3.73,.54,12.59,9.47,-3.37,23.48,4.25,-3.88,16.73,5.37,-4.86,
+    21.43,9.07,6.21,26.98,6.89,3.17,26.59,11.61,2.38,21.62,9.07,-5.32,21.76,12,4.8,15.51,11.01,.35,21.99,
+    13.29,.46,21.9,12,-3.89,28.81,6.64,.57,27.06,6.89,-2.1,26.65,11.61,-1.32,28.65,9.14,.56,33.95,6.74,2.06,
+    35.63,8.88,.68,35.66,6.79,.68,33.99,6.74,-.76,-9,-6.61,-4.34,-9.2,-6.66,2.25,-14.67,-6.67,2.28,-26.73,
+    -6.62,2.6,-15.58,-4.7,2.23,-16.28,-6.9,5.02,-26.03,-7.18,4.83,-15.62,-4.7,4.49,-14.46,-6.62,-4.56,-26.51,
+    -6.65,-4.72,-15.47,-4.7,-4.58,-16.25,-6.96,-2.71,-26.65,-6.62,-2.58,-15.5,-4.7,-2.46,-30.01,-10.12,.93,
+    -30.67,-9.61,9.32,-29.98,-10.12,-1.12,-30.38,-9.61,-9.33,-25.96,-4.39,2.27,-25.84,-4.39,-2.72
+  ]; // unique positions (x, y, z)
+  const C = [
+    .31,.31,.33,.93,.93,.95,.18,.18,.18,.59,.4,.09
+  ]; // color palette (r, g, b)
+  const I = [
+    0,1,2,3,4,5,6,7,4,4,7,5,5,7,2,2,7,8,9,8,7,8,0,2,3,1,4,4,1,0,3,5,1,1,5,2,10,11,6,11,8,6,6,8,9,4,10,6,0,11,
+    4,4,11,10,8,11,0,12,13,14,15,14,16,16,14,13,17,18,16,15,16,18,15,18,14,14,18,12,18,17,12,19,20,21,21,20,
+    22,23,16,20,20,16,13,12,22,13,21,22,17,22,12,17,16,21,17,23,19,16,16,19,21,23,20,19,20,13,22,24,25,26,26,
+    25,27,28,29,30,30,29,31,32,33,34,34,33,35,36,37,38,25,24,39,38,37,24,37,39,24,25,40,41,42,43,44,44,43,45,
+    26,27,30,30,27,28,30,31,26,33,46,35,35,46,47,48,49,40,40,49,41,31,29,46,46,29,47,33,31,46,50,51,44,44,51,
+    42,36,38,52,34,53,32,38,32,52,32,53,52,54,40,34,54,55,40,40,55,48,47,18,35,56,35,57,35,18,57,56,34,35,58,
+    36,52,39,59,25,28,27,60,61,62,7,61,7,60,7,6,60,60,6,28,7,62,9,62,28,9,6,9,28,49,48,63,63,48,64,62,29,28,
+    47,29,65,55,66,48,48,66,64,67,57,65,18,17,57,57,17,65,65,17,47,17,18,47,62,61,68,63,69,70,67,65,71,62,68,
+    72,62,72,73,73,72,74,65,73,75,75,73,74,65,75,71,64,76,63,76,69,63,64,66,76,66,77,76,29,73,65,29,62,73,27,
+    41,60,60,41,49,60,49,61,61,49,63,61,63,68,68,63,70,72,68,70,72,70,74,70,78,74,75,74,78,78,71,75,67,71,66,
+    66,71,78,57,67,55,55,67,66,55,54,57,57,54,56,54,34,56,34,40,36,25,36,40,41,27,25,43,42,24,24,42,38,43,24,
+    45,45,24,26,31,44,26,26,44,45,38,42,32,32,42,51,31,33,44,44,33,50,33,32,50,50,32,51,66,78,77,79,78,70,69,
+    80,79,79,80,81,82,80,76,76,80,69,82,76,83,83,76,77,81,83,79,79,83,77,53,34,84,34,36,84,36,58,84,25,59,36,
+    59,85,36,36,85,37,86,87,88,86,89,87,87,89,90,90,89,91,92,93,94,92,95,93,93,95,96,96,95,97,87,90,98,98,90,
+    99,87,98,90,90,98,99,96,100,93,93,100,101,96,93,100,100,93,101,79,77,78,70,69,79,81,80,82,82,83,81,85,86,
+    37,37,86,88,59,89,85,85,89,86,59,39,89,89,39,91,37,88,39,39,88,91,58,52,95,95,52,97,52,53,97,97,53,94,84,
+    92,53,53,92,94,84,58,92,92,58,95,88,87,91,91,87,90,97,94,96,96,94,93,90,87,102,90,102,87,93,103,96,93,96,
+    103
+  ]; // position index per vertex
+  const J = [
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,1,1,1,1,1,2,2,
+    0,0,0,0,0,1,1,0,0,0,2,2,1,1,1,1,1,1,1,0,0,0,0,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,1,2,2,2,2,1,2,2,2,2,2,1,1,3,2,2,3,2,3,2,3,1,1,
+    1,1,1,1,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,1,1,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3
+  ]; // color index per triangle
+  const pos = [], col = [];
+  for (let n = 0; n < I.length; n++) {
+    const p = I[n] * 3, c = J[(n / 3) | 0] * 3;
+    pos.push(P[p], P[p + 1], P[p + 2]);
+    col.push(C[c], C[c + 1], C[c + 2]);
+  }
+  return { pos, col };
+}
+
+// Gull Texture 1.obj: 238 triangles
+function seagull_grounded() {
+  // Compact form: expands to { pos, col } (238 triangles) each time it is called.
+  const P = [
+    -30.18,25.06,5.38,-32.59,25.06,3.08,-30.71,22.81,3.08,-25.38,26.28,4.17,-1.52,28.65,12.12,-4.12,26.05,
+    12.12,0,28.65,9.66,-4.75,23.01,9.02,-9.3,26.05,11.67,-6.31,32.2,6.7,-11.51,35.25,6.26,-9.3,31.25,11.67,
+    -20.19,22.34,5.83,-1.39,33.86,8.92,-2.99,36.23,7,-4.12,31.25,12.12,-6.31,36.19,5.13,-34.21,18.45,2.55,
+    -6.31,16.19,7.29,-29.66,26.41,3.06,-8.31,40.19,.09,-14.73,32.87,4.84,-16.12,35.7,-.04,-34.81,18.65,.05,
+    -3.87,16.29,-2.26,-6.31,16.19,3.97,-6.31,16.19,1.91,3.69,16.19,.09,7.69,26.19,.09,2.77,17.73,7.43,5.26,
+    26.19,7.66,-47.46,21.62,.97,-47.46,21.62,-.81,-48.83,19.23,.82,-30.32,28.21,.06,7.69,36.19,.09,5.54,
+    34.65,7.43,-6.31,36.19,-4.95,-14.73,32.87,-4.94,-48.83,19.23,-.67,-34.21,18.45,-2.41,-6.31,16.19,-7.05,
+    -6.31,16.19,-3.99,2.77,17.73,-7.24,5.26,26.19,-7.49,5.54,34.65,-7.25,4.4,54.14,3,-.03,53.74,.15,.36,
+    52.98,3.32,4.4,54.14,-2.56,.37,52.94,-2.88,-3.93,16.38,4.44,-1.77,16.96,8.88,-3.14,42.75,4.51,.49,43.49,
+    5.45,4.11,44.24,4.58,7.75,43.59,.22,-3.16,44.39,.09,-3.14,42.75,-4.07,4.11,44.24,-4.14,-1.44,35.86,-7.89,
+    -.39,35.42,-8.71,.49,43.49,-5.01,7.73,47.54,2.85,7.33,53.44,2.07,-2.97,50.38,.22,-1.88,49.43,3.77,-1.88,
+    49.43,-3.32,1.36,46.88,5.72,7.33,53.44,-1.63,5.52,55.09,.22,1.36,46.88,-5.28,9.52,47.23,.22,7.73,47.54,
+    -2.41,.3,28.66,-9.4,-1.77,16.96,-8.67,-3.93,16.38,-4.42,-29.66,26.41,-2.9,14.68,47.36,1.63,9.36,50.35,
+    .22,16.34,50.03,.22,16.37,47.42,.22,14.68,47.36,-1.19,-3.69,-.79,2.53,-3.75,-.69,4.78,-8.12,-.68,2.48,
+    -3.87,16.29,2.17,-8.12,-.72,-2.54,-3.75,-.69,-4.78,-3.69,-.79,-2.65,1.65,.44,.92,1.65,-.38,9.32,1.66,.44,
+    -1.13,1.65,-.38,-9.33,-6.16,.04,4.3,-8.15,-.13,-3.99,-6.16,.04,-4.34,-1.5,28.68,-12.35,-9.3,31.24,-11.89,
+    -4.12,31.27,-12.33,-32.57,24.86,-3.39,-11.53,35.17,-6.45,-30.16,24.89,-5.68,-4.09,26.07,-12.38,-29.95,
+    21.75,-3.41,-4.34,10.84,2.29,-6.78,10.74,2.04,-4.18,9.25,5.06,-6.87,10.14,4.52,-4.34,10.84,-2.39,-6.78,
+    10.74,-2.2,-6.87,10.14,-4.56,-4.18,9.25,-5.05,-6.16,.04,2.26,-6.16,.04,-2.43,-22.2,21.78,-5.21,-21.73,
+    26.33,-4.94,-26.69,22.95,-3.96,-6.31,21.93,-8.12,-6.31,31.29,-6.9,-2.15,22.74,-9.26
+  ]; // unique positions (x, y, z)
+  const C = [
+    .31,.31,.33,.93,.93,.95,.18,.18,.18,.59,.4,.09
+  ]; // color palette (r, g, b)
+  const I = [
+    0,1,2,2,1,3,4,5,6,6,5,7,4,8,5,9,3,1,1,10,9,1,0,10,10,0,11,0,8,11,12,0,2,0,12,8,12,7,8,13,4,6,14,15,13,4,
+    13,15,14,9,10,10,11,14,11,15,14,4,15,8,8,15,11,8,7,5,14,16,9,17,18,12,12,18,7,12,2,17,17,2,19,2,3,19,16,
+    20,21,21,20,22,23,24,17,18,17,25,24,26,17,26,25,17,27,28,29,29,28,30,31,32,33,19,3,21,3,9,21,21,9,16,34,
+    19,22,22,19,21,35,36,28,28,36,30,37,38,20,20,38,22,33,32,39,23,40,24,41,42,40,40,42,24,27,43,28,28,43,44,
+    44,45,28,28,45,35,46,47,48,49,50,47,25,51,18,18,51,52,7,18,52,6,7,52,16,14,53,13,54,14,14,54,53,36,35,55,
+    55,35,56,16,53,20,20,53,57,37,20,58,58,20,57,56,35,59,59,35,45,37,58,60,61,60,62,58,62,60,63,64,55,65,57,
+    66,67,57,65,46,48,68,68,48,66,66,48,65,65,48,47,67,65,50,50,65,47,64,69,70,70,69,49,67,50,71,71,50,49,68,
+    66,54,54,66,53,56,72,55,72,63,55,56,59,72,59,73,72,71,62,67,67,62,58,58,57,67,53,66,57,13,6,36,36,6,30,
+    55,54,36,36,54,13,55,68,54,64,68,55,68,64,46,46,70,47,47,70,49,71,49,69,69,59,71,71,59,62,61,62,45,45,62,
+    59,61,45,74,45,44,74,75,74,43,43,74,44,75,43,76,43,27,76,52,51,29,29,51,27,52,29,6,6,29,30,32,31,34,34,
+    31,19,32,34,77,69,73,59,64,70,46,63,78,79,79,78,80,81,78,72,72,78,63,81,72,82,82,72,73,80,82,79,79,82,73,
+    79,69,64,83,84,85,42,41,76,41,75,76,76,27,24,51,86,27,86,24,27,86,26,24,87,88,89,83,84,90,90,84,91,83,90,
+    84,84,90,91,89,92,88,88,92,93,89,88,92,92,88,93,84,94,85,88,95,96,97,98,99,100,101,102,102,101,98,97,103,
+    98,100,102,104,103,102,98,34,22,77,77,22,38,79,73,69,17,33,23,19,31,17,17,31,33,40,23,39,39,23,33,77,40,
+    32,32,40,39,64,63,79,80,78,81,81,82,80,86,105,26,26,105,106,51,107,86,86,107,105,51,25,107,107,25,108,26,
+    106,25,25,106,108,109,24,110,24,42,110,110,42,111,76,112,42,42,112,111,76,24,112,112,24,109,113,83,85,
+    114,87,89,106,105,113,113,105,83,107,84,105,105,84,83,107,108,84,84,108,94,106,113,108,108,113,94,110,
+    111,114,114,111,96,112,88,111,111,88,96,112,109,88,88,109,89,110,114,109,109,114,89,94,113,85,96,95,114,
+    114,95,87,88,87,95,115,40,104,40,77,104,116,117,77,104,77,117,40,115,41,115,118,41,38,37,119,77,38,116,
+    116,38,119,118,120,75,74,75,120,118,75,41,74,60,61,119,37,60,118,103,120,60,99,98,98,101,60,60,101,119,
+    60,97,99,60,74,97,102,103,118,118,115,102,115,104,102,119,101,100,119,100,116,120,103,97,120,97,74,116,
+    100,117,100,104,117
+  ]; // position index per vertex
+  const J = [
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,2,2,0,1,1,1,1,1,1,1,2,0,0,0,2,0,1,1,0,0,2,1,1,1,1,1,
+    1,1,1,1,1,1,1,0,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
+    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,2,2,1,1,3,2,2,3,2,3,2,3,1,3,1,1,1,1,1,1,3,3,3,3,3,3,3,3,3,3,3,0,0,0,
+    0,0,0,2,0,1,1,2,2,1,2,2,2,1,2,2,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,3,
+    3,0,0,2,0,1,0,0,0,0,0,0,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+  ]; // color index per triangle
+  const pos = [], col = [];
+  for (let n = 0; n < I.length; n++) {
+    const p = I[n] * 3, c = J[(n / 3) | 0] * 3;
+    pos.push(P[p], P[p + 1], P[p + 2]);
+    col.push(C[c], C[c + 1], C[c + 2]);
+  }
+  return { pos, col };
+}
+
+// ---- Configs (Tri Soup format) ----
+// Mesh_Crab.obj: Tri Soup creature config (as exported; `model` points at the inline mesh above
+// instead of meshCrab.glb). The crawl leg data comes from tsDeriveCrawlRig on load.
+const meshCrabConfig = {
+  id: 'meshCrab',
+  model: meshCrabMesh,
+  method: 'shader',
+  type: 'crawl',
+  rig: null,
+  defaultAnimation: 'crawl',
+  states: ['undulate', 'pulse', 'sway', 'crawl', 'slither'],
+  animations: {
+    undulate: {
+      method: 'shader',
+      type: 'undulate',
+      speed: 1,
+      intensity: 1,
+      loop: true,
+      transition: 0.5,
+      body: { center: [0, 1.07, -7.95], fwd: [0, 0, 1], side: [0, 1, 0], up: [1, 0, 0], half: [39.38, 9.71, 50.13] },
+    },
+    pulse: {
+      method: 'shader',
+      type: 'pulse',
+      speed: 1,
+      intensity: 1,
+      loop: true,
+      transition: 0.5,
+      body: { center: [0, 1.07, -7.95], fwd: [0, 0, 1], side: [1, 0, 0], up: [0, 1, 0], half: [39.38, 50.13, 9.71] },
+    },
+    sway: {
+      method: 'shader',
+      type: 'sway',
+      speed: 1,
+      intensity: 1,
+      loop: true,
+      transition: 0.5,
+      body: { center: [0, 1.07, -7.95], fwd: [0, 0, 1], side: [1, 0, 0], up: [0, 1, 0], half: [39.38, 50.13, 9.71] },
+    },
+    crawl: {
+      method: 'shader',
+      type: 'crawl',
+      speed: 1.5,
+      intensity: 0.85,
+      loop: true,
+      transition: 0.5,
+      body: {
+        center: [0, 1.07, -11.175],
+        fwd: [0, 0, 1],
+        side: [1, 0, 0],
+        up: [0, 1, 0],
+        half: [21.255, 35.52, 9.71],
+        legs: { move: [5.616972, 4.493578, 0.5826, 0.56775], dir: [1, 0, 0] },
+      },
+    },
+    slither: {
+      method: 'shader',
+      type: 'slither',
+      speed: 1,
+      intensity: 1,
+      loop: true,
+      transition: 0.5,
+      body: { center: [0, 1.07, -7.95], fwd: [0, 0, 1], side: [1, 0, 0], up: [0, 1, 0], half: [39.38, 50.13, 9.71] },
+    },
+  },
+  skeleton: null,
+  size: [100.26, 19.42, 78.76],
+};
+// Seagull: a Tri Soup bird config written by hand for the two inline gull meshes (no export came
+// with them). The frames were measured from the meshes: both face +X with Y up and Z to the side.
+// centre = torso centroid; pivot = shoulder [side, height, forward]; pivot2 = hip [forward, height]
+// and neck [forward, height] (all from the centre); pitch = torso pitch (nose up); unit = body size;
+// leg = hip height; toe / heel = foot reach in front of / behind the leg. `mask` (game-side) is
+// how tsDeriveBirdMask builds the per-vertex wing / leg / head weights a .glb export would carry.
+// `origin` places the point between the feet at the creature's position.
+const seagullConfig = {
+  id: 'seagull',
+  method: 'bird',
+  type: 'bird',
+  rig: null,
+  defaultAnimation: 'idle',
+  states: ['idle', 'walk', 'takeoff', 'flap', 'glide', 'landing'],
+  animations: {
+    idle:    { method: 'bird', type: 'bird-idle',    speed: 1, intensity: 1, loop: true, transition: 0.35 },
+    walk:    { method: 'bird', type: 'bird-walk',    speed: 1, intensity: 1, loop: true, transition: 0.35 },
+    takeoff: { method: 'bird', type: 'bird-takeoff', speed: 1, intensity: 1, loop: true, transition: 0.35 },
+    flap:    { method: 'bird', type: 'bird-flap',    speed: 1, intensity: 1, loop: true, transition: 0.3 },
+    glide:   { method: 'bird', type: 'bird-glide',   speed: 1, intensity: 1, loop: true, transition: 0.6 },
+    landing: { method: 'bird', type: 'bird-landing', speed: 1, intensity: 1, loop: true, transition: 0.35 },
+  },
+  bird: {
+    fwd: [1, 0, 0],
+    align: { yaw: 0, offset: [-7.29, 20.12, 0] },
+    ground: {
+      model: seagull_grounded,
+      frame: { center: [-13.98, 24.51, 0], fwd: [1, 0, 0], side: [0, 0, 1], half: [32.6, 12.4, 27.94],
+               pivot: [9, 7.5, 8, 0], pivot2: [8.48, -8.31, 15.48, 14.49], pitch: 0.05, unit: 50, leg: 16.6, toe: 7.2, heel: 2.7 },
+      mask: { legs: { below: [16.0, 11.0] }, head: { above: [36.5, 43.0], fwdMin: -10 } },
+    },
+    air: {
+      model: seagull_flying,
+      frame: { center: [-6.69, 4.39, 0], fwd: [1, 0, 0], side: [0, 0, 1], half: [41.08, 44.24, 22.1],
+               pivot: [7.5, 6.6, 9.7, 0], pivot2: [-15, -8, 27, 4], pitch: 0.19, unit: 50 },
+      mask: { wings: { side: [7.5, 14.0], above: [5.0, 9.0] } },
+    },
+  },
+  origin: [-4, -0.7, 0],
+  skeleton: null,
+  size: [65.2, 55.9, 24.5],
+};
+
+let CREATURE_RT = null;
+try {
+  if (!tsProg) throw new Error("creature shader unavailable");
+  CREATURE_RT = createCreatureRuntimeGL();
+  CREATURE_RT.register(meshCrabConfig); CREATURE_RT.load('meshCrab');
+  CREATURE_RT.register(seagullConfig);  CREATURE_RT.load('seagull');
+} catch (e) { console.error("[creatures] disabled:", e); CREATURE_RT = null; }
+
+// ---- Shared helpers ----
+let critRng = mulberry32((SEED_INT ^ 0x6c1e5a7d) >>> 0);   // live-creature stream (never the world-gen rng)
+let _critReseed = false;                                     // New Island: re-seed on the next update (after the new SEED_INT is set)
+const crR = (a, b) => a + (b - a) * critRng();
+const wrapA = (a) => a - 6.283185307 * Math.round(a / 6.283185307);
+const approach = (v, t, d) => v < t ? Math.min(t, v + d) : Math.max(t, v - d);
+const _plPrev = { x: 0, z: 0, spd: 0, init: false };
+// How "loud" the player is: radii scale with it. Standing still / creeping shrinks them, sprinting grows them.
+function playerLoudness(dt) {
+  if (!_plPrev.init) { _plPrev.x = player.x; _plPrev.z = player.z; _plPrev.init = true; }
+  if (dt > 0) {
+    const s = Math.hypot(player.x - _plPrev.x, player.z - _plPrev.z) / dt;
+    _plPrev.spd += (Math.min(30, s) - _plPrev.spd) * Math.min(1, dt * 5);
+    _plPrev.x = player.x; _plPrev.z = player.z;
+  }
+  const s = _plPrev.spd;
+  return (mode !== "walk") ? 0.0 : s < 0.5 ? 0.55 : s < 4 ? 0.8 : (player.sprinting ? 1.45 : 1.0);
+}
+function bandAt(x, z) { return heightAt(x, z) - waterLevel; }   // height above the live waterline
+function onBeachBiome(x, z, reefChance) {
+  const b = coastBiomeAt(x, z), bio = COAST_BIOMES[b];
+  if (bio && bio.crit && bio.crit.indexOf("crab") >= 0) return true;
+  return b === "reef" && critRng() < reefChance;
+}
+// First point along a random ray from the player (between r0 and r1) whose band is in [lo, hi], or null.
+function shorePointNear(r0, r1, lo, hi, out) {
+  const a = critRng() * 6.283185307, ca = Math.cos(a), sa = Math.sin(a);
+  for (let r = r0; r <= r1; r += 1.5) {
+    const x = player.x + ca * r, z = player.z + sa * r, b = bandAt(x, z);
+    if (b >= lo && b <= hi && waterDepthAt(x, z) < 0.05) { out[0] = x; out[1] = z; return out; }
+  }
+  return null;
+}
+const _spot = [0, 0];
+
+/* ---- Crabs ---- */
+const CRAB = {
+  base: 9, cap: 16,                     // how many live around the player (before tide / time / weather)
+  ringNear: 16, ringFar: 58, despawn: 76, tick: 0.5,
+  bandLo: -0.12, bandHi: 2.4,           // where they live: height above the live waterline (m)
+  scale: [0.0026, 0.004],               // model is ~100 units across the legs → 0.26–0.40 m
+  wander: [0.08, 0.26], flee: [0.42, 0.62],   // m/s
+  notice: 6.5, fleeR: 3.8, calm: 10,    // m, × player loudness
+  idle: [1.5, 7], turn: 2.8, turnFlee: 7.5,
+  stride: [0.7, 1.5],                   // intensity range: shorter, slower steps when dawdling … long fast ones fleeing
+};
+let crabs = [], _crabT = 0;
+function spawnCrab(x, z) {
+  if (!CREATURE_RT) return null;
+  const c = CREATURE_RT.spawn('meshCrab', { animation: 'crawl', phase: critRng() });
+  const sc = crR(CRAB.scale[0], CRAB.scale[1]), shade = crR(0.82, 1.12);
+  c.x = x; c.z = z; c.y = surfaceAt(x, z).h; c.yaw = critRng() * 6.283; c.scale = sc;
+  c.tint = [shade * crR(0.92, 1.06), shade * crR(0.9, 1.05), shade * crR(0.9, 1.08)];
+  c.intensity = 0;
+  const k = { c, mode: "idle", t: crR(0.5, 4), tx: x, tz: z, v: 0, vT: 0, turn: 0, yawT: c.yaw, sign: 1,
+              nx: 0, ny: 1, nz: 0, fleeDx: 0, fleeDz: 0, reaim: 0 };
+  crabs.push(k);
+  return k;
+}
+function crabTarget(cx, cz) {   // a nearby wander spot on the wet band
+  for (let i = 0; i < 6; i++) {
+    const a = critRng() * 6.283, r = crR(1, 4.5), x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r, b = bandAt(x, z);
+    if (b >= CRAB.bandLo && b <= CRAB.bandHi && waterDepthAt(x, z) < 0.06 && surfaceAt(x, z).slope < 0.7) { _spot[0] = x; _spot[1] = z; return _spot; }
+  }
+  return null;
+}
+function crabWaterDir(k, px, pz) {   // downhill toward the sea, and away from the player
+  const c = k.c, h0 = heightAt(c.x, c.z);
+  let ax = c.x - px, az = c.z - pz; const ad = Math.hypot(ax, az) || 1; ax /= ad; az /= ad;
+  let best = 1e9, bx = ax, bz = az;
+  for (let i = 0; i < 12; i++) {
+    const a = i / 12 * 6.283185307, dx = Math.cos(a), dz = Math.sin(a);
+    const s = (heightAt(c.x + dx * 2.5, c.z + dz * 2.5) - h0) - 0.45 * (dx * ax + dz * az);
+    if (s < best) { best = s; bx = dx; bz = dz; }
+  }
+  k.fleeDx = bx; k.fleeDz = bz;
+}
+// Steer a crab along world direction (dx, dz): it walks sideways, so pick whichever side faces that
+// way with the smaller turn (sticky, so it doesn't flip-flop) and turn its body to match.
+function crabSteer(k, dx, dz) {
+  const yA = Math.atan2(-dz, dx), yB = yA + Math.PI, c = k.c;
+  const dA = Math.abs(wrapA(yA - c.yaw)), dB = Math.abs(wrapA(yB - c.yaw));
+  const keepA = k.sign > 0 ? dA < dB + 0.5 : dA + 0.5 < dB;
+  k.sign = keepA ? 1 : -1; k.yawT = keepA ? yA : yB;
+}
+function updateCrab(k, dt, px, pz, loud) {
+  const c = k.c, dx = px - c.x, dz = pz - c.z, d = Math.hypot(dx, dz);
+  const depth = waterDepthAt(c.x, c.z);
+  if (k.mode !== "flee" && k.mode !== "leave" && loud > 0) {
+    if (d < CRAB.fleeR * loud) { k.mode = "flee"; k.t = 0; crabWaterDir(k, px, pz); k.reaim = 0.4; k.vT = crR(CRAB.flee[0], CRAB.flee[1]); }
+    else if (d < CRAB.notice * loud && k.mode !== "alert") { k.mode = "alert"; k.t = crR(1.5, 3.5); }
+  }
+  let turnRate = CRAB.turn;
+  switch (k.mode) {
+    case "idle":
+      k.vT = 0; k.t -= dt;
+      if (k.t <= 0) {
+        const t = crabTarget(c.x, c.z);
+        if (t) { k.mode = "walk"; k.tx = t[0]; k.tz = t[1]; k.vT = crR(CRAB.wander[0], CRAB.wander[1]); k.t = 12; }
+        else k.t = crR(1, 3);
+      }
+      break;
+    case "walk": {
+      const wx = k.tx - c.x, wz = k.tz - c.z, wd = Math.hypot(wx, wz);
+      k.t -= dt;
+      if (wd < 0.12 || k.t <= 0) { k.mode = "idle"; k.t = crR(CRAB.idle[0], CRAB.idle[1]); break; }
+      crabSteer(k, wx / wd, wz / wd);
+      k.vT = Math.min(k.vT, 0.15 + wd * 0.5);   // ease in to the stop
+      break;
+    }
+    case "alert":   // freeze and face you (eyes are model +Z: yaw = atan2(dx, dz))
+      k.vT = 0; k.yawT = Math.atan2(dx, dz); k.t -= dt;
+      if (d > CRAB.calm * Math.max(0.6, loud) || k.t <= 0 && d > CRAB.notice * loud) { k.mode = "idle"; k.t = crR(1, 4); }
+      break;
+    case "flee":
+      turnRate = CRAB.turnFlee;
+      k.reaim -= dt; if (k.reaim <= 0) { crabWaterDir(k, px, pz); k.reaim = 0.5; }
+      crabSteer(k, k.fleeDx, k.fleeDz);
+      if (depth > 0.18) k.mode = "leave";
+      else if (d > CRAB.calm * 1.4 * Math.max(0.6, loud)) { k.mode = "idle"; k.t = crR(1, 3); }
+      break;
+    case "leave":   // walked into the sea: keep going down, then it's gone
+      turnRate = CRAB.turnFlee;
+      k.reaim -= dt; if (k.reaim <= 0) { crabWaterDir(k, px, pz); k.reaim = 0.6; }
+      crabSteer(k, k.fleeDx, k.fleeDz);
+      k.vT = CRAB.flee[0] * 0.7;
+      if (depth > 0.5) k.gone = true;
+      break;
+  }
+  // body turn, then sideways travel at the animation-matched speed
+  const dy = wrapA(k.yawT - c.yaw), step = Math.max(-turnRate * dt, Math.min(turnRate * dt, dy));
+  c.yaw += step; k.turn = Math.abs(step) / Math.max(dt, 1e-4);
+  const align = k.mode === "alert" || k.mode === "idle" ? 0 : Math.max(0, Math.cos(dy));
+  k.v = approach(k.v, k.vT * align, (k.mode === "flee" ? 4 : 1.2) * dt);
+  c.legDir = k.sign;
+  const mx = Math.cos(c.yaw) * k.sign, mz = -Math.sin(c.yaw) * k.sign;
+  c.x += mx * k.v * dt; c.z += mz * k.v * dt;
+  // stand on the ground, leaning with its slope (smoothed)
+  const s = surfaceAt(c.x, c.z), f = Math.min(1, dt * 8);
+  k.nx += (s.nx - k.nx) * f; k.ny += (s.ny - k.ny) * f; k.nz += (s.nz - k.nz) * f;
+  const nh = Math.hypot(k.nx, k.nz);
+  c.y = s.h; c.tilt = nh > 1e-4 ? Math.atan2(nh, k.ny) : 0; c.tiltDir = Math.atan2(-k.nx, k.nz);
+  // legs: stride grows with speed; turning on the spot shuffles the feet too. Rate matches travel.
+  const vAnim = Math.max(k.v, k.turn * 0.09);
+  const iT = vAnim < 0.01 ? 0 : CRAB.stride[0] + (CRAB.stride[1] - CRAB.stride[0]) * Math.min(1, vAnim / CRAB.flee[1]);
+  c.intensity = approach(c.intensity, iT, dt * 4);
+  c.matchGroundSpeed(vAnim / c.scale);
+  if (c.speed > 7) c.speed = 7;
+}
+function crabTargetCount() {
+  let n = CRAB.base;
+  n *= 1 + 0.35 * Math.max(-1, Math.min(1, (TIDE_MID - waterLevel) / Math.max(0.3, TIDE_RANGE * 0.5)));   // low tide → more
+  if (isNightNow()) n *= 1.3;
+  if (weather && weather.state === "rain") n *= 0.65;
+  if (weather && weather.state === "storm") n *= 0.3;
+  return Math.min(CRAB.cap, Math.round(n));
+}
+function updateCrabs(dt, loud) {
+  const px = player.x, pz = player.z;
+  _crabT -= dt;
+  if (_crabT <= 0) {
+    _crabT = CRAB.tick;
+    if (crabs.length < crabTargetCount()) {
+      for (let tries = 0; tries < 3; tries++) {
+        const p = shorePointNear(CRAB.ringNear, CRAB.ringFar, CRAB.bandLo + 0.1, CRAB.bandHi - 0.4, _spot);
+        if (!p || !onBeachBiome(p[0], p[1], 0.25) || onScreenPoint(p[0], p[1])) continue;
+        spawnCrab(p[0], p[1]); break;
+      }
+    }
+  }
+  for (let i = crabs.length - 1; i >= 0; i--) {
+    const k = crabs[i];
+    if (dt > 0) updateCrab(k, dt, px, pz, loud);
+    const far = Math.hypot(k.c.x - px, k.c.z - pz) > CRAB.despawn;
+    if (far || (k.gone && !onScreenPoint(k.c.x, k.c.z))) { k.c.dispose(); crabs.splice(i, 1); }
+  }
+}
+
+/* ---- Gulls ---- */
+const GULL = {
+  ground: 7, groundNight: 3, groundStorm: 2, flyers: 3, cap: 18,
+  scale: [0.0084, 0.0095],              // ~0.47–0.53 m tall standing
+  spawnNear: 34, spawnFar: 85, despawn: 150,
+  bandLo: 0.35, bandHi: 6,              // where they stand: height above the live waterline (m)
+  notice: 13, walkAway: 9.5, flush: 6, contagion: 7.5,   // m, × player loudness
+  stroll: [0.18, 0.45], wary: 0.75,     // walking speeds (m/s)
+  cruise: [4.2, 6.2], alt: [6, 13],     // flight speed (m/s), height above ground / water (m)
+  loiter: [9, 22], orbit: [9, 18],      // seconds circling before landing; circling radius (m)
+  landFrom: 22,                         // land at least this far from the player (m)
+};
+let gulls = [], _gullT = 0;
+const gullUnit = () => seagullConfig.bird.air.frame.unit;
+function spawnGull(x, z, flying) {
+  if (!CREATURE_RT) return null;
+  const c = CREATURE_RT.spawn('seagull', { animation: flying ? 'glide' : 'idle', phase: critRng(), speed: flying ? 1 : crR(0.8, 1.2) });
+  c.scale = crR(GULL.scale[0], GULL.scale[1]);
+  const shade = crR(0.93, 1.04); c.tint = [shade, shade, shade * crR(0.98, 1.03)];
+  const k = { c, mode: flying ? "fly" : "stand", t: crR(1, 6), h: critRng() * 6.283, v: 0, vy: 0, alt: crR(GULL.alt[0], GULL.alt[1]),
+              ocx: x, ocz: z, oR: crR(GULL.orbit[0], GULL.orbit[1]), oDir: critRng() < 0.5 ? -1 : 1, lx: 0, lz: 0,
+              flushAt: -1, flap: 0, animHold: 0, cry: crR(4, 18), tx: x, tz: z, vT: 0, ambient: flying, idleSpd: crR(0.8, 1.2) };
+  c.x = x; c.z = z;
+  if (flying) { c.y = Math.max(heightAt(x, z), waterLevel) + k.alt; k.v = crR(GULL.cruise[0], GULL.cruise[1]); k.t = crR(GULL.loiter[0], GULL.loiter[1]) * 2; }
+  else c.y = surfaceAt(x, z).h;
+  c.yaw = -k.h;
+  gulls.push(k);
+  return k;
+}
+function gullStandSpot(cx, cz, r0, r1, px, pz) {   // flat beach above the waterline, away from the player
+  for (let i = 0; i < 10; i++) {
+    const a = critRng() * 6.283, r = crR(r0, r1), x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r, b = bandAt(x, z);
+    if (b < GULL.bandLo || b > GULL.bandHi || waterDepthAt(x, z) > 0 || surfaceAt(x, z).slope > 0.35) continue;
+    if (Math.hypot(x - px, z - pz) < GULL.landFrom) continue;
+    _spot[0] = x; _spot[1] = z; return _spot;
+  }
+  return null;
+}
+function gullFloor(x, z) { return Math.max(heightAt(x, z), waterLevel); }
+function gullAnim(k, name, speed) {   // switch bird state only when it changes (blends via the runtime)
+  const c = k.c;
+  if (c.target !== name) c.setState(name);
+  if (speed !== undefined) c.speed = speed;
+}
+function gullFlush(k, px, pz) {
+  const c = k.c;
+  k.mode = "takeoff";
+  let ax = c.x - px, az = c.z - pz; const ad = Math.hypot(ax, az) || 1;
+  const wd = weather ? weather.windDir : 0, wind = weather ? weather.wind : 0;
+  ax = ax / ad + Math.cos(wd) * wind * 0.5; az = az / ad + Math.sin(wd) * wind * 0.5;   // away, leaning into the wind
+  k.h = Math.atan2(az, ax) + crR(-0.4, 0.4); c.yaw = -k.h;
+  c.setState('takeoff', { speed: crR(1.3, 1.6) });
+  if (typeof SND !== "undefined") { SND.play("wingflap", { position: [c.x, c.y, c.z] }); if (critRng() < 0.6) SND.play("gull_cry", { position: [c.x, c.y + 1, c.z], pitch: crR(0.9, 1.15) }); }
+  for (const o of gulls) if (o !== k && o.flushAt < 0 && (o.mode === "stand" || o.mode === "stroll" || o.mode === "wary")
+    && Math.hypot(o.c.x - c.x, o.c.z - c.z) < GULL.contagion) o.flushAt = clock.t + crR(0.08, 0.6);   // panic spreads
+  k.ocx = c.x + Math.cos(k.h) * 18; k.ocz = c.z + Math.sin(k.h) * 18;   // circle somewhere ahead
+  k.t = crR(GULL.loiter[0], GULL.loiter[1]);
+}
+function gullPickLanding(k, px, pz) {
+  // prefer joining a gull already down (a flock), else any quiet spot near the circle
+  let best = null, bd = 1e9;
+  for (const o of gulls) if (o !== k && o.mode === "stand") { const d = Math.hypot(o.c.x - k.c.x, o.c.z - k.c.z); if (d < 70 && d < bd && Math.hypot(o.c.x - px, o.c.z - pz) > GULL.landFrom) { bd = d; best = o; } }
+  const p = best ? gullStandSpot(best.c.x, best.c.z, 0.9, 3.5, px, pz) : gullStandSpot(k.ocx, k.ocz, 4, 40, px, pz);
+  if (!p) return false;
+  k.lx = p[0]; k.lz = p[1]; k.mode = "approach"; k.t = 30;
+  return true;
+}
+// Fly toward heading `hd` at speed vT, holding height yT. Banks into turns; flaps to climb or speed up, glides otherwise.
+function gullFly(k, dt, hd, vT, yT) {
+  const c = k.c, dh = wrapA(hd - k.h), turn = Math.max(-1.25, Math.min(1.25, dh * 1.8));
+  k.h += turn * dt;
+  k.v = approach(k.v, vT, 2.2 * dt);
+  const vyT = Math.max(-1.7, Math.min(2.4, (yT - c.y) * 0.7));
+  k.vy += (vyT - k.vy) * Math.min(1, dt * 2);
+  c.x += Math.cos(k.h) * k.v * dt; c.z += Math.sin(k.h) * k.v * dt; c.y += k.vy * dt;
+  const floor = gullFloor(c.x, c.z) + (k.mode === "approach" ? 0.3 : 0.6); if (c.y < floor) c.y = floor;
+  c.yaw = -k.h;
+  c.bank += (Math.max(-0.55, Math.min(0.55, turn * 0.42)) - c.bank) * Math.min(1, dt * 3);   // roll into the turn
+  // wings: flap to climb, to speed up, and in bursts; glide the rest
+  k.flap -= dt; k.animHold -= dt;
+  if (k.flap < -crR(3, 7)) k.flap = crR(0.8, 2.0);
+  const wantFlap = k.vy > 0.45 || k.v < vT - 0.8 || k.flap > 0;
+  if (k.animHold <= 0) {
+    const want = wantFlap ? 'flap' : 'glide';
+    if (c.target !== want) { c.setState(want); k.animHold = 0.7; }
+  }
+  if (c.state === 'flap') c.speed = 0.95 + 0.3 * Math.max(0, Math.min(1, k.vy / 2));
+}
+function updateGull(k, dt, px, pz, loud) {
+  const c = k.c, dx = c.x - px, dz = c.z - pz, d = Math.hypot(dx, dz), sc = c.scale, U = gullUnit();
+  const grounded = k.mode === "stand" || k.mode === "stroll" || k.mode === "wary";
+  if (grounded && loud > 0) {
+    if (d < GULL.flush * loud || (k.flushAt > 0 && clock.t >= k.flushAt)) { k.flushAt = -1; gullFlush(k, px, pz); return; }
+    if (d < GULL.walkAway * loud && k.mode !== "wary") { k.mode = "wary"; k.t = crR(1.5, 3); k.h = Math.atan2(dz, dx) + crR(-0.5, 0.5); k.vT = GULL.wary; }
+  }
+  switch (k.mode) {
+    case "stand": {
+      gullAnim(k, 'idle', k.idleSpd);
+      k.v = 0; k.t -= dt;
+      if (weather && weather.wind > 0.6) k.h += wrapA(weather.windDir + Math.PI - k.h) * Math.min(1, dt * 0.2);   // face into a strong wind
+      if (k.t <= 0) {
+        k.t = crR(3, 10);
+        if (critRng() < 0.55) {
+          const a = critRng() * 6.283, r = crR(0.6, 3), x = c.x + Math.cos(a) * r, z = c.z + Math.sin(a) * r, b = bandAt(x, z);
+          if (b > GULL.bandLo && b < GULL.bandHi && waterDepthAt(x, z) <= 0) { k.mode = "stroll"; k.tx = x; k.tz = z; k.vT = crR(GULL.stroll[0], GULL.stroll[1]); k.t = 10; }
+        }
+      }
+      if (bandAt(c.x, c.z) < 0.1) { const p = gullStandSpot(c.x, c.z, 1, 5, px, pz); if (p) { k.mode = "stroll"; k.tx = p[0]; k.tz = p[1]; k.vT = GULL.stroll[1]; k.t = 12; } }   // tide coming in
+      break;
+    }
+    case "stroll": case "wary": {
+      if (k.mode === "stroll") {
+        const wx = k.tx - c.x, wz = k.tz - c.z, wd = Math.hypot(wx, wz);
+        if (wd < 0.1) { k.mode = "stand"; k.t = crR(2, 8); break; }
+        k.h += wrapA(Math.atan2(wz, wx) - k.h) * Math.min(1, dt * 5);
+        k.vT = Math.min(k.vT, 0.12 + wd);
+      }
+      k.t -= dt;
+      if (k.t <= 0 || (k.mode === "wary" && d > GULL.notice * loud)) { k.mode = "stand"; k.t = crR(2, 6); break; }
+      k.v = approach(k.v, k.vT, 1.5 * dt);
+      const nx = c.x + Math.cos(k.h) * k.v * dt, nz = c.z + Math.sin(k.h) * k.v * dt;
+      if (waterDepthAt(nx, nz) > 0.02) { k.mode = "stand"; k.t = crR(1, 4); break; }   // don't wade
+      c.x = nx; c.z = nz;
+      gullAnim(k, 'walk');
+      // walk cycle matched to speed: short quick steps when slow, longer when brisk
+      c.intensity = 0.55 + 0.6 * Math.min(1, k.v / GULL.wary);
+      c.matchGroundSpeed(k.v / sc);
+      break;
+    }
+    case "takeoff": {
+      if (c.state === 'flap' || c.state === 'glide') { k.mode = "fly"; k.v = Math.max(1.4, c.groundSpeed * sc); k.vy = 1.6; k.alt = crR(GULL.alt[0], GULL.alt[1]); break; }
+      c.x += Math.cos(k.h) * c.groundSpeed * sc * dt; c.z += Math.sin(k.h) * c.groundSpeed * sc * dt;
+      c.y += c.climb * sc * dt;
+      const g = surfaceAt(c.x, c.z).h; if (c.y < g) c.y = g;
+      break;
+    }
+    case "fly": {
+      k.t -= dt;
+      const ox = c.x - k.ocx, oz = c.z - k.ocz, od = Math.hypot(ox, oz) || 1;
+      const tx = -oz / od * k.oDir, tz = ox / od * k.oDir, pull = Math.max(-1, Math.min(1, (od - k.oR) / k.oR * 1.5));
+      const hd = Math.atan2(tz - oz / od * pull, tx - ox / od * pull);
+      const ahead = gullFloor(c.x + Math.cos(k.h) * 8, c.z + Math.sin(k.h) * 8);
+      gullFly(k, dt, hd, (GULL.cruise[0] + GULL.cruise[1]) * 0.5, Math.max(ahead, gullFloor(c.x, c.z)) + k.alt);
+      if (!k.ambient && k.t <= 0 && !gullPickLanding(k, px, pz)) k.t = crR(3, 8);
+      if (k.ambient && k.t <= 0) {   // ambient circlers wander the shore, now and then landing
+        if (critRng() < (isNightNow() ? 0.9 : 0.3)) { k.ambient = false; if (!gullPickLanding(k, px, pz)) k.t = crR(3, 8); }
+        else { const p = shorePointNear(20, 90, GULL.bandLo, GULL.bandHi, _spot); if (p) { k.ocx = p[0]; k.ocz = p[1]; } k.t = crR(GULL.loiter[0], GULL.loiter[1]); }
+      }
+      break;
+    }
+    case "approach": {
+      k.t -= dt;
+      const lx = k.lx - c.x, lz = k.lz - c.z, ld = Math.hypot(lx, lz);
+      const gL = surfaceAt(k.lx, k.lz).h, hL = 0.8 * U * sc;              // landing starts ~0.8 units up (Tri Soup)
+      const dTrig = 1.49 * U * sc;                                        // and travels ~1.5 units forward
+      if (Math.hypot(k.lx - px, k.lz - pz) < GULL.flush * 1.6 * Math.max(0.8, loud) || k.t <= 0 || bandAt(k.lx, k.lz) < GULL.bandLo * 0.5) {   // spot got busy → go round
+        k.mode = "fly"; k.ocx = c.x; k.ocz = c.z; k.t = crR(4, 10); break;
+      }
+      const yT = gL + hL + Math.max(0, ld - dTrig) * 0.32, vT = Math.max(1.6, Math.min(GULL.cruise[0], 1.6 + (ld - dTrig) * 0.22));
+      gullFly(k, dt, Math.atan2(lz, lx), vT, yT);
+      if (ld < dTrig + 2 && c.y - gL > hL + 2.5) { k.mode = "fly"; k.ocx = k.lx; k.ocz = k.lz; k.oR = crR(5, 8); k.t = crR(3, 6); break; }   // still too high: go round
+      if (ld < dTrig + 0.25 || (ld < dTrig + 1.5 && Math.abs(wrapA(Math.atan2(lz, lx) - k.h)) > 1.2)) {
+        k.mode = "landing"; c.setState('landing'); c.speed = 1; k.vy = 0;
+        k.h0 = Math.max(0, c.y - surfaceAt(c.x, c.z).h);   // height to lose; the flare's drop is stretched to fit it
+      }
+      break;
+    }
+    case "landing": {
+      c.bank *= Math.max(0, 1 - dt * 6);
+      c.x += Math.cos(k.h) * c.groundSpeed * sc * dt; c.z += Math.sin(k.h) * c.groundSpeed * sc * dt;
+      const g = surfaceAt(c.x, c.z).h;
+      if (c.state === 'landing') {   // Tri Soup's landing drops over the first 60% of the cycle (a half-cosine); follow that curve from wherever it started, so it always touches down on time
+        const p = Math.min(1, c.phase / 0.6), drop = 0.5 - 0.5 * Math.cos(Math.PI * p);
+        c.y = g + (k.h0 || 0) * (1 - drop);
+      } else { c.y += (g - c.y) * Math.min(1, dt * 10); if (Math.abs(c.y - g) < 0.01) { k.mode = "stand"; k.t = crR(2, 8); } }
+      break;
+    }
+  }
+  if (grounded) {   // stand on the ground, facing where it walks
+    c.y = surfaceAt(c.x, c.z).h; c.bank = 0;
+    c.yaw += wrapA(-k.h - c.yaw) * Math.min(1, dt * 6);
+  }
+  if (k.mode === "fly" || k.mode === "approach") {   // the odd call overhead
+    k.cry -= dt;
+    if (k.cry <= 0) { k.cry = crR(6, 22); if (typeof SND !== "undefined" && d < 70) SND.play("gull_cry", { position: [c.x, c.y, c.z], pitch: crR(0.88, 1.15), volume: 0.8 }); }
+  }
+}
+function gullTargets() {
+  const night = isNightNow(), storm = weather && weather.state === "storm";
+  return { ground: storm ? GULL.groundStorm : night ? GULL.groundNight : GULL.ground, flyers: night || storm ? 0 : GULL.flyers };
+}
+function updateGulls(dt, loud) {
+  const px = player.x, pz = player.z;
+  _gullT -= dt;
+  if (_gullT <= 0) {
+    _gullT = 1.2;
+    const tg = gullTargets();
+    let nGround = 0, nFly = 0; for (const k of gulls) { if (k.ambient) nFly++; else nGround++; }
+    if (nGround < tg.ground && gulls.length < GULL.cap) {   // a small flock somewhere quiet, out of view
+      const p = shorePointNear(GULL.spawnNear, GULL.spawnFar, GULL.bandLo + 0.3, GULL.bandHi - 1, _spot);
+      if (p && !onScreenPoint(p[0], p[1]) && onBeachBiome(p[0], p[1], 0.6)) {
+        const cx = p[0], cz = p[1], n = Math.min(tg.ground - nGround, 2 + (critRng() * 4 | 0));
+        for (let i = 0; i < n; i++) {
+          const s = i === 0 ? [cx, cz] : gullStandSpot(cx, cz, 0.8, 3.5, px, pz);
+          if (s) spawnGull(s[0], s[1], false);
+        }
+      }
+    }
+    if (nFly < tg.flyers && gulls.length < GULL.cap) {
+      const p = shorePointNear(55, 95, -2, GULL.bandHi, _spot);
+      if (p && !onScreenPoint(p[0], p[1])) spawnGull(p[0], p[1], true);
+    }
+  }
+  for (let i = gulls.length - 1; i >= 0; i--) {
+    const k = gulls[i];
+    if (dt > 0) updateGull(k, dt, px, pz, loud);
+    if (Math.hypot(k.c.x - px, k.c.z - pz) > GULL.despawn && !onScreenPoint(k.c.x, k.c.z)) { k.c.dispose(); gulls.splice(i, 1); }
+  }
+}
+
+/* ---- Driver hooks ---- */
+function updateCreatures(dt) {
+  if (!CREATURE_RT) return;
+  if (_critReseed) { critRng = mulberry32((SEED_INT ^ 0x6c1e5a7d) >>> 0); _critReseed = false; }
+  const loud = playerLoudness(dt);
+  updateCrabs(dt, loud);
+  updateGulls(dt, loud);
+  CREATURE_RT.update(dt);
+}
+function drawCreatures(view) {
+  if (!CREATURE_RT) return;
+  CREATURE_RT.draw(view, DRAW_R);
+}
+function resetCreatures() {   // New Island: drop every live creature and restart their stream for the new seed
+  for (const k of crabs) k.c.dispose(); for (const k of gulls) k.c.dispose();
+  crabs = []; gulls = []; _crabT = 0; _gullT = 0;
+  _critReseed = true;
+}
+function creatureStatsText() { return `crabs ${crabs.length}  gulls ${gulls.length} (${gulls.filter(g => g.mode === "fly" || g.mode === "approach" || g.mode === "takeoff").length} up)`; }
+// Console / test hooks: spawn right next to the player, toggle the legs-mask view.
+const CREATURE_DEBUG = {
+  crabs(n = 5, r = 3) { for (let i = 0; i < n; i++) { const a = i / n * 6.283; spawnCrab(player.x + Math.cos(a) * r, player.z + Math.sin(a) * r); } return crabs.length; },
+  gulls(n = 4, r = 6, flying = false) { for (let i = 0; i < n; i++) { const a = i / n * 6.283; spawnGull(player.x + Math.cos(a) * r, player.z + Math.sin(a) * r, flying); } return gulls.length; },
+  legs(on) { tsShowLegs = on === undefined ? !tsShowLegs : !!on; return tsShowLegs; },
+  get crabList() { return crabs; }, get gullList() { return gulls; },
+};
+window.CREATURE_DEBUG = CREATURE_DEBUG;
+
 /* --------------------------------------------------------------------- *
  * § INVENTORY / JOURNAL / INTERACTION
  * --------------------------------------------------------------------- */
@@ -9412,6 +11234,10 @@ function updateStarRescue() {
 
 function propUniforms(view) {
   gl.useProgram(propProg);
+  worldLitUniforms(propU, view);
+}
+// The world lighting every propFS program shares (sun, sky, fog, night, moon, lantern). The program must be bound.
+function worldLitUniforms(propU, view) {
   gl.uniform1i(propU.uHemi, ATMO.hemi ? 1 : 0);   // §ATMO #2 held tool / world props share the world lighting
   gl.uniformMatrix4fv(propU.uProj, false, proj); gl.uniformMatrix4fv(propU.uView, false, view);
   setLanternUniform(propU);   // §18
@@ -9843,6 +11669,19 @@ function drawCritDebug() {
   if (cc.width !== innerWidth || cc.height !== innerHeight) { cc.width = innerWidth; cc.height = innerHeight; }
   const ctx = cc.getContext("2d"); ctx.clearRect(0, 0, cc.width, cc.height);
   ctx.font = "11px ui-monospace, monospace"; ctx.textAlign = "center"; ctx.lineWidth = 2;
+  // §creatures crabs & gulls: state label + travel direction (crabs show their sideways walk)
+  const crit = (list, kind) => { for (const k of list) {
+    const c = k.c, dd = Math.hypot(c.x - cam.pos[0], c.z - cam.pos[2]); if (dd > 60) continue;
+    const sp = projectToScreen(c.x, c.y + 0.35, c.z); if (!sp) continue;
+    const hx = kind === "crab" ? Math.cos(c.yaw) * c.legDir : Math.cos(-c.yaw), hz = kind === "crab" ? -Math.sin(c.yaw) * c.legDir : Math.sin(-c.yaw);
+    const tip = projectToScreen(c.x + hx * 0.8, c.y + 0.35, c.z + hz * 0.8);
+    ctx.strokeStyle = "rgba(255,190,120,.9)";
+    if (tip) { ctx.beginPath(); ctx.moveTo(sp[0], sp[1]); ctx.lineTo(tip[0], tip[1]); ctx.stroke(); }
+    const lbl = `${kind}:${k.mode} ${c.state} ×${c.speed.toFixed(1)}`;
+    const w = ctx.measureText(lbl).width + 8; ctx.fillStyle = "rgba(10,16,20,.65)"; ctx.fillRect(sp[0]-w/2, sp[1]-20, w, 14);
+    ctx.fillStyle = "#ffd9b0"; ctx.fillText(lbl, sp[0], sp[1]-9);
+  } };
+  crit(crabs, "crab"); crit(gulls, "gull");
   for (const e of life) {
     if (e.kind !== "creature") continue;
     const dd = Math.hypot(e.x - cam.pos[0], e.z - cam.pos[2]); if (dd > 40) continue;
@@ -12263,6 +14102,7 @@ function resetWorldState() {
   // fresh load would, keeping the whole generation deterministic.
   ODDITY_ITEM = null; ODDITY_NAME = "";
   _ecoFinds = null; _ecoCrit = null; _ecoZoneInfo = null; _ecoT = 2;   // §living drop the old island's zone census/targets
+  resetCreatures();   // §creatures drop the old island's crabs & gulls (their stream re-seeds from the new seed)
 }
 // Re-fill the terrain chunks in place (same grid size every seed → reuse the
 // existing VAOs/buffers, no GL leak), then re-upload the sampled textures.
@@ -12438,6 +14278,7 @@ function frame(now) {
   updateTools(simDt, gdtTotal);
   updateEco(simDt);       // §living the zoned beach ecosystem tops up finds & shore critters, never past target
   updateFlotsam(simDt);   // §5 floating debris drifts & beaches itself
+  updateCreatures(simDt); // §creatures crabs & gulls (spawn around the player, behave, animate)
   updateBarnacles();   // §5 barnacles regrow over time
   updateWeather(simDt);     // §20 weather state machine, fog/light/wind, lightning, after-storm
   updateWeakStones(simDt);  // §weak7 broken spots regrow a stone, out of view
@@ -12766,6 +14607,7 @@ function frame(now) {
   drawBuilds(view);        // §16B placed building pieces + the placement ghost
   drawSalt(view);
   drawLife(view);
+  drawCreatures(view);   // §creatures crabs & gulls (instanced, one call per model)
   drawFlotsam(view);   // §5 floating debris on the water surface (drawn before the transparent water)
   drawTells(view, dt);
   drawWeakStones(view);   // §weak7 weak breakable stones
@@ -13011,6 +14853,7 @@ function frame(now) {
       `atmo  ${ATMO.tonemap ? "tone " : ""}${ATMO.hemi ? "hemi " : ""}${ATMO.fogsun ? "mist " : ""}${ATMO.groundnoise ? "gnoise " : ""}${ATMO.vignette ? "vig " : ""}${ATMO.grade ? "grade" : ""}\n` +
       `grade exp ${ATMO.exposure.toFixed(2)}  vib ${ATMO.vibrance.toFixed(2)}  sat ${ATMO.saturation.toFixed(2)}  con ${ATMO.contrast.toFixed(2)}  warm ${ATMO.warmth.toFixed(2)}\n` +
       `pos   ${cam.pos[0].toFixed(0)}, ${cam.pos[1].toFixed(0)}, ${cam.pos[2].toFixed(0)}\n` +
+      `crit  ${creatureStatsText()}\n` +
       `slope ${_curSlopeDeg.toFixed(0)}°  spd ×${_curSpeedMul.toFixed(2)}${player.sprinting ? " sprint" : ""}  steps ${stepsPerSec()}/s\n` +
       `audio ${SND.ctx ? SND.ctx.state : "not started"}${SND.muted ? " muted" : ""}  vox ${SND.ctx ? SND.activeVoices() : 0}\n` +
       `  bus m${SND.vol.master.toFixed(2)} s${SND.vol.sfx.toFixed(2)} a${SND.vol.ambience.toFixed(2)} u${SND.vol.ui.toFixed(2)}\n` +

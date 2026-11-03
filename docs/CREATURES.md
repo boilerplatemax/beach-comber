@@ -4,6 +4,32 @@ Ideas for bringing animals back to the island. Ordered from "just loop an anim"
 up to "two species reacting to each other". Nothing here is code — it's a menu
 to pick from.
 
+## Status
+
+**Built: crabs and gulls** (`§ CREATURE RUNTIME` + `§ CRABS & GULLS` in
+`index.html`). The Tri Soup runtime is ported to the game's raw WebGL2 (it was
+three.js): same GLSL, same state/transition logic, same config format, drawn
+instanced (one draw call per model). Animation rate follows real travel speed
+(`matchGroundSpeed`), so slow movers step slowly and nothing slides.
+
+| Creature | Tri Soup states used | Behaviour |
+|----------|----------------------|-----------|
+| Crab | `crawl` (sideways, both directions; at rest = crawl at intensity 0) | idle → wander → idle; alert (stop, face you); flee sideways to the water and walk in. More at low tide / night, fewer in rain / storm. No digging. |
+| Gull | `idle`, `walk`, `takeoff`, `flap`, `glide`, `landing` | idle + strolls in loose flocks; walks away when you near; flushes (panic spreads through the flock), circles, picks a quiet spot near other gulls and lands. A few circle the shore. |
+
+Unused crab states from the export: `undulate`, `pulse`, `sway`, `slither`.
+
+### Adding the next creature
+1. Paste the Tri Soup mesh function and its config; set `model: <meshFn>`
+   (inline `{ pos, col }` — the game loads no `.glb`).
+2. `CREATURE_RT.register(cfg); CREATURE_RT.load(id);` then `spawn(id)`.
+3. Drive it: `x y z yaw scale`, `setState()`, `matchGroundSpeed(v / scale)`.
+
+Shader and bird methods are ported. Skeletal / clip (deer, wolves) still need
+porting before quadrupeds can use them. Crawl leg data and bird wing/leg/head
+masks are derived on load when the inline mesh lacks them; a re-export with
+`tsLeg` / `tsLegReach` / `tsBird` arrays inline is used as-is.
+
 ---
 
 ## 1. Shared pieces (build once, every creature uses them)

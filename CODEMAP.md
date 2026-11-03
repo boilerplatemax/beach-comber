@@ -28,6 +28,7 @@ says what it does. Supporting docs: `docs/model-report.md` (per-mesh memory/tria
 | **AUDIO** | Synthesized sound engine (no files); Simlish NPC voice framework (currently unused — no NPCs) | `AUDIO/engine` `AUDIO/voice` |
 | **PROPS** | Tiny procedural prop/POI mesh builders (trees, rocks, kelp…) | `PROPS/meshes` |
 | **WORLD** | POI placement, prop placement, finds (`life[]` = dropped items only — creatures removed), floating debris, barnacles, the zoned "living beach" find-restock | `WORLD/poi` `WORLD/placement` `WORLD/finds` `WORLD/flotsam` `WORLD/barnacles` `WORLD/eco` |
+| **CREATURES** | The Tri Soup creature runtime ported to raw WebGL2 (verbatim animation GLSL, instanced: one draw per model), crawl-leg / bird-mask derivation for inline meshes; crabs & gulls (models, configs, behaviour, spawning) | `CREATURES/runtime` `CREATURES/crabs-gulls` |
 | **GAMEPLAY** | Digging, targeting, tools (chop/mine/plant), fishing, farming, flipping stones, heavy boulders, oysters, geodes, salt | `DIGGING/shovel` `GAMEPLAY/targeting` `GAMEPLAY/tools` `GAMEPLAY/fishing` `GAMEPLAY/farming` `GAMEPLAY/flip-stones` `GAMEPLAY/heave` `GAMEPLAY/oysters` `GAMEPLAY/geodes` `GAMEPLAY/salt` |
 | **DRIVER** | Top-level build + `frame()` main loop; `newIsland()` in-place regeneration | `DRIVER/build-loop` `DRIVER/new-island` |
 | **DEBUG** | F3 perf overlay, `modelReport()`, screenshot hook | `DEBUG/perf-overlay` `DEBUG/model-report` `DEBUG/shoot` |
@@ -48,6 +49,8 @@ says what it does. Supporting docs: `docs/model-report.md` (per-mesh memory/tria
 | **Swim behaviour** | `@section PLAYER/swimming` | `swimStep`, buoyancy, breath. |
 | **Tide timing / range** | `@section TIDES/cycle` | `TIDE_*` constants; `waterLevel`, `wetLevel`. |
 | **Add a dropped item / find (model)** | `@section WORLD/finds` | Add a `FINDS` entry `{ mesh:()=>xMesh(), base, max, label, desc, rare }`; add the mesh builder in `@section PROPS/meshes` or `@section WORLD/finds`. |
+| **Add a creature (Tri Soup export)** | `@section CREATURES/crabs-gulls` | Paste the mesh function + the `.creature.js` config with `model: <meshFn>` (inline `{ pos, col }`, no .glb), `CREATURE_RT.register(cfg); CREATURE_RT.load(id)`, then `spawn(id)` and drive it (x/y/z/yaw/scale, `setState`, `matchGroundSpeed`). Shader + bird methods work; skeletal/clip need porting. Crawl legs / bird masks are derived if the model lacks them. |
+| **Crab / gull behaviour & numbers** | `const CRAB` / `const GULL` in `@section CREATURES/crabs-gulls` | Population, radii (× player loudness), speeds, stride range, flight heights. Debug: `CREATURE_DEBUG.crabs()/gulls()/legs()` in the console, **J** overlay, `crit` line in the debug HUD. |
 | **Add a prop type (instanced)** | `@section WORLD/placement` (`propTypes`) + mesh in `@section PROPS/meshes` | One draw call per type via `makeInstanced`. |
 | **Tuning values** | Each section keeps its constants at the top; central gameplay tunables are `const TUNE` in `@section DIGGING/shovel` (debug sliders via `TUNABLES`). | |
 | **Measure performance** | Press **F3** in game (`@section DEBUG/perf-overlay`); regenerate the per-mesh table with `node tools/model-report.js`. | |
@@ -61,6 +64,6 @@ says what it does. Supporting docs: `docs/model-report.md` (per-mesh memory/tria
 - **Mobile + debug** must keep working (`@system INPUT` touch controls; the F3 overlay).
 
 ## Removed features (gone; a few inert remnants remain — see `STRIP-REMNANTS-TODO.md`)
-Kappas/villages, buckets, magic mushrooms/trips, **all moving creatures/animals** (the world now
-spawns finds only), the spear, treasure chests, goblins/trading, goats. Fishing, the worm/bait
+Kappas/villages, buckets, magic mushrooms/trips, the old moving creatures/animals (crabs & gulls are
+back on the new creature runtime, see CREATURES; the old `life[]` creature code stays gone), the spear, treasure chests, goblins/trading, goats. Fishing, the worm/bait
 items, oysters, barnacles and storage boxes stay.
