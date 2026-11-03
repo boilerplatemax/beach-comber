@@ -1407,10 +1407,11 @@ let FOG_DENSITY = BASE_FOG_DENSITY;   // see far across the big landscape, still
 let FOG_NEAR = BASE_FOG_NEAR;         // clear band before fog ramps in
 let baseFogDensity = BASE_FOG_DENSITY, baseFogNear = BASE_FOG_NEAR;   // §20 GFX-scaled base; weather adds fog on top each frame
 // §night how far you can see at NIGHT (metres), independent of the fog slider so raising fog can't see past it.
-// Without a lantern only a small pool around the player is dimly lit; beyond NIGHT_VIEW_NEAR it fades to dark
-// by NIGHT_VIEW_FAR. The lantern does NOT extend this (that lit up the whole far landscape) — it adds a local
-// warm pool (LANTERN_R) instead, so it genuinely helps you see what's near you on a dark night.
-const NIGHT_VIEW_NEAR = 22, NIGHT_VIEW_FAR = 92, NIGHT_POOL_R = 15, NIGHT_POOL_I = 0.32;
+// Night view: near NIGHT_VIEW_NEAR the ground is dimly visible; it fades to dark by NIGHT_VIEW_FAR (not pure
+// black — "less darkness fog"). The lantern adds a SMALL bright ring (LANTERN_R) around the player AND pushes
+// the view distance out a modest amount (LANTERN_VIEW_BONUS) so you see a bit further — DIMLY, never spotlighting
+// distant objects (the bright light is only the small ring).
+const NIGHT_VIEW_NEAR = 28, NIGHT_VIEW_FAR = 112, NIGHT_POOL_R = 15, NIGHT_POOL_I = 0.3, LANTERN_VIEW_BONUS = 28;
 
 // Day & night palettes; SKY is the blended current state (uploaded each frame).
 const SKY_DAY = { zenith: [0.30, 0.52, 0.80], horizon: [0.72, 0.81, 0.92], warm: [1.10, 0.96, 0.75] };   // §VIB a bluer sky (saturated zenith, clean light-blue horizon instead of cream-grey), warm sun
@@ -2583,7 +2584,7 @@ vec3 applyNight(vec3 col, vec3 world, vec3 camPos, float nd, float nearD, float 
   // then fades further to near-black with distance — your sight is short. The lantern is added AFTER this, so
   // it reads as a real local light on a dark world rather than lifting the whole far landscape.
   float fade = smoothstep(nearD, farD, d);
-  col *= mix(1.0, NIGHT_FLOOR, nd) * (1.0 - nd * 0.97 * fade);
+  col *= mix(1.0, NIGHT_FLOOR, nd) * (1.0 - nd * 0.88 * fade);   // §night fade toward dark (not pure black) so distant things stay faintly visible — less harsh darkness fog
   // a faint cool moonlit floor right around the player so you're never totally blind without a lantern
   float pool = (1.0 - smoothstep(poolR * 0.3, poolR, d)) * poolI * nd;
   col += col * vec3(0.40, 0.48, 0.70) * pool;
@@ -2677,11 +2678,19 @@ void main() {
   col = mix(col, cForest, smoothstep(28.0, 60.0, hb));
   col = mix(col, cRock,   smoothstep(0.34, 0.74, sb));   // smooth slope + wander → stone borders no longer stair-step
 
-  // Painted surface material (dug or player-placed) overrides the height bands. Sampled NEAREST
-  // (the ids must not interpolate), but the sample point is jittered by noise so the per-cell
-  // boundary breaks into a dithered, wandering edge instead of a hard grid line.
-  vec2 mjit = vec2(vnoise(vWorld.xz * 0.9 + 11.0) - 0.5, vnoise(vWorld.xz * 0.9 + 43.0) - 0.5) * (texel * 1.3);
-  float m = texture(uMaterial, muv + mjit).r;
+  // Painted surface material (dug or player-placed) overrides the height bands. Sampled NEAREST (ids must not
+  // interpolate); a SMALL noise jitter softens the outer edge. A fragment that reads unpainted but is surrounded
+  // by painted cells is treated as painted (the strongest neighbour), so small unpainted gaps BETWEEN dig
+  // strokes don't show as grass "blobs" inside a dirt patch — only the outer edge stays a soft transition.
+  vec2 mjit = vec2(vnoise(vWorld.xz * 0.85 + 11.0) - 0.5, vnoise(vWorld.xz * 0.85 + 43.0) - 0.5) * (texel * 0.6);
+  vec2 mu = muv + mjit;
+  float m = texture(uMaterial, mu).r;
+  if (m < 0.5) {   // §matfill unpainted here — fill an interior gap from painted neighbours (don't grow the outer edge)
+    float ma = texture(uMaterial, mu + vec2(texel, 0.0)).r, mb = texture(uMaterial, mu - vec2(texel, 0.0)).r;
+    float mcn = texture(uMaterial, mu + vec2(0.0, texel)).r, md = texture(uMaterial, mu - vec2(0.0, texel)).r;
+    float painted = step(0.5, ma) + step(0.5, mb) + step(0.5, mcn) + step(0.5, md);
+    if (painted >= 3.0) m = max(max(ma, mb), max(mcn, md));   // surrounded on 3+ sides → interior gap → fill it
+  }
   if (m > 0.5) {
     vec3 mc = cGrass;
     if      (m < 1.5) mc = vec3(0.43, 0.61, 0.26);   // grass (matches the lush band)
@@ -3571,13 +3580,11 @@ function saveRodRec() { try { localStorage.setItem("bc_rodrec", JSON.stringify(r
 // §fishpolish bait is worms only for now (other baits removed). q = quality (0 = basic).
 const ROD_BAIT = [ ["worm", 0, "Earthworm"], ["bug", 0, "Bug"],   // §stonebug/§P3 bugs work as bait like worms; each species is its own item now
   ["pillbug", 0, "Pill Bug"], ["beetle", 0, "Ground Beetle"], ["centipede", 0, "Centipede"], ["slug", 0, "Slug"] ];
-// §fishrework ALL the fishing feel in one place — a short, snappy fight that reacts in step with the mouse.
-// Tweak these to taste.
+// §fishopt The OLD fishing minigame, kept — just the optimisations the player asked for: a short wait, a
+// short fight, a reel that reacts in step with the mouse, and a punishing slack. All in one place.
 const FISH_TUNE = {
-  BITE_MIN: 1.4, BITE_MAX: 6.5,     // §fishrework much shorter wait before something happens (was 4–40 s)
-  NIBBLES_MIN: 1, NIBBLES_MAX: 3,   // teasing nibbles before the real bite — strike on one and you spook the fish
-  NIBBLE_GAP: [0.45, 0.95],         // seconds between nibble twitches
-  STRIKE_WINDOW: 0.9,               // seconds you have to set the hook once the bobber plunges (relaxed adds more)
+  BITE_MIN: 1.4, BITE_MAX: 6.5,     // much shorter wait before a bite (was 4–40 s)
+  STRIKE_WINDOW: 0.9,               // seconds to set the hook once the bobber plunges (relaxed adds more)
   FIGHT_SCALE: 0.5,                 // overall fight-length multiplier (smaller = quicker catches)
   REEL_RISE: 1.7,                   // how hard holding-to-reel drives tension up (bigger = snappier, more 1:1)
   REEL_CAP: 2.6,                    // max tension climb rate (lets a burst + reel spike fast)
@@ -3734,24 +3741,14 @@ function beginBite() {                                         // fish takes the
     const vr = rng();                                                         // §22 a giant catch counts as a record; colour morphs for the journal
     if (vr < 0.03) { rod.fish.variant = "giant"; rod.fish.weight = +(rod.fish.weight * (1.9 + rng()*0.6)).toFixed(2); }
     else if (vr < 0.03 + 0.03) rod.fish.variant = VARIANT_MORPHS[(rng()*VARIANT_MORPHS.length)|0]; }
-  // §fishrework a run of teasing nibbles first — small twitches meant to bait an early strike (which spooks it)
-  rod.state = "nibble";
-  rod.nibblesLeft = FISH_TUNE.NIBBLES_MIN + Math.floor(Math.random() * (FISH_TUNE.NIBBLES_MAX - FISH_TUNE.NIBBLES_MIN + 1));
-  rod.nibbleUntil = clock.t + FISH_TUNE.NIBBLE_GAP[0] + Math.random() * (FISH_TUNE.NIBBLE_GAP[1] - FISH_TUNE.NIBBLE_GAP[0]);
-  rod.nibbleTwitch = 1;
+  // the original single nibble, then the plunge (old minigame restored)
+  rod.state = "nibble"; rod.nibbleUntil = clock.t + (0.5 + Math.random() * 0.5);
   if (typeof SND !== "undefined") SND.play("tick", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz] });
 }
-function nibbleTwitch() {   // §fishrework one more little tease: a tick, a dimple on the water, the bobber jiggles
-  rod.nibbleTwitch = 1; rod.bob.sink = 0.3;
-  if (typeof SND !== "undefined") SND.play("tick", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz], volume: 0.7 });
-  if (typeof spawnSand === "function") spawnSand(rod.bob.x, rod.bob.surf + 0.02, rod.bob.z, 2, [0.8, 0.86, 0.92]);
-  rod.nibbleUntil = clock.t + FISH_TUNE.NIBBLE_GAP[0] + Math.random() * (FISH_TUNE.NIBBLE_GAP[1] - FISH_TUNE.NIBBLE_GAP[0]);
-}
-function toBite() {   // §fishrework THE real bite: the bobber plunges under with a splash and a thud — clearly different
+function toBite() {   // THE real bite: the bobber plunges under with a splash + a plop (a clear, readable cue)
   rod.state = "bite"; rod.hookUntil = clock.t + FISH_TUNE.STRIKE_WINDOW + (relaxedFishing ? 0.8 : 0); rod.bob.sink = 1; rod.bob.splash = 1;
-  hintText = "Strike!"; hintT = FISH_TUNE.STRIKE_WINDOW + 0.2;   // §fishrework a clear cue for the short strike window
-  if (typeof SND !== "undefined") { SND.play("plop", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz], volume: 1 }); SND.play("whoosh", { volume: 0.4 }); }
-  if (typeof spawnSand === "function") spawnSand(rod.bob.x, rod.bob.surf + 0.05, rod.bob.z, 10, [0.85, 0.9, 0.96]);
+  if (typeof SND !== "undefined") SND.play("plop", { position: [rod.bob.tx, rod.bob.surf, rod.bob.tz], volume: 1 });
+  if (typeof spawnSand === "function") spawnSand(rod.bob.x, rod.bob.surf + 0.05, rod.bob.z, 8, [0.85, 0.9, 0.96]);
 }
 function missBite() {                                          // struck during the nibble, or let the bite window lapse
   showCard("It got away", "The fish spat the hook. Wait for the full bite next time.");
@@ -3794,14 +3791,6 @@ function updateFight(dt) {
   fg.tension += dTens * dt;
   fg.tension = Math.max(0, Math.min(1, fg.tension));
   if (fg.snapFlash > 0) fg.snapFlash = Math.max(0, fg.snapFlash - dt);
-  // §fishrework reeling draws the bobber slowly toward the player (never up onto land — depth-gated at the
-  // shoreline); a run makes it dart side to side and kick up splashes, more for a bigger/stronger fish.
-  { const dxp = player.x - rod.bob.x, dzp = player.z - rod.bob.z, dd = Math.hypot(dxp, dzp) || 1;
-    if (reeling && dd > 2.4) { const step = (fg.runActive ? 0.5 : 1.5) * dt, nx = rod.bob.x + dxp/dd*step, nz = rod.bob.z + dzp/dd*step;
-      if (waterDepthAt(nx, nz) > 0.4) { rod.bob.x = nx; rod.bob.z = nz; } }                              // stop at the shoreline
-    if (fg.runActive) { const amp = Math.sin(clock.t * 13) * (0.6 + (mini.runStr||1) * 0.9) * dt, px = -dzp/dd, pz = dxp/dd, nx = rod.bob.x + px*amp, nz = rod.bob.z + pz*amp;
-      if (waterDepthAt(nx, nz) > 0.4) { rod.bob.x = nx; rod.bob.z = nz; }
-      if (typeof spawnSand === "function" && Math.random() < dt * 16) spawnSand(rod.bob.x, rod.bob.surf + 0.05, rod.bob.z, 2 + Math.round((mini.runStr||1) * 2), [0.85, 0.9, 0.96]); } }
   const inZone = fg.tension >= lo && fg.tension <= hi;
   fg.zoneGlow += ((inZone ? 1 : 0) - fg.zoneGlow) * Math.min(1, dt * 10);        // zone glows while the needle is inside
   if (fg.tension > hi)      { fg.strain += (fg.tension - hi) * (relaxed ? 1.5 : 3.4) * dt; fg.slack = Math.max(0, fg.slack - 0.5 * dt); }
@@ -3865,7 +3854,7 @@ function updateFishing(dt) {
     if (Math.hypot(player.x - rod.bob.x, player.z - rod.bob.z) > CANCEL_DIST) { hintText = "Too far, line reeled in"; hintT = 1.4; if (typeof SND !== "undefined") SND.play("plop"); endCast(0.4); return; }
   }
   if (rod.state === "waiting") { if (clock.t >= rod.biteAt) beginBite(); }
-  else if (rod.state === "nibble") { if (clock.t >= rod.nibbleUntil) { rod.nibblesLeft--; if (rod.nibblesLeft <= 0) toBite(); else nibbleTwitch(); } }
+  else if (rod.state === "nibble") { if (clock.t >= rod.nibbleUntil) toBite(); }
   else if (rod.state === "bite") { if (clock.t >= rod.hookUntil) missBite(); }
   else if (rod.state === "fighting") updateFight(dt);
   // bobber bob / sink settle
@@ -4110,16 +4099,9 @@ function hudHook(g, x, y) {
   g.restore();
 }
 function drawReelGauge(g) {
-  const fg = rod.fight; const w = 380, cx = innerWidth / 2, x = cx - w / 2;
-  // §fishrework compact and near the CENTRE of the screen (eyes stay by the bobber), not way down at the bottom.
-  const yT = Math.round(innerHeight * 0.56), yL = yT + 56, h = 24;
+  const fg = rod.fight; const w = 400, cx = innerWidth / 2, x = cx - w / 2;   // §fishbig the original bottom-of-screen mini-game
+  const yT = innerHeight - 220, yL = innerHeight - 164, h = 24;
   g.save();
-  // §fishrework critical shake + red flash when the line is about to snap (tension over the zone / a strain)
-  const crit = fg.snapFlash > 0 ? 1 : (fg.tension > fg.hi ? Math.min(1, (fg.tension - fg.hi) * 5) : 0);
-  if (crit > 0.01) {
-    const sh = crit * 5; g.translate(Math.round((Math.random() - 0.5) * sh), Math.round((Math.random() - 0.5) * sh));
-    g.fillStyle = `rgba(200,50,40,${0.14 * crit})`; g.fillRect(0, 0, innerWidth, innerHeight);   // red danger flash over the screen
-  }
   g.fillStyle = FHUD.oak; hudChamfer(g, x - 22, yT - 18, w + 44, 104, 11); g.fill();              // oak panel
   g.strokeStyle = FHUD.rim; g.lineWidth = 2; hudChamfer(g, x - 22, yT - 18, w + 44, 104, 11); g.stroke();   // brass rim
   // --- tension track with a zone that GLOWS inside and flashes red on a strain ---
@@ -8180,8 +8162,8 @@ function selectedItem() { const c = Inv.hotbar[Inv.selected]; return c ? c.id : 
 function lanternLit() { return mode === "walk" && !isPanelOpen() && selectedItem() === "lantern"; }
 function lanternPos() { return [player.x, player.eyeY - 0.55, player.z]; }
 function lanternFlicker() { const t = clock.t; return 0.84 + 0.12*Math.sin(t*18.0) + 0.06*Math.sin(t*7.3 + 1.0) + 0.04*Math.sin(t*33.0); }
-const LANTERN_I = 0.8;    // §night lantern brightness (warm, soft) — a touch brighter now it's the main night light
-let LANTERN_R = 26;       // §night lantern light radius in metres — a wide LOCAL pool so it's the useful "see" tool at night
+const LANTERN_I = 0.85;   // §night lantern brightness (warm, soft)
+let LANTERN_R = 13;       // §night lantern light radius — a SMALL bright ring right around the player (not a wide pool that lights mid-distance trees)
    // §3 indoor multiplier so the lantern doesn't wash the close walls to white (tunable)
 let placedLanterns = [];   // §tools lit lanterns set down in the world, saved per seed: { x, y, z }
 // the one lantern that lights the scene this frame: the held one if raised, else the nearest placed lantern to the camera
@@ -8199,9 +8181,10 @@ function activeLanternPos() {
 function setNightUniforms(U) {
   if (!U || U.uNightDark === undefined) return;
   const nd = camUnderwaterNow ? 0 : (1 - (typeof dayFactor === "function" ? dayFactor() : 1));
+  const far = NIGHT_VIEW_FAR + ((lanternLit() || _dbgLantern) ? LANTERN_VIEW_BONUS : 0);   // §night a held lantern pushes the view a bit further (DIMLY — the darkening keeps far things dim, not lit)
   gl.uniform1f(U.uNightDark, nd);
   gl.uniform1f(U.uNightNear, NIGHT_VIEW_NEAR);
-  gl.uniform1f(U.uNightFar, NIGHT_VIEW_FAR);   // §night fixed short night view; the lantern is a LOCAL pool, it doesn't extend this
+  gl.uniform1f(U.uNightFar, far);
   gl.uniform1f(U.uNightPoolR, NIGHT_POOL_R);
   gl.uniform1f(U.uNightPoolI, NIGHT_POOL_I);
 }
@@ -9965,7 +9948,7 @@ function digAt(x, z) {
   const amt = (kind === "wet" ? 1.5 : kind === "dry" ? 1.1 : 0.7) * weak;
   const holeAng = Math.atan2(player.z - z, player.x - x);
   const wasAbove = waterSurfaceAt(x, z) < surfaceAt(x, z).h - 0.02;
-  paintCells(x, z, DIG_R * 0.55, digMaterialMat(x, z), true);   // the floor of the hole shows the exposed material (grass regrows on heal). §matrm digging no longer yields earth-material items
+  paintCells(x, z, DIG_R * 0.72, digMaterialMat(x, z), true);   // §matfill paint a bit wider so neighbouring dig strokes overlap and don't leave unpainted grass gaps (blobs) between them
   applyDig(x, z, amt, holeAng);
   removeFoliageAround(x, z, DIG_R);                          // clear grass/seaweed with a burst
   const dc = terrainColorAt(x, z);   // §hitcol chips match the ground struck (green on grass, tan on sand, …)
@@ -12576,7 +12559,7 @@ function frame(now) {
   // §night at night, stop drawing props past where they've already melted into darkness (they'd be invisible
   // anyway): a perf win and no pop-in, since the night fade (NIGHT_VIEW_FAR) completes before this cull edge.
   { const nd = camUnderwater ? 0 : (1 - dayFactor()), base = BASE_DRAW_R * GFX.propDist;
-    DRAW_R = (nd > 0.35) ? Math.min(base, NIGHT_VIEW_FAR + 15) : base; }
+    DRAW_R = (nd > 0.35) ? Math.min(base, NIGHT_VIEW_FAR + ((lanternLit() || _dbgLantern) ? LANTERN_VIEW_BONUS : 0) + 15) : base; }
   let _uwFogD, _uwFogN, _uwSky;
   if (camUnderwater) {
     const depthBelow = Math.max(0, camSurf - cam.pos[1]);
