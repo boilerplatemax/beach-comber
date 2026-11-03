@@ -2951,8 +2951,8 @@ void main() {
   vec2 uv = clamp((xz + ${HALF_F}) / ${WORLD_F}, 0.0, 1.0);
   float terr = texture(uHeight, uv).r;
   float rim = texture(uFilled, uv).r;            // level this cell connects to the sea
-  float local = max(uWaterLevel, rim);           // isolated pools hold water to the rim
-  float pool = (rim > uWaterLevel + 0.05 && rim > terr + 0.02) ? 1.0 : 0.0;
+  float pool = (rim > uWaterLevel + 0.05 && rim > terr + 0.02) ? 1.0 : 0.0;   // §waterfix a real basin that holds water above sea level
+  float local = pool > 0.5 ? rim : uWaterLevel;  // §waterfix the surface is the SEA (or a held pool), NEVER max(sea,rim): on dry land rim==terr, so max() dragged the sheet up onto the land and rendered water on dry sand
   float depth = local - terr;
   float damp = pool > 0.5 ? 0.05 : smoothstep(0.0, 3.0, max(0.0, depth)); // pools are still; waves ramp in slowly from the shore so the waterline never lifts/exposes an edge
   float wy = waveH(xz, uTime) * damp * uWaterQ;
@@ -2984,7 +2984,7 @@ void main() {
   vec2 swarp = (vec2(wvn(vWorld.xz * 0.07 + 5.0), wvn(vWorld.xz * 0.07 + 29.0)) - 0.5) * (4.0 / ${WORLD_F});
   float terr = texture(uHeight, uv + swarp).r;
   float rim = texture(uFilled, uv).r;
-  float local = max(uWaterLevel, rim);
+  float local = vPool > 0.5 ? rim : uWaterLevel;   // §waterfix match the VS: sea level on the open coast, the rim only inside a real pool — not max(sea,rim), which painted water across dry land
   float depth = local - terr;
   // §water SOFT shoreline: the sheet extends UNDER the beach, so the terrain clips it via the depth
   // buffer (no exposed sheet edge). Only skip fragments well inside dry land; right at the waterline
