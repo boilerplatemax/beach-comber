@@ -7498,6 +7498,7 @@ const FINDS = {
   rubberduck:{ mesh: () => rubberDuckMesh(),        base: 0.6, max: 50, label: "Rubber Duck", desc: "A cheery little bath duck, impossibly far from any bath.", rare: 1 },
   nautilus: { mesh: () => nautilusMesh(),           base: 0.5, max: 60, label: "Nautilus Shell", desc: "A pearly chambered spiral, drifted from deep water.", rare: 2 },
   oyster:   { mesh: () => oysterMesh(),             base: 0.5, max: 80, label: "Oyster", desc: "A craggy grey oyster, clamped shut. Good food, better cooked.", rare: 0 },
+  conch:    { mesh: () => conchMesh(),              base: 0.5, max: 30, label: "Conch", desc: "A big conch with a flared pink lip. Hermit crabs would love it; so would the gulls.", rare: 1 },
   urchin:   { mesh: () => urchinItemMesh(),         base: 0.5, max: 40, label: "Sea Urchin", desc: "A spiny purple urchin from the seabed. Its spines still stir, slowly.", rare: 1 },
   barnacle: { mesh: () => barnacleMesh(),           base: 0.5, max: 80, label: "Barnacles", desc: "Acorn barnacles scraped off a tidal rock, prized fishing bait.", rare: 0, bait: 1 },
   crabmeat: { mesh: () => crabMeatMesh(),           base: 0.45,max: 80, label: "Crab Meat", desc: "Pale, sweet meat picked from a crab. Good food, better cooked.", rare: 0 },
@@ -9741,6 +9742,10 @@ const GULL = {
   huntChance: 0.7,                      // chance it commits to a dive when a crab is in range and off cooldown
   diveSpeed: 13, diveAlt: 0.55,         // dive flight speed (m/s) and how low above the crab it skims (m)
   snatchR: 1.3, diveGiveUp: 3.2,        // grab radius (m) and seconds before it breaks off a failed dive
+  // §gullcarry now and then a flying gull picks up a loose shell (or a hermit crab in one), carries it up and drops it
+  carryChance: 0.2,                     // per hunting check, odds it looks for a shell instead
+  carryR: 0.8, grabR: 0.9, grabSpeed: 7, // spots shells within huntR × this; pick-up radius (m); swoop speed (m/s)
+  carryTime: [2.5, 5], dropAlt: 3.5,    // seconds it carries before letting go, once at least this high (m)
 };
 let gulls = [], _gullT = 0;
 const gullUnit = () => seagullConfig.bird.air.frame.unit;
@@ -9931,10 +9936,12 @@ function updateGull(k, dt, px, pz, loud) {
     }
     case "fly": {
       k.t -= dt;
+      if (k.carrying) gullCarryTick(k, dt);   // §gullcarry holding a shell: let go once high enough
       // §gullhunt peel off to dive at a crab now and then
       k.huntCd = (k.huntCd || 0) - dt;
-      if (k.huntCd <= 0 && k.climb <= 0) {
+      if (k.huntCd <= 0 && k.climb <= 0 && !k.carrying) {
         k.huntCd = crR(GULL.huntCd[0], GULL.huntCd[1]);
+        if (spawnShellObj.ready && critRng() < GULL.carryChance) { const o = gullFindCarry(k); if (o) { k.carryT = o; k.mode = "grab"; k.t = GULL.diveGiveUp * 2.6; break; } }   // §gullcarry
         if (critRng() < GULL.huntChance) { const prey = gullFindPrey(k); if (prey) { k.prey = prey; k.mode = "dive"; k.t = GULL.diveGiveUp; break; } }
       }
       const ox = c.x - k.ocx, oz = c.z - k.ocz, od = Math.hypot(ox, oz) || 1;
@@ -9942,11 +9949,31 @@ function updateGull(k, dt, px, pz, loud) {
       const hd = Math.atan2(tz - oz / od * pull, tx - ox / od * pull);
       const ahead = gullFloor(c.x + Math.cos(k.h) * 8, c.z + Math.sin(k.h) * 8);
       gullFly(k, dt, hd, (GULL.cruise[0] + GULL.cruise[1]) * 0.5, Math.max(ahead, gullFloor(c.x, c.z)) + k.alt);
+      if (k.carrying && k.t <= 0) k.t = 2;   // §gullcarry no landing with something in its beak
       if (!k.ambient && k.t <= 0 && !gullPickLanding(k, px, pz)) k.t = crR(3, 8);
       if (k.ambient && k.t <= 0) {   // ambient circlers wander the shore, now and then landing
         if (critRng() < (isNightNow() ? 0.9 : 0.3)) { k.ambient = false; if (!gullPickLanding(k, px, pz)) k.t = crR(3, 8); }
         else { const p = shorePointNear(20, 90, GULL.bandLo, GULL.bandHi, _spot); if (p) { k.ocx = p[0]; k.ocz = p[1]; } k.t = crR(GULL.loiter[0], GULL.loiter[1]); }
       }
+      break;
+    }
+    case "grab": {   // §gullcarry glide down onto a shell (or a hermit crab in one) and pick it up
+      k.t -= dt;
+      const o = k.carryT;
+      if (!o || o.gone || o.carrier || o.fall || k.t <= 0 || (o.occupant && o.occupant.mode === "carried")) {
+        k.carryT = null; k.mode = "fly"; k.ocx = c.x + Math.cos(k.h)*14; k.ocz = c.z + Math.sin(k.h)*14; k.t = crR(3, 7); k.climb = crR(GULL.climbOut[0], GULL.climbOut[1]); break; }
+      const tx = o.c.x - c.x, tz = o.c.z - c.z, td = Math.hypot(tx, tz);
+      if (td < GULL.grabR && c.y - surfaceAt(o.c.x, o.c.z).h < 0.95) { gullGrabShell(k, o); break; }
+      const gy = surfaceAt(o.c.x, o.c.z).h;
+      if (td < 2.5) {   // the last swoop: straight in and down onto it (a gliding turn circle is wider than the grab radius)
+        k.h = Math.atan2(tz, tx); c.yaw = -k.h; k.v = Math.max(1.5, Math.min(k.v, 4));
+        const high = c.y - gy > 1.4, st = Math.min(td, k.v * dt * (high ? 0.35 : 1)); c.x += tx / td * st; c.z += tz / td * st;   // still high: drop over it rather than overshoot
+        c.y = approach(c.y, gy + 0.35, 4.5 * dt);
+        c.bank *= Math.max(0, 1 - dt * 5);
+        if (c.target !== 'glide') c.setState('glide');
+        break;
+      }
+      gullFly(k, dt, Math.atan2(tz, tx), Math.min(GULL.grabSpeed, 1.8 + td * 0.7), Math.max(gullFloor(o.c.x, o.c.z), gy) + 0.4 + td * 0.4);   // down a glide path onto it
       break;
     }
     case "dive": {   // §gullhunt swoop low and fast at the target crab; grab it on contact, break off if it escapes
@@ -10068,7 +10095,7 @@ function updateGulls(dt, loud) {
   for (let i = gulls.length - 1; i >= 0; i--) {
     const k = gulls[i];
     if (dt > 0) updateGull(k, dt, px, pz, loud);
-    if (Math.hypot(k.c.x - px, k.c.z - pz) > GULL.despawn && !onScreenPoint(k.c.x, k.c.z)) { k.c.dispose(); gulls.splice(i, 1); }
+    if (Math.hypot(k.c.x - px, k.c.z - pz) > GULL.despawn && !onScreenPoint(k.c.x, k.c.z)) { if (k.carrying) gullLetGo(k); k.c.dispose(); gulls.splice(i, 1); }
   }
 }
 
@@ -10165,10 +10192,15 @@ try {   // register on the shared runtime (a failure only turns the reef life of
 } catch (e) { console.error("[creatures] reef disabled:", e); }
 let anemones = new Map(), _anemT = 0, fishes = [];
 // Deterministic per-seed hash of a grid cell (0..1). Independent of every rng stream.
+// (ix and iz are mixed in one after the other, with a full avalanche between, so neighbouring cells don't
+// come out in streaks of high or low values.)
 function reefHash(ix, iz, k) {
-  let h = (Math.imul(ix | 0, 0x27d4eb2d) ^ Math.imul(iz | 0, 0x165667b1) ^ Math.imul(k | 0, 0x9e3779b1) ^ SEED_INT) >>> 0;
-  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b); h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
-  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  let h = (SEED_INT ^ Math.imul(k | 0, 0x9e3779b1)) >>> 0;
+  h = Math.imul(h ^ (ix | 0), 0x85ebca6b); h ^= h >>> 13;
+  h = Math.imul(h ^ (iz | 0), 0xc2b2ae35); h ^= h >>> 16;
+  h = Math.imul(h, 0x27d4eb2d); h ^= h >>> 15;
+  h = Math.imul(h, 0x165667b1); h ^= h >>> 13;
+  return (h >>> 0) / 4294967296;
 }
 // A typical low tide (only the strongest springs drain lower: then the shallowest anemones close up and
 // their fish leave until the water comes back).
@@ -11342,6 +11374,369 @@ function resetWorms() { for (const w of worms) w.c.dispose(); worms = []; }
 // flag on the hoisted function first, so they never touch `worms` too early.
 spawnLivingWorm.ready = WORM_OK;
 
+/* ===================================================================== *
+ * § BIG SHELLS & HERMIT CRABS  (physical shells, their tenants, and gulls)
+ *
+ *   Big shells are physical world objects, not flat finds: conches (a new
+ *   procedural model) and whelks (the game's own spiral shell), lying on the
+ *   beach where the per-seed grid hash puts them. Pick one up → the Conch
+ *   item (new) or the Spiral Shell (existing). Drop a Conch from the satchel
+ *   and a real conch lands there again (saved like any drop).
+ *
+ *   Hermit crabs are the crab model, small, wearing one of those shell
+ *   objects on their back (two parts, as Tri Soup can't rig a crab-in-shell).
+ *   They potter about the wet band, duck into their shell when you or a gull
+ *   come close (the crab hides, the shell lies still), and now and then move
+ *   house: a free shell nearby that fits better (a conch you dropped next to
+ *   one, say) and the crab walks over and swaps, leaving its old shell behind.
+ *
+ *   Gulls (§gullcarry): as well as snatching crabs (§gullhunt), a flying gull
+ *   sometimes swoops on a loose shell or a hermit crab, carries it up and
+ *   drops it, as real gulls do to crack shells. Nothing is hurt: the hermit
+ *   crab stays tucked in a while after it lands, then walks off.
+ *   Live state uses critRng / the grid hash (never world-gen rng()).
+ * ===================================================================== */
+// @system CREATURES  @section CREATURES/shells-hermits
+
+// A conch, lying on its side (built procedurally, in metres, ~0.62 long): a fat knobbed body whorl
+// tapering to a short spire (+Z), with a flared pink lip at the aperture end (z ≈ 0) rolled toward the ground.
+function conchMesh() {
+  const outer = [0.92, 0.8, 0.64], band = [0.8, 0.62, 0.46], lip = [0.98, 0.72, 0.64], lipIn = [0.95, 0.56, 0.55];
+  const H = 0.62, R = 0.19, pw = 1.7, prof = (y) => R * Math.pow(Math.max(0, 1 - y / H), pw);
+  const m = spireShell(H, R, pw, 5, outer, band, 0.016);
+  for (let i = 0; i < 8; i++) { const a = i / 8 * 6.283, y = 0.2, r = prof(y) + 0.008; mergeAt(m, sphM(0.03, band, 5, 3), Math.cos(a) * r, y, Math.sin(a) * r); }   // knobbed shoulder
+  const n = 6; let prev = null;   // the flared lip: a plate fanning out on +X along the lower body (both faces)
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, y = 0.01 + t * 0.36, rIn = prof(y) * 0.92, rOut = prof(y) + 0.12 * Math.sin(Math.PI * Math.min(1, t * 1.05)) + 0.015;
+    const row = [[rIn, y, -0.035], [rOut, y + 0.015, 0], [rIn, y, 0.035]];
+    if (prev) { mQuad(m, prev[0], prev[1], row[1], row[0], lip); mQuad(m, row[0], row[1], prev[1], prev[0], lip);
+                mQuad(m, prev[1], prev[2], row[2], row[1], lipIn); mQuad(m, row[1], row[2], prev[2], prev[1], lipIn); }
+    prev = row;
+  }
+  return shellLying(m, -1.0);
+}
+// The whelk a hermit crab usually wears: the game's spiral shell (shellMesh), lying on its side.
+function whelkLyingMesh() { return shellLying(shellMesh(), 0); }
+// Turn an upright shell (aperture at y = 0, spire up +Y) to lie along +Z, then roll it `roll` rad about Z.
+function shellLying(m, roll) {
+  const P = m.pos, cr = Math.cos(roll), sr = Math.sin(roll);
+  for (let i = 0; i < P.length; i += 3) { const x = P[i], y = P[i+1], z = P[i+2], x1 = x, y1 = -z, z1 = y; P[i] = x1 * cr - y1 * sr; P[i+1] = x1 * sr + y1 * cr; P[i+2] = z1; }
+  return m;
+}
+// Static models on the creature runtime (Tri Soup's 'static' method: no animation states), so shells get
+// the same instanced drawing, lighting and placement (x/y/z, yaw, tilt, scale) as the creatures.
+const conchConfig = { id: 'conch', model: conchMesh, method: 'static', type: 'static', rig: null, defaultAnimation: null, states: [], animations: {}, skeleton: null };
+const whelkConfig = { id: 'whelk', model: whelkLyingMesh, method: 'static', type: 'static', rig: null, defaultAnimation: null, states: [], animations: {}, skeleton: null };
+let SHELLS_OK = false;
+try {
+  if (CREATURE_RT) { CREATURE_RT.register(conchConfig); CREATURE_RT.load('conch'); CREATURE_RT.register(whelkConfig); CREATURE_RT.load('whelk'); SHELLS_OK = true; }
+} catch (e) { console.error("[creatures] big shells / hermit crabs disabled:", e); }
+
+const SHELL = {
+  cell: 11, near: 44, despawn: 60, tick: 0.8, cap: 40,
+  chance: { sandy: 0.2, cobble: 0.15, reef: 0.15, mudflat: 0.06, marsh: 0.03 },   // per cell: a conch / whelk lying here
+  conchShare: 0.55,                      // of those, how many are conches (the rest whelks)
+  conch: [0.5, 0.7], whelk: [0.42, 0.58],    // scale (model ~0.62 m long → conches ~31–43 cm, whelks ~26–36 cm: big enough to read on the sand)
+  len: 0.62, regrowDays: [1.5, 3],
+  g: 9.8,                                // falling shells
+};
+const HERMIT = {
+  count: 4, cap: 6, tick: 1.5, near: 10, far: 40, despawn: 62,
+  crabPerShell: 0.0062,                  // crab scale per shell scale (legs and claws poke out round the shell)
+  spawnConch: 0.3,                       // chance a new hermit wears a conch (else a whelk)
+  shellScale: [0.42, 0.56],
+  walk: [0.05, 0.12], idle: [2, 7], hop: [1, 3.2],   // m/s; s paused; wander distance (m)
+  shy: 2.6, hideFor: [5, 10], gullFear: 5,           // m (× player loudness) / s / m: duck into the shell
+  house: 4.5, upgrade: [0.95, 1.8], fancy: 0.25,     // seek free shells within (m); acceptable size × own; odds of moving into a same-size one
+  house_v: 0.17,                                    // m/s walking over to a new shell
+};
+const SHELL_TONES = [[1.0, 0.82, 0.66], [1.02, 0.74, 0.62], [0.9, 0.72, 0.58], [1.0, 0.9, 0.8], [0.86, 0.66, 0.6]];   // cream-orange, pink, tan, ivory, rosy-brown
+let shells = [], _shellCells = new Map(), _shellT = 0, hermits = [], _hermitT = 0;
+const shellTaken = new Map();            // grid key → clock.t when that cell's shell lies there again
+function shellLen(sh) { return SHELL.len * sh.c.scale; }
+function shellItem(sh) { return sh.kind === "conch" ? "conch" : "shell"; }
+// A shell object. `drop` = its saved worldDrops record (a conch the player dropped), `key` = its grid cell.
+function spawnShellObj(kind, x, z, scale, opts) {
+  if (!CREATURE_RT || !SHELLS_OK) return null;
+  opts = opts || {};
+  const c = CREATURE_RT.spawn(kind === "conch" ? 'conch' : 'whelk');
+  c.scale = scale; c.x = x; c.z = z; c.y = surfaceAt(x, z).h - 0.01 * scale; c.yaw = opts.yaw !== undefined ? opts.yaw : critRng() * 6.283;
+  const sh = crR(0.85, 1.02), w = SHELL_TONES[(critRng() * SHELL_TONES.length) | 0];   // warm, varied tones so a shell stands out from the sand
+  c.tint = [sh * w[0], sh * w[1], sh * w[2]];
+  const o = { c, kind, key: opts.key || null, drop: opts.drop || null, occupant: null, carrier: null, fall: null, gone: false };
+  shellRest(o);
+  shells.push(o);
+  return o;
+}
+spawnShellObj.ready = false;
+function shellRest(o) {   // settle onto the ground (or seabed), leaning with its slope
+  const c = o.c, s = surfaceAt(c.x, c.z), nh = Math.hypot(s.nx, s.nz);
+  c.y = s.h - 0.01 * c.scale; c.tilt = nh > 1e-4 ? Math.atan2(nh, s.ny) * 0.8 : 0; c.tiltDir = Math.atan2(-s.nx, s.nz); c.visible = true;
+}
+function removeShell(o) {
+  if (o.gone) return; o.gone = true; o.c.dispose();
+  const i = shells.indexOf(o); if (i >= 0) shells.splice(i, 1);
+  if (o.drop) { const di = worldDrops.indexOf(o.drop); if (di >= 0) worldDrops.splice(di, 1); o.drop = null; saveDrops(); }
+}
+// It leaves its grid cell for good (picked up, carried off, moved into): that cell stays empty a while.
+function shellLeaveCell(o) {
+  if (!o.key) return;
+  shellTaken.set(o.key, clock.t + DAY_PERIOD * crR(SHELL.regrowDays[0], SHELL.regrowDays[1]));
+  _shellCells.set(o.key, null); o.key = null;
+}
+function shellFree(o) { return !o.gone && !o.occupant && !o.carrier && !o.fall; }
+
+/* ---- world shells from the grid hash ---- */
+function updateShellCells() {
+  const px = player.x, pz = player.z;
+  for (const [key, o] of _shellCells) {
+    const [ix, iz] = key.split(",").map(Number);
+    if (Math.hypot((ix + 0.5) * SHELL.cell - px, (iz + 0.5) * SHELL.cell - pz) > SHELL.despawn) { if (o && !o.gone && shellFree(o)) removeShell(o); _shellCells.delete(key); }
+  }
+  for (const [key, t] of shellTaken) if (clock.t >= t) shellTaken.delete(key);
+  const C = SHELL.cell, r = Math.ceil(SHELL.near / C), cx = Math.floor(px / C), cz = Math.floor(pz / C);
+  const lo = typicalLowTide() - 2.5, hi = MAX_HIGH_TIDE + 1.2;   // from the low-tide flats and shallows up to the top of the beach
+  for (let iz = cz - r; iz <= cz + r; iz++) for (let ix = cx - r; ix <= cx + r; ix++) {
+    const key = ix + "," + iz;
+    if (_shellCells.has(key)) continue;
+    const H = (k) => reefHash(ix, iz, 300 + k), x = (ix + 0.15 + 0.7 * H(1)) * C, z = (iz + 0.15 + 0.7 * H(2)) * C;
+    if (Math.hypot(x - px, z - pz) > SHELL.near) continue;
+    let o = null;
+    const h = heightAt(x, z), bio = coastBiomeAt(x, z);
+    if (shells.length < SHELL.cap && !shellTaken.has(key) && cellIndex(x, z) >= 0 && h > lo && h < hi && H(0) < (SHELL.chance[bio] || 0) && surfaceAt(x, z).slope < 0.55) {
+      const conch = H(3) < SHELL.conchShare, rg = conch ? SHELL.conch : SHELL.whelk;
+      o = spawnShellObj(conch ? "conch" : "whelk", x, z, rg[0] + (rg[1] - rg[0]) * H(4), { key, yaw: H(5) * 6.283 });
+    }
+    _shellCells.set(key, o);
+  }
+}
+/* ---- falling / carried shells ---- */
+function updateShellMotion(o, dt) {
+  const c = o.c;
+  if (o.carrier) {   // held in a gull's beak, a little ahead of and below its body
+    const g = o.carrier, gc = g.c;
+    c.x = gc.x + Math.cos(g.h) * 0.3; c.z = gc.z + Math.sin(g.h) * 0.3; c.y = gc.y + 0.1;
+    c.yaw = Math.PI / 2 - g.h; c.tilt = 0.15; c.tiltDir = -c.yaw;
+  } else if (o.fall) {
+    const f = o.fall; f.vy -= SHELL.g * dt; f.vx *= Math.max(0, 1 - dt * 0.6); f.vz *= Math.max(0, 1 - dt * 0.6);
+    c.x += f.vx * dt; c.z += f.vz * dt; c.y += f.vy * dt; c.tilt += f.spin * dt; c.tiltDir = -c.yaw;
+    const wet = waterDepthAt(c.x, c.z) > 0.15, floor = surfaceAt(c.x, c.z).h;
+    if (wet && c.y < waterSurfaceAt(c.x, c.z) && !f.splashed) {   // hits the water: slows right down and sinks
+      f.splashed = true; f.vy *= 0.25; f.vx *= 0.3; f.vz *= 0.3;
+      if (typeof SND !== "undefined") SND.play("plop", { position: [c.x, c.y, c.z], pitch: 0.9 });
+    }
+    if (c.y <= floor) {
+      if (!wet && f.vy < -3 && !f.bounced) {   // a hard landing on sand / rock: clack, a puff, one small bounce
+        f.bounced = true; f.vy = -f.vy * 0.28; f.spin = crR(-3, 3); c.y = floor;
+        if (typeof spawnSand === "function") spawnSand(c.x, floor + 0.05, c.z, 6, [0.78, 0.68, 0.52]);
+        if (typeof SND !== "undefined") SND.play("crack", { position: [c.x, floor, c.z], pitch: crR(1.4, 1.8), volume: 0.45 });
+      } else {
+        o.fall = null; shellRest(o);
+        if (o.drop) { o.drop.x = c.x; o.drop.z = c.z; saveDrops(); }
+        if (o.occupant) hermitLanded(o.occupant);
+      }
+    }
+  }
+}
+function dropShellFrom(o, vx, vz) { o.carrier = null; o.fall = { vx, vy: 0, vz, spin: crR(-2, 2), bounced: false, splashed: false }; }
+
+/* ---- hermit crabs ---- */
+function spawnHermit(x, z) {
+  if (!CREATURE_RT || !SHELLS_OK) return null;
+  const conch = critRng() < HERMIT.spawnConch, ss = crR(HERMIT.shellScale[0], HERMIT.shellScale[1]) * (conch ? 1.1 : 1);
+  const sh = spawnShellObj(conch ? "conch" : "whelk", x, z, ss);
+  if (!sh) return null;
+  const c = CREATURE_RT.spawn('meshCrab', { animation: 'crawl', phase: critRng() });
+  c.scale = ss * HERMIT.crabPerShell; c.x = x; c.z = z; c.y = surfaceAt(x, z).h; c.yaw = critRng() * 6.283; c.intensity = 0;
+  const hue = critRng(); c.tint = hue < 0.5 ? [1.15, 0.7, 0.55] : hue < 0.8 ? [0.85, 0.55, 0.8] : [1.1, 0.95, 0.6];   // orange, purple or sandy hermits
+  const k = { c, shell: sh, mode: "idle", t: crR(0.5, 3), tx: x, tz: z, v: 0, vT: 0, sign: 1, yawT: c.yaw, turn: 0, hideT: 0, want: null, gone: false };
+  sh.occupant = k;
+  hermits.push(k);
+  hermitWear(k);
+  return k;
+}
+// Seat the shell on the crab's back: aperture to the carapace, spire trailing back and a little up.
+function hermitWear(k) {
+  const c = k.c, o = k.shell, oc = o.c, cs = c.scale, L = shellLen(o);
+  const bx = -Math.sin(c.yaw), bz = -Math.cos(c.yaw), back = 21 * cs + L * 0.42;   // the crab's back (model −Z), past the carapace
+  oc.x = c.x + bx * back; oc.z = c.z + bz * back; oc.y = c.y + 6 * cs;
+  oc.yaw = c.yaw + Math.PI; oc.tilt = -0.3; oc.tiltDir = -oc.yaw; oc.visible = true;
+}
+function hermitHide(k, secs) {
+  if (k.mode === "carried") return;
+  if (k.mode !== "hide") {   // the crab pulls in; the shell settles where it is
+    k.mode = "hide"; k.c.visible = false; k.v = 0;
+    const o = k.shell; o.c.x = k.c.x; o.c.z = k.c.z; shellRest(o); o.c.yaw = k.c.yaw + Math.PI;
+  }
+  k.hideT = Math.max(k.hideT, secs);
+}
+function hermitLanded(k) { k.c.x = k.shell.c.x; k.c.z = k.shell.c.z; k.c.y = surfaceAt(k.c.x, k.c.z).h; k.mode = "hide"; k.hideT = crR(6, 12); }   // lands tucked in, stays put a while
+function hermitFindHouse(k) {   // a free shell nearby that fits (bigger is better; same size now and then)
+  const own = k.shell.c.scale; let best = null, bs = 0;
+  for (const o of shells) {
+    if (!shellFree(o) || o === k.shell) continue;
+    const d = Math.hypot(o.c.x - k.c.x, o.c.z - k.c.z); if (d > HERMIT.house) continue;
+    const r = o.c.scale / own; if (r < HERMIT.upgrade[0] || r > HERMIT.upgrade[1]) continue;
+    if (r < 1.08 && critRng() > HERMIT.fancy) continue;
+    const score = r - d * 0.05; if (score > bs) { bs = score; best = o; }
+  }
+  return best;
+}
+function hermitSwap(k, o) {   // out of the old shell, into the new: the old one stays behind, free
+  const old = k.shell;
+  old.occupant = null; shellRest(old);
+  shellLeaveCell(o);
+  if (o.drop) { const di = worldDrops.indexOf(o.drop); if (di >= 0) worldDrops.splice(di, 1); o.drop = null; saveDrops(); }   // a crab moved into your conch: it's theirs now
+  o.occupant = k; k.shell = o; k.want = null;
+  hermitHide(k, crR(0.6, 1.2));   // a quick tuck-in to show it's moved
+}
+function updateHermit(k, dt, px, pz, loud) {
+  const c = k.c, o = k.shell;
+  if (k.mode === "carried") { c.visible = false; c.x = o.c.x; c.z = o.c.z; return; }
+  // threats: you, close; a gull swooping at it or circling low nearby
+  const d = Math.hypot(c.x - px, c.z - pz);
+  let threat = loud > 0 && d < HERMIT.shy * loud;
+  for (const g of gulls) { if (g.mode !== "grab" && g.mode !== "dive" && g.mode !== "stand" && g.mode !== "stroll") continue;
+    if (Math.hypot(g.c.x - c.x, g.c.z - c.z) < HERMIT.gullFear * (g.mode === "grab" ? 1.6 : 1)) { threat = true; break; } }
+  if (threat && k.mode !== "hide") hermitHide(k, crR(HERMIT.hideFor[0], HERMIT.hideFor[1]));
+  switch (k.mode) {
+    case "hide":
+      if (!threat) k.hideT -= dt;
+      if (k.hideT <= 0 && !o.fall && !o.carrier) {   // peeks out and carries on
+        k.mode = "idle"; k.t = crR(0.5, 2); c.visible = true; c.x = o.c.x; c.z = o.c.z; c.y = surfaceAt(c.x, c.z).h; c.yaw = o.c.yaw - Math.PI;
+      } else return;
+      break;
+    case "idle":
+      k.vT = 0; k.t -= dt;
+      if (k.t <= 0) {
+        const h = critRng() < 0.5 ? hermitFindHouse(k) : null;
+        if (h) { k.want = h; k.mode = "walk"; k.tx = h.c.x; k.tz = h.c.z; k.vT = HERMIT.house_v; k.t = 40; }   // a better home: hurries over
+        else {
+          const a = critRng() * 6.283, r = crR(HERMIT.hop[0], HERMIT.hop[1]), x = c.x + Math.cos(a) * r, z = c.z + Math.sin(a) * r, b = bandAt(x, z);
+          if (b > CRAB.bandLo - 0.2 && b < CRAB.bandHi + 0.6 && waterDepthAt(x, z) < 0.25 && surfaceAt(x, z).slope < 0.7) { k.mode = "walk"; k.tx = x; k.tz = z; k.vT = crR(HERMIT.walk[0], HERMIT.walk[1]); k.t = 25; }
+          else k.t = crR(1, 3);
+        }
+      }
+      break;
+    case "walk": {
+      if (k.want) { if (!shellFree(k.want)) { k.want = null; k.mode = "idle"; k.t = 1; break; } k.tx = k.want.c.x; k.tz = k.want.c.z; }
+      const wx = k.tx - c.x, wz = k.tz - c.z, wd = Math.hypot(wx, wz);
+      k.t -= dt;
+      if (k.want && wd < 0.22) { hermitSwap(k, k.want); return; }
+      if (wd < 0.1 || k.t <= 0) { k.mode = "idle"; k.t = crR(HERMIT.idle[0], HERMIT.idle[1]); k.want = null; break; }
+      crabSteer(k, wx / wd, wz / wd);
+      k.vT = Math.min(k.vT, 0.03 + wd * 0.4);
+      break;
+    }
+  }
+  // turn, then sidle at an animation-matched pace, like the shore crabs (the shell rides along)
+  const dy = wrapA(k.yawT - c.yaw), step = Math.max(-2.2 * dt, Math.min(2.2 * dt, dy));
+  c.yaw += step; k.turn = Math.abs(step) / Math.max(dt, 1e-4);
+  k.v = approach(k.v, k.vT * (k.mode === "walk" ? Math.max(0, Math.cos(dy)) : 0), 0.6 * dt);
+  c.legDir = k.sign;
+  c.x += Math.cos(c.yaw) * k.sign * k.v * dt; c.z += -Math.sin(c.yaw) * k.sign * k.v * dt;
+  c.y = surfaceAt(c.x, c.z).h; c.tilt = 0;
+  const vAnim = Math.max(k.v, k.turn * 0.02);
+  c.intensity = approach(c.intensity, vAnim < 0.005 ? 0 : 0.8, dt * 4);
+  c.matchGroundSpeed(vAnim / c.scale); if (c.speed > 6) c.speed = 6;
+  hermitWear(k);
+}
+function updateHermits(dt, loud) {
+  const px = player.x, pz = player.z;
+  _hermitT -= dt;
+  if (_hermitT <= 0) {
+    _hermitT = HERMIT.tick;
+    if (hermits.length < Math.min(HERMIT.cap, HERMIT.count)) for (let tries = 0; tries < 3; tries++) {
+      const p = shorePointNear(HERMIT.near, HERMIT.far, CRAB.bandLo + 0.1, CRAB.bandHi - 0.3, _spot);
+      if (!p || !onBeachBiome(p[0], p[1], 0.4) || onScreenPoint(p[0], p[1])) continue;
+      spawnHermit(p[0], p[1]); break;
+    }
+  }
+  for (let i = hermits.length - 1; i >= 0; i--) {
+    const k = hermits[i];
+    if (dt > 0) updateHermit(k, dt, px, pz, loud);
+    if (Math.hypot(k.c.x - px, k.c.z - pz) > HERMIT.despawn && !onScreenPoint(k.c.x, k.c.z) && k.mode !== "carried") {
+      k.gone = true; k.c.dispose(); hermits.splice(i, 1);
+      if (k.shell && !k.shell.carrier) { k.shell.occupant = null; removeShell(k.shell); }   // it wanders off with its home
+    }
+  }
+}
+
+/* ---- gulls: pick up a shell (or a hermit crab in one), carry it up, drop it (§gullcarry) ---- */
+function gullFindCarry(k) {
+  let best = null, bd = (GULL.huntR * GULL.carryR) ** 2;
+  for (const o of shells) {
+    if (o.gone || o.carrier || o.fall) continue;
+    if (o.occupant && o.occupant.mode === "carried") continue;
+    if (waterDepthAt(o.c.x, o.c.z) > 0.2) continue;
+    if (Math.hypot(o.c.x - player.x, o.c.z - player.z) < GULL.flush) continue;   // not right under your nose
+    const dx = o.c.x - k.c.x, dz = o.c.z - k.c.z, d2 = dx*dx + dz*dz;
+    if (d2 < bd) { bd = d2; best = o; }
+  }
+  return best;
+}
+function gullGrabShell(k, o) {
+  o.carrier = k; k.carrying = o; k.carryT = null; k.dropT = crR(GULL.carryTime[0], GULL.carryTime[1]);
+  shellLeaveCell(o);
+  if (o.occupant) { const h = o.occupant; h.mode = "carried"; h.c.visible = false; h.hideT = 0; }
+  if (typeof spawnSand === "function") spawnSand(o.c.x, surfaceAt(o.c.x, o.c.z).h + 0.1, o.c.z, 5, [0.78, 0.68, 0.52]);
+  if (typeof SND !== "undefined") SND.play("wingflap", { position: [k.c.x, k.c.y, k.c.z] });
+  k.mode = "fly"; k.climb = crR(GULL.climbOut[0], GULL.climbOut[1]); k.alt = crR(GULL.alt[0], GULL.alt[1]);
+  k.ocx = k.c.x + Math.cos(k.h) * 12; k.ocz = k.c.z + Math.sin(k.h) * 12; k.t = crR(GULL.loiter[0], GULL.loiter[1]); k.ambient = false;
+}
+// While carrying: after a few seconds, once high enough, let go (it drops along the gull's line of flight).
+function gullCarryTick(k, dt) {
+  const o = k.carrying; if (!o || o.gone) { k.carrying = null; return; }
+  k.dropT -= dt;
+  if (k.dropT <= 0 && k.c.y - gullFloor(k.c.x, k.c.z) > GULL.dropAlt) gullLetGo(k);
+}
+function gullLetGo(k) {
+  const o = k.carrying; if (!o) return; k.carrying = null;
+  if (o.gone) return;
+  if (o.occupant) o.occupant.mode = "hide";   // still tucked in on the way down
+  dropShellFrom(o, Math.cos(k.h) * k.v * 0.6, Math.sin(k.h) * k.v * 0.6);
+  if (typeof SND !== "undefined" && critRng() < 0.5) SND.play("gull_cry", { position: [k.c.x, k.c.y + 1, k.c.z], pitch: crR(0.95, 1.15), volume: 0.7 });
+}
+
+/* ---- pick up / prompts ---- */
+function pickBigShell(o) {
+  if (!o || o.gone || o.carrier || o.fall) return;
+  if (o.occupant) {   // somebody lives here: it pulls in, and you leave it be
+    hermitHide(o.occupant, crR(HERMIT.hideFor[0], HERMIT.hideFor[1]));
+    hintText = "A hermit crab lives in this shell"; hintT = 1.8; return;
+  }
+  const id = shellItem(o), added = Inv.add(id, 1);
+  if (added <= 0) { showCard("Pack full", "Drop something to make room."); if (typeof bagShake === "function") bagShake(); return; }
+  const first = !discovered.has("f_" + id); discovered.add("f_" + id); if (typeof notify === "function") notify(id, 1, first);
+  if (typeof SND !== "undefined") SND.play("pickup");
+  camNudge = 0.03;
+  shellLeaveCell(o); removeShell(o);
+  if (typeof checkSets === "function") checkSets();
+  saveState();
+}
+function bigShellPrompt(o) {
+  const v = IS_TOUCH ? "tap" : "click";
+  if (o.occupant) return "A hermit crab lives in this shell";
+  return v + " to pick up the " + (o.kind === "conch" ? "conch" : "spiral shell");
+}
+
+function updateShellsAndHermits(dt, loud) {
+  if (!CREATURE_RT || !SHELLS_OK) return;
+  _shellT -= dt;
+  if (_shellT <= 0) { _shellT = SHELL.tick; updateShellCells(); }
+  updateHermits(dt, loud);
+  if (dt > 0) for (let i = shells.length - 1; i >= 0; i--) { const o = shells[i]; if (o.carrier || o.fall) updateShellMotion(o, dt); }
+  // a free shell (no grid cell, no saved drop: one a crab left, or one a gull moved) fades from the world once far away
+  for (let i = shells.length - 1; i >= 0; i--) { const o = shells[i];
+    if (!o.key && !o.drop && shellFree(o) && Math.hypot(o.c.x - player.x, o.c.z - player.z) > SHELL.despawn + 20) removeShell(o); }
+}
+function resetShellsAndHermits() {
+  for (const k of hermits) k.c.dispose(); for (const o of shells) o.c.dispose();
+  hermits = []; shells = []; _shellCells = new Map(); shellTaken.clear(); _shellT = 0; _hermitT = 0;
+}
+function shellStatsText() { return `shells ${shells.length} (${shells.filter(o => o.carrier || o.fall).length} airborne)  hermits ${hermits.length} (${hermits.filter(k => k.mode === "hide" || k.mode === "carried").length} tucked in)`; }
+spawnShellObj.ready = SHELLS_OK;
+
 /* ---- Driver hooks ---- */
 function updateCreatures(dt) {
   if (!CREATURE_RT) return;
@@ -11354,6 +11749,7 @@ function updateCreatures(dt) {
   updateOpenSea(dt, loud);
   updateEels(dt, loud);
   if (spawnLivingWorm.ready) updateWorms(dt);
+  updateShellsAndHermits(dt, loud);
   CREATURE_RT.update(dt);
 }
 function drawCreatures(view) {
@@ -11363,10 +11759,10 @@ function drawCreatures(view) {
 function resetCreatures() {   // New Island: drop every live creature and restart their stream for the new seed
   for (const k of crabs) k.c.dispose(); for (const k of gulls) k.c.dispose();
   crabs = []; gulls = []; _crabT = 0; _gullT = 0;
-  resetReef(); resetSeaLife(); resetOpenSea(); resetEels(); resetWorms();
+  resetReef(); resetSeaLife(); resetOpenSea(); resetEels(); resetWorms(); resetShellsAndHermits();
   _critReseed = true;
 }
-function creatureStatsText() { return `${reefStatsText()}  ${seaLifeStatsText()}  ${openSeaStatsText()}  ${eelStatsText()}  worms ${spawnLivingWorm.ready ? worms.length : 0}  crabs ${crabs.length}  gulls ${gulls.length} (${gulls.filter(g => g.mode === "fly" || g.mode === "approach" || g.mode === "takeoff").length} up, ${gulls.filter(g => g.mode === "float").length} afloat)`; }
+function creatureStatsText() { return `${reefStatsText()}  ${seaLifeStatsText()}  ${openSeaStatsText()}  ${eelStatsText()}  worms ${spawnLivingWorm.ready ? worms.length : 0}  ${SHELLS_OK ? shellStatsText() : ""}  crabs ${crabs.length}  gulls ${gulls.length} (${gulls.filter(g => g.mode === "fly" || g.mode === "approach" || g.mode === "takeoff").length} up, ${gulls.filter(g => g.mode === "float").length} afloat)`; }
 // Console / test hooks: spawn right next to the player, toggle the legs-mask view.
 const CREATURE_DEBUG = {
   crabs(n = 5, r = 3) { for (let i = 0; i < n; i++) { const a = i / n * 6.283; spawnCrab(player.x + Math.cos(a) * r, player.z + Math.sin(a) * r); } return crabs.length; },
@@ -11382,6 +11778,9 @@ const CREATURE_DEBUG = {
   get eelList() { return [...eels.values()].filter(Boolean); },
   worms(n = 3, r = 1.5) { let k = 0; for (let i = 0; i < n; i++) { const a = i / n * 6.283; if (spawnLivingWorm(player.x + Math.cos(a) * r, player.z + Math.sin(a) * r)) k++; } return k; },
   get wormList() { return worms; },
+  hermits(n = 2, r = 2.5) { let k = 0; for (let i = 0; i < n; i++) { const a = i / n * 6.283; if (spawnHermit(player.x + Math.cos(a) * r, player.z + Math.sin(a) * r)) k++; } return k; },
+  conch(r = 2) { return !!spawnShellObj("conch", player.x + r, player.z, 0.5); },
+  get shellList() { return { shells, hermits }; },
   legs(on) { tsShowLegs = on === undefined ? !tsShowLegs : !!on; return tsShowLegs; },
   get crabList() { return crabs; }, get gullList() { return gulls; },
 };
@@ -11771,6 +12170,11 @@ function dropItemWorld(id, qty) {
     const a = rng() * 6.283, r = 0.6 + rng() * 1.1;
     const x = player.x + fx * 2 + Math.cos(a) * r, z = player.z + fz * 2 + Math.sin(a) * r;
     if (live && spawnLivingWorm(x, z, true)) continue;
+    if (id === "conch" && spawnShellObj.ready) {   // §shells a dropped Conch lands as a real conch (crabs can move in, gulls can take it)
+      const d = { id, x, z }, o = spawnShellObj("conch", x, z, 0.5, { drop: d });
+      if (o) { worldDrops.push(d); const fwd = camForward(), hx = player.x + fwd[0] * 0.5, hz = player.z + fwd[2] * 0.5;
+        o.c.x = hx; o.c.z = hz; o.c.y = player.eyeY - 0.5; o.fall = { vx: (x - hx) * 1.5, vy: 1.2, vz: (z - hz) * 1.5, spin: crR(-2, 2), bounced: true, splashed: false }; continue; }
+    }
     const d = { id, x, z }; worldDrops.push(d); spawnDropEntity(d, true);   // §dropfly animate the fall for fresh drops
   }
   saveDrops();
@@ -11793,6 +12197,7 @@ function loadDrops() {
   try { const a = JSON.parse(localStorage.getItem("bcd_" + SEED_STR) || "[]");
     for (const r of a) { if (!ITEMS[r[0]] && !FINDS[r[0]]) continue;   // §strip skip drops of items removed in the strip-down
       if (r[0] === "worm" && spawnLivingWorm.ready) continue;   // §earthworms an old saved worm drop has long since burrowed
+      if (r[0] === "conch" && spawnShellObj.ready) { const d = { id: r[0], x: r[1], z: r[2] }; if (spawnShellObj("conch", d.x, d.z, 0.5, { drop: d })) { worldDrops.push(d); continue; } }   // §shells
       const d = { id: r[0], x: r[1], z: r[2] }; worldDrops.push(d); spawnDropEntity(d); } } catch (e) {}
 }
 
@@ -12589,6 +12994,8 @@ function targetAlongRay(r, sticky) {
   for (const L of placedLanterns) sphere(L, "lantern", L.x, L.z, 0.4, 0.6);
   if (spawnLivingWorm.ready) for (const w of worms) if (!w.gone && !w.air && !(w.mode === "burrow" && w.sink > 0.75))   // §earthworms a live worm (small: a generous sphere)
     sphere(w, "worm", w.c.x, w.c.z, 0.04, 0.3);
+  for (const o of shells) if (!o.gone && !o.carrier && !o.fall) { const L = SHELL.len * o.c.scale;   // §shells a big shell (a hermit crab's too: it pulls in)
+    consider(o, "bigshell", o.c.x, o.c.z, (w) => raySphere(r.o, r.d, o.c.x, o.c.y + L * 0.25, o.c.z, Math.max(0.3, L * 0.75) * Math.max(w, TARGET_FORGIVE))); }
   for (const u of urchins.values()) if (u)   // sea urchins on the seabed: a generous sphere (they sit under water, like the other underwater pickups)
     consider(u, "urchin", u.x, u.z, (w) => raySphere(r.o, r.d, u.x, u.c.y + u.r, u.z, Math.max(0.35, u.r * 1.9) * Math.max(w, TARGET_FORGIVE)));   // §tools pick a set-down lantern back up
 
@@ -12628,7 +13035,8 @@ function useToolOnTarget(t) {
     case "storagebox": openStash(storageBoxes.indexOf(t.obj)); return true;
     case "lantern": pickUpLantern(t.obj); return true;
     case "urchin": pickUrchin(t.obj); return true;
-    case "worm": pickWorm(t.obj); return true;       // §earthworms a live worm → one Earthworm item   // a sea urchin off the seabed, into the satchel   // §tools pick a set-down lantern back up
+    case "worm": pickWorm(t.obj); return true;
+    case "bigshell": pickBigShell(t.obj); return true;   // §shells pick up a conch / whelk (a lived-in one only pulls in)       // §earthworms a live worm → one Earthworm item   // a sea urchin off the seabed, into the satchel   // §tools pick a set-down lantern back up
     case "tree": chopStanding(t.obj); return true;                 // §P2 any item chops; the axe is just faster (toolMul)
     case "fallentree": chopFallen(t.obj); return true;
     case "searock":   // §menu a shore rock with an oyster/barnacle cluster, scraping/picking takes priority over mining (any item)
@@ -16222,8 +16630,8 @@ function frame(now) {
       promptEl.style.color = "#ffbda6"; promptEl.style.opacity = Math.min(0.92, cantDigT * 1.3).toFixed(2);
     } else if (hintT > 0) { promptEl.textContent = hintText; promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = ""; }
     else { promptEl.style.display = "none"; promptEl.style.color = ""; promptEl.style.opacity = ""; }
-    if (!buildMode && curTarget && (curTarget.kind === "urchin" || curTarget.kind === "worm")) {   // sea-urchin / live-worm tooltip
-      promptEl.textContent = curTarget.kind === "worm" ? wormPrompt() : urchinPrompt();
+    if (!buildMode && curTarget && (curTarget.kind === "urchin" || curTarget.kind === "worm" || curTarget.kind === "bigshell")) {   // sea-urchin / live-worm / big-shell tooltip
+      promptEl.textContent = curTarget.kind === "worm" ? wormPrompt() : curTarget.kind === "bigshell" ? bigShellPrompt(curTarget.obj) : urchinPrompt();
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }

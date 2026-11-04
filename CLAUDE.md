@@ -55,6 +55,14 @@ Per-seed `localStorage` keys: `bc_<seed>` (player state), `bcw_<seed>` (world),
 then updates the URL. Seed-dependent GPU buffers must be freed in
 `disposeWorldGL()` before they are rebuilt.
 
+## Creatures & Tri Soup
+
+Creatures run on the shared creature runtime (`@section CREATURES/runtime`), a WebGL2 port of the **Tri Soup**
+runtime. Tri Soup itself is in the repo: `tools/tri-soup.html` (open in a browser; a dev tool that uses CDN
+libraries, never shipped in the game). Reference: `docs/tri-soup-reference.md`. How to bring an export into
+the game (inline mesh `.js` + config, what's supported): `docs/tri-soup-workflow.md`. Live creatures use
+`critRng` or the per-seed grid hash (`reefHash`), never the world-gen `rng()`.
+
 ## Testing (headless, Playwright + Chromium/SwiftShader)
 
 Chromium + Playwright are preinstalled. Launch with the software-GL flags:
