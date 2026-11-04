@@ -9510,13 +9510,14 @@ let _critReseed = false;                                     // New Island: re-s
 const crR = (a, b) => a + (b - a) * critRng();
 const wrapA = (a) => a - 6.283185307 * Math.round(a / 6.283185307);
 const approach = (v, t, d) => v < t ? Math.min(t, v + d) : Math.max(t, v - d);
-const _plPrev = { x: 0, z: 0, spd: 0, init: false };
+const _plPrev = { x: 0, z: 0, spd: 0, vx: 0, vz: 0, init: false };
 // How "loud" the player is: radii scale with it. Standing still / creeping shrinks them, sprinting grows them.
 function playerLoudness(dt) {
   if (!_plPrev.init) { _plPrev.x = player.x; _plPrev.z = player.z; _plPrev.init = true; }
   if (dt > 0) {
-    const s = Math.hypot(player.x - _plPrev.x, player.z - _plPrev.z) / dt;
-    _plPrev.spd += (Math.min(30, s) - _plPrev.spd) * Math.min(1, dt * 5);
+    const vx = (player.x - _plPrev.x) / dt, vz = (player.z - _plPrev.z) / dt, s = Math.hypot(vx, vz), f = Math.min(1, dt * 5), cl = s > 30 ? 30 / s : 1;
+    _plPrev.spd += (Math.min(30, s) - _plPrev.spd) * f;
+    _plPrev.vx += (vx * cl - _plPrev.vx) * f; _plPrev.vz += (vz * cl - _plPrev.vz) * f;
     _plPrev.x = player.x; _plPrev.z = player.z;
   }
   const s = _plPrev.spd;
@@ -9544,10 +9545,10 @@ const CRAB = {
   base: 9, cap: 16,                     // how many live around the player (before tide / time / weather)
   ringNear: 16, ringFar: 58, despawn: 76, tick: 0.5,
   bandLo: -0.12, bandHi: 2.4,           // where they live: height above the live waterline (m)
-  scale: [0.0045, 0.0075],              // model is ~100 units across the legs → 0.45–0.75 m…
-  big: [0.0075, 0.0098], bigChance: 0.12, // …and now and then a big old one, up to ~1 m
+  scale: [0.006, 0.0095],               // model is ~100 units across the legs → 0.6–0.95 m…
+  big: [0.0095, 0.013], bigChance: 0.15,  // …and now and then a big old one, up to ~1.3 m
   sizeRef: 0.006,                       // bigger crabs walk / scuttle a little faster (× √(scale / sizeRef))
-  wander: [0.08, 0.26], flee: [0.42, 0.62],   // m/s
+  wander: [0.1, 0.32], flee: [0.6, 0.95],     // m/s (× size pace)
   notice: 6.5, fleeR: 3.8, calm: 10,    // m, × player loudness
   idle: [1.5, 7], turn: 2.8, turnFlee: 7.5,
   stride: [0.7, 1.5],                   // intensity range: shorter, slower steps when dawdling … long fast ones fleeing
@@ -9639,7 +9640,7 @@ function updateCrab(k, dt, px, pz, loud) {
   const dy = wrapA(k.yawT - c.yaw), step = Math.max(-turnRate * dt, Math.min(turnRate * dt, dy));
   c.yaw += step; k.turn = Math.abs(step) / Math.max(dt, 1e-4);
   const align = k.mode === "alert" || k.mode === "idle" ? 0 : Math.max(0, Math.cos(dy));
-  k.v = approach(k.v, k.vT * align, (k.mode === "flee" ? 4 : 1.2) * dt);
+  k.v = approach(k.v, k.vT * align, (k.mode === "flee" ? 6 : 1.4) * dt);
   c.legDir = k.sign;
   const mx = Math.cos(c.yaw) * k.sign, mz = -Math.sin(c.yaw) * k.sign;
   c.x += mx * k.v * dt; c.z += mz * k.v * dt;
@@ -9687,11 +9688,18 @@ function updateCrabs(dt, loud) {
 /* ---- Gulls ---- */
 const GULL = {
   ground: 7, groundNight: 3, groundStorm: 2, flyers: 3, cap: 18,
-  scale: [0.0098, 0.0112],              // ~0.55–0.63 m tall standing
+  scale: [0.0112, 0.0128],              // ~0.63–0.72 m tall standing
   spawnNear: 34, spawnFar: 85, despawn: 150,
   bandLo: 0.35, bandHi: 6,              // where they stand: height above the live waterline (m)
-  notice: 13, walkAway: 9.5, flush: 6, contagion: 7.5,   // m, × player loudness
-  stroll: [0.18, 0.45], wary: 0.75,     // walking speeds (m/s)
+  notice: 18, walkAway: 13, flush: 8.5, contagion: 9,   // m, × player loudness
+  closing: 1.7,                         // …and they go if you'd reach them within this many seconds (heading straight at them)
+  stroll: [0.18, 0.45], wary: 1.1,      // walking speeds (m/s)
+  takeoffRate: [1.7, 2.0],              // takeoff animation speed (×): a quick, hard spring
+  takeoffPush: 1.6, takeoffLift: 2.6,   // × the animation's own forward travel / climb while leaping
+  climbOut: [1.8, 2.6], climbRate: 4.2, // then this many seconds of hard flapping straight up at this rate (m/s)
+  floatDepth: 0.12, sink: 14,           // in water deeper than this a gull floats, feet `sink` model units under the surface
+  paddle: [0.06, 0.22], floatTime: [14, 45],   // paddling speed (m/s); seconds afloat before it takes off again
+  waterLand: 0.25, seaFlock: 0.25,      // chance a landing / a spawned flock is on the water
   cruise: [4.2, 6.2], alt: [6, 13],     // flight speed (m/s), height above ground / water (m)
   loiter: [9, 22], orbit: [9, 18],      // seconds circling before landing; circling radius (m)
   landFrom: 22,                         // land at least this far from the player (m)
@@ -9705,7 +9713,8 @@ function spawnGull(x, z, flying) {
   const shade = crR(0.93, 1.04); c.tint = [shade, shade, shade * crR(0.98, 1.03)];
   const k = { c, mode: flying ? "fly" : "stand", t: crR(1, 6), h: critRng() * 6.283, v: 0, vy: 0, alt: crR(GULL.alt[0], GULL.alt[1]),
               ocx: x, ocz: z, oR: crR(GULL.orbit[0], GULL.orbit[1]), oDir: critRng() < 0.5 ? -1 : 1, lx: 0, lz: 0,
-              flushAt: -1, flap: 0, animHold: 0, cry: crR(4, 18), tx: x, tz: z, vT: 0, ambient: flying, idleSpd: crR(0.8, 1.2) };
+              flushAt: -1, flap: 0, animHold: 0, cry: crR(4, 18), tx: x, tz: z, vT: 0, ambient: flying, idleSpd: crR(0.8, 1.2),
+              climb: 0, ft: 0, ph: critRng() * 6.283, lWater: false, likesWater: critRng() < 0.5 };
   c.x = x; c.z = z;
   if (flying) { c.y = Math.max(heightAt(x, z), waterLevel) + k.alt; k.v = crR(GULL.cruise[0], GULL.cruise[1]); k.t = crR(GULL.loiter[0], GULL.loiter[1]) * 2; }
   else c.y = surfaceAt(x, z).h;
@@ -9723,41 +9732,67 @@ function gullStandSpot(cx, cz, r0, r1, px, pz) {   // flat beach above the water
   return null;
 }
 function gullFloor(x, z) { return Math.max(heightAt(x, z), waterLevel); }
+// Where a gull's feet rest here: on the ground, or (in water deep enough to float) `sink` model units under the live wave surface.
+function gullRestY(x, z, sc) {
+  if (waterDepthAt(x, z) > GULL.floatDepth) return waterSurfaceAt(x, z) + waterWaveY(x, z, _waveClock) - GULL.sink * sc;
+  return surfaceAt(x, z).h;
+}
+function gullWaterSpot(cx, cz, r0, r1, px, pz) {   // open water to settle on, away from the player
+  for (let i = 0; i < 10; i++) {
+    const a = critRng() * 6.283, r = crR(r0, r1), x = cx + Math.cos(a) * r, z = cz + Math.sin(a) * r;
+    if (waterDepthAt(x, z) < 0.6 || Math.hypot(x - px, z - pz) < GULL.landFrom) continue;
+    _spot[0] = x; _spot[1] = z; return _spot;
+  }
+  return null;
+}
+function seaPointNear(r0, r1, out) {   // first point along a random ray from the player that's in water ≥ 0.6 m deep
+  const a = critRng() * 6.283, ca = Math.cos(a), sa = Math.sin(a);
+  for (let r = r0; r <= r1; r += 2) { const x = player.x + ca * r, z = player.z + sa * r; if (waterDepthAt(x, z) > 0.6) { out[0] = x; out[1] = z; return out; } }
+  return null;
+}
+function gullStartFloat(k) { k.mode = "float"; k.ft = crR(GULL.floatTime[0], GULL.floatTime[1]); k.t = crR(0.5, 3); k.v = 0; k.vT = 0; k.c.bank = 0; }
 function gullAnim(k, name, speed) {   // switch bird state only when it changes (blends via the runtime)
   const c = k.c;
   if (c.target !== name) c.setState(name);
   if (speed !== undefined) c.speed = speed;
 }
-function gullFlush(k, px, pz) {
+const gullSettled = (k) => k.mode === "stand" || k.mode === "stroll" || k.mode === "wary" || k.mode === "float";
+// Spring into the air heading roughly along (ax, az), leaning into the wind. A panicked takeoff
+// (flush) cries out and sets off the rest of the flock.
+function gullTakeoff(k, ax, az, panic) {
   const c = k.c;
   k.mode = "takeoff";
-  let ax = c.x - px, az = c.z - pz; const ad = Math.hypot(ax, az) || 1;
+  const ad = Math.hypot(ax, az) || 1;
   const wd = weather ? weather.windDir : 0, wind = weather ? weather.wind : 0;
-  ax = ax / ad + Math.cos(wd) * wind * 0.5; az = az / ad + Math.sin(wd) * wind * 0.5;   // away, leaning into the wind
-  k.h = Math.atan2(az, ax) + crR(-0.4, 0.4); c.yaw = -k.h;
-  c.setState('takeoff', { speed: crR(1.3, 1.6) });
-  if (typeof SND !== "undefined") { SND.play("wingflap", { position: [c.x, c.y, c.z] }); if (critRng() < 0.6) SND.play("gull_cry", { position: [c.x, c.y + 1, c.z], pitch: crR(0.9, 1.15) }); }
-  for (const o of gulls) if (o !== k && o.flushAt < 0 && (o.mode === "stand" || o.mode === "stroll" || o.mode === "wary")
-    && Math.hypot(o.c.x - c.x, o.c.z - c.z) < GULL.contagion) o.flushAt = clock.t + crR(0.08, 0.6);   // panic spreads
+  ax = ax / ad + Math.cos(wd) * wind * 0.5; az = az / ad + Math.sin(wd) * wind * 0.5;
+  k.h = Math.atan2(az, ax) + crR(-0.4, 0.4); c.yaw = -k.h; c.bank = 0; c.tilt = 0;
+  c.setState('takeoff', { speed: crR(GULL.takeoffRate[0], GULL.takeoffRate[1]) });
+  if (typeof SND !== "undefined") { SND.play("wingflap", { position: [c.x, c.y, c.z] }); if (panic && critRng() < 0.6) SND.play("gull_cry", { position: [c.x, c.y + 1, c.z], pitch: crR(0.9, 1.15) }); }
+  if (panic) for (const o of gulls) if (o !== k && o.flushAt < 0 && gullSettled(o)
+    && Math.hypot(o.c.x - c.x, o.c.z - c.z) < GULL.contagion) o.flushAt = clock.t + crR(0.08, 0.5);   // panic spreads
   k.ocx = c.x + Math.cos(k.h) * 18; k.ocz = c.z + Math.sin(k.h) * 18;   // circle somewhere ahead
   k.t = crR(GULL.loiter[0], GULL.loiter[1]);
 }
+function gullFlush(k, px, pz) { gullTakeoff(k, k.c.x - px, k.c.z - pz, true); }
 function gullPickLanding(k, px, pz) {
   // prefer joining a gull already down (a flock), else any quiet spot near the circle
   let best = null, bd = 1e9;
-  for (const o of gulls) if (o !== k && o.mode === "stand") { const d = Math.hypot(o.c.x - k.c.x, o.c.z - k.c.z); if (d < 70 && d < bd && Math.hypot(o.c.x - px, o.c.z - pz) > GULL.landFrom) { bd = d; best = o; } }
-  const p = best ? gullStandSpot(best.c.x, best.c.z, 0.9, 3.5, px, pz) : gullStandSpot(k.ocx, k.ocz, 4, 40, px, pz);
+  for (const o of gulls) if (o !== k && (o.mode === "stand" || o.mode === "float")) { const d = Math.hypot(o.c.x - k.c.x, o.c.z - k.c.z); if (d < 70 && d < bd && Math.hypot(o.c.x - px, o.c.z - pz) > GULL.landFrom) { bd = d; best = o; } }
+  const water = best ? best.mode === "float" : critRng() < GULL.waterLand;
+  const p = best ? (water ? gullWaterSpot(best.c.x, best.c.z, 1, 4, px, pz) : gullStandSpot(best.c.x, best.c.z, 0.9, 3.5, px, pz))
+                 : (water ? gullWaterSpot(k.ocx, k.ocz, 4, 40, px, pz) : gullStandSpot(k.ocx, k.ocz, 4, 40, px, pz));
   if (!p) return false;
-  k.lx = p[0]; k.lz = p[1]; k.mode = "approach"; k.t = 30;
+  k.lx = p[0]; k.lz = p[1]; k.lWater = water; k.mode = "approach"; k.t = 30;
   return true;
 }
 // Fly toward heading `hd` at speed vT, holding height yT. Banks into turns; flaps to climb or speed up, glides otherwise.
 function gullFly(k, dt, hd, vT, yT) {
   const c = k.c, dh = wrapA(hd - k.h), turn = Math.max(-1.25, Math.min(1.25, dh * 1.8));
+  const climbing = k.climb > 0; if (climbing) k.climb -= dt;   // just took off: beat hard and gain height fast
   k.h += turn * dt;
-  k.v = approach(k.v, vT, 2.2 * dt);
-  const vyT = Math.max(-1.7, Math.min(2.4, (yT - c.y) * 0.7));
-  k.vy += (vyT - k.vy) * Math.min(1, dt * 2);
+  k.v = approach(k.v, vT, (climbing ? 4.5 : 2.2) * dt);
+  const vyT = climbing ? GULL.climbRate : Math.max(-1.7, Math.min(2.4, (yT - c.y) * 0.7));
+  k.vy += (vyT - k.vy) * Math.min(1, dt * (climbing ? 5 : 2));
   c.x += Math.cos(k.h) * k.v * dt; c.z += Math.sin(k.h) * k.v * dt; c.y += k.vy * dt;
   const floor = gullFloor(c.x, c.z) + (k.mode === "approach" ? 0.3 : 0.6); if (c.y < floor) c.y = floor;
   c.yaw = -k.h;
@@ -9765,19 +9800,27 @@ function gullFly(k, dt, hd, vT, yT) {
   // wings: flap to climb, to speed up, and in bursts; glide the rest
   k.flap -= dt; k.animHold -= dt;
   if (k.flap < -crR(3, 7)) k.flap = crR(0.8, 2.0);
-  const wantFlap = k.vy > 0.45 || k.v < vT - 0.8 || k.flap > 0;
+  const wantFlap = climbing || k.vy > 0.45 || k.v < vT - 0.8 || k.flap > 0;
+  if (climbing && c.target !== 'flap') { c.setState('flap'); k.animHold = 0.7; }
   if (k.animHold <= 0) {
     const want = wantFlap ? 'flap' : 'glide';
     if (c.target !== want) { c.setState(want); k.animHold = 0.7; }
   }
-  if (c.state === 'flap') c.speed = 0.95 + 0.3 * Math.max(0, Math.min(1, k.vy / 2));
+  if (c.state === 'flap') c.speed = climbing ? 1.45 : 0.95 + 0.3 * Math.max(0, Math.min(1, k.vy / 2));
 }
 function updateGull(k, dt, px, pz, loud) {
   const c = k.c, dx = c.x - px, dz = c.z - pz, d = Math.hypot(dx, dz), sc = c.scale, U = gullUnit();
   const grounded = k.mode === "stand" || k.mode === "stroll" || k.mode === "wary";
-  if (grounded && loud > 0) {
-    if (d < GULL.flush * loud || (k.flushAt > 0 && clock.t >= k.flushAt)) { k.flushAt = -1; gullFlush(k, px, pz); return; }
-    if (d < GULL.walkAway * loud && k.mode !== "wary") { k.mode = "wary"; k.t = crR(1.5, 3); k.h = Math.atan2(dz, dx) + crR(-0.5, 0.5); k.vT = GULL.wary; }
+  if (grounded && waterDepthAt(c.x, c.z) > GULL.floatDepth) { gullStartFloat(k); return; }   // the tide came in under it: float
+  if (gullSettled(k) && loud > 0) {
+    // closing speed: how fast the player is coming straight at it; leave before they'd arrive
+    const closing = d > 0.01 ? (dx * _plPrev.vx + dz * _plPrev.vz) / d : 0;
+    const arriving = closing > 1 && d < GULL.notice * loud && d / closing < GULL.closing;
+    if (d < GULL.flush * loud || arriving || (k.flushAt > 0 && clock.t >= k.flushAt)) { k.flushAt = -1; gullFlush(k, px, pz); return; }
+    if (d < GULL.walkAway * loud && k.mode !== "wary") {
+      if (k.mode === "float") { k.wary = 2.5; k.h = Math.atan2(dz, dx) + crR(-0.4, 0.4); }   // paddle away
+      else { k.mode = "wary"; k.t = crR(1.5, 3); k.h = Math.atan2(dz, dx) + crR(-0.5, 0.5); k.vT = GULL.wary; }
+    }
   }
   switch (k.mode) {
     case "stand": {
@@ -9791,7 +9834,7 @@ function updateGull(k, dt, px, pz, loud) {
           if (b > GULL.bandLo && b < GULL.bandHi && waterDepthAt(x, z) <= 0) { k.mode = "stroll"; k.tx = x; k.tz = z; k.vT = crR(GULL.stroll[0], GULL.stroll[1]); k.t = 10; }
         }
       }
-      if (bandAt(c.x, c.z) < 0.1) { const p = gullStandSpot(c.x, c.z, 1, 5, px, pz); if (p) { k.mode = "stroll"; k.tx = p[0]; k.tz = p[1]; k.vT = GULL.stroll[1]; k.t = 12; } }   // tide coming in
+      if (bandAt(c.x, c.z) < 0.1 && !k.likesWater) { const p = gullStandSpot(c.x, c.z, 1, 5, px, pz); if (p) { k.mode = "stroll"; k.tx = p[0]; k.tz = p[1]; k.vT = GULL.stroll[1]; k.t = 12; } }   // tide coming in: half walk up the beach, half let it float them
       break;
     }
     case "stroll": case "wary": {
@@ -9814,10 +9857,14 @@ function updateGull(k, dt, px, pz, loud) {
       break;
     }
     case "takeoff": {
-      if (c.state === 'flap' || c.state === 'glide') { k.mode = "fly"; k.v = Math.max(1.4, c.groundSpeed * sc); k.vy = 1.6; k.alt = crR(GULL.alt[0], GULL.alt[1]); break; }
-      c.x += Math.cos(k.h) * c.groundSpeed * sc * dt; c.z += Math.sin(k.h) * c.groundSpeed * sc * dt;
-      c.y += c.climb * sc * dt;
-      const g = surfaceAt(c.x, c.z).h; if (c.y < g) c.y = g;
+      if (c.state === 'flap' || c.state === 'glide') {   // airborne: hard climb-out, then cruise
+        k.mode = "fly"; k.v = Math.max(3.2, c.groundSpeed * sc * GULL.takeoffPush); k.vy = GULL.climbRate * 0.8;
+        k.climb = crR(GULL.climbOut[0], GULL.climbOut[1]); k.alt = crR(GULL.alt[0], GULL.alt[1]); break;
+      }
+      const push = c.groundSpeed * sc * GULL.takeoffPush;
+      c.x += Math.cos(k.h) * push * dt; c.z += Math.sin(k.h) * push * dt;
+      c.y += c.climb * sc * GULL.takeoffLift * dt;
+      const g = gullRestY(c.x, c.z, sc); if (c.y < g) c.y = g;
       break;
     }
     case "fly": {
@@ -9837,9 +9884,10 @@ function updateGull(k, dt, px, pz, loud) {
     case "approach": {
       k.t -= dt;
       const lx = k.lx - c.x, lz = k.lz - c.z, ld = Math.hypot(lx, lz);
-      const gL = surfaceAt(k.lx, k.lz).h, hL = 0.8 * U * sc;              // landing starts ~0.8 units up (Tri Soup)
+      const gL = k.lWater ? waterSurfaceAt(k.lx, k.lz) - GULL.sink * sc : surfaceAt(k.lx, k.lz).h, hL = 0.8 * U * sc;   // landing starts ~0.8 units up (Tri Soup)
       const dTrig = 1.49 * U * sc;                                        // and travels ~1.5 units forward
-      if (Math.hypot(k.lx - px, k.lz - pz) < GULL.flush * 1.6 * Math.max(0.8, loud) || k.t <= 0 || bandAt(k.lx, k.lz) < GULL.bandLo * 0.5) {   // spot got busy → go round
+      const spotGone = k.lWater ? waterDepthAt(k.lx, k.lz) < GULL.floatDepth * 2 : bandAt(k.lx, k.lz) < GULL.bandLo * 0.5;
+      if (Math.hypot(k.lx - px, k.lz - pz) < GULL.flush * 1.6 * Math.max(0.8, loud) || k.t <= 0 || spotGone) {   // spot got busy → go round
         k.mode = "fly"; k.ocx = c.x; k.ocz = c.z; k.t = crR(4, 10); break;
       }
       const yT = gL + hL + Math.max(0, ld - dTrig) * 0.32, vT = Math.max(1.6, Math.min(GULL.cruise[0], 1.6 + (ld - dTrig) * 0.22));
@@ -9847,23 +9895,48 @@ function updateGull(k, dt, px, pz, loud) {
       if (ld < dTrig + 2 && c.y - gL > hL + 2.5) { k.mode = "fly"; k.ocx = k.lx; k.ocz = k.lz; k.oR = crR(5, 8); k.t = crR(3, 6); break; }   // still too high: go round
       if (ld < dTrig + 0.25 || (ld < dTrig + 1.5 && Math.abs(wrapA(Math.atan2(lz, lx) - k.h)) > 1.2)) {
         k.mode = "landing"; c.setState('landing'); c.speed = 1; k.vy = 0;
-        k.h0 = Math.max(0, c.y - surfaceAt(c.x, c.z).h);   // height to lose; the flare's drop is stretched to fit it
+        k.h0 = Math.max(0, c.y - gullRestY(c.x, c.z, sc));   // height to lose; the flare's drop is stretched to fit it
       }
       break;
     }
     case "landing": {
       c.bank *= Math.max(0, 1 - dt * 6);
       c.x += Math.cos(k.h) * c.groundSpeed * sc * dt; c.z += Math.sin(k.h) * c.groundSpeed * sc * dt;
-      const g = surfaceAt(c.x, c.z).h;
+      const g = gullRestY(c.x, c.z, sc);
       if (c.state === 'landing') {   // Tri Soup's landing drops over the first 60% of the cycle (a half-cosine); follow that curve from wherever it started, so it always touches down on time
         const p = Math.min(1, c.phase / 0.6), drop = 0.5 - 0.5 * Math.cos(Math.PI * p);
         c.y = g + (k.h0 || 0) * (1 - drop);
-      } else { c.y += (g - c.y) * Math.min(1, dt * 10); if (Math.abs(c.y - g) < 0.01) { k.mode = "stand"; k.t = crR(2, 8); } }
+      } else if (waterDepthAt(c.x, c.z) > GULL.floatDepth) gullStartFloat(k);   // came down on the water
+      else { c.y += (g - c.y) * Math.min(1, dt * 10); if (Math.abs(c.y - g) < 0.01) { k.mode = "stand"; k.t = crR(2, 8); } }
+      break;
+    }
+    case "float": {   // sits on the surface, riding the waves, paddling slowly about; takes off again after a while
+      gullAnim(k, 'idle', k.idleSpd * 0.8);
+      k.t -= dt; k.ft -= dt;
+      if (k.wary > 0) { k.wary -= dt; k.vT = GULL.paddle[1] * 1.6; }
+      else if (k.t <= 0) { k.t = crR(3, 9); k.vT = critRng() < 0.6 ? crR(GULL.paddle[0], GULL.paddle[1]) : 0; k.h += crR(-1.2, 1.2); }
+      k.v = approach(k.v, k.vT, 0.35 * dt);
+      const wd = weather ? weather.windDir : 0, wind = weather ? weather.wind : 0;   // a little wind drift
+      const nx = c.x + (Math.cos(k.h) * k.v + Math.cos(wd) * wind * 0.04) * dt, nz = c.z + (Math.sin(k.h) * k.v + Math.sin(wd) * wind * 0.04) * dt;
+      const nd = waterDepthAt(nx, nz);
+      if (nd < GULL.floatDepth * 0.5) {   // drifted into the shallows: stand up there now and then, else turn back out
+        if (critRng() < 0.5) { c.x = nx; c.z = nz; k.mode = "stand"; k.t = crR(2, 6); c.tilt = 0; break; }
+        k.h += Math.PI * crR(0.7, 1.3); k.t = crR(2, 5);
+      } else { c.x = nx; c.z = nz; }
+      // ride the live wave surface, leaning with its slope, with a gentle extra rock
+      const e = 0.35, t = _waveClock, wy = waterWaveY(c.x, c.z, t);
+      const sx = (waterWaveY(c.x + e, c.z, t) - waterWaveY(c.x - e, c.z, t)) / (2 * e), sz = (waterWaveY(c.x, c.z + e, t) - waterWaveY(c.x, c.z - e, t)) / (2 * e);
+      c.y = waterSurfaceAt(c.x, c.z) + wy - GULL.sink * sc;
+      const nh = Math.hypot(sx, sz);
+      c.tilt = Math.atan2(nh, 1) * 0.8; c.tiltDir = Math.atan2(sx, -sz);
+      c.bank = 0.07 * Math.sin(clock.t * 1.3 + k.ph);
+      c.yaw += wrapA(-k.h - c.yaw) * Math.min(1, dt * 1.5);
+      if (k.ft <= 0) gullTakeoff(k, Math.cos(k.h), Math.sin(k.h), false);   // rested enough: off again
       break;
     }
   }
   if (grounded) {   // stand on the ground, facing where it walks
-    c.y = surfaceAt(c.x, c.z).h; c.bank = 0;
+    c.y = surfaceAt(c.x, c.z).h; c.bank = 0; c.tilt = 0;
     c.yaw += wrapA(-k.h - c.yaw) * Math.min(1, dt * 6);
   }
   if (k.mode === "fly" || k.mode === "approach") {   // the odd call overhead
@@ -9882,7 +9955,13 @@ function updateGulls(dt, loud) {
     _gullT = 1.2;
     const tg = gullTargets();
     let nGround = 0, nFly = 0; for (const k of gulls) { if (k.ambient) nFly++; else nGround++; }
-    if (nGround < tg.ground && gulls.length < GULL.cap) {   // a small flock somewhere quiet, out of view
+    if (nGround < tg.ground && gulls.length < GULL.cap && critRng() < GULL.seaFlock) {   // a raft of gulls floating offshore
+      const p = seaPointNear(GULL.spawnNear, GULL.spawnFar, _spot);
+      if (p && !onScreenPoint(p[0], p[1])) {
+        const cx = p[0], cz = p[1], n = Math.min(tg.ground - nGround, 2 + (critRng() * 3 | 0));
+        for (let i = 0; i < n; i++) { const s = i === 0 ? [cx, cz] : gullWaterSpot(cx, cz, 0.8, 3, px, pz); if (s) { const g = spawnGull(s[0], s[1], false); if (g) gullStartFloat(g); } }
+      }
+    } else if (nGround < tg.ground && gulls.length < GULL.cap) {   // a small flock somewhere quiet, out of view
       const p = shorePointNear(GULL.spawnNear, GULL.spawnFar, GULL.bandLo + 0.3, GULL.bandHi - 1, _spot);
       if (p && !onScreenPoint(p[0], p[1]) && onBeachBiome(p[0], p[1], 0.6)) {
         const cx = p[0], cz = p[1], n = Math.min(tg.ground - nGround, 2 + (critRng() * 4 | 0));
@@ -9922,7 +10001,7 @@ function resetCreatures() {   // New Island: drop every live creature and restar
   crabs = []; gulls = []; _crabT = 0; _gullT = 0;
   _critReseed = true;
 }
-function creatureStatsText() { return `crabs ${crabs.length}  gulls ${gulls.length} (${gulls.filter(g => g.mode === "fly" || g.mode === "approach" || g.mode === "takeoff").length} up)`; }
+function creatureStatsText() { return `crabs ${crabs.length}  gulls ${gulls.length} (${gulls.filter(g => g.mode === "fly" || g.mode === "approach" || g.mode === "takeoff").length} up, ${gulls.filter(g => g.mode === "float").length} afloat)`; }
 // Console / test hooks: spawn right next to the player, toggle the legs-mask view.
 const CREATURE_DEBUG = {
   crabs(n = 5, r = 3) { for (let i = 0; i < n; i++) { const a = i / n * 6.283; spawnCrab(player.x + Math.cos(a) * r, player.z + Math.sin(a) * r); } return crabs.length; },
