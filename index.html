@@ -6294,6 +6294,7 @@ function drawProps(view) {
   gl.uniformMatrix4fv(propU.uView, false, view);
   setLanternUniform(propU);   // §18
   setNightUniforms(propU);   // §night
+  if (propU.uEmissive !== undefined) gl.uniform1f(propU.uEmissive, 0);   // §night own our emissive state: world props are lit normally, never self-lit (the held-lantern/village-glow passes turn this on for themselves)
   gl.uniform3fv(propU.uSunDir, SKY.sun);
   gl.uniform3fv(propU.uCamPos, cam.pos);
   gl.uniform3fv(propU.uZenith, SKY.zenith);
@@ -10164,8 +10165,8 @@ function selectedItem() { const c = Inv.hotbar[Inv.selected]; return c ? c.id : 
 function lanternLit() { return mode === "walk" && !isPanelOpen() && selectedItem() === "lantern"; }
 function lanternPos() { return [player.x, player.eyeY - 0.55, player.z]; }
 function lanternFlicker() { const t = clock.t; return 0.84 + 0.12*Math.sin(t*18.0) + 0.06*Math.sin(t*7.3 + 1.0) + 0.04*Math.sin(t*33.0); }
-const LANTERN_I = 1.2;    // §night lantern brightness (warm, soft) — a touch brighter now that N·L + the aim cone shape it
-let LANTERN_R = 16;       // §night lantern light radius — the finite reach; beyond it props/terrain get NO lantern light
+const LANTERN_I = 1.5;    // §night lantern brightness (warm, soft) — a bit stronger now that the pool is omnidirectional like a placed one
+let LANTERN_R = 22;       // §night lantern light radius — the finite reach; beyond it props/terrain get NO lantern light (wider so the held pool is genuinely useful)
    // §3 indoor multiplier so the lantern doesn't wash the close walls to white (tunable)
 let placedLanterns = [];   // §tools lit lanterns set down in the world, saved per seed: { x, y, z }
 // the one lantern that lights the scene this frame: the held one if raised, else the nearest placed lantern to the camera
@@ -10199,14 +10200,9 @@ function setLanternUniform(U) {   // call after the program + its uniforms are b
   gl.uniform1f(U.uLanternI, p ? LANTERN_I * lanternFlicker() * nf : 0);
   if (U.uLanternR !== undefined) gl.uniform1f(U.uLanternR, LANTERN_R);   // §look tunable, ~60% wider radius
   if (p) gl.uniform3f(U.uLanternPos, p[0], p[1], p[2]);
-  if (U.uLanternDir !== undefined) {   // §lantern a HELD lantern aims along the player's horizontal facing; a placed one is omnidirectional (zero dir)
-    if (p && (lanternLit() || _dbgLantern)) {
-      const f = camForward(); let dx = f[0], dz = f[2]; const m = Math.hypot(dx, dz) || 1;
-      gl.uniform3f(U.uLanternDir, dx / m, 0, dz / m);
-    } else {
-      gl.uniform3f(U.uLanternDir, 0, 0, 0);
-    }
-  }
+  // §lantern the held lantern now lights the world omnidirectionally — identical to a lantern set down in the
+  // world (a steady pool all around you, not a forward beam). Always zero dir → the shader's aim cone is off.
+  if (U.uLanternDir !== undefined) gl.uniform3f(U.uLanternDir, 0, 0, 0);
 }
 // §P2 you can only set a bucket / lantern down on dry ground (not in water, not on a tide-pool floor)
 function isDryGround(x, z) { return waterDepthAt(x, z) < 0.04; }
@@ -12675,6 +12671,10 @@ function drawShovel(view) {
   gl.enable(gl.DEPTH_TEST); gl.depthMask(true);               // but its own faces still sort correctly
   gl.drawArraysInstanced(gl.TRIANGLES, 0, fp.vc, 1);
   countDraw(fp.vc / 3);
+  // §night CRITICAL: the held lantern turned on uEmissive (0.7) for its own glow; reset it so the NEXT frame's
+  // drawProps (which doesn't set uEmissive) doesn't inherit it and render every tree/rock/prop self-lit — that
+  // was the bug where a raised lantern appeared to brighten the whole island instead of a local pool.
+  if (held && id === "lantern" && propU.uEmissive !== undefined) gl.uniform1f(propU.uEmissive, 0);
 }
 
 function updateDigging(dt) {
