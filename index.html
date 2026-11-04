@@ -11513,10 +11513,11 @@ function updateShellCells() {
 /* ---- falling / carried shells ---- */
 function updateShellMotion(o, dt) {
   const c = o.c;
-  if (o.carrier) {   // held in a gull's beak, a little ahead of and below its body
+  if (o.carrier) {   // gripped in the gull's feet: hangs just under them, lengthways along its body
     const g = o.carrier, gc = g.c;
-    c.x = gc.x + Math.cos(g.h) * 0.3; c.z = gc.z + Math.sin(g.h) * 0.3; c.y = gc.y + 0.1;
-    c.yaw = Math.PI / 2 - g.h; c.tilt = 0.15; c.tiltDir = -c.yaw;
+    gullFeetPos(gc, _gFeet);
+    c.x = _gFeet[0]; c.z = _gFeet[2]; c.y = _gFeet[1] - shellHeight(o) * 0.85;
+    c.yaw = Math.PI / 2 - g.h; c.tilt = 0.08; c.tiltDir = -c.yaw;
   } else if (o.fall) {
     const f = o.fall; f.vy -= SHELL.g * dt; f.vx *= Math.max(0, 1 - dt * 0.6); f.vz *= Math.max(0, 1 - dt * 0.6);
     c.x += f.vx * dt; c.z += f.vz * dt; c.y += f.vy * dt; c.tilt += f.spin * dt; c.tiltDir = -c.yaw;
@@ -11538,6 +11539,20 @@ function updateShellMotion(o, dt) {
     }
   }
 }
+// Where a flying gull's feet are, in the world: the tucked feet of the flight model (measured: under the tail,
+// ~(−24, −9, 0) model units, the low end of the orange leg/foot triangles) put through the same steps the bird
+// shader applies: flight→ground alignment, minus the origin, the bank roll about the body, scale, then yaw.
+const GULL_FEET_AIR = [-24, -9, 0], _gFeet = [0, 0, 0];
+function gullFeetPos(c, out) {
+  const al = seagullConfig.bird.align.offset, org = seagullConfig.origin, bankY = CREATURE_RT.assets.get('seagull').bankY || 0;
+  let x = GULL_FEET_AIR[0] + al[0] - org[0], y = GULL_FEET_AIR[1] + al[1] - org[1], z = GULL_FEET_AIR[2] + al[2] - org[2];
+  if (c.bank) { const cb = Math.cos(c.bank), sb = Math.sin(c.bank), yy = y - bankY; y = yy * cb - z * sb + bankY; z = z * cb + yy * sb; }   // roll about the bird's forward (+X) axis
+  x *= c.scale; y *= c.scale; z *= c.scale;
+  const cy = Math.cos(c.yaw), sy = Math.sin(c.yaw);
+  out[0] = c.x + x * cy + z * sy; out[1] = c.y + y; out[2] = c.z - x * sy + z * cy;
+  return out;
+}
+function shellHeight(o) { const m = o.c.asset.model; return (m.hi[1] - m.lo[1]) * o.c.scale; }   // model height × scale (the origin is its underside)
 function dropShellFrom(o, vx, vz) { o.carrier = null; o.fall = { vx, vy: 0, vz, spin: crR(-2, 2), bounced: false, splashed: false }; }
 
 /* ---- hermit crabs ---- */
