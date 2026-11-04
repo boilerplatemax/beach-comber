@@ -4129,7 +4129,7 @@ function drawFishHUD() {
   const g = _fishLo.getContext("2d"); g.setTransform(1/PX, 0, 0, 1/PX, 0, 0); g.imageSmoothingEnabled = false; g.clearRect(0, 0, innerWidth, innerHeight);
   // line + bobber + bite marker
   if (["casting","waiting","nibble","bite","fighting"].includes(rod.state)) {
-    const bp = projectToScreen(rod.bob.x, rod.bob.y + 0.25, rod.bob.z);
+    const bp = projectToScreen(rod.bob.x, rod.bob.y + 0.18, rod.bob.z);   // §fishline attach the line onto the bobber's float, not above its antenna
     const tipP = projectToScreen(rodTipWorld[0], rodTipWorld[1], rodTipWorld[2]);   // §fishpolish line starts at the actual rod tip
     const tip = tipP || [innerWidth * (IS_TOUCH ? 0.6 : 0.63), innerHeight * 0.46];
     if (bp) {
@@ -4142,26 +4142,33 @@ function drawFishHUD() {
     }
   }
   if (rod.state === "fighting") drawReelGauge(g);
-  else if (rod.state === "charging") drawCastMeter(g);
   g.textAlign = "left";
   // §fishdither blit the low-res HUD up to the screen with no smoothing → chunky, palette-limited pixels
   const realG = cv.getContext("2d"); realG.setTransform(1, 0, 0, 1, 0, 0); realG.imageSmoothingEnabled = false;
   realG.clearRect(0, 0, cv.width, cv.height); realG.drawImage(_fishLo, 0, 0, lw, lh, 0, 0, cv.width, cv.height);   // §pixui blit low-res buffer → full device-res canvas, nearest-neighbour
+  // §castui the cast-power meter is drawn CRISP on the full-res canvas (not the chunky low-res buffer) and
+  // sits well clear of the hotbar, so its label reads sharply and nothing obscures it.
+  if (rod.state === "charging") drawCastMeter(realG, dpr);
 }
 // §fishui the fishing HUD wears the same oak / parchment / brass RPG skin as the menus
 const FHUD = { oak: "rgba(42,28,16,0.92)", rim: "rgba(150,110,60,0.95)", groove: "rgba(26,17,9,0.95)",
   parch: "rgba(240,217,176,0.95)", brass: [150,110,60], amber: [196,150,70], gold: [236,190,86], safe: [120,190,104] };
-function drawCastMeter(g) {
-  const w = 240, h = 14, x = (innerWidth - w) / 2, y = innerHeight - 150, c = rod.charge;
+// §castui drawn CRISP on the full-resolution canvas: `g` is the real 2D context, `dpr` its device-pixel scale.
+// All coordinates are in CSS px and scaled by dpr so the panel + label are sharp (not run through the chunky
+// low-res fishing buffer, which blurred the text). Sits at innerHeight-190 so the hotbar never covers it.
+function drawCastMeter(g, dpr) {
+  dpr = dpr || 1;
+  const w = 260, h = 16, cx = innerWidth / 2, x = cx - w / 2, y = innerHeight - 190, c = rod.charge;
   g.save();
-  g.fillStyle = FHUD.oak; hudChamfer(g, x - 10, y - 22, w + 20, h + 34, 7); g.fill();                   // oak panel
-  g.strokeStyle = FHUD.rim; g.lineWidth = 2; hudChamfer(g, x - 10, y - 22, w + 20, h + 34, 7); g.stroke();   // brass rim
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.imageSmoothingEnabled = true;   // crisp, full-res
+  g.fillStyle = FHUD.oak; hudChamfer(g, x - 12, y - 26, w + 24, h + 40, 8); g.fill();                   // oak panel
+  g.strokeStyle = FHUD.rim; g.lineWidth = 2; hudChamfer(g, x - 12, y - 26, w + 24, h + 40, 8); g.stroke();   // brass rim
   g.fillStyle = FHUD.groove; hudChamfer(g, x, y, w, h, 3); g.fill();                                    // sunken groove track
   const col = c < 0.5 ? FHUD.brass : c < 0.85 ? FHUD.amber : FHUD.gold;                                 // brass → amber → bright gold as it winds up
   g.fillStyle = `rgb(${col[0]},${col[1]},${col[2]})`; g.fillRect(x, y, w * c, h);
   if (c > 0.85) { g.save(); g.shadowColor = "rgba(236,190,86,0.9)"; g.shadowBlur = 10; g.fillRect(x + w*0.85, y, w*(c-0.85), h); g.restore(); }   // glow near full power
   g.strokeStyle = "rgba(240,217,176,0.3)"; g.lineWidth = 1; hudChamfer(g, x, y, w, h, 3); g.stroke();
-  g.fillStyle = FHUD.parch; g.font = "700 12px system-ui,sans-serif"; g.textAlign = "center"; g.fillText("CAST POWER", innerWidth / 2, y - 8);
+  g.fillStyle = FHUD.parch; g.font = "700 14px system-ui,sans-serif"; g.textAlign = "center"; g.textBaseline = "alphabetic"; g.fillText("CAST POWER", cx, y - 10);
   g.restore();
 }
 const SPECIES_HUD_COL = { surfperch: [0.75,0.77,0.64], rockfish: [0.86,0.32,0.2], lingcod: [0.42,0.46,0.35], ratfish: [0.6,0.63,0.7],
@@ -5729,7 +5736,6 @@ function tallGrassMesh(cut) {
   }
   return m;
 }
-function fenceMesh() { const m = Mesh(); mBox(m, 0, 0.45, 0, 0.05, 0.45, 0.05, [0.4, 0.34, 0.26]); return m; }
 
 /* --------------------------------------------------------------------- *
  * § INSTANCED PROP RENDERER  (one draw call per prop type)
@@ -6172,14 +6178,15 @@ function buildProps() {
     pushInst(kelpF, x, h, z, sc, rng()*6.28, 0, 0, vary([0.52,0.56,0.4], 0.12));   // §gulls olive-brown-green, not near-white (no more white tops)
     kelpStalks.push({ x, z, h, sc, ii: kelpF.length/10 - 1 });                     // §P3 harvestable: ii indexes the kelp instance buffer
   });
-  // occasional old fence posts (collide)
-  const fences = scatter(28, 1.0, 600, (x, z, inst) => {
+  // §nofence the old fence posts no longer spawn. Like the removed "seaweed" clumps above, the scatter + its
+  // rng draws + the big-cell / footprint reservations are kept EXACTLY so the rest of the world (trees, rocks,
+  // berry bushes, grass, crops, flotsam, …) stays byte-identical per seed; only the post + its collider are gone.
+  scatter(28, 1.0, 600, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 6 || s.h > 26 || s.slope > 0.4) return;
     if (rng() > 0.1 || nearPOI(x, z, 2) || spotUnderwater(x, z) || !reserveBig(x, z)) return;
-    const fsc = 1 + rng()*0.8, fyaw = rng()*6.28, flean = 0.08 + rng()*0.2, fld = rng()*6.28, ftint = vary([1,1,1], 0.15);
-    if (!claimFootprint(x, z, 0.35, "fence")) return;
-    pushInst(inst, x, s.h, z, fsc, fyaw, flean, fld, ftint);
-    colliders.push({ x, z, r: 0.3, kind: "fence", ii: inst.length/10 - 1 });
+    rng(); rng(); rng(); rng();          // consume the old scale + yaw + lean + leanDir draws
+    rng(); rng(); rng();                  // …and the 3 tint draws (vary); emit nothing
+    claimFootprint(x, z, 0.35, "post");   // keep the footprint reservation so later props place identically
   });
 
   propTypes = [
@@ -6195,7 +6202,6 @@ function buildProps() {
     { kind: "rock",   foliage: false, snap: true, inst: makeInstanced(rockMesh((SEED_INT^0x51)>>>0, "rounded", [0.56,0.54,0.50]), rocksR) },
     { kind: "rockSlab", foliage: false, snap: true, inst: makeInstanced(rockMesh((SEED_INT^0x52)>>>0, "slab", [0.47,0.47,0.43]), rocksS) },
     { kind: "rockJag", foliage: false, snap: true, inst: makeInstanced(rockMesh((SEED_INT^0x53)>>>0, "jagged", [0.40,0.40,0.43]), rocksJ) },
-    { kind: "fence",  foliage: false, snap: true, inst: makeInstanced(fenceMesh(), fences) },
     { kind: "poi",    foliage: false, snap: false, inst: makeInstanced(poiMesh, poiMesh.pos.length ? [0,0,0, 1,0,0,0, 1,1,1] : []) },
   ];
   rockStyleTypes = [propTypes.find(t=>t.kind==="rock"), propTypes.find(t=>t.kind==="rockSlab"), propTypes.find(t=>t.kind==="rockJag")];   // §13.7 rounded / slab / jagged, by collider.styleIdx
@@ -6204,11 +6210,11 @@ function buildProps() {
   rebuildCollHash();
   validateProps();
 }
-// §12A generation self-check: no dry-land prop (tree, boulder, fence, POI) may stand in water.
+// §12A generation self-check: no dry-land prop (tree, boulder, POI) may stand in water.
 function validateProps() {
   let bad = 0;
   for (const c of colliders) {
-    if (c.kind === "tree" || c.kind === "rock" || c.kind === "fence") {
+    if (c.kind === "tree" || c.kind === "rock") {
       if (spotUnderwater(c.x, c.z)) { bad++; if (bad <= 5) console.warn(`prop underwater: ${c.kind} at ${c.x.toFixed(1)},${c.z.toFixed(1)} (ground ${surfaceAt(c.x,c.z).h.toFixed(1)}, water ${waterSurfaceAtMax(c.x,c.z).toFixed(1)})`); }
     }
   }
@@ -6313,9 +6319,9 @@ function drawProps(view) {
     // §13.6 foliage density: draw only a leading fraction of foliage instances (scatter order is random)
     const cnt = t.foliage ? Math.max(0, Math.round(t.inst.count * GFX.foliage)) : t.inst.count;
     if (cnt === 0) continue;
-    const rigid = (t.kind === "rock" || t.kind === "rockSlab" || t.kind === "rockJag" || t.kind === "fence" || t.kind === "poi");
+    const rigid = (t.kind === "rock" || t.kind === "rockSlab" || t.kind === "rockJag" || t.kind === "poi");
     const isTree = (t.kind === "palm" || t.kind === "pine" || t.kind === "broadleaf");   // §P2 trees sway ~40% less than the grass/kelp
-    gl.uniform1f(propU.uSway, rigid ? 0 : (isTree ? TREE_SWAY_MUL : 1));   // §14B plants & trees sway, rocks/fences stay put
+    gl.uniform1f(propU.uSway, rigid ? 0 : (isTree ? TREE_SWAY_MUL : 1));   // §14B plants & trees sway, rocks stay put
     gl.uniform1i(propU.uClampTop, (t.kind === "eelgrass" || t.kind === "kelp" || t.kind === "seamoss" || t.kind === "redalgae") ? 1 : 0);   // §14B/§17.2 ocean plants can't breach the surface
     // @section RENDER/frustum-cull  compact the on-screen instances into scratch and draw only those.
     // Off-screen copies can't be seen, so skipping them is free of visible pop; the big win is the
@@ -7201,7 +7207,12 @@ function cropMesh(type, stage) {
   return m;
 }
 // §17 harvested crop foods & plantable seeds
-function cassavaFoodMesh(){ const m=Mesh(); const s=[0.56,0.43,0.3], f=[0.84,0.76,0.62]; mCyl(m,-0.02,0.44,0.07,0.035,6,s); mCyl(m,0.4,0.48,0.035,0.02,5,f); mergeMesh(m, discMesh(-0.02,0.07,6,-0.04,f)); return m; }
+// §cassava the harvested cassava root looks like the Cassava Cutting (seed) but WITHOUT the green sprout —
+// just the long pale root tuber lying down, with capped ends.
+function cassavaFoodMesh(){ const m=Mesh(); const root=[0.74,0.56,0.36], root2=[0.66,0.48,0.3];
+  mPathTube(m, [[-0.22,0.07,0,0.015],[-0.1,0.085,0.02,0.055],[0.02,0.09,-0.01,0.062],[0.14,0.082,0.02,0.045],[0.24,0.075,0,0.012]], 7, root);
+  mergeAt(m, ballM(0.022, root2, 5), -0.22,0.07,0); mergeAt(m, ballM(0.016, root2, 5), 0.24,0.075,0);   // capped ends
+  return m; }
 // §banana a single classic crescent banana (the satchel icon): one fat curved finger with a short brown stem
 // §models a smooth, fat crescent banana with brown stem and tip caps.
 function bananaIconMesh(){ const m=Mesh(); const y=[0.98,0.82,0.16], stem=[0.36,0.26,0.14]; const pts=[], seg=10;
@@ -7527,8 +7538,9 @@ const ODD_SPECIES = ["spectralis","nebulosa","pallida","umbrae","vitrea","cavern
 function latinName() { return ODD_GENUS[(rng()*ODD_GENUS.length)|0] + " " + ODD_SPECIES[(rng()*ODD_SPECIES.length)|0]; }
 
 function spawnFind(t, x, z) {
-  life.push({ kind: "find", t, x, z, yaw: rng()*6.283, scale: FINDS[t].base*(0.85+rng()*0.3),
-              phase: rng()*6.283, name: FINDS[t].label, tint: [1,1,1], pickAt: clock.t });
+  const reg = dropReg(t) || { base: 0.5, label: (ITEMS[t] ? ITEMS[t].name : t) };   // §drop FINDS, else a generic item-drop registry (fish/crops/seeds)
+  life.push({ kind: "find", t, x, z, yaw: rng()*6.283, scale: reg.base*(0.85+rng()*0.3),
+              phase: rng()*6.283, name: reg.label, tint: [1,1,1], pickAt: clock.t });
 }
 // §pixui/§treedrop spawn a find that pops out at a RANDOM angle around an impact point, flies a short
 // tumbling arc (toss.h) with a spin and settles onto the terrain (the render loop reads heightAt at its
@@ -8115,6 +8127,7 @@ function drawLife(view) {
     reg.dyn.draw(lifeScratch, n);
   };
   for (const k in FINDS) drawType(k, FINDS[k], (e) => e.kind === "find" && e.t === k);
+  for (const k in ITEM_DROP_REG) drawType(k, ITEM_DROP_REG[k], (e) => e.kind === "find" && e.t === k);   // §drop dropped fish/crops/seeds (lazily-registered meshes)
   gl.uniform1f(propU.uDissolve, 0);
 }
 
@@ -9549,9 +9562,10 @@ const CRAB = {
   scale: [0.006, 0.0095],               // model is ~100 units across the legs → 0.6–0.95 m…
   big: [0.0095, 0.013], bigChance: 0.15,  // …and now and then a big old one, up to ~1.3 m
   sizeRef: 0.006,                       // bigger crabs walk / scuttle a little faster (× √(scale / sizeRef))
-  wander: [0.1, 0.32], flee: [0.6, 0.95],     // m/s (× size pace)
-  notice: 6.5, fleeR: 3.8, calm: 10,    // m, × player loudness
-  idle: [1.5, 7], turn: 2.8, turnFlee: 7.5,
+  wander: [0.1, 0.32], flee: [1.15, 1.7],     // §crabfast m/s (× size pace) — a much quicker scurry when they bolt
+  notice: 6.5, fleeR: 4.4, calm: 10,    // m, × player loudness (bolt a little sooner too)
+  gullFear: 6.0,                        // §crabgull flee from a gull within this many metres (a hunting/diving one scares them from twice as far)
+  idle: [1.5, 7], turn: 2.8, turnFlee: 9.0,
   stride: [0.7, 1.5],                   // intensity range: shorter, slower steps when dawdling … long fast ones fleeing
 };
 let crabs = [], _crabT = 0;
@@ -9600,6 +9614,22 @@ function updateCrab(k, dt, px, pz, loud) {
     if (d < CRAB.fleeR * loud) { k.mode = "flee"; k.t = 0; crabWaterDir(k, px, pz); k.reaim = 0.4; k.vT = crR(CRAB.flee[0], CRAB.flee[1]) * k.pace; }
     else if (d < CRAB.notice * loud && k.mode !== "alert") { k.mode = "alert"; k.t = crR(1.5, 3.5); }
   }
+  // §crabgull gulls hunt crabs: bolt away from any gull that gets close (and from much farther if one is diving at them)
+  if (k.mode !== "leave" && typeof gulls !== "undefined") {
+    let gThreat = null, gtd = 1e9;
+    for (const g of gulls) {
+      if (g.mode === "float") continue;                                   // a gull sitting out on the water is no threat
+      const hunting = (g.mode === "dive" && g.prey === k);
+      const reach = hunting ? CRAB.gullFear * 2.2 : CRAB.gullFear;
+      const gd = Math.hypot(g.c.x - c.x, g.c.z - c.z);
+      if (gd < reach && gd < gtd) { gtd = gd; gThreat = g; }
+    }
+    if (gThreat) {
+      const hunting = (gThreat.mode === "dive" && gThreat.prey === k);
+      if (k.mode !== "flee" || hunting) { k.mode = "flee"; k.t = 0; crabWaterDir(k, gThreat.c.x, gThreat.c.z); k.reaim = 0.35; }
+      k.vT = crR(CRAB.flee[0], CRAB.flee[1]) * k.pace * (hunting ? 1.2 : 1.0);   // extra urgency under a dive
+    }
+  }
   let turnRate = CRAB.turn;
   switch (k.mode) {
     case "idle":
@@ -9641,7 +9671,7 @@ function updateCrab(k, dt, px, pz, loud) {
   const dy = wrapA(k.yawT - c.yaw), step = Math.max(-turnRate * dt, Math.min(turnRate * dt, dy));
   c.yaw += step; k.turn = Math.abs(step) / Math.max(dt, 1e-4);
   const align = k.mode === "alert" || k.mode === "idle" ? 0 : Math.max(0, Math.cos(dy));
-  k.v = approach(k.v, k.vT * align, (k.mode === "flee" ? 6 : 1.4) * dt);
+  k.v = approach(k.v, k.vT * align, (k.mode === "flee" || k.mode === "leave" ? 11 : 1.4) * dt);   // §crabfast snap up to flee speed quickly
   c.legDir = k.sign;
   const mx = Math.cos(c.yaw) * k.sign, mz = -Math.sin(c.yaw) * k.sign;
   c.x += mx * k.v * dt; c.z += mz * k.v * dt;
@@ -9655,7 +9685,7 @@ function updateCrab(k, dt, px, pz, loud) {
   const iT = vAnim < 0.01 ? 0 : CRAB.stride[0] + (CRAB.stride[1] - CRAB.stride[0]) * Math.min(1, vAnim / (CRAB.flee[1] * k.pace));
   c.intensity = approach(c.intensity, iT, dt * 4);
   c.matchGroundSpeed(vAnim / c.scale);
-  if (c.speed > 7) c.speed = 7;
+  if (c.speed > 10) c.speed = 10;   // §crabfast let the legs keep up with the quicker scurry
 }
 function crabTargetCount() {
   let n = CRAB.base;
@@ -9704,6 +9734,12 @@ const GULL = {
   cruise: [4.2, 6.2], alt: [6, 13],     // flight speed (m/s), height above ground / water (m)
   loiter: [9, 22], orbit: [9, 18],      // seconds circling before landing; circling radius (m)
   landFrom: 22,                         // land at least this far from the player (m)
+  // §gullhunt gulls hunt crabs: a flying gull that spots one nearby peels off and dives to snatch it.
+  huntR: 30,                            // how far a flying gull will spot a crab to hunt (m)
+  huntCd: [1.6, 3.5],                   // seconds between hunting attempts while flying
+  huntChance: 0.7,                      // chance it commits to a dive when a crab is in range and off cooldown
+  diveSpeed: 13, diveAlt: 0.55,         // dive flight speed (m/s) and how low above the crab it skims (m)
+  snatchR: 1.3, diveGiveUp: 3.2,        // grab radius (m) and seconds before it breaks off a failed dive
 };
 let gulls = [], _gullT = 0;
 const gullUnit = () => seagullConfig.bird.air.frame.unit;
@@ -9809,6 +9845,26 @@ function gullFly(k, dt, hd, vT, yT) {
   }
   if (c.state === 'flap') c.speed = climbing ? 1.45 : 0.95 + 0.3 * Math.max(0, Math.min(1, k.vy / 2));
 }
+// §gullhunt the nearest huntable crab to a gull: on land/shallows, within range, not already someone's prey.
+function gullFindPrey(k) {
+  if (typeof crabs === "undefined" || !crabs.length) return null;
+  let best = null, bd = GULL.huntR * GULL.huntR;
+  for (const cr of crabs) {
+    if (cr.gone || cr.mode === "leave") continue;                 // already escaping into the sea
+    if (waterDepthAt(cr.c.x, cr.c.z) > 0.2) continue;             // snatch from land / the wet band, not deep water
+    const dx = cr.c.x - k.c.x, dz = cr.c.z - k.c.z, d2 = dx*dx + dz*dz;
+    if (d2 < bd) { bd = d2; best = cr; }
+  }
+  return best;
+}
+function gullSnatchCrab(k, cr) {   // §gullhunt grab the crab: a sand poof, a cry, the crab is gone and the gull climbs out
+  const i = crabs.indexOf(cr); if (i >= 0) { cr.c.dispose(); crabs.splice(i, 1); }
+  cr.gone = true;
+  if (typeof spawnSand === "function") spawnSand(cr.c.x, surfaceAt(cr.c.x, cr.c.z).h + 0.15, cr.c.z, 8, [0.78,0.68,0.52]);
+  if (typeof SND !== "undefined") { SND.play("wingflap", { position: [k.c.x, k.c.y, k.c.z] }); SND.play("gull_cry", { position: [k.c.x, k.c.y + 1, k.c.z], pitch: crR(0.8, 1.0), volume: 0.9 }); }
+  k.prey = null; k.mode = "fly"; k.climb = crR(GULL.climbOut[0], GULL.climbOut[1]); k.alt = crR(GULL.alt[0], GULL.alt[1]);
+  k.ocx = k.c.x + Math.cos(k.h) * 16; k.ocz = k.c.z + Math.sin(k.h) * 16; k.t = crR(GULL.loiter[0], GULL.loiter[1]); k.ambient = false;
+}
 function updateGull(k, dt, px, pz, loud) {
   const c = k.c, dx = c.x - px, dz = c.z - pz, d = Math.hypot(dx, dz), sc = c.scale, U = gullUnit();
   const grounded = k.mode === "stand" || k.mode === "stroll" || k.mode === "wary";
@@ -9870,6 +9926,12 @@ function updateGull(k, dt, px, pz, loud) {
     }
     case "fly": {
       k.t -= dt;
+      // §gullhunt peel off to dive at a crab now and then
+      k.huntCd = (k.huntCd || 0) - dt;
+      if (k.huntCd <= 0 && k.climb <= 0) {
+        k.huntCd = crR(GULL.huntCd[0], GULL.huntCd[1]);
+        if (critRng() < GULL.huntChance) { const prey = gullFindPrey(k); if (prey) { k.prey = prey; k.mode = "dive"; k.t = GULL.diveGiveUp; break; } }
+      }
       const ox = c.x - k.ocx, oz = c.z - k.ocz, od = Math.hypot(ox, oz) || 1;
       const tx = -oz / od * k.oDir, tz = ox / od * k.oDir, pull = Math.max(-1, Math.min(1, (od - k.oR) / k.oR * 1.5));
       const hd = Math.atan2(tz - oz / od * pull, tx - ox / od * pull);
@@ -9880,6 +9942,17 @@ function updateGull(k, dt, px, pz, loud) {
         if (critRng() < (isNightNow() ? 0.9 : 0.3)) { k.ambient = false; if (!gullPickLanding(k, px, pz)) k.t = crR(3, 8); }
         else { const p = shorePointNear(20, 90, GULL.bandLo, GULL.bandHi, _spot); if (p) { k.ocx = p[0]; k.ocz = p[1]; } k.t = crR(GULL.loiter[0], GULL.loiter[1]); }
       }
+      break;
+    }
+    case "dive": {   // §gullhunt swoop low and fast at the target crab; grab it on contact, break off if it escapes
+      k.t -= dt;
+      const prey = k.prey;
+      if (!prey || prey.gone || prey.mode === "leave" || k.t <= 0) { k.prey = null; k.mode = "fly"; k.ocx = c.x + Math.cos(k.h)*14; k.ocz = c.z + Math.sin(k.h)*14; k.t = crR(3, 7); k.climb = crR(GULL.climbOut[0], GULL.climbOut[1]); break; }
+      const tx = prey.c.x - c.x, tz = prey.c.z - c.z, td = Math.hypot(tx, tz);
+      if (td < GULL.snatchR && Math.abs(c.y - (surfaceAt(prey.c.x, prey.c.z).h)) < 1.2) { gullSnatchCrab(k, prey); break; }
+      const yT = gullFloor(prey.c.x, prey.c.z) + GULL.diveAlt;
+      gullFly(k, dt, Math.atan2(tz, tx), GULL.diveSpeed, yT);
+      if (c.target !== 'flap' && c.target !== 'glide') c.setState('glide');   // wings swept back in the stoop
       break;
     }
     case "approach": {
@@ -10089,8 +10162,8 @@ function tooTired() {
 let cantDigT = 0, lastCantDigShown = -99;
 function cantDig() { if (clock.t - lastCantDigShown > 1.4) { lastCantDigShown = clock.t; cantDigT = 1.1; } }
 const WORK_LOCK_TIME = 1.5;
-const WORK_KINDS = { tree: 1, fallentree: 1, rock: 1, stump: 1, fence: 1, chest: 1, heaveboulder: 1, geode: 1, searock: 1 };   // multi-strike targets
-function workLockActive() { return !!(workLock && clock.t < workLock.until && workLock.obj && !workLock.obj.gone && !(workLock.kind === "fence" && workLock.obj.r <= 0)); }
+const WORK_KINDS = { tree: 1, fallentree: 1, rock: 1, stump: 1, chest: 1, heaveboulder: 1, geode: 1, searock: 1 };   // multi-strike targets
+function workLockActive() { return !!(workLock && clock.t < workLock.until && workLock.obj && !workLock.obj.gone); }
 function setWorkLock(t) { if (!t || !WORK_KINDS[t.kind]) return; workLock = { obj: t.obj, kind: t.kind, tool: selectedTool(), until: clock.t + WORK_LOCK_TIME }; lastEntityHitT = clock.t; }
 function workLockReach() { const o = workLock.obj; return Math.hypot(o.x - player.x, o.z - player.z) <= REACH + 2; }
 // the target to act on: the locked entity while the lock holds (even if aim drifts), else the crosshair target
@@ -10282,9 +10355,19 @@ function invMove(from, to) {
   } else { Inv.setCell(to, a); Inv.setCell(from, b); }   // swap
   Inv.emit();
 }
+// §drop any item with a world model can be dropped (and picked back up) EXCEPT tools, which stay in the pack.
+// FINDS already carry a world mesh; other droppables (fish, crops, seeds, …) get a lazily-built one from their
+// own inventory model, so the single find/drop pipeline renders and re-collects them all the same way.
+const ITEM_DROP_REG = {};
+function isDroppable(id) { const it = ITEMS[id]; return !!(it && it.model && it.category !== "tool"); }
+function dropReg(id) {
+  if (FINDS[id]) return FINDS[id];
+  if (!ITEM_DROP_REG[id]) { const it = ITEMS[id]; if (!it || !it.model) return null; ITEM_DROP_REG[id] = { mesh: it.model, base: 0.5, max: 40, label: it.name, dyn: makeDynamic(it.model(), 40) }; }
+  return ITEM_DROP_REG[id];
+}
 function invDrop(idx, one) {
   const s = Inv.cell(idx); if (!s) return;
-  if (!FINDS[s.id]) { showCard("Can't drop that", "Tools stay in your pack."); return; }   // tools aren't world-droppable
+  if (!isDroppable(s.id)) { showCard("Can't drop that", "Tools stay in your pack."); return; }   // tools aren't world-droppable
   const q = one ? 1 : s.qty; dropItemWorld(s.id, q);
   s.qty -= q; if (s.qty <= 0) Inv.setCell(idx, null); Inv.emit();
 }
@@ -10374,7 +10457,7 @@ function updateAutoPickup() {
 
 let worldDrops = [];
 function dropItemWorld(id, qty) {
-  if (!FINDS[id]) return;                       // only items with an in-world mesh can be dropped
+  if (!dropReg(id)) return;                      // §drop needs a world mesh (FINDS, or a lazily-built one for other items)
   const fx = Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);
   for (let k = 0; k < qty && k < 30; k++) {
     const a = rng() * 6.283, r = 0.6 + rng() * 1.1;
@@ -10384,7 +10467,7 @@ function dropItemWorld(id, qty) {
   saveDrops();
 }
 function spawnDropEntity(d, animate) {
-  if (!FINDS[d.id]) return;
+  if (!dropReg(d.id)) return;
   spawnFind(d.id, d.x, d.z);
   const e = life[life.length - 1]; if (e) { e.drop = d; e.pickAt = clock.t + AUTO_PICK_GRACE;   // no instant re-grab
     // §dropfly a fresh drop (not one restored from a save) visibly falls from the player: it starts at
@@ -10725,7 +10808,7 @@ function showContextMenu(idx, x, y) {
   if (isFood(c.id)) opts.push(["Eat", () => eatItem(idx)]);
   // §bugfix "Put in bucket": a scoopable fish / critter goes into the first bucket with water + room; greyed if none fits
   if (isPlaceable(c.id)) opts.push(["Place", () => placeHeldFromMenu(idx)]);
-  if (FINDS[c.id]) { opts.push(["Drop one", () => invDrop(idx, true)]); if (c.qty > 1) opts.push(["Drop all", () => invDrop(idx, false)]); }
+  if (isDroppable(c.id)) { opts.push(["Drop one", () => invDrop(idx, true)]); if (c.qty > 1) opts.push(["Drop all", () => invDrop(idx, false)]); }   // §drop fish/crops/seeds are droppable too
   const m = document.getElementById("ctxmenu");
   m.innerHTML = opts.map((o, i) => `<div data-i="${i}"${o[2] ? ' class="disabled"' : ''}>${o[0]}</div>`).join("");
   m.querySelectorAll("div").forEach((d, i) => d.onclick = () => { if (opts[i][2]) return; opts[i][1](); hideContextMenu(); if (invOpen) renderInventory(); });
@@ -10806,12 +10889,12 @@ function carryReturn() {   // put the carried stack back into the pack (first fr
   for (let i = 0; i < INV_SLOTS; i++) if (!Inv.main[i]) free.push(i);
   for (let i = 0; i < HOTBAR_SLOTS; i++) if (!Inv.hotbar[i]) free.push(INV_SLOTS + i);
   if (free.length) { Inv.setCell(free[0], { id: carry.id, qty: carry.qty }); carry = null; Inv.emit(); }
-  else if (FINDS[carry.id]) { dropItemWorld(carry.id, carry.qty); carry = null; }
+  else if (isDroppable(carry.id)) { dropItemWorld(carry.id, carry.qty); carry = null; }
   hideGhost();
 }
 function carryDropWorld() {   // clicking outside the panel while carrying drops it in front (tools can't litter → returned)
   if (!carry) return;
-  if (FINDS[carry.id]) { dropItemWorld(carry.id, carry.qty); carry = null; hideGhost(); }
+  if (isDroppable(carry.id)) { dropItemWorld(carry.id, carry.qty); carry = null; hideGhost(); }
   else carryReturn();
   if (invOpen) renderInventory();
 }
@@ -11192,7 +11275,6 @@ function targetAlongRay(r, sticky) {
   if (typeof geodes !== "undefined") for (const g of geodes) if (!g.cracked) sphere(g, "geode", g.x, g.z, 0.4*g.sc, 0.5 + g.sc*0.4);   // §40 geodes to crack with a pickaxe (once cracked they are spent scenery)
   for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
-  for (const c of colliders) if (c.kind === "fence" && c.r > 0) { const gy = surfaceAt(c.x, c.z).h; capsule(c, "fence", c.x, c.z, c.x, gy, c.z, c.x, gy+1.0, c.z, 0.32); }   // §13.1 choppable posts
   for (let i = 0; i < storageBoxes.length; i++) sphere(storageBoxes[i], "storagebox", storageBoxes[i].x, storageBoxes[i].z, 0.3, 0.8);   // §strip only free-standing storage boxes remain (cottage removed)
   for (const L of placedLanterns) sphere(L, "lantern", L.x, L.z, 0.4, 0.6);   // §tools pick a set-down lantern back up
 
@@ -11208,7 +11290,7 @@ let curTarget = null;    // recomputed each frame from the crosshair (desktop)
 // The tool-gated kinds (tree/fallentree/rock/searock/stump/geode/heaveboulder) are deliberately excluded.
 const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","tallgrass","plant","kelp","salt",
   "flotsam","barnacle","nest","driftwood","storagebox",
-  "lantern","fence","crate","barrel","searock"]);
+  "lantern","crate","barrel","searock"]);
 function softTargetUnderCrosshair() { const t = effectiveTarget(); return (t && SOFT_INTERACT.has(t.kind)) ? t : null; }
 function useToolOnTarget(t) {
   if (!t) return false;
@@ -11229,7 +11311,6 @@ function useToolOnTarget(t) {
     case "flotsam": collectFlotsam(t.obj); return true;   // §5 scoop floating debris straight from the water
     case "barnacle": scrapeBarnacle(t.obj); return true;   // §5 scrape with the Tool Kit (or a shovel) for bait
     case "driftwood": return breakDriftwood(t.obj);
-    case "fence": return chopFence(t.obj);
     case "storagebox": openStash(storageBoxes.indexOf(t.obj)); return true;
     case "lantern": pickUpLantern(t.obj); return true;   // §tools pick a set-down lantern back up
     case "tree": chopStanding(t.obj); return true;                 // §P2 any item chops; the axe is just faster (toolMul)
@@ -12589,12 +12670,14 @@ function drawShovel(view) {
     oy = -0.5 + raise * 0.24 + munch + bob * 0.3;                                         // §look held lower (doesn't rise all the way up to the mouth)
     oz = 0.62 - raise * 0.12;                                                             // and in toward the face
     roll = 0.1 + Math.sin(t * 6) * 0.03; pitch = -0.1 - raise * 0.2;                      // §eatcalm softer roll sway
-  } else if (isRod) {                                                                     // §fishpolish rod: smaller, gripped low-right, blank pointing FORWARD (away from the player), not leaning across
+  } else if (isRod) {                                                                     // §fishpolish rod: gripped low-right, blank angled UP-and-FORWARD so the tip stays ON screen (the fishing line starts at it)
     const chg = (rod && rod.state === "charging") ? rod.charge : 0, bend = (rod ? rod.bend : 0) || 0;
     scale = 0.3;
-    ox = 0.26 + sway; oy = -0.5 - swap*0.5 + bob; oz = 0.5 - chg*0.06;
-    roll = -0.1 + swayR;                                                                   // barely any lean now
-    pitch = 0.78 + chg*0.18 - bend*0.5;                                                     // tip points UP-and-FORWARD over the water; a bite/run dips the tip toward it
+    // §fishline raised + stood up from the old low-hip pose (oy -0.5 / pitch 0.78), whose tip projected off the
+    // bottom-right corner, so the line appeared to start from nowhere. Now the tip sits comfortably in view.
+    ox = 0.30 + sway; oy = -0.34 - swap*0.5 + bob; oz = 0.58 - chg*0.06;
+    roll = -0.14 + swayR;                                                                  // barely any lean now
+    pitch = 0.5 + chg*0.18 - bend*0.5;                                                      // tip points UP-and-FORWARD over the water; a bite/run dips the tip toward it
   } else if (held) {                                                                      // bucket / lantern: carried upright in the lower-right
     scale = 0.6;
     ox = 0.26 + sway; oy = -0.52 - swap*0.5 + bob; oz = 0.92;
@@ -13121,27 +13204,6 @@ function breakDriftwood(d) {
     if (Inv.add("driftwood", 1) > 0) { const first = !discovered.has("f_driftwood"); d.gone = true; discovered.add("f_driftwood"); notify("driftwood", 1, first); if (onDig) onDig("thud"); saveWorld(); }
     else { showCard("Pack full", "Drop something to make room."); bagShake(); }
   }
-  return true;
-}
-// §13.1 fence posts are wood → choppable for sticks (audit: nothing breakable is indestructible)
-function hideFenceInstance(c) {
-  const ft = propTypes.find(t => t.kind === "fence");
-  if (ft && ft.inst.data && c.ii != null) { const o = c.ii*10; ft.inst.data[o+3] = 0;
-    gl.bindBuffer(gl.ARRAY_BUFFER, ft.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, (o+3)*4, ft.inst.data, o+3, 1); }
-}
-function chopFence(c) {
-  // §4 a rotten old post: breakable with anything (an axe just topples it faster and yields a little more).
-  if (!c || c.r <= 0) return true;
-  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
-  const axe = selectedTool() === "axe";
-  shovelSwing = 1; spendStamina(axe ? TUNE.CHOP_COST : TUNE.CHOP_COST * 0.7, true); rootPlayer(); if (onDig) onDig("chop");
-  c.hits = (c.hits || 0) + (axe ? 2 : 1);
-  if (c.hits < 2) {                                   // bare hands / a non-axe tool need a second knock
-    camNudge = Math.max(camNudge, 0.03); spawnSand(c.x, surfaceAt(c.x,c.z).h + 0.6, c.z, 3, [0.5,0.42,0.3]); return true;
-  }
-  hideFenceInstance(c); c.r = 0;
-  const n = (axe ? 1 : 0) + 1 + (rng()*2|0); Inv.add("stick", n); discovered.add("f_stick");
-  spawnSand(c.x, surfaceAt(c.x,c.z).h + 0.2, c.z, 6, [0.5,0.42,0.3]); showCard("Fence post", "Knocked loose, " + n + " sticks."); saveWorld();
   return true;
 }
 // placeholder hook; §13.2 "Too tired" will refine this
@@ -13748,7 +13810,6 @@ function saveWorld() {
     stumps: stumps.map(s => [s.species, +s.x.toFixed(1), +s.z.toFixed(1), s.sproutAt]),
     chopped: treeObjs.filter(o => o.gone).map(o => o.i + ":" + o.species),
     driftGone: driftObjs.map((d, i) => d.gone ? i : -1).filter(i => i >= 0),
-    fenceGone: colliders.filter(c => c.kind === "fence" && c.r <= 0).map(c => c.ii),
     // fallen trees are real toppled instances: save the instance ref + its whittle state
     fallen: fallenTrees.filter(o => !o.gone).map(o => [o.i, o.species, +o.treeScale.toFixed(2), +o.scale.toFixed(2), o.crownChops, o.trunkChops, +o.leanDir.toFixed(2), +(clock.t - o.bornFall).toFixed(0), o.trunkChopsMax || o.trunkChops]),
     // player-built terrain (sparse): [cell index, built height, material]
@@ -13769,8 +13830,6 @@ function loadWorld() {
     const chop = new Set(w.chopped || []);
     for (const o of treeObjs) if (chop.has(o.i + ":" + o.species)) { o.gone = true; o.scale = 0; setTreeInstance(o); if (o.coll) o.coll.r = 0; }
     for (const i of (w.driftGone || [])) if (driftObjs[i]) driftObjs[i].gone = true;   // §13.1
-    if (w.fenceGone && w.fenceGone.length) { const fg = new Set(w.fenceGone);
-      for (const c of colliders) if (c.kind === "fence" && fg.has(c.ii)) { c.r = 0; hideFenceInstance(c); } }
     for (const p of (w.planted||[])) { planted.push({ species: p[0], x: p[1], z: p[2], plantedAt: p[3] }); colliders.push({ x: p[1], z: p[2], r: 0.4, kind: "planted" }); }
     for (const s of (w.stumps||[])) stumps.push({ species: s[0], x: s[1], z: s[2], hp: 4, sproutAt: s[3] });
     for (const f of (w.fallen||[])) {
