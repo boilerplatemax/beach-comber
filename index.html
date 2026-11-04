@@ -6871,13 +6871,6 @@ function fernItemMesh() { const m = Mesh(), g = [0.3,0.46,0.24], g2 = [0.34,0.5,
   return m; }
 // --- inland raw-material meshes (§5) ---
 // §models a plump mauve worm, coiled on the ground with its head lifted and two little black eyes.
-function wormMesh() { const m = Mesh(); const c=[0.74,0.56,0.73], eye=[0.08,0.08,0.11];
-  const pts=[[-0.32,0.05,0.08,0.045],[-0.18,0.06,-0.06,0.065],[-0.02,0.06,0.04,0.078],[0.12,0.07,0.12,0.078],[0.22,0.11,0.04,0.07],[0.29,0.17,-0.06,0.06],[0.31,0.21,-0.14,0.048]];
-  mPathTube(m, pts, 7, c);
-  mergeAt(m, ballM(0.065, c, 7), 0.31, 0.21, -0.14);        // rounded head
-  mergeAt(m, ballM(0.045, c, 6), -0.32, 0.05, 0.08);        // rounded tail
-  for (const s of [-1,1]) mBox(m, 0.34, 0.24, -0.13+s*0.045, 0.026,0.03,0.026, eye);   // eyes
-  return m; }
 function rootMesh() { const m = Mesh(); const c = [0.6,0.45,0.3]; mCyl(m,-0.02,0.3,0.05,0.02,6,c); mCyl(m,0.0,0.22,0.035,0.015,6,[0.55,0.4,0.26]); mBox(m,0.08,0.12,0.03,0.12,0.025,0.025,[0.5,0.38,0.24]); mBox(m,-0.06,0.08,-0.04,0.1,0.022,0.022,[0.52,0.4,0.26]); return m; }
 function flintMesh() { const m = Mesh(); mRock(m, mulberry32(0x5f11 ^ SEED_INT), [0.26, 0.27, 0.31]); return m; }
 // §14B a single wavy blade of seaweed: a tapering vertical ribbon curved into a gentle S, so
@@ -7457,7 +7450,7 @@ const FINDS = {
   fern:     { mesh: () => fernItemMesh(),           base: 0.4, max: 80, label: "Fern", desc: "A soft green frond from the island's shaded interior.", rare: 0 },
   // --- inland raw materials (dug from grass / dirt / forest) ---
   // §matrm earth-material items (sand/dirt/gravel/mud) removed with the material-placement feature
-  worm:     { mesh: () => wormMesh(),               base: 0.4, max: 80, label: "Earthworm", desc: "A fat worm from the dark soil. Good bait.", rare: 0 },
+  worm:     { mesh: () => wormItemMesh(),           base: 0.4, max: 80, label: "Earthworm", desc: "A fat worm from the dark soil. Good bait.", rare: 0 },
   bug:      { mesh: () => beetleMesh(),             base: 0.4, max: 80, label: "Bug", desc: "A little bug from under a stone. Good on a hook, or drop it to let it go.", rare: 0, bait: 1 },   // §stonebug legacy generic bug item (kept so old saves still render); new picks give the specific species below
   // §P3 each land bug picked from under a stone is now its OWN item, with its own icon + journal entry (keys match the CREATURES entries); all work as fishing bait and can be dropped to release the live bug
   pillbug:  { mesh: () => pillbugMesh(),            base: 0.4, max: 80, label: "Pill Bug", desc: "A woodlouse curled into a ball. Good on a hook, or drop it to let it go.", rare: 0, bait: 1 },
@@ -11334,6 +11327,14 @@ function pickWorm(w) {
   camNudge = 0.03;
   saveState();
   return true;
+}
+// The Earthworm item's model (satchel icon, inspect view, a dropped/placed find): the same live-worm mesh,
+// ~0.7 units long, resting on y = 0, with the live worms' ruddy tint baked in so icon and creature match.
+function wormItemMesh() {
+  const m = meshEarthwormMesh(), s = 0.0135, tint = [0.95, 0.7, 0.66];
+  for (let i = 0; i < m.pos.length; i += 3) { m.pos[i] *= s; m.pos[i+1] = (m.pos[i+1] + 2.1) * s; m.pos[i+2] *= s; }
+  for (let i = 0; i < m.col.length; i += 3) { m.col[i] *= tint[0]; m.col[i+1] *= tint[1]; m.col[i+2] *= tint[2]; }
+  return m;
 }
 function wormPrompt() { return (IS_TOUCH ? "tap" : "click") + " to pick up the earthworm"; }
 function resetWorms() { for (const w of worms) w.c.dispose(); worms = []; }
