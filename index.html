@@ -2625,7 +2625,9 @@ vec3 lanternLight(vec3 col, vec3 world, vec3 N, vec3 camPos, vec3 lpos, float I,
   float ld = length(toL);
   float x = clamp(ld / R, 0.0, 1.0);
   float win = 1.0 - x * x * x * x; win *= win;              // smooth window → 0 at the radius (finite range, no cutoff)
-  float dist = win / (1.0 + 0.055 * ld * ld);               // rapid inverse-square falloff, bright near → weak far
+  float dist = win / (1.0 + 26.62 * (ld * ld) / (R * R));   // rapid inverse-square falloff, bright near → weak far. The constant is
+                                                            // 0.055 at the original R = 22 m (26.62 = 0.055·22²), scaled with R so a
+                                                            // bigger radius stretches the WHOLE curve (same look, just wider), not only the cut-off
   vec3 Ldir = toL / max(ld, 1e-4);
   vec3 nl = N; if (dot(nl, camPos - world) < 0.0) nl = -nl; // orient to the viewer so the facing side is the lit side
   float ndl = max(dot(nl, Ldir), 0.0);                      // directional: back/edge faces fall off to dark
@@ -9008,6 +9010,7 @@ function createCreatureRuntimeGL() {
         const st = cfg.animations[track.state];
         tsBirdPose(pose, st.type, track.phase, (st.intensity ?? 1) * this.intensity, B);
         blender.blend(pose, 1 - track.weight);
+        if (this.headLook) pose.g.head[0] += this.headLook;   // game-side: an extra head yaw (e.g. a gull keeping an eye on you)
         const m = Math.min(1, Math.max(0, pose.mix));
         this.model = B.air && (!B.ground || pose.mix >= 0.5) ? 'air' : 'ground';
         this.gVis = !!B.ground && 1 - m > 0.001; this.gDither = 1 - m >= 0.999 ? 0 : m;
@@ -9726,6 +9729,8 @@ const GULL = {
   spawnNear: 34, spawnFar: 85, despawn: 150,
   bandLo: 0.35, bandHi: 6,              // where they stand: height above the live waterline (m)
   notice: 18, walkAway: 13, flush: 8.5, contagion: 9,   // m, × player loudness
+  waryAngle: [0.3, 1.15],               // walking off: this far (rad, either side) from dead-away (a look over the shoulder … side-on)
+  headTurn: 0.95,                       // rad: how far an aware gull turns its head to keep you in view
   closing: 1.7,                         // …and they go if you'd reach them within this many seconds (heading straight at them)
   stroll: [0.18, 0.45], wary: 1.1,      // walking speeds (m/s)
   takeoffRate: [1.7, 2.0],              // takeoff animation speed (×): a quick, hard spring
@@ -9878,8 +9883,11 @@ function updateGull(k, dt, px, pz, loud) {
     const arriving = closing > 1 && d < GULL.notice * loud && d / closing < GULL.closing;
     if (d < GULL.flush * loud || arriving || (k.flushAt > 0 && clock.t >= k.flushAt)) { k.flushAt = -1; gullFlush(k, px, pz); return; }
     if (d < GULL.walkAway * loud && k.mode !== "wary") {
-      if (k.mode === "float") { k.wary = 2.5; k.h = Math.atan2(dz, dx) + crR(-0.4, 0.4); }   // paddle away
-      else { k.mode = "wary"; k.t = crR(1.5, 3); k.h = Math.atan2(dz, dx) + crR(-0.5, 0.5); k.vT = GULL.wary; }
+      // §gullwary move off at a slant, not dead away: each picks its own angle (a glance back over the shoulder …
+      // nearly side-on) to a random side, so it can still keep you in view (the head tracks you; see below)
+      k.wOff = (critRng() < 0.5 ? -1 : 1) * crR(GULL.waryAngle[0], GULL.waryAngle[1]); k.wTurn = crR(1.2, 3);
+      if (k.mode === "float") { k.wary = 2.5; k.h = Math.atan2(dz, dx) + k.wOff * 0.8; }   // paddle away
+      else { k.mode = "wary"; k.t = crR(1.5, 3); k.h = Math.atan2(dz, dx) + k.wOff; k.vT = GULL.wary * crR(0.75, 1.05); }
     }
   }
   switch (k.mode) {
@@ -9906,6 +9914,7 @@ function updateGull(k, dt, px, pz, loud) {
       }
       k.t -= dt;
       if (k.t <= 0 || (k.mode === "wary" && d > GULL.notice * loud)) { k.mode = "stand"; k.t = crR(2, 6); break; }
+      if (k.mode === "wary") k.h += wrapA(Math.atan2(dz, dx) + k.wOff - k.h) * Math.min(1, dt * k.wTurn);   // hold its slant as you move
       k.v = approach(k.v, k.vT, 1.5 * dt);
       const nx = c.x + Math.cos(k.h) * k.v * dt, nz = c.z + Math.sin(k.h) * k.v * dt;
       if (waterDepthAt(nx, nz) > 0.02) { k.mode = "stand"; k.t = crR(1, 4); break; }   // don't wade
@@ -10014,8 +10023,18 @@ function updateGull(k, dt, px, pz, loud) {
   }
   if (grounded) {   // stand on the ground, facing where it walks
     c.y = surfaceAt(c.x, c.z).h; c.bank = 0; c.tilt = 0;
-    c.yaw += wrapA(-k.h - c.yaw) * Math.min(1, dt * 6);
+    c.yaw += wrapA(-k.h - c.yaw) * Math.min(1, dt * (k.mode === "wary" ? 3.5 : 6));
   }
+  // §gullwary an aware gull keeps an eye on you: its head turns toward you (as far as a neck goes), each with
+  // its own strength and lag so a flock never moves as one. Gulls ignore you again once you're far off.
+  if (k.lookK === undefined) { k.lookK = crR(0.6, 1); k.lookRate = crR(2, 4.5); k.look = 0; }
+  let lookT = 0;
+  if ((grounded || k.mode === "float") && loud > 0 && d < GULL.notice * loud) {
+    const vx = px - c.x, vz = pz - c.z, cy = Math.cos(c.yaw), sy = Math.sin(c.yaw);   // body forward = (cy, -sy), its side = (sy, cy)
+    lookT = Math.max(-GULL.headTurn, Math.min(GULL.headTurn, Math.atan2(vx * sy + vz * cy, vx * cy - vz * sy))) * k.lookK;
+  }
+  k.look += (lookT - k.look) * Math.min(1, dt * k.lookRate);
+  c.headLook = k.look;
   if (k.mode === "fly" || k.mode === "approach") {   // the odd call overhead
     k.cry -= dt;
     if (k.cry <= 0) { k.cry = crR(6, 22); if (typeof SND !== "undefined" && d < 70) SND.play("gull_cry", { position: [c.x, c.y, c.z], pitch: crR(0.88, 1.15), volume: 0.8 }); }
@@ -11521,7 +11540,7 @@ function lanternLit() { return mode === "walk" && !isPanelOpen() && selectedItem
 function lanternPos() { return [player.x, player.eyeY - 0.55, player.z]; }
 function lanternFlicker() { const t = clock.t; return 0.84 + 0.12*Math.sin(t*18.0) + 0.06*Math.sin(t*7.3 + 1.0) + 0.04*Math.sin(t*33.0); }
 const LANTERN_I = 1.5;    // §night lantern brightness (warm, soft) — a bit stronger now that the pool is omnidirectional like a placed one
-let LANTERN_R = 22;       // §night lantern light radius — the finite reach; beyond it props/terrain get NO lantern light (wider so the held pool is genuinely useful)
+let LANTERN_R = 66;       // §night lantern light radius — the finite reach; beyond it props/terrain get NO lantern light. Tripled from 22 m; the shader's falloff scales with it, so the pool keeps its shape at 3× the size
    // §3 indoor multiplier so the lantern doesn't wash the close walls to white (tunable)
 let placedLanterns = [];   // §tools lit lanterns set down in the world, saved per seed: { x, y, z }
 // the one lantern that lights the scene this frame: the held one if raised, else the nearest placed lantern to the camera
