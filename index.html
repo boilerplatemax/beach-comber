@@ -9544,7 +9544,9 @@ const CRAB = {
   base: 9, cap: 16,                     // how many live around the player (before tide / time / weather)
   ringNear: 16, ringFar: 58, despawn: 76, tick: 0.5,
   bandLo: -0.12, bandHi: 2.4,           // where they live: height above the live waterline (m)
-  scale: [0.0026, 0.004],               // model is ~100 units across the legs → 0.26–0.40 m
+  scale: [0.0045, 0.0075],              // model is ~100 units across the legs → 0.45–0.75 m…
+  big: [0.0075, 0.0098], bigChance: 0.12, // …and now and then a big old one, up to ~1 m
+  sizeRef: 0.006,                       // bigger crabs walk / scuttle a little faster (× √(scale / sizeRef))
   wander: [0.08, 0.26], flee: [0.42, 0.62],   // m/s
   notice: 6.5, fleeR: 3.8, calm: 10,    // m, × player loudness
   idle: [1.5, 7], turn: 2.8, turnFlee: 7.5,
@@ -9554,12 +9556,12 @@ let crabs = [], _crabT = 0;
 function spawnCrab(x, z) {
   if (!CREATURE_RT) return null;
   const c = CREATURE_RT.spawn('meshCrab', { animation: 'crawl', phase: critRng() });
-  const sc = crR(CRAB.scale[0], CRAB.scale[1]), shade = crR(0.82, 1.12);
+  const big = critRng() < CRAB.bigChance, sc = big ? crR(CRAB.big[0], CRAB.big[1]) : crR(CRAB.scale[0], CRAB.scale[1]), shade = crR(0.82, 1.12);
   c.x = x; c.z = z; c.y = surfaceAt(x, z).h; c.yaw = critRng() * 6.283; c.scale = sc;
   c.tint = [shade * crR(0.92, 1.06), shade * crR(0.9, 1.05), shade * crR(0.9, 1.08)];
   c.intensity = 0;
   const k = { c, mode: "idle", t: crR(0.5, 4), tx: x, tz: z, v: 0, vT: 0, turn: 0, yawT: c.yaw, sign: 1,
-              nx: 0, ny: 1, nz: 0, fleeDx: 0, fleeDz: 0, reaim: 0 };
+              nx: 0, ny: 1, nz: 0, fleeDx: 0, fleeDz: 0, reaim: 0, pace: Math.sqrt(sc / CRAB.sizeRef) };
   crabs.push(k);
   return k;
 }
@@ -9593,7 +9595,7 @@ function updateCrab(k, dt, px, pz, loud) {
   const c = k.c, dx = px - c.x, dz = pz - c.z, d = Math.hypot(dx, dz);
   const depth = waterDepthAt(c.x, c.z);
   if (k.mode !== "flee" && k.mode !== "leave" && loud > 0) {
-    if (d < CRAB.fleeR * loud) { k.mode = "flee"; k.t = 0; crabWaterDir(k, px, pz); k.reaim = 0.4; k.vT = crR(CRAB.flee[0], CRAB.flee[1]); }
+    if (d < CRAB.fleeR * loud) { k.mode = "flee"; k.t = 0; crabWaterDir(k, px, pz); k.reaim = 0.4; k.vT = crR(CRAB.flee[0], CRAB.flee[1]) * k.pace; }
     else if (d < CRAB.notice * loud && k.mode !== "alert") { k.mode = "alert"; k.t = crR(1.5, 3.5); }
   }
   let turnRate = CRAB.turn;
@@ -9602,7 +9604,7 @@ function updateCrab(k, dt, px, pz, loud) {
       k.vT = 0; k.t -= dt;
       if (k.t <= 0) {
         const t = crabTarget(c.x, c.z);
-        if (t) { k.mode = "walk"; k.tx = t[0]; k.tz = t[1]; k.vT = crR(CRAB.wander[0], CRAB.wander[1]); k.t = 12; }
+        if (t) { k.mode = "walk"; k.tx = t[0]; k.tz = t[1]; k.vT = crR(CRAB.wander[0], CRAB.wander[1]) * k.pace; k.t = 12; }
         else k.t = crR(1, 3);
       }
       break;
@@ -9629,7 +9631,7 @@ function updateCrab(k, dt, px, pz, loud) {
       turnRate = CRAB.turnFlee;
       k.reaim -= dt; if (k.reaim <= 0) { crabWaterDir(k, px, pz); k.reaim = 0.6; }
       crabSteer(k, k.fleeDx, k.fleeDz);
-      k.vT = CRAB.flee[0] * 0.7;
+      k.vT = CRAB.flee[0] * 0.7 * k.pace;
       if (depth > 0.5) k.gone = true;
       break;
   }
@@ -9648,7 +9650,7 @@ function updateCrab(k, dt, px, pz, loud) {
   c.y = s.h; c.tilt = nh > 1e-4 ? Math.atan2(nh, k.ny) : 0; c.tiltDir = Math.atan2(-k.nx, k.nz);
   // legs: stride grows with speed; turning on the spot shuffles the feet too. Rate matches travel.
   const vAnim = Math.max(k.v, k.turn * 0.09);
-  const iT = vAnim < 0.01 ? 0 : CRAB.stride[0] + (CRAB.stride[1] - CRAB.stride[0]) * Math.min(1, vAnim / CRAB.flee[1]);
+  const iT = vAnim < 0.01 ? 0 : CRAB.stride[0] + (CRAB.stride[1] - CRAB.stride[0]) * Math.min(1, vAnim / (CRAB.flee[1] * k.pace));
   c.intensity = approach(c.intensity, iT, dt * 4);
   c.matchGroundSpeed(vAnim / c.scale);
   if (c.speed > 7) c.speed = 7;
@@ -9685,7 +9687,7 @@ function updateCrabs(dt, loud) {
 /* ---- Gulls ---- */
 const GULL = {
   ground: 7, groundNight: 3, groundStorm: 2, flyers: 3, cap: 18,
-  scale: [0.0084, 0.0095],              // ~0.47–0.53 m tall standing
+  scale: [0.0098, 0.0112],              // ~0.55–0.63 m tall standing
   spawnNear: 34, spawnFar: 85, despawn: 150,
   bandLo: 0.35, bandHi: 6,              // where they stand: height above the live waterline (m)
   notice: 13, walkAway: 9.5, flush: 6, contagion: 7.5,   // m, × player loudness
