@@ -25,7 +25,7 @@ const SEED = process.argv[2] || "alpha";
     out.tree = { i: dropped.i, species: dropped.species };
     saveWorld();
     // dig with the shovel
-    const hb = Inv.hotbar.findIndex(c => c && c.id === "shovel"); Inv.selected = hb;
+    const hb = Inv.hotbar.findIndex(c => c && c.id === "spade"); Inv.selected = hb;
     let dug = 0;
     for (let k = 0; k < 400 && !dug; k++) {
       const a = k * 2.4, r = 30 + k, x = player.x + Math.cos(a) * r, z = player.z + Math.sin(a) * r;
