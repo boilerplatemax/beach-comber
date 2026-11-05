@@ -16880,7 +16880,7 @@ function invDrop(idx, one) {
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 // §strip save format version. Bumped when the strip-down broke old saves; a stored save whose v
 // does not match is discarded on load so the game starts fresh (no backward-compat / migration).
-const SAVE_VERSION = 7;   // v7: sea stars collected (bcw.stars), barnacles only on objects.   // v6: tide encrustations (bcw_<seed>.enc) replace barnacle rocks / oyster beds / salt spots. v5: the shovel became the Plastic Beach Spade (item id "spade"). v4: survival tools / chopping / mining / planting cut. Older saves are discarded per seed on load (no migration).
+const SAVE_VERSION = 8;   // v8: 1800 m world on a 577 grid (cell indices moved), new island shapes / ground cover.   // v7: sea stars collected (bcw.stars), barnacles only on objects.   // v6: tide encrustations (bcw_<seed>.enc) replace barnacle rocks / oyster beds / salt spots. v5: the shovel became the Plastic Beach Spade (item id "spade"). v4: survival tools / chopping / mining / planting cut. Older saves are discarded per seed on load (no migration).
 function purgeSeedSaves() { for (const suf of ["bc_","bcw_","bcd_","bcs_","bcc_","bcg_","bcsets_"]) { try { localStorage.removeItem(suf + SEED_STR); } catch (e) {} } }
 function saveState() {
   try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ v: SAVE_VERSION, main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, cleanup: beachCleanup, variants: variantsSeen,
