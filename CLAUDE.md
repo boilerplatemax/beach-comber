@@ -24,12 +24,16 @@ design — keep it one file (reorganize *within* the file rather than splitting)
 ## Invariants (do not break)
 
 - **Determinism.** One seeded PRNG stream (`§ PRNG`, mulberry32) drives *all*
-  procedural generation. The same seed must produce an identical island
-  (terrain, POIs, placement, spawns). Anything that consumes `rng()`/`subStream()`
-  during generation is order-sensitive: never reorder or add/remove draws from
-  the stream without intending to change every seed's world. Some removed
-  features keep their seeding calls (e.g. `seedHeaveBoulders`) purely to hold
-  the stream position — leave them.
+  procedural generation. Within one build, the same seed must produce an identical
+  world (terrain, islands, POIs, placement, spawns), both on a fresh `?seed=` load
+  and after an in-place `newIsland(seed)`. Anything that consumes `rng()`/`subStream()`
+  during generation is order-sensitive, so keep draws in a fixed order.
+  **Development phase:** seeds and saves do NOT need to stay compatible with earlier
+  builds. Adding/removing generation draws (which reshuffles every seed's world) is
+  fine, and removed features don't need to keep stub seeding calls. When a change
+  breaks the save format, bump `SAVE_VERSION` instead of writing a migration: older
+  saves are discarded per seed on load. Live (play-time) state uses `critRng`,
+  `Math.random` or the per-seed grid hash, never the world-gen `rng()` stream.
 - **`"use strict"`.** Assigning an undeclared global throws. Declare before use.
 - **Single file.** No bundler, no `import`/`export`.
 - **Mobile + debug.** Keep touch controls (`§ MOBILE CONTROLS`) and the debug
@@ -71,12 +75,18 @@ Chromium + Playwright are preinstalled. Launch with the software-GL flags:
 --use-gl=angle --use-angle=swiftshader --ignore-gpu-blocklist --enable-unsafe-swiftshader
 ```
 
-Scripts in `/tmp/wtest/`:
+Scripts in `tools/wtest/` (run them from that folder, e.g. `cd tools/wtest && node gl.js`):
 
-- `gl.js` — smoke test: loads 3 seeds × desktop/mobile, checks for console errors.
-- `det.js` — determinism: same seed twice → identical POIs / character / heights.
-- `perf2.js` — drives `frame()` directly (bypassing rAF throttle) to read draw
-  calls, triangles, and heap/allocation per frame.
+- `check.sh` — extracts the main `<script>` and runs `node --check` on it.
+- `gl.js [seeds]` — smoke test: loads 3 seeds × desktop/mobile, enters the game,
+  drives frames, fails on any console error / page error.
+- `det.js [seeds]` — determinism: same seed twice (reload) and once via in-place
+  `newIsland()` → identical heights / materials / POIs / colliders / initial finds.
+- `perf2.js [seed]` — drives `frame()` directly (bypassing rAF throttle) to read draw
+  calls, triangles and heap at four view directions.
+- `partA.js` … — headless gameplay exercises for specific features (see each file).
+- `undef.py` — crude static scan for calls to names that are defined nowhere
+  (run after `check.sh`; most hits are methods / GLSL builtins, look for real ones).
 
 **SwiftShader caveat:** there is no real GPU, so wall-clock frame time / FPS are
 software-rasterizer-bound and *not* representative. GPU-independent metrics
@@ -85,5 +95,5 @@ timing is not. `frame(now)` can be driven manually with an advancing timestamp.
 
 To validate a change: run `node --check` on the extracted script, then `gl.js`
 (no errors) and `det.js` (determinism holds). For anything touching stamina /
-tools / digging, also exercise a dig/chop headlessly since a missed reference
-only throws at use time.
+digging / interactions, also exercise it headlessly (dig, shake a tree, pick a
+barnacle …) since a missed reference only throws at use time.

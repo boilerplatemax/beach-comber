@@ -862,9 +862,9 @@
  *   INTERACTION
  *     § INVENTORY / JOURNAL / INTERACTION · § CLICK-TO-WALK · § TARGETING ·
  *     § DIGGING · § TERRAIN API · § BUCKET · § 11.6 MINI 3D VIEWS ·
- *     § 17 FARMING · § 17.5 GOBLIN TRADERS (inert) · § TOOLS ·
+ *     § GLINTS & MISC · § 17.5 GOBLIN TRADERS (inert) · § TREES & SCENERY ·
  *     § 21 FLIPPING STONES · § 21D HEAVY BOULDERS · § 23 OYSTERS ·
- *     § 40 RARE FINDS & GEODES · § 41 HORSESHOE CRABS · §B5 FINDABLE EVENTS ·
+ *     § 40 RARE FINDS · § 41 HORSESHOE CRABS · §B5 FINDABLE EVENTS ·
  *     § 19 COTTAGE (removed, inert stubs) · § GOATS & SALT (inert) ·
  *     § 12C BURIED TREASURE
  *   DRIVER
@@ -872,7 +872,7 @@
  *
  *  Central gameplay tunables: `const TUNE` in § DIGGING (debug sliders:
  *  TUNABLES + DBG_GET/DBG_SET). Determinism: one seeded rng stream (§ PRNG);
- *  same seed → identical island (see /tmp/wtest/det.js). CLAUDE.md has the
+ *  same seed → identical world within a build (see tools/wtest/det.js). CLAUDE.md has the
  *  architecture notes and the test commands.
  * ===================================================================== */
 
@@ -1858,7 +1858,7 @@ function soundCategory(id, bus) {
   if (/^step|^land_/.test(id)) return "footsteps";
   if (bus === "ui") return "ui";
   if (bus === "ambience") return "ambience";
-  if (/^dig_|chop|timber|clang|clink|scrape|sift|crack|thud|fail_thud|snap|hitflesh|^pat$|whoosh|crash|mine|crumble/.test(id)) return "tools";
+  if (/^dig_|rustle|clang|clink|scrape|sift|crack|thud|fail_thud|snap|hitflesh|^pat$|whoosh|crash|crumble/.test(id)) return "tools";
   if (/gull|wingflap|peep|skitter|seal_bark|^jet$|squirt|owl|^bat$|raccoon|hcrab|chirp|cricket|frog|toad|^duck|heron|seal|growl/.test(id)) return "creatures";
   return "other";
 }
@@ -2033,9 +2033,9 @@ const VOICE = {
   D("dig_gravel", { shape:"noise", lpf:0.5, atk:0.001, sus:0.03, rel:0.07, gain:0.5, crush:30 }, { vol:0.4 });
   D("dig_mud",    { freq:180, freq2:90, shape:"sine", atk:0.002, sus:0.04, rel:0.1, noise:0.4, gain:0.45 }, { vol:0.38 });
   D("sift",       { shape:"noise", lpf:0.35, atk:0.01, sus:0.06, rel:0.1, gain:0.4 }, { vol:0.35 });
-  // axe / pickaxe
-  D("chop",       { freq:260, freq2:120, shape:"tri", atk:0.001, sus:0.02, rel:0.09, noise:0.4, gain:0.6 }, { vol:0.5, pv:0.08 });
-  D("timber",     { freq:160, freq2:80, shape:"saw", atk:0.02, sus:0.2, rel:0.4, noise:0.3, gain:0.5 }, { vol:0.55 });
+  // trees: a leafy rustle when you shake one
+  D("rustle",     { shape:"noise", lpf:0.55, atk:0.03, sus:0.22, rel:0.28, gain:0.42, crush:12 }, { vol:0.42, pv:0.12 });
+  // knocks / strikes
   D("crash",      { shape:"noise", lpf:0.3, atk:0.01, sus:0.2, rel:0.5, gain:0.6 }, { vol:0.6 });
   D("snap",       { freq:900, freq2:300, shape:"saw", atk:0.0005, sus:0.005, rel:0.04, gain:0.4 }, { vol:0.35 });
   D("clink",      { freq:1800, freq2:1400, shape:"sine", atk:0.0005, sus:0.006, rel:0.08, gain:0.35 }, { vol:0.4, pv:0.1 });
@@ -2214,7 +2214,7 @@ function updateFootsteps() {}
 // assign every sound hook once (called after the on* vars are declared)
 function wireSound() {
   onFootstep = (surf, str) => { const id = surf === "wet" ? "step_wet" : surf === "rock" ? "step_rock" : surf === "grass" ? "step_grass" : surf === "wood" ? "step_wood" : "step_sand"; SND.play(id, { volume: 0.5 + (str||0.5)*0.8 }); };
-  const DIG = { chop:"chop", timber:"timber", clang:"clang", clink:"clink", grind:"scrape", scrape:"scrape", sift:"sift", splash:"splash", eat:"eat_crunch", plant:"pat", mine:"crack", pluck:"pickup", growl:"thud", thud:"thud", cook:"eat_slurp" };
+  const DIG = { rustle:"rustle", clang:"clang", clink:"clink", grind:"scrape", scrape:"scrape", sift:"sift", splash:"splash", eat:"eat_crunch", pluck:"pickup", growl:"thud", thud:"thud", cook:"eat_slurp" };
   onDig = (k) => SND.play(DIG[k] || "thud", { position: [player.x, 0, player.z] });
   onBreath = () => SND.play("breath");
   onSplash = () => SND.play("splash", { position: [player.x, 0, player.z] });
@@ -3421,7 +3421,7 @@ const player = { x: 0, z: 0, bob: 0, eyeY: EYE, feetY: 0, prevFeetY: 0, sprintin
                  swimming: false, underwater: false, breath: 40 };     // §14A swimming/breath (BREATH_MAX)
 // §strip crouching removed (key, mobile button, creature-calm bonus, crouch-resting, camera dip).
    // kept as a constant-false so existing reads are harmless
-// §P1 the player standing height here (terrain, or a fallen trunk you're on)
+// §P1 the player standing height here (the terrain underfoot)
 // §P1 grounded probe with a few cm of tolerance, so bumps and slope changes don't read as airborne
 // §P2 jump input buffer: a Space press sets this; the frame loop fires a jump while it's >0 and you can jump.
 let jumpBuffer = 0;
@@ -4823,7 +4823,7 @@ function controlsRows() {
   // pack, so it is not listed as a separate "tab" control.
   const rows = [
     ["Move", "W A S D"], ["Look", "Mouse"], ["Jump · swim up", "Space"], ["Sprint", "Shift"],
-    ["Use · dig · chop", "Left-click"],
+    ["Use · dig · shake", "Left-click"],
     ["Use held item · eat", "Right-click"],
     ["Pick up · interact", "F"],
     ["Open satchel", "E"],
@@ -5108,7 +5108,7 @@ let chewT = 0;
 // §P2 EATING: hold right-click on a food item in hand to eat it over ~EAT_TIME. The food lifts to the
 // mouth, you munch (bob + crumbs in the food's colour + a chew sound each bite), and releasing cancels it.
 // Some foods leave a shell / peel behind, which goes to the pack (or drops at your feet if it's full).
-const LEFTOVER = { oyster: "oystershell", clam: "clamshell", mussel: "musselshell", banana: "bananapeel" };
+const LEFTOVER = { oyster: "oystershell", clam: "clamshell", mussel: "musselshell" };
 let eating = null;   // { id, t, dur, munch } while the meal is in progress, else null
 let _mobileEatTouch = null;   // FEATURE: mobile-eat  the touch id that is holding a food slot to eat (so a second finger moving doesn't cancel it)
 function eatProgress() { return eating ? Math.min(1, eating.t / eating.dur) : 0; }
@@ -5167,7 +5167,7 @@ function finishEat() {
 
 /* ---- the interaction target, independent of the equipped tool (§11.2 / §11.3) ---- */
 // Which tool performs the primary action on each target kind.
-const TOOL_FOR_KIND = { find: "hand", rubble: "hand", bush: "hand", crop: "hand", salt: "hand", driftwood: "hand", storagebox: "hand", tree: "axe", fallentree: "axe", rock: "pickaxe", stump: "axe" };
+const TOOL_FOR_KIND = { find: "hand", bush: "hand", salt: "hand", driftwood: "hand", storagebox: "hand", tree: "hand" };
 function aimInfo() {
   if (mode !== "walk") return null;
   if (curTarget) return { kind: curTarget.kind, obj: curTarget.obj, x: curTarget.x, z: curTarget.z, need: TOOL_FOR_KIND[curTarget.kind] || "hand" };
@@ -5175,12 +5175,9 @@ function aimInfo() {
   if (isFood(tool)) return { kind: "self", need: "hand" };                 // food in hand: eat anytime
   const pt = rayGround(0, 0); if (!pt) return null;
   if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return null;
-  if (SEED_TREE[tool]) return canPlant(SEED_TREE[tool], pt[0], pt[1]) ? { kind: "ground", x: pt[0], z: pt[1], need: "self" } : null;
-  if (CROP_SEED[tool]) return canPlantCrop(CROP_SEED[tool], pt[0], pt[1]) ? { kind: "ground", x: pt[0], z: pt[1], need: "self" } : null;
   if (surfaceKind(pt[0], pt[1]) !== "rock") return { kind: "ground", x: pt[0], z: pt[1], need: "shovel" };   // diggable ground → a shovel target
   return null;
 }
-// §13.2 the Tool Kit counts as owning the shovel, axe and pickaxe
 function ownsTool(id) { return Inv.hotbarHasId(id) || selectedTool() === id || Inv.has(id); }   // §P2 do you carry this tool anywhere
 // Do you OWN a tool that can affect this target (even if not equipped, auto-switch will reach for it)?
 function aimAffordable(info) {
@@ -5190,7 +5187,6 @@ function aimAffordable(info) {
   if (info.kind === "creature") {
     return true;                                              // otherwise inspecting always works
   }
-  if (info.kind === "stump") return ownsTool("axe") || ownsTool("shovel");
   return ownsTool(n);
 }
 
@@ -5224,10 +5220,8 @@ function drawBounds(view) {
   const near = (x, z) => Math.hypot(x-player.x, z-player.z) < 32;
   for (const e of life) { if (!lifeVisible(e) || !near(e.x, e.z)) continue; add(e.x, e.z, entityRadius(e), curTarget && curTarget.obj === e); }
   for (const s of saltSpots) if (near(s.x, s.z)) add(s.x, s.z, 0.75, curTarget && curTarget.obj === s);
-  for (const o of treeObjs) { if (o.gone || o.falling || !near(o.x, o.z)) continue; add(o.x, o.z, o.fallen ? 0.9 : 0.8 + o.scale*0.05, curTarget && curTarget.obj === o); }
+  for (const o of treeObjs) { if (o.gone || !near(o.x, o.z)) continue; add(o.x, o.z, 0.8 + o.scale*0.05, curTarget && curTarget.obj === o); }
   for (const o of rockObjs) { if (o.gone || !near(o.x, o.z)) continue; add(o.x, o.z, 0.5 + o.sc*0.45, curTarget && curTarget.obj === o); }
-  for (const s of stumps) if (near(s.x, s.z)) add(s.x, s.z, 1.0, curTarget && curTarget.obj === s);
-  for (const lr of looseRocks) if (near(lr.x, lr.z)) add(lr.x, lr.z, 0.45 + lr.sc*0.4, curTarget && curTarget.obj === lr);
   if (n) { propUniforms(view); boundsDyn.draw(arr, n); }
 }
 
@@ -5990,7 +5984,7 @@ function emitPOI(m, poi) {
     }
   };
   // §worldbug cairn, tide-pool and sea-cave rocks are now emitted as breakable dynamic rocks in
-  // seedLandmarkRocks(), not baked into this static mesh, so they can be mined. The "hut" landmark
+  // seedLandmarkRocks(), not baked into this static mesh. The "hut" landmark
   // was removed from generation entirely. Only the pier (non-rock landmark) stays in the POI mesh.
   if (poi.type === "cairn") {
     return;   // the cairn's stacked stones are spawned as breakable rocks instead
@@ -6087,7 +6081,7 @@ function buildProps() {
     if (rng() > 0.45 || nearPOI(x, z, 2)) return;
     rng(); rng(); rng(); rng(); rng();   // consume the scale + yaw + 3 tint draws the clump used; emit nothing
   });
-  // driftwood along the shore, lying flat, choppable (§13.1); tracked, not instanced
+  // driftwood along the shore, lying flat (§13.1): small pieces pickable, big logs scenery; tracked, not instanced
   driftObjs = [];
   scatter(26, 0.9, 1200, (x, z) => {
     const s = surfaceAt(x, z); if (s.h < 0.4 || s.h > 7 || s.slope > 0.35) return;
@@ -6408,9 +6402,8 @@ function drawContactShadows(view) {
     const g = surfaceAt(x, z).h, off = rad*0.18*stretch, o = n*4;
     A[o] = x + ox*off; A[o+1] = g + 0.04; A[o+2] = z + oz*off; A[o+3] = rad; n++; };
   // §15 only static props cast grounded shadows, creatures (esp. flying gulls) looked bad, so they don't
-  for (const o of treeObjs) if (!o.gone && !o.falling) add(o.x, o.z, (o.fallen?0.8:1.3)*(0.8+(o.scale||1)*0.3));
+  for (const o of treeObjs) if (!o.gone) add(o.x, o.z, 1.3*(0.8+(o.scale||1)*0.3));
   for (const o of rockObjs) if (!o.gone) add(o.x, o.z, 0.9 + (o.sc||1)*0.7);
-  for (const o of fallenTrees) if (!o.gone) add(o.x, o.z, 1.0);
   for (const o of driftObjs) if (!o.gone) add(o.x, o.z, 0.5*(o.scale||1));
   // §A2 a soft contact shadow under each hovering dropped find
   for (const e of life) if (e.kind === "find" && e.fade === undefined) add(e.x, e.z, 0.22 + (e.scale||0.5)*0.28);
@@ -6802,39 +6795,6 @@ function chestMesh(open, barnacled) {   // composed (for the journal icon): body
     m.pos.push(lid.pos[i], 2*CHEST_H + (y*ct - z*st), -CHEST_D + (y*st + z*ct)); m.col.push(lid.col[i],lid.col[i+1],lid.col[i+2]); }
   return m;
 }
-// §R4 axe: a wooden haft with a wedge-shaped blade at the top
-// §R4/polish axe: a haft, an eye/socket, a blunt poll to the +x and a wide flared bit facing -x (left, toward screen centre)
-function axeMesh() { const m = Mesh();
-  toolShaft(m, 0.0, 0.82, 0.04, true);
-  mCyl(m, 0.72, 0.9, 0.052, 0.058, 6, TM_DK);                                 // eye/socket over the haft
-  // poll (the blunt hammer back) to the +x side
-  mBox(m, 0.1, 0.85, 0, 0.055, 0.065, 0.05, TM_MD);
-  mBox(m, 0.15, 0.85, 0.024, 0.012, 0.055, 0.042, TM_HI);
-  // the bit (cutting blade) flares out to -x and tapers to a sharp edge: eye-top/bot thick, cutting edge thin
-  const et=[-0.04,0.93], eb=[-0.04,0.76], ct=[-0.36,1.0], cb=[-0.34,0.67], zf=0.034;
-  mQuad(m, [et[0],et[1],zf],[ct[0],ct[1],0.0],[cb[0],cb[1],0.0],[eb[0],eb[1],zf], TM_MD);    // front face
-  mQuad(m, [et[0],et[1],-zf],[ct[0],ct[1],0.0],[cb[0],cb[1],0.0],[eb[0],eb[1],-zf], TM_DK);   // back face
-  mTri(m, [et[0],et[1],zf],[et[0],et[1],-zf],[ct[0],ct[1],0], TM_MD);         // close top edge
-  mTri(m, [eb[0],eb[1],zf],[eb[0],eb[1],-zf],[cb[0],cb[1],0], TM_DK);         // close bottom edge
-  mTri(m, [-0.12,0.9,0.03],[-0.28,0.97,0.012],[-0.26,0.73,0.012], TM_HI);     // bright bevel highlight on the front
-  return m; }
-// §R4/polish pickaxe: a haft with a curved two-point steel head whose tips curve DOWNWARD
-function pickaxeMesh() { const m = Mesh();
-  toolShaft(m, 0.0, 0.8, 0.036, true);
-  mBox(m, 0, 0.86, 0, 0.065, 0.07, 0.055, TM_DK);                             // central head block / eye
-  for (const s of [-1,1]) {
-    mBox(m, s*0.14, 0.855, 0, 0.1, 0.045, 0.045, TM_MD);                      // inner arm
-    mBox(m, s*0.28, 0.825, 0, 0.08, 0.04, 0.04, TM_MD);                       // outer arm, dropping toward the tip
-    mTri(m, [s*0.35,0.84,0.035],[s*0.35,0.8,0],[s*0.52,0.72,0], TM_HI);       // the point curves DOWN
-    mTri(m, [s*0.35,0.84,-0.035],[s*0.35,0.8,0],[s*0.52,0.72,0], TM_MD);
-    mTri(m, [s*0.35,0.84,0.035],[s*0.35,0.84,-0.035],[s*0.52,0.72,0], TM_DK);
-  }
-  mBox(m, 0.03, 0.88, 0.04, 0.05, 0.045, 0.012, TM_HI);                       // highlight face
-  return m; }
-// §tools a classic tin pail: tapered body (wider at the top), a smooth rolled rim, and a swinging arc handle
-// §A1 the water surface that sits just below the pail's rim when it holds water, the game's water tint, lighter in the middle
-function stumpMesh() { const m = Mesh(); mCyl(m,0,0.4,0.32,0.28,7,BARK); mergeMesh(m, discMesh(0.4,0.28,7,0.03,[0.72,0.6,0.42])); return m; }
-function logMesh() { const m = Mesh(); mCyl(m,-0.45,0.45,0.15,0.15,7,BROWN); mergeMesh(m, discMesh(0.45,0.15,7,0.02,[0.66,0.56,0.42])); mergeMesh(m, discMesh(-0.45,0.15,7,-0.02,[0.66,0.56,0.42])); return m; }
 // §models a whole coconut: a smooth, slightly oval husk-brown nut (many faces, no seams) with the three small dark
 // germination "eyes" clustered at one end.
 function coconutMesh() { const m = Mesh(); const husk=[0.46,0.33,0.22], eye=[0.16,0.1,0.06];
@@ -6848,12 +6808,6 @@ function nutMesh() { const m = Mesh(); mCyl(m,-0.1,0.14,0.14,0.14,7,[0.5,0.36,0.
 function stoneMesh() { const m = Mesh(); mRock(m, mulberry32(0x51a3 ^ SEED_INT), [0.52, 0.5, 0.47]); return m; }
 // A derpy goat, facing +Z, origin at the feet. Oversized eyes with horizontal pupils.
 function saltMesh() { const m = Mesh(); for (let i = 0; i < 6; i++) { const a = i/6*6.283; mBox(m, Math.cos(a)*0.13, 0.05+(i%2)*0.07, Math.sin(a)*0.13, 0.07, 0.07, 0.07, [0.93,0.95,0.97]); } mBox(m,0,0.1,0,0.09,0.09,0.09,[0.96,0.97,0.99]); return m; }
-// §saltfix the salt pan as it sits on the ground: a dried-mud rim with a low, faceted salt crust mounded in it (reads as salt, not a flat white plate)
-// §models a forked twig: a tapering main shaft with a gentle bend and a little Y-branch near the thin end.
-function stickMesh() { const m = Mesh(); const c=[0.42,0.3,0.19];
-  mPathTube(m, [[-0.4,0.03,0,0.03],[-0.1,0.045,0.02,0.028],[0.12,0.06,0.0,0.024],[0.3,0.06,-0.03,0.019],[0.42,0.07,-0.05,0.013]], 5, c);   // main shaft
-  mPathTube(m, [[0.22,0.055,0.0,0.017],[0.3,0.1,0.06,0.012],[0.35,0.14,0.11,0.007]], 4, [c[0]*0.9,c[1]*0.9,c[2]*0.9]);                     // side fork
-  return m; }
 // §A7/§C2 Plant Fiber: a thick splayed bundle of dry grass strands (stripped from tall grass → twisted into rope)
 function fiberMesh() { const m = Mesh(); const c = [0.84,0.78,0.52], c2 = [0.72,0.65,0.42];
   for (let i = 0; i < 12; i++) { const a = i/12*6.283, r = 0.06, st = Mesh(), h = 0.22 + (i%3)*0.08;
@@ -7088,7 +7042,6 @@ function barnacleMesh() { const m = Mesh(); const sh=[0.94,0.92,0.87], sh2=[0.86
 // §16.1 new creatures
 // §17 small shape helpers returning a sub-mesh (for mergeAt)
 function cylM(y0,y1,r0,r1,c){ const d=Mesh(); mCyl(d,y0,y1,r0,r1,5,c); return d; }
-// §17 a growing crop plant: type × stage ("sprout" | "grow" | "ripe")
 // §4 a tapering sword/blade leaf that arches out from (bx,bz) toward `dir`, via the wavy-ribbon builder
 function bladeLeaf(m, bx, bz, dir, len, wide, droop, c0, c1, twist) {
   wavyRibbon(m, { h: len, w0: wide, w1: wide * 0.08, seg: 4, dir, amp: 0.12, freq: 0.9, phase: 0.3,
@@ -7123,156 +7076,6 @@ function diamondOvoid(m, cx, cy, cz, ry, rr, c0, c1) {
     prev = ring;
   }
 }
-// §polish, a pineapple's leafy crown: a tuft of spiky blades springing UP and out from a point (the fruit's top)
-function pineappleCrown(m, cx, cy, cz, crown, tip) {
-  for (let ring = 0; ring < 2; ring++) {
-    const nb = ring ? 5 : 7, rr = ring ? 0.015 : 0.05, h = ring ? 0.26 : 0.18, splay = ring ? 0.025 : 0.1;
-    for (let i = 0; i < nb; i++) { const a = i/nb*6.283 + ring*0.45;
-      wavyRibbon(m, { h, w0: 0.05, w1: 0.004, seg: 3, dir: a, amp: splay, freq: 0.7, droop: -0.03, y0: cy + ring*0.03,
-        bx: cx + Math.cos(a)*rr, bz: cz + Math.sin(a)*rr, twist: 0.25, c0: crown, c1: tip }); }
-  }
-}
-function cropMesh(type, stage) {
-  const m = Mesh(), sp = stage === "sprout", gr = stage === "grow", rp = stage === "ripe";
-  if (type === "cassava") {
-    // §models a single upright stem carrying two fern crowns stacked vertically (a medium one below, a small one up top).
-    const cane=[0.5,0.36,0.26], caneHi=[0.58,0.42,0.3], lf=[0.3,0.5,0.28], lf2=[0.42,0.64,0.36];
-    const H = sp?0.42:(gr?1.0:1.32), topR=0.02, botR=0.045;
-    // the stem: a few stacked segments so it reads as a real knobby stalk
-    const segs=5; for (let s=0;s<segs;s++){ const t0=s/segs, t1=(s+1)/segs; mergeAt(m, cylM(0, (t1-t0)*H, botR+(topR-botR)*t0, botR+(topR-botR)*t1, s%2?cane:caneHi), 0, t0*H, 0); }
-    // a fern crown = arching fronds springing from a point (reuses the world fern silhouette)
-    const fernAt = (y, scale, nf) => { const d=Mesh();
-      for (let k=0;k<nf;k++){ const a=k/nf*6.2832 + (y*3.0), dx=Math.cos(a), dz=Math.sin(a), c=k%2?lf:lf2;
-        mTri(d, [-dz*0.025,0,dx*0.025], [dz*0.025,0,-dx*0.025], [dx*0.5*scale, 0.52*scale, dz*0.5*scale], c);   // arching frond
-        mTri(d, [dx*0.5*scale,0.52*scale,dz*0.5*scale], [dx*0.9*scale,0.42*scale,dz*0.9*scale], [dx*0.56*scale,0.4*scale,dz*0.56*scale], c); }   // drooping tip
-      mergeAt(m, d, 0, y, 0); };
-    if (sp) { fernAt(H, 0.55, 5); }
-    else { fernAt(H*0.5, gr?0.72:0.88, 6); fernAt(H, gr?0.5:0.62, 6); }   // lower medium fern + upper small fern
-    if (rp) { const tub=[0.56,0.4,0.3], tub2=[0.48,0.34,0.26]; for (let i=0;i<4;i++){ const a=i/4*6.283;   // knobby tubers swelling at the base
-      const d=Mesh(); mergeMesh(d, discMesh(0,0.07,6,0.1,tub)); mergeMesh(d, discMesh(0,0.07,6,-0.1,tub2)); mergeAt(m, d, Math.cos(a)*0.1, 0.02, Math.sin(a)*0.1); } }
-  } else if (type === "banana") {
-    // §Crop polish, layered pseudostem, broad arching paddle leaves, hands of curved faceted fruit + a purple heart bud
-    const sheath=[0.44,0.5,0.28], sheath2=[0.5,0.56,0.33], lf=[0.26,0.5,0.26], lftip=[0.38,0.64,0.36];
-    const H = sp?0.45:(gr?1.35:1.6);
-    mCyl(m,0,H,0.1,0.045,7,sheath); mCyl(m,0,H*0.62,0.115,0.075,7,sheath2);           // trunk + an outer sheath layer
-    mCyl(m,0,H*0.3,0.125,0.1,7,sheath);                                               // a fatter base sheath
-    mergeMesh(m, discMesh(H,0.045,7,0.02,sheath2));
-    if (sp) { for (let i=0;i<2;i++){ const a=i*3.1; wavyRibbon(m, { h:0.42, w0:0.11, w1:0.04, seg:5, dir:a, amp:0.12, freq:0.8, droop:0.14, y0:H*0.5, twist:0.1, c0:lf, c1:lftip }); } }
-    else {
-      // §A3 a fuller, bushier crown, more broad paddle leaves, plus a cluster of shorter upright inner leaves so it reads dense
-      const blades = gr?6:9;
-      for (let i=0;i<blades;i++){ const a=i/blades*6.283 + 0.4; wavyRibbon(m, { h: gr?0.85:1.05, w0: 0.19, w1: 0.05, seg: 6, dir: a, amp: 0.26, freq: 0.75, phase: 0.2, droop: gr?0.4:0.58, bx:0, bz:0, y0: H-0.12, twist: 0.12, c0: lf, c1: lftip }); }
-      const inner = gr?3:4;
-      for (let i=0;i<inner;i++){ const a=i/inner*6.283 + 1.1; wavyRibbon(m, { h: gr?0.58:0.72, w0: 0.13, w1: 0.04, seg: 5, dir: a, amp: 0.14, freq: 0.8, phase: 0.5, droop: 0.22, bx:0, bz:0, y0: H-0.04, twist: 0.1, c0: lftip, c1: lf }); }
-      if (rp) {
-        mergeAt(m, cylM(-0.42,0,0.028,0.02,[0.42,0.46,0.26]), 0,H-0.1,0.03);          // the fruit stalk hanging down
-        const fruit=[0.9,0.82,0.3];
-        for (let tier=0;tier<3;tier++){ const ty=H-0.46-tier*0.16, n=6-tier, rad=0.07;   // hands of curved fingers, splaying outward
-          for (let i=0;i<n;i++){ const a=i/n*6.283; bananaFinger(m, Math.cos(a)*rad, ty, Math.sin(a)*rad + 0.03, a, 0.26, [fruit[0], fruit[1]-tier*0.03, fruit[2]]); } }
-        // §A3 (the purple heart flower bud has been removed)
-      }
-    }
-  } else if (type === "pineapple") {
-    // §Crop polish, a ground rosette of serrated sword leaves and, when ripe, a closed diamond-crosshatched football with a spiky crown
-    const lf=[0.33,0.55,0.3], lf2=[0.46,0.66,0.36], fr=[0.88,0.68,0.26], fr2=[0.72,0.5,0.18], crown=[0.3,0.56,0.3];
-    const n = sp?6:(gr?11:13), H = sp?0.22:(gr?0.5:0.6);
-    for (let i=0;i<n;i++){ const a=i/n*6.283 + (i%2)*0.25, r=0.04+(i%3)*0.02;         // low rosette of arching blades
-      bladeLeaf(m, Math.cos(a)*r, Math.sin(a)*r, a, H*(0.9+(i%2)*0.2), 0.05, H*0.42, lf, lf2, 0.25); }
-    if (rp) {
-      diamondOvoid(m, 0, 0.34, 0, 0.23, 0.15, fr, fr2);                               // closed football fruit, diamond crosshatch, fully capped
-      pineappleCrown(m, 0, 0.5, 0, crown, lf2);                                        // a leafy tuft springing from the TOP of the fruit
-    }
-  } else { // taro: a fern-like clump of big broad leaves on arching stalks springing from the base
-    const stalk=[0.4,0.5,0.28], stalk2=[0.48,0.56,0.32], lf=[0.3,0.55,0.3], lf2=[0.4,0.64,0.38], lf3=[0.46,0.7,0.42];
-    const n = sp?2:(gr?4:6), H = sp?0.28:(gr?0.82:1.05), W = sp?0.14:(gr?0.3:0.38);
-    for (let i=0;i<n;i++){ const a=i/n*6.283 + (i%2)*0.5 + 0.3, sx=Math.cos(a), sz=Math.sin(a), lean=0.34;
-      // an arching stalk rising from the clump and leaning outward (tube follows the arc)
-      const sp2=[]; for (let s=0;s<=4;s++){ const t=s/4; sp2.push([sx*lean*H*t*t, H*t, sz*lean*H*t*t, 0.032-0.014*t]); }
-      mPathTube(m, sp2, 5, i%2?stalk:stalk2);
-      const tx=sx*lean*H, tz=sz*lean*H;
-      if (sp) { const d=Mesh(); wavyRibbon(d,{h:0.2,w0:W,w1:0.03,seg:4,dir:a,amp:0.04,droop:0.07,c0:lf,c1:lf2}); mergeAt(m, d, tx, H-0.02, tz); }
-      else { // a broad, wide elephant-ear / heart leaf drooping gently outward from the stalk tip
-        const d=Mesh();
-        wavyRibbon(d,{h:0.46,w0:W,w1:0.03,seg:5,dir:a,amp:0.05,freq:0.7,droop:0.22,c0:lf,c1:lf3});       // broad forward blade
-        wavyRibbon(d,{h:0.2,w0:W*0.7,w1:0.03,seg:3,dir:a+3.14,amp:0.03,droop:0.09,c0:lf2,c1:lf});          // the back heart-lobes
-        mergeAt(m, d, tx, H-0.02, tz);
-      }
-    }
-  }
-  return m;
-}
-// §17 harvested crop foods & plantable seeds
-// §cassava the harvested cassava root looks like the Cassava Cutting (seed) but WITHOUT the green sprout —
-// just the long pale root tuber lying down, with capped ends.
-function cassavaFoodMesh(){ const m=Mesh(); const root=[0.74,0.56,0.36], root2=[0.66,0.48,0.3];
-  mPathTube(m, [[-0.22,0.07,0,0.015],[-0.1,0.085,0.02,0.055],[0.02,0.09,-0.01,0.062],[0.14,0.082,0.02,0.045],[0.24,0.075,0,0.012]], 7, root);
-  mergeAt(m, ballM(0.022, root2, 5), -0.22,0.07,0); mergeAt(m, ballM(0.016, root2, 5), 0.24,0.075,0);   // capped ends
-  return m; }
-// §banana a single classic crescent banana (the satchel icon): one fat curved finger with a short brown stem
-// §models a smooth, fat crescent banana with brown stem and tip caps.
-function bananaIconMesh(){ const m=Mesh(); const y=[0.98,0.82,0.16], stem=[0.36,0.26,0.14]; const pts=[], seg=10;
-  for (let i=0;i<=seg;i++){ const t=i/seg, ang=Math.PI*0.82*(t-0.5);
-    pts.push([Math.sin(ang)*0.42, 0.5-Math.cos(ang)*0.3, 0, 0.032 + 0.05*Math.pow(Math.sin(t*Math.PI),0.7)]); }
-  mPathTube(m, pts, 8, y);
-  mBox(m, pts[0][0], pts[0][1], 0, 0.04,0.055,0.04, stem);     // stem
-  mergeAt(m, ballM(0.035, stem, 5), pts[seg][0], pts[seg][1], 0);   // browned tip
-  return m; }
-// §P2 an open banana peel (eating leftover): a few splayed brown-yellow strips drooping from the stem
-// §models an opened banana peel: four strips drooping down and out from a top stem hub.
-// §models a classic discarded banana peel: a low central base with wide flat flaps splaying outward and
-// drooping onto the ground (a star/flower from above), yellow outside with a pale inner face, a stem nub.
-function bananaPeelMesh(){ const m=Mesh();
-  const outY=[0.97,0.85,0.18], outY2=[0.88,0.74,0.18], inner=[0.95,0.92,0.78], stem=[0.42,0.3,0.16], base=[0.93,0.88,0.62];
-  const n=4, seg=6, w0=0.13, w1=0.014;
-  mergeAt(m, sphM(0.095, base, 8, 4), 0, 0.08, 0);                 // the uneaten pale fruit base in the middle
-  for (let i=0;i<n;i++){ const a=i/n*6.2832 + 0.25, dx=Math.cos(a), dz=Math.sin(a), px=-dz, pz=dx;
-    let pL=null, pR=null;
-    for (let j=0;j<=seg;j++){ const t=j/seg, th=t*1.9;
-      const out = 0.08 + 0.34*Math.sin(th);                       // reaches outward
-      const y   = Math.max(0.012, 0.15 + 0.12*Math.sin(th) - 0.27*t);   // lifts a little off the base, then flops to the ground
-      const w   = w0*(1-t) + w1*t, cx=dx*out, cz=dz*out;
-      const L=[cx+px*w, y, cz+pz*w], R=[cx-px*w, y, cz-pz*w];
-      if (pL){ mQuad(m, pL, pR, R, L, t<0.5?outY:outY2); mQuad(m, L, R, pR, pL, inner); }   // yellow top face + pale inner underside (two-sided flap)
-      pL=L; pR=R;
-    }
-  }
-  mBox(m, 0, 0.19, 0, 0.035, 0.055, 0.035, stem);                 // short brown stem nub in the centre
-  return m; }
-   // the stem crown they hang from
-function pineappleFoodMesh(){ const m=Mesh(); const f=[0.9,0.72,0.28], f2=[0.74,0.54,0.2], g=[0.32,0.55,0.3], g2=[0.42,0.64,0.36];
-  diamondOvoid(m, 0, 0.26, 0, 0.22, 0.16, f, f2);                                       // closed diamond-crosshatch body
-  pineappleCrown(m, 0, 0.42, 0, g, g2);                                                 // leafy tuft from the top
-  return m; }
-// §models a lumpy earthy taro corm (a rounded tuber) with a few sunken dark eyes.
-function taroFoodMesh(){ const m=Mesh(); const c=[0.78,0.62,0.42], eye=[0.3,0.22,0.17];
-  mPathTube(m, [[-0.26,0.18,0,0.02],[-0.17,0.19,0.03,0.11],[-0.04,0.2,-0.02,0.16],[0.08,0.19,0.04,0.165],[0.2,0.18,-0.02,0.12],[0.28,0.17,0,0.03]], 8, c);
-  mergeAt(m, ballM(0.035, c, 6), -0.26,0.18,0); mergeAt(m, ballM(0.04, c, 6), 0.28,0.17,0);   // close the ends
-  for (const [x,y,z] of [[-0.05,0.33,0.07],[0.12,0.3,-0.09],[0.0,0.07,0.12],[0.18,0.22,0.1]]) mergeAt(m, ballM(0.022, eye, 5), x,y,z);
-  return m; }
-// §17 crop saplings: a shared little green sprout, with each crop's own starter part attached, so every seed item
-// (and its inventory icon) is recognizable at a glance.
-function sproutMesh(h){ const m=Mesh(); const stem=[0.46,0.56,0.32], lf=[0.4,0.62,0.3], lf2=[0.52,0.72,0.4]; h=h||0.22;
-  mCyl(m, 0, h, 0.013, 0.009, 5, stem);                                                        // a slender stem
-  for (const s of [-1,1]){ const d=Mesh(); wavyRibbon(d,{h:h*0.6,w0:0.05,w1:0.012,seg:4,dir:s>0?0.4:3.5,amp:0.05,droop:0.06,c0:lf,c1:lf2}); mergeAt(m, d, 0, h*0.5, 0); }   // two young leaves
-  const tip=Mesh(); wavyRibbon(tip,{h:h*0.5,w0:0.04,w1:0.01,seg:4,dir:1.6,amp:0.03,droop:0.0,twist:0.12,c0:lf2,c1:lf}); mergeAt(m, tip, 0, h*0.72, 0);   // an upright furled tip
-  return m; }
-function cassavaSaplingMesh(){ const m=Mesh(); const root=[0.74,0.56,0.36], root2=[0.66,0.48,0.3];   // a long, pale root-shaped tuber lying down (a different colour to taro)
-  mPathTube(m, [[-0.22,0.07,0,0.015],[-0.1,0.085,0.02,0.055],[0.02,0.09,-0.01,0.062],[0.14,0.082,0.02,0.045],[0.24,0.075,0,0.012]], 7, root);
-  mergeAt(m, ballM(0.022, root2, 5), -0.22,0.07,0); mergeAt(m, ballM(0.016, root2, 5), 0.24,0.075,0);   // capped ends
-  mergeAt(m, sproutMesh(0.2), 0.02, 0.09, 0);                                                   // the sprout rising from the tuber
-  return m; }
-function taroSaplingMesh(){ const m=Mesh(); const corm=[0.72,0.56,0.44], corm2=[0.6,0.46,0.36];       // a round earthy corm
-  mergeMesh(m, scaleMeshXYZ(sphM(0.12, corm, 9, 6), 1.0, 0.86, 1.0));
-  for (let i=0;i<5;i++){ const a=i/5*6.283; mergeAt(m, discMesh(0,0.013,5,-0.006,corm2), Math.cos(a)*0.07, 0.015+i*0.012, Math.sin(a)*0.07); }   // a few sunken rings
-  mergeAt(m, sproutMesh(0.22), 0, 0.09, 0);                                                     // the sprout from the top
-  return m; }
-function pineappleSaplingMesh(){ const m=Mesh(); const f=[0.9,0.72,0.28], f2=[0.74,0.54,0.2], g=[0.33,0.55,0.3], g2=[0.46,0.66,0.36];
-  diamondOvoid(m, 0, 0.1, 0, 0.09, 0.08, f, f2);                                                // a small pineapple top …
-  pineappleCrown(m, 0, 0.17, 0, g, g2);                                                         // … with its leafy crown sprouting up
-  return m; }
-function bananaSaplingMesh(){ const m=Mesh(); mergeMesh(m, sproutMesh(0.24));
-  bananaFinger(m, 0.03, 0.17, 0.05, 0.3, 0.2, [0.92,0.82,0.3]);                                 // a small banana hanging at its side
-  return m; }
 // §17.1 shoreline litter, common washed-up trash to collect and (eventually) hand back
 function plasticBottleMesh(){ const m=Mesh(); const c=[0.58,0.78,0.7]; mCyl(m,0,0.3,0.065,0.055,6,c); mCyl(m,0.3,0.4,0.03,0.025,5,[0.8,0.82,0.8]); mergeMesh(m, discMesh(0.4,0.025,5,0.01,[0.7,0.5,0.3])); mBox(m,0,0.14,0.06,0.055,0.07,0.004,[0.9,0.84,0.35]); return m; }
 // §models a faceted soda can: red body with a white band, a silver domed top with a pull-tab, inset base.
@@ -7412,8 +7215,6 @@ function berryBushMesh(state) { const m = Mesh();
       mergeAt(m, berryDotMesh(sz, col), x, y, z); }
   }
   return m; }
-// fallen trunk: a log lying along +X from x=0 (base) to x=1 (unit, scaled by length)
-// one short trunk section lying along +X (centered), drawn per fallen-tree segment
 
 // --- registries: mesh, palette, scale, how many may draw, behaviour ---
 const CREATURES = {};   // §strip all creatures/animals removed (registry emptied; finds remain)
@@ -7437,14 +7238,12 @@ const FINDS = {
   fossil:   { mesh: () => fossilMesh(),             base: 0.4, max: 40, label: "Ammonite", desc: "A coiled creature turned to stone.", rare: 2 },   // §models flat stone with a raised spiral imprint; kept at its small item size
   bell:     { mesh: () => bellMesh(),               base: 0.6, max: 20, label: "Ship's Bell", desc: "Verdigris-green bronze. It still rings, faintly.", rare: 2 },
   tin:      { mesh: () => tinMesh(),                base: 0.34,max: 30, label: "Sealed Tin", desc: "Rust-flecked and heavy. Something shifts inside.", rare: 2 },   // §pixui smaller in the world (was oversized)
-  // --- materials & seeds (chopping / mining / planting) ---
-  log:      { mesh: () => logMesh(),                base: 0.8, max: 60, label: "Log", desc: "A length of trunk, fresh-cut.", rare: 0 },
+  // --- materials, and the fruit trees drop ---
   stone:    { mesh: () => weakStoneMesh(),          base: 0.3, max: 60, label: "Stone", desc: "A small, hand-sized stone.", rare: 0 },   // §stonematch the world stone matches its inventory icon (the dome stone)
-  coconut:  { mesh: () => coconutMesh(),            base: 0.5, max: 30, label: "Coconut", desc: "A palm seed, plant it on sand.", rare: 1 },
-  pinecone: { mesh: () => coneMesh2(),              base: 0.4, max: 30, label: "Pine Cone", desc: "A conifer seed, plant it on soil or grass.", rare: 1 },
-  nut:      { mesh: () => nutMesh(),                 base: 0.4, max: 30, label: "Nut", desc: "A broadleaf seed, plant it on soil or grass.", rare: 1 },
+  coconut:  { mesh: () => coconutMesh(),            base: 0.5, max: 30, label: "Coconut", desc: "A heavy green-brown nut fallen from a palm. Crack it open for the sweet flesh inside.", rare: 1 },
+  pinecone: { mesh: () => coneMesh2(),              base: 0.4, max: 30, label: "Pine Cone", desc: "A woody cone dropped from a pine, its scales spread to let the seeds go.", rare: 1 },
+  nut:      { mesh: () => nutMesh(),                 base: 0.4, max: 30, label: "Nut", desc: "A glossy nut in its cup, dropped from a broadleaf tree.", rare: 1 },
   salt:     { mesh: () => saltMesh(),               base: 0.45,max: 40, label: "Sea Salt", desc: "A coarse crystal the sea left drying on the sand. Good for seasoning.", rare: 1 },
-  stick:    { mesh: () => stickMesh(),              base: 0.5, max: 60, label: "Sticks", desc: "Snapped twigs from a tree's crown.", rare: 0 },
   fiber:    { mesh: () => fiberMesh(),              base: 0.4, max: 80, label: "Plant Fiber", desc: "Tough strands stripped from tall grass.", rare: 0 },
   flower:   { mesh: () => flowerItemMesh(),         base: 0.4, max: 80, label: "Flower", desc: "A bright wild bloom picked from the dune meadows.", rare: 0 },
   fern:     { mesh: () => fernItemMesh(),           base: 0.4, max: 80, label: "Fern", desc: "A soft green frond from the island's shaded interior.", rare: 0 },
@@ -7510,14 +7309,11 @@ const FINDS = {
   sharktooth:{ mesh: () => sharkToothMesh(false),   base: 0.4, max: 40, label: "Shark Tooth", desc: "A fossil tooth, black with age and still needle-sharp.", rare: 2 },
   megalodon:{ mesh: () => sharkToothMesh(true),     base: 0.5, max: 20, label: "Megalodon Tooth", desc: "A palm-sized tooth from a shark long extinct. The find of a lifetime.", rare: 2 },
   hagstone: { mesh: () => hagStoneMesh(),           base: 0.5, max: 40, label: "Hag Stone", desc: "A beach stone worn clean through by the sea. Look through the hole for luck, they say.", rare: 2 },
-  quartz:   { mesh: () => quartzMesh(),             base: 0.5, max: 30, label: "Quartz Crystal", desc: "A clear six-sided point, broken from a geode's heart.", rare: 2 },
-  amethyst: { mesh: () => amethystMesh(),           base: 0.5, max: 20, label: "Amethyst", desc: "A cluster of violet crystal from inside a geode. Rare and lovely.", rare: 2 },
   hcmolt:   { mesh: () => horseshoeMesh(),           base: 0.6, max: 40, label: "Horseshoe Molt", desc: "The cast-off shell a horseshoe crab climbed out of as it grew, split at the front, light as paper, perfectly intact.", rare: 1 },
   // §P2 eating leftovers: the empty shells / peel you're left holding after a meal
   oystershell: { mesh: () => oysterShellMesh(),      base: 0.5, max: 60, label: "Oyster Shell", desc: "An empty oyster shell, licked clean.", rare: 0, litter: 1 },
   clamshell:   { mesh: () => clamShellMesh(),         base: 0.5, max: 60, label: "Clam Shell", desc: "The two empty halves of a clam, hinged open.", rare: 0, litter: 1 },
   musselshell: { mesh: () => musselMesh(),           base: 0.45,max: 60, label: "Mussel Shell", desc: "An empty blue-black mussel shell.", rare: 0, litter: 1 },
-  bananapeel:  { mesh: () => bananaPeelMesh(),       base: 0.5, max: 60, label: "Banana Peel", desc: "A spent banana peel. Watch your step.", rare: 0, litter: 1 },
 };
 // §A2 Minecraft-style dropped-item presentation: a gentle hover + bob a few cm up, a slow spin, a soft shadow and the odd faint glint (all tunable)
 const FIND_HOVER = 0.14, FIND_BOB_AMP = 0.045, FIND_BOB_SPD = 2.1, FIND_SPIN = 0.85;
@@ -7535,7 +7331,7 @@ const ODD_SPECIES = ["spectralis","nebulosa","pallida","umbrae","vitrea","cavern
 function latinName() { return ODD_GENUS[(rng()*ODD_GENUS.length)|0] + " " + ODD_SPECIES[(rng()*ODD_SPECIES.length)|0]; }
 
 function spawnFind(t, x, z) {
-  const reg = dropReg(t) || { base: 0.5, label: (ITEMS[t] ? ITEMS[t].name : t) };   // §drop FINDS, else a generic item-drop registry (fish/crops/seeds)
+  const reg = dropReg(t) || { base: 0.5, label: (ITEMS[t] ? ITEMS[t].name : t) };   // §drop FINDS, else a generic item-drop registry (fish and other items)
   const e = { kind: "find", t, x, z, yaw: rng()*6.283, scale: reg.base*(0.85+rng()*0.3),
               phase: rng()*6.283, name: reg.label, tint: [1,1,1], pickAt: clock.t };   // (built first either way: keeps the rng() draws identical)
   if (t === "worm" && spawnLivingWorm.ready && spawnLivingWorm(x, z)) return;   // §earthworms a worm in the world is a live creature now
@@ -7543,8 +7339,8 @@ function spawnFind(t, x, z) {
 }
 // §pixui/§treedrop spawn a find that pops out at a RANDOM angle around an impact point, flies a short
 // tumbling arc (toss.h) with a spin and settles onto the terrain (the render loop reads heightAt at its
-// resting x,z). It keeps a minimum spacing from other dropped finds, so a batch (e.g. the logs from a
-// felled tree) scatters into a loose ring instead of lining up along one axis. Runtime only, so its
+// resting x,z). It keeps a minimum spacing from other dropped finds, so a batch of drops
+// scatters into a loose ring instead of lining up along one axis. Runtime only, so its
 // rng() draws do not touch world-gen determinism.
 const DROP_MIN_SEP = 0.85;
 function tossFind(id, fromX, fromZ, spread) {
@@ -7864,7 +7660,7 @@ function scrapeCluster(o) {
 function pickOyster(o) {
   const oy = o && o.oyst; if (!oy || oy.amt <= 0) { showCard("Bare rock", "No oysters left on this one."); return; }
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
-  shovelSwing = 1; spendStamina(TUNE.CHOP_COST*0.5, true); rootPlayer(); if (onDig) onDig("scrape");
+  shovelSwing = 1; spendStamina(TUNE.SCRAPE_COST, true); rootPlayer(); if (onDig) onDig("scrape");
   const added = Inv.add("oyster", 1);
   if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
   oy.amt--; oy.regrowAt = clock.t + BARNACLE_REGROW_DAYS*DAY_PERIOD;
@@ -7875,7 +7671,7 @@ function pickOyster(o) {
 function scrapeRockBarnacle(o) {
   const bn = o && o.barn; if (!bn || bn.amt <= 0) { showCard("Bare rock", "No barnacles left on this one, give them a few days to crust back over."); return; }
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
-  shovelSwing = 1; spendStamina(TUNE.CHOP_COST*0.5, true); rootPlayer(); if (onDig) onDig("chop");
+  shovelSwing = 1; spendStamina(TUNE.SCRAPE_COST, true); rootPlayer(); if (onDig) onDig("scrape");
   const added = Inv.add("barnacle", 1);
   if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
   bn.amt--; bn.regrowAt = clock.t + BARNACLE_REGROW_DAYS*DAY_PERIOD;
@@ -7887,7 +7683,7 @@ function barnacleExposed(b) { return waterLevel < barnTop(b) + 0.35; }    // rea
 function scrapeBarnacle(b) {
   if (!b || b.amt <= 0) { showCard("Bare rock", "Give the barnacles a few days to grow back."); return; }
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §P2 any item scrapes them off
-  shovelSwing = 1; spendStamina(TUNE.CHOP_COST*0.5, true); rootPlayer(); if (onDig) onDig("chop");
+  shovelSwing = 1; spendStamina(TUNE.SCRAPE_COST, true); rootPlayer(); if (onDig) onDig("scrape");
   const added = Inv.add("barnacle", 1);
   if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
   b.amt--; b.regrowAt = clock.t + BARNACLE_REGROW_DAYS*DAY_PERIOD;
@@ -8126,7 +7922,7 @@ function drawLife(view) {
     reg.dyn.draw(lifeScratch, n);
   };
   for (const k in FINDS) drawType(k, FINDS[k], (e) => e.kind === "find" && e.t === k);
-  for (const k in ITEM_DROP_REG) drawType(k, ITEM_DROP_REG[k], (e) => e.kind === "find" && e.t === k);   // §drop dropped fish/crops/seeds (lazily-registered meshes)
+  for (const k in ITEM_DROP_REG) drawType(k, ITEM_DROP_REG[k], (e) => e.kind === "find" && e.t === k);   // §drop dropped fish and other items (lazily-registered meshes)
   gl.uniform1f(propU.uDissolve, 0);
 }
 
@@ -11835,10 +11631,6 @@ for (const k in FINDS)
 // tools
 ITEMS.shovel = { id: "shovel", name: "Shovel", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
                  desc: "A sturdy beach shovel. Dig wet sand to unearth buried finds.", model: () => shovelMesh(), tint: [1,1,1] };
-ITEMS.axe = { id: "axe", name: "Axe", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
-              desc: "A felling axe. Chop trees for logs, and sometimes seeds.", model: () => axeMesh(), tint: [1,1,1] };
-ITEMS.pickaxe = { id: "pickaxe", name: "Pickaxe", category: "tool", rarity: "tool", stackable: false, maxStack: 1,
-                  desc: "A miner's pick. Break boulders into stone.", model: () => pickaxeMesh(), tint: [1,1,1] };
 ITEMS.rawfish = { id: "rawfish", name: "Raw Fish", category: "find", rarity: "common", stackable: true, maxStack: 99,
                   desc: "A fresh fish. Good food.", model: () => fishMesh([0.7,0.72,0.66]), tint: [1,1,1] };
 ITEMS.lantern = { id: "lantern", name: "Lantern", category: "tool", rarity: "tool", stackable: false, maxStack: 1,  // §18
@@ -11878,7 +11670,7 @@ function tooTired() {
 let cantDigT = 0, lastCantDigShown = -99;
 function cantDig() { if (clock.t - lastCantDigShown > 1.4) { lastCantDigShown = clock.t; cantDigT = 1.1; } }
 const WORK_LOCK_TIME = 1.5;
-const WORK_KINDS = { tree: 1, fallentree: 1, rock: 1, stump: 1, chest: 1, heaveboulder: 1, geode: 1, searock: 1 };   // multi-strike targets
+const WORK_KINDS = { chest: 1, heaveboulder: 1, searock: 1 };   // multi-strike targets
 function workLockActive() { return !!(workLock && clock.t < workLock.until && workLock.obj && !workLock.obj.gone); }
 function setWorkLock(t) { if (!t || !WORK_KINDS[t.kind]) return; workLock = { obj: t.obj, kind: t.kind, tool: selectedTool(), until: clock.t + WORK_LOCK_TIME }; lastEntityHitT = clock.t; }
 function workLockReach() { const o = workLock.obj; return Math.hypot(o.x - player.x, o.z - player.z) <= REACH + 2; }
@@ -11887,15 +11679,13 @@ function effectiveTarget() {
   if (workLockActive() && workLockReach()) { const o = workLock.obj; return { kind: workLock.kind, obj: o, x: o.x, z: o.z }; }
   return curTarget || targetAlongRay(rayFromNDC(0, 0), curTarget);
 }
-// materials & seeds (Phase 6; building comes later)
-digItem("log", "Log", "material", "common", "A length of trunk, fresh-cut.", () => logMesh(), [0.5,0.4,0.28]);
-digItem("stone", "Stone", "material", "common", "A heavy chunk of rock. Place it to build; only a pickaxe removes placed stone.", () => weakStoneMesh(), [0.52,0.5,0.47]);   // §models icon matches the liftable dome stones in the world
+// materials, and the fruit trees drop
+digItem("stone", "Stone", "material", "common", "A small, hand-sized beach stone.", () => weakStoneMesh(), [0.52,0.5,0.47]);   // §models icon matches the liftable dome stones in the world
 // §matrm earth-material items (sand/dirt/gravel/mud) removed with the material-placement feature
-digItem("coconut", "Coconut", "seed", "common", "A palm seed, plant it on sand.", () => coconutMesh(), [0.5,0.38,0.26]);
-digItem("pinecone", "Pine Cone", "seed", "common", "A conifer seed, plant it on soil or grass.", () => coneMesh2(), [0.44,0.32,0.2]);
-digItem("nut", "Nut", "seed", "common", "A broadleaf seed, plant it on soil or grass.", () => nutMesh(), [0.5,0.36,0.22]);
+digItem("coconut", "Coconut", "consumable", "common", "A heavy nut fallen from a palm. Crack it open for the sweet flesh inside.", () => coconutMesh(), [0.5,0.38,0.26]);
+digItem("pinecone", "Pine Cone", "find", "common", "A woody cone dropped from a pine, its scales spread to let the seeds go.", () => coneMesh2(), [0.44,0.32,0.2]);
+digItem("nut", "Nut", "find", "common", "A glossy nut in its cup, dropped from a broadleaf tree.", () => nutMesh(), [0.5,0.36,0.22]);
 digItem("salt", "Sea Salt", "consumable", "uncommon", "Coarse crystals. Hold it to coax wild goats.", () => saltMesh(), [0.93,0.95,0.97]);
-digItem("stick", "Sticks", "material", "common", "Snapped twigs from a crown.", () => stickMesh(), [0.45,0.34,0.22]);
 // dug finds (collected from holes)
 function digItem(id, name, cat, rar, desc, meshFn, tint) { ITEMS[id] = { id, name, category: cat, rarity: rar, stackable: cat !== "relic", maxStack: cat === "relic" ? 1 : 99, desc, model: meshFn, tint: tint || [1,1,1] }; }
 digItem("clam", "Clam", "find", "common", "A plump clam, still closed.", () => clamMesh(), [0.85,0.8,0.72]);
@@ -11906,19 +11696,6 @@ digItem("ceramic", "Ceramic Shard", "find", "uncommon", "A broken piece of glaze
 digItem("fossil", "Fossil", "find", "rare", "A flat stone with a coiled shell pressed into its face.", () => fossilMesh(), [1,1,1]);
 digItem("bell", "Ship's Bell", "relic", "rare", "A green bronze bell from a lost vessel.", () => bellMesh(), [0.5,0.6,0.45]);
 digItem("tin", "Sealed Tin", "relic", "rare", "A rusted tin, something rattles inside.", () => tinMesh(), [0.6,0.55,0.5]);
-// §17 wild & farmed crops, foods and their plantable seeds
-digItem("cassava", "Cassava", "consumable", "common", "A starchy root. Filling.", () => cassavaFoodMesh(), [0.82,0.72,0.56]);
-digItem("banana", "Banana", "consumable", "common", "A sweet ripe banana.", () => bananaIconMesh(), [0.95,0.85,0.3]);   // §banana classic single crescent icon
-digItem("pineapple", "Pineapple", "consumable", "common", "Golden and sweet-sharp, under a spiky crown.", () => pineappleFoodMesh(), [0.9,0.75,0.3]);
-digItem("taro", "Taro", "consumable", "common", "An earthy corm.", () => taroFoodMesh(), [0.72,0.64,0.62]);
-digItem("seed_cassava", "Cassava Cutting", "seed", "common", "A sprouting root cutting, plant it on dug soil to grow cassava.", () => cassavaSaplingMesh(), [1,1,1]);
-digItem("seed_banana", "Banana Sucker", "seed", "common", "A young banana shoot with a little fruit, replant it on soil.", () => bananaSaplingMesh(), [1,1,1]);
-digItem("seed_pineapple", "Pineapple Crown", "seed", "common", "A leafy crown on a young fruit, press it into soil or sand to root.", () => pineappleSaplingMesh(), [1,1,1]);
-digItem("seed_taro", "Taro Top", "seed", "common", "A sprouting taro corm to replant in damp soil.", () => taroSaplingMesh(), [1,1,1]);
-EDIBLE.cassava = 0.22; EDIBLE.banana = 0.18; EDIBLE.pineapple = 0.2; EDIBLE.taro = 0.22;
-const CROP_SEED = { seed_cassava: "cassava", seed_banana: "banana", seed_pineapple: "pineapple", seed_taro: "taro" };
-const CROP_FOOD_SEED = { cassava: "seed_cassava", banana: "seed_banana", pineapple: "seed_pineapple", taro: "seed_taro" };
-
 /* ---- inventory (slot model + hotbar) ---- §P2 Minecraft-style ---- */
 // 32 slots total: an 8-slot belt (hotbar) + a 24-slot bag (main). Every cell is
 // a {id,qty} stack or null. No auto-sort, no compartments: items stay where you
@@ -11996,7 +11773,7 @@ function setLanternUniform(U) {   // call after the program + its uniforms are b
 // §P2 you can only set a bucket / lantern down on dry ground (not in water, not on a tide-pool floor)
 function isDryGround(x, z) { return waterDepthAt(x, z) < 0.04; }
 // §bugfix a spot is blocked for placing if it overlaps any object: natural trees/rocks/POIs (the world-spawn
-// footprint registry), live colliders (incl. planted trees/stumps), or something already set down there.
+// footprint registry), live colliders, or something already set down there.
 function placeBlocked(x, z, r) {
   if (typeof footprintClear === "function" && !footprintClear(x, z, r)) return true;   // same check world-gen uses
   if (typeof colliders !== "undefined") for (const c of colliders) { if (!c || c.r <= 0) continue; const rr = c.r + r; if ((c.x-x)**2 + (c.z-z)**2 < rr*rr) return true; }
@@ -12055,8 +11832,6 @@ function drawPlacedLanterns(view) {
 const _pbArr = new Float32Array(64 * 10), _pbWaterArr = new Float32Array(64 * 10);
 // §P2 Minecraft-style: the held belt item IS the tool. No auto-switch, no Tool Kit.
 function selectedTool() { const c = Inv.hotbar[Inv.selected]; return c ? c.id : null; }
-// §P2 effort multiplier for a work target by the held item: 1 with the right tool, WRONG_TOOL_MUL otherwise (≈3x hits).
-function toolMul(kind) { const opts = TOOLS_FOR_KIND[kind]; return (opts && opts.includes(selectedTool())) ? 1 : TUNE.WRONG_TOOL_MUL; }
 function selectHotbar(i) { if (i < 0 || i >= HOTBAR_SLOTS) return; Inv.selected = i; renderHotbar(); }
 
 /* ---- inventory stack operations (drag / split / drop) ---- */
@@ -12072,7 +11847,7 @@ function invMove(from, to) {
   Inv.emit();
 }
 // §drop any item with a world model can be dropped (and picked back up) EXCEPT tools, which stay in the pack.
-// FINDS already carry a world mesh; other droppables (fish, crops, seeds, …) get a lazily-built one from their
+// FINDS already carry a world mesh; other droppables (fish, …) get a lazily-built one from their
 // own inventory model, so the single find/drop pipeline renders and re-collects them all the same way.
 const ITEM_DROP_REG = {};
 function isDroppable(id) { const it = ITEMS[id]; return !!(it && it.model && it.category !== "tool"); }
@@ -12091,43 +11866,21 @@ function invDrop(idx, one) {
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 // §strip save format version. Bumped when the strip-down broke old saves; a stored save whose v
 // does not match is discarded on load so the game starts fresh (no backward-compat / migration).
-const SAVE_VERSION = 3;   // §P2 v3: Minecraft inventory (8 belt + 24 bag, discrete tools, per-item buckets). v2 saves migrate; older are wiped.
-// §P2 fold a v2 save's inventory into the new 8-belt + 24-bag model: a Tool Kit becomes a
-// separate shovel + axe + pickaxe; every other stack keeps its id/qty. Placement is belt-first,
-// merging into existing stacks, so hand-arrangement isn't preserved (a one-time migration).
-function migrateInvV2(s) {
-  Inv.main = new Array(INV_SLOTS).fill(null);
-  Inv.hotbar = new Array(HOTBAR_SLOTS).fill(null);
-  const place = (id, qty) => {
-    const it = ITEMS[id]; if (!it) return; let rem = qty; const arrs = [Inv.hotbar, Inv.main];
-    if (it.stackable) for (const arr of arrs) for (const c of arr) { if (rem <= 0) break; if (c && c.id === id && c.qty < it.maxStack) { const n = Math.min(it.maxStack - c.qty, rem); c.qty += n; rem -= n; } }
-    for (const arr of arrs) for (let i = 0; i < arr.length; i++) { if (rem <= 0) break; if (!arr[i]) { const n = it.stackable ? Math.min(it.maxStack, rem) : 1; arr[i] = { id, qty: n }; rem -= n; } }
-  };
-  for (const arr of [s.hotbar || [], s.main || []]) for (const c of arr) {
-    if (!c || !c.id) continue;
-    if (c.id === "toolkit") { place("shovel", 1); place("axe", 1); place("pickaxe", 1); }
-    else place(c.id, c.qty || 1);
-  }
-}
+const SAVE_VERSION = 4;   // v4: survival tools / chopping / mining / planting cut. Older saves are discarded per seed on load (no migration).
 function purgeSeedSaves() { for (const suf of ["bc_","bcw_","bcd_","bcs_","bcc_","bcg_","bcsets_"]) { try { localStorage.removeItem(suf + SEED_STR); } catch (e) {} } }
 function saveState() {
   try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ v: SAVE_VERSION, main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, cleanup: beachCleanup, variants: variantsSeen,
     junseen: [...jUnseen],   // §UI journal entries not yet viewed (red !)
     heaves: heaveBoulders.map((b,i)=>b.flipped?[i,+b.refillAt.toFixed(2),+b.flippedAt.toFixed(2)]:0).filter(e=>e),  // §21D heaved boulders (index, refillAt, flippedAt)
-    oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)]),  // §23 oyster-bed stock
-    geodes: geodes.map((g,i)=>g.cracked?i:-1).filter(i=>i>=0)  // §40 which geodes are already cracked
+    oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)])  // §23 oyster-bed stock
     })); } catch (e) {}   // §P2 each bucket's water + creatures ride on its own Inv slot's .bk, saved with main/hotbar above
 }
 function loadState() {
   try {
     const s = JSON.parse(localStorage.getItem("bc_" + SEED_STR) || "null");
-    if (s && s.v !== SAVE_VERSION && s.v !== 2) { purgeSeedSaves(); return; }   // §P2 v2 migrates; anything else out of date is wiped
+    if (s && s.v !== SAVE_VERSION) { purgeSeedSaves(); return; }   // out-of-date save → wiped (no migrations during development)
     if (s) {
-      const migrate = (s.v === 2);   // §P2 old inventory layout → remap
-      if (Array.isArray(s.main) || Array.isArray(s.hotbar)) {
-        if (migrate) migrateInvV2(s);
-        else { Inv.main = padArr(s.main, INV_SLOTS); Inv.hotbar = padArr(s.hotbar || [], HOTBAR_SLOTS); }
-      }
+      if (Array.isArray(s.main) || Array.isArray(s.hotbar)) { Inv.main = padArr(s.main, INV_SLOTS); Inv.hotbar = padArr(s.hotbar || [], HOTBAR_SLOTS); }
       Inv.selected = Math.min(HOTBAR_SLOTS - 1, s.sel || 0); (s.disc || []).forEach((d) => discovered.add(d));
       jUnseen.clear(); (s.junseen || []).forEach((k) => jUnseen.add(k));   // §UI restore not-yet-viewed flags
       starsRescued = s.rescued || 0;
@@ -12135,7 +11888,6 @@ function loadState() {
       if (s.variants && typeof s.variants === "object") variantsSeen = s.variants;   // §22 variant sightings per species
       if (Array.isArray(s.heaves)) _savedHeave = s.heaves;   // §21D heaved boulders (applied in seedHeaveBoulders)
       if (Array.isArray(s.oysters)) _savedOysters = s.oysters;   // §23 oyster-bed stock (applied in seedOysterBeds)
-      if (Array.isArray(s.geodes)) _savedGeodes = s.geodes;   // §40 cracked geodes (applied in seedGeodes)
       if (typeof s.hunger === "number") hunger = s.hunger;
     }
   } catch (e) {}
@@ -12148,13 +11900,9 @@ const AUTO_PICK_R = 1.5, AUTO_PICK_GRACE = 2;      // reach radius · just-dropp
 let autoPickup = true;
 try { if (localStorage.getItem("bc_autopick") === "0") autoPickup = false; } catch (e) {}
 function saveAutoPick() { try { localStorage.setItem("bc_autopick", autoPickup ? "1" : "0"); } catch (e) {} }
-// §P2 which tool is the RIGHT (full-speed) tool for each work kind; any other item still works, at WRONG_TOOL_MUL.
-const TOOLS_FOR_KIND = { tree: ["axe"], fallentree: ["axe"], stump: ["axe", "shovel"], rock: ["pickaxe"], heaveboulder: ["shovel"], geode: ["pickaxe"] };
 // §P2 auto-switching removed. Whatever is in the selected belt slot is what you use;
-// any item hits any work target (the right tool is just faster, see toolMul). These
-// stay as trivial shims so the old call sites keep working without auto-switch logic.
+// any item works on any target. These stay as trivial shims so the old call sites keep working without auto-switch logic.
 function reachForTool(t) { return "pass"; }           // never fail / never switch, always use the held item
-function groundAutoDig(pt) { return false; }          // no auto-dig: an axe/pick on bare ground just thuds
 function updateAutoPickup() {
   if (!autoPickup || mode !== "walk" || resting) return;
   const R2 = AUTO_PICK_R * AUTO_PICK_R;
@@ -12163,11 +11911,6 @@ function updateAutoPickup() {
     if (clock.t < (e.pickAt || 0)) continue;                    // just-dropped / fresh grace
     const dx = e.x - player.x, dz = e.z - player.z; if (dx*dx + dz*dz > R2) continue;
     interactWith(e);                                            // arc in: adds to inventory, clears drop record
-  }
-  for (let i = looseRocks.length - 1; i >= 0; i--) { const lr = looseRocks[i];
-    if (clock.t - lr.bornT < 0.3) continue;                     // let fresh rubble settle a moment
-    const dx = lr.x - player.x, dz = lr.z - player.z; if (dx*dx + dz*dz > R2) continue;
-    pickRubble(lr);
   }
   if (spawnLivingWorm.ready) for (let i = worms.length - 1; i >= 0; i--) { const w = worms[i];   // §earthworms live worms arc in too
     if (w.gone || w.air || w.mode === "burrow" && w.sink > 0.6 || clock.t < w.pickAt) continue;
@@ -12538,7 +12281,7 @@ function showContextMenu(idx, x, y) {
   if (isFood(c.id)) opts.push(["Eat", () => eatItem(idx)]);
   // §bugfix "Put in bucket": a scoopable fish / critter goes into the first bucket with water + room; greyed if none fits
   if (isPlaceable(c.id)) opts.push(["Place", () => placeHeldFromMenu(idx)]);
-  if (isDroppable(c.id)) { opts.push(["Drop one", () => invDrop(idx, true)]); if (c.qty > 1) opts.push(["Drop all", () => invDrop(idx, false)]); }   // §drop fish/crops/seeds are droppable too
+  if (isDroppable(c.id)) { opts.push(["Drop one", () => invDrop(idx, true)]); if (c.qty > 1) opts.push(["Drop all", () => invDrop(idx, false)]); }   // §drop fish and other items are droppable too
   const m = document.getElementById("ctxmenu");
   m.innerHTML = opts.map((o, i) => `<div data-i="${i}"${o[2] ? ' class="disabled"' : ''}>${o[0]}</div>`).join("");
   m.querySelectorAll("div").forEach((d, i) => d.onclick = () => { if (opts[i][2]) return; opts[i][1](); hideContextMenu(); if (invOpen) renderInventory(); });
@@ -12708,9 +12451,7 @@ function syncDebugPanel() {
     <label>Pitch offset <b class="tv2" data-tk="pitch">${dbgTool.pitch.toFixed(2)}</b> <input class="dbgtool" data-tk="pitch" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.pitch}"></label>
     <label>Roll offset <b class="tv2" data-tk="roll">${dbgTool.roll.toFixed(2)}</b> <input class="dbgtool" data-tk="roll" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.roll}"></label>
     <label>Handle spin (NEW axis) <b class="tv2" data-tk="spin">${dbgTool.spin.toFixed(2)}</b> <input class="dbgtool" data-tk="spin" type="range" min="-3.14" max="3.14" step="0.01" value="${dbgTool.spin}"></label>
-    <div class="dbgrow"><button id="dbgSwingDir">Pickaxe swing dir: ${dbgTool.swingDir > 0 ? "forward (+1)" : "reversed (-1)"}</button><button id="dbgToolReset">Reset offsets</button></div>
-    <div class="dbgrow"><button id="dbgAxeAxis">Axe swing axis: ${dbgAxe.axis.toUpperCase()}</button><button id="dbgAxeDir">Axe swing dir: ${dbgAxe.dir > 0 ? "+1" : "-1"}</button></div>
-    <div class="jhint">§axe8 Hold the AXE and chop: the two buttons above cycle its swing axis (X=overhead pitch, Y=yaw twist, Z=screen-plane sweep) and flip its direction, axe only (pickaxe unaffected). Tell me which axis+dir looks right and I'll bake it as the default. Other sliders fine-tune the resting pose; read-out above shows the final numbers.</div>
+    <div class="dbgrow"><button id="dbgSwingDir">Swing dir: ${dbgTool.swingDir > 0 ? "forward (+1)" : "reversed (-1)"}</button><button id="dbgToolReset">Reset offsets</button></div>
     <h3>Slopes</h3>
     <div class="jhint">Slope limits removed: you walk any grade at full speed.</div>
     <h3>Footsteps</h3>
@@ -12728,7 +12469,7 @@ function syncDebugPanel() {
     <h3>Shovel / stamina</h3>
     ${TUNABLES.map((t) => `<label>${t.k} <b class="tv" data-k="${t.k}">${(+DBG_GET(t.k)).toFixed(t.step < 0.01 ? 3 : 2)}</b>
       <input class="dbgtune" data-k="${t.k}" type="range" min="${t.min}" max="${t.max}" step="${t.step}" value="${DBG_GET(t.k)}"></label>`).join("")}
-    <div class="jhint">full ring ≈ ${Math.round(1/TUNE.DIG_COST)} sand digs · ${Math.round(1/TUNE.DIRT_COST)} grass/dirt · ${(1/TUNE.CHOP_COST).toFixed(1)} chops · Ctrl+Shift+D</div>`;
+    <div class="jhint">full ring ≈ ${Math.round(1/TUNE.DIG_COST)} sand digs · ${Math.round(1/TUNE.DIRT_COST)} grass/dirt · Ctrl+Shift+D</div>`;
   p.querySelector("#dbgPause").onclick = () => { clock.paused = !clock.paused; syncDebugPanel(); };
   { const cb = p.querySelector("#dbgClusters"); if (cb) cb.onclick = () => { dbgClusterHighlight = !dbgClusterHighlight; if (typeof validateClusters === "function") validateClusters(); syncDebugPanel(); }; }   // §clust8 highlight + log floating clusters
   p.querySelectorAll(".dbgspd").forEach((b) => b.onclick = () => { clock.speed = +b.dataset.s; clock.paused = false; syncDebugPanel(); });
@@ -12749,8 +12490,6 @@ function syncDebugPanel() {
   });
   { const sd = p.querySelector("#dbgSwingDir"); if (sd) sd.onclick = () => { dbgTool.swingDir = -dbgTool.swingDir; syncDebugPanel(); }; }
   { const tr = p.querySelector("#dbgToolReset"); if (tr) tr.onclick = () => { dbgTool.yaw = 0; dbgTool.pitch = 0; dbgTool.roll = 0; dbgTool.spin = 0; dbgTool.swingDir = 1; syncDebugPanel(); }; }
-  { const aa = p.querySelector("#dbgAxeAxis"); if (aa) aa.onclick = () => { dbgAxe.axis = dbgAxe.axis === "x" ? "y" : dbgAxe.axis === "y" ? "z" : "x"; syncDebugPanel(); }; }   // §axe8 cycle X→Y→Z
-  { const ad = p.querySelector("#dbgAxeDir"); if (ad) ad.onclick = () => { dbgAxe.dir = -dbgAxe.dir; syncDebugPanel(); }; }
   p.querySelectorAll(".dbgstride").forEach((el) => el.oninput = (e) => {   // §foot2 live stride lengths (steps per metre)
     const k = el.dataset.fk, v = +e.target.value;
     if (k === "walk") STRIDE_WALK = v; else if (k === "sprint") STRIDE_SPRINT = v;
@@ -12783,15 +12522,13 @@ function syncDebugPanel() {
 // Live-tunable shovel/stamina values exposed in the debug panel (§4).
 const TUNABLES = [
   { k: "DIG_COST", min: 0.04, max: 0.6, step: 0.01 }, { k: "DIRT_COST", min: 0.1, max: 0.8, step: 0.01 },
-  { k: "GRAVEL_COST", min: 0.08, max: 0.7, step: 0.01 }, { k: "MINE_COST", min: 0.08, max: 0.9, step: 0.01 },
-  { k: "CHOP_COST", min: 0.08, max: 0.8, step: 0.01 }, { k: "SIFT_COST", min: 0.02, max: 0.15, step: 0.005 },
+  { k: "GRAVEL_COST", min: 0.08, max: 0.7, step: 0.01 }, { k: "SCRAPE_COST", min: 0.02, max: 0.4, step: 0.01 },
+  { k: "SIFT_COST", min: 0.02, max: 0.15, step: 0.005 },
   { k: "DIG_WATER_MAX", min: 0.0, max: 1.5, step: 0.05 },
   { k: "COMMIT_TIME", min: 0.1, max: 1.0, step: 0.05 }, { k: "EXHAUST_RECOVER", min: 0.1, max: 0.8, step: 0.02 },
   { k: "REGEN_IDLE", min: 0.02, max: 0.4, step: 0.01 }, { k: "REGEN_REST", min: 0.05, max: 0.6, step: 0.02 },
   { k: "SPRINT_DRAIN", min: 0.0, max: 0.3, step: 0.01 }, { k: "SCRAMBLE_DRAIN", min: 0.0, max: 0.4, step: 0.01 },
   { k: "BLIND_FIND_CHANCE", min: 0.0, max: 0.3, step: 0.005 },
-  { k: "WRONG_TOOL_MUL", min: 0.1, max: 1.0, step: 0.02 },
-  { k: "HARVEST_SPEED", min: 0.5, max: 2.5, step: 0.05 },
   { k: "BREAK_IGNORE_T", min: 0.0, max: 1.0, step: 0.05 },
   { k: "JUMP_SPEED", min: 4.0, max: 11.0, step: 0.1 },
   { k: "JUMP_CUT", min: 0.1, max: 1.0, step: 0.02 },
@@ -12949,7 +12686,7 @@ function terrainBlocks(r, t) { if (t < 2) return false; for (const f of [0.35, 0
 function entityRadius(e) { return Math.max(0.6, (e.scale||0.5)*0.75); }
 function entityCY(e) { return e.kind === "find" ? 0.25 : (e.scale||0.5)*0.4 + 0.15; }
 // The one interaction target under a ray: rendered-only, within reach, in line of sight.
-// Small things (finds, goats, salt) use spheres; trees/rocks/stumps/fallen trunks use
+// Small things (finds, salt) use spheres; trees and crusted rocks use
 // generous fat volumes so you don't have to aim precisely. `sticky` is last frame's target:
 // once locked, it is kept while the crosshair stays within a wider cone (less flicker).
 const STICK_WIDEN = 1.4, STICK_REACH = REACH + 1.0, STICK_MARGIN = 1.2;
@@ -12980,16 +12717,13 @@ function targetAlongRay(r, sticky) {
   for (const bc of barnacles) if (bc.amt > 0 && barnacleExposed(bc))   // §5 barnacle crusts on exposed intertidal rock
     consider(bc, "barnacle", bc.x, bc.z, (w) => raySphere(r.o, r.d, bc.x, barnClusterTop(bc) + 0.12, bc.z, (0.4 + bc.rsc*0.4)*Math.max(w, TARGET_FORGIVE)));
   // §tools big objects read generously, any part of the trunk OR the crown within reach grabs the whole tree
-  for (const o of treeObjs) { if (o.gone || o.falling) continue; const gy = surfaceAt(o.x, o.z).h;
-    if (o.fallen) { const [cx, cz] = fallenCrownPos(o);                                   // the whole lying length: stump end → crown end
-      capsule(o, "fallentree", (o.x+cx)/2, (o.z+cz)/2, o.x, gy+0.3, o.z, cx, surfaceAt(cx, cz).h+0.5, cz, 1.5 + o.scale*0.08); }   // §P3 a fatter capsule down the whole trunk, easy to hit anywhere
-    else { capsule(o, "tree", o.x, o.z, o.x, gy-0.3, o.z, o.x, gy+o.scale*1.05, o.z, 1.0 + o.scale*0.07);   // tall, fat trunk capsule (full height)
-      sphere(o, "tree", o.x, o.z, o.scale*0.92, o.scale*0.5); } }                          // + a generous crown sphere up top
-  for (const o of rockObjs) { if (o.gone) continue; const gy = surfaceAt(o.x, o.z).h + (o.yOff||0);   // §worldbug a stacked landmark rock sits at its yOff
-    capsule(o, ((o.barn && o.barn.amt > 0) || (o.oyst && o.oyst.amt > 0)) ? "searock" : "rock", o.x, o.z, o.x, gy-0.1, o.z, o.x, gy+o.sc*0.55, o.z, 0.6 + o.sc*0.5); }
-  for (const s of stumps) { const gy = surfaceAt(s.x, s.z).h; capsule(s, "stump", s.x, s.z, s.x, gy-0.1, s.z, s.x, gy+0.9, s.z, 1.15); }
+  for (const o of treeObjs) { if (o.gone) continue; const gy = surfaceAt(o.x, o.z).h;   // §shake any part of the trunk OR the crown within reach grabs the tree
+    capsule(o, "tree", o.x, o.z, o.x, gy-0.3, o.z, o.x, gy+o.scale*1.05, o.z, 1.0 + o.scale*0.07);   // tall, fat trunk capsule (full height)
+    sphere(o, "tree", o.x, o.z, o.scale*0.92, o.scale*0.5); }                            // + a generous crown sphere up top
+  for (const o of rockObjs) { if (o.gone || !((o.barn && o.barn.amt > 0) || (o.oyst && o.oyst.amt > 0))) continue;   // rocks are scenery; only a crusted shore rock is workable
+    const gy = surfaceAt(o.x, o.z).h + (o.yOff||0);
+    capsule(o, "searock", o.x, o.z, o.x, gy-0.1, o.z, o.x, gy+o.sc*0.55, o.z, 0.6 + o.sc*0.5); }
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
-  for (const cr of crops) sphere(cr, "crop", cr.x, cr.z, 0.5*cr.scale, 1.0*cr.scale);   // §17 harvestable crops
   if (typeof tallGrass !== "undefined") for (const g of tallGrass) if (!g.cut) sphere(g, "tallgrass", g.x, g.z, 0.4*g.scale, 0.7*g.scale);   // §veg5 strip tall grass for fibre
   if (typeof plants !== "undefined") for (const pl of plants) if (!pl.cut) sphere(pl, "plant", pl.x, pl.z, 0.35*pl.scale, 0.55*pl.scale);   // §P3 pick flowers / ferns
   // §P3 standing bull kelp: a tall capsule down the whole stipe (seabed → crown) so any part in reach grabs it,
@@ -12998,12 +12732,10 @@ function targetAlongRay(r, sticky) {
     for (const k of kelpStalks) { const ex = k.x - r.o[0], ez = k.z - r.o[2]; if (ex*ex + ez*ez > gate) continue;   // cheap reach gate before the capsule test (there are many stalks)
       if (kd[k.ii*10+3] <= 0.001) continue; const top = k.h + k.sc*1.95;
       capsule(k, "kelp", k.x, k.z, k.x, k.h, k.z, k.x, top, k.z, 0.5 + k.sc*0.18); } }
-  for (const lr of looseRocks) sphere(lr, "rubble", lr.x, lr.z, lr.sc*0.3, 0.45 + lr.sc*0.4);
   for (const s of weakStones) if (!s.picked) sphere(s, "weakstone", s.x, s.z, 0.4*s.sc, 0.55 + s.sc*0.4);   // §stonepick pick up a dome stone with any item (picked ones aren't targetable)
   // §heave-removed: heave boulders are no longer targetable
   if (typeof oysterBeds !== "undefined") for (const b of oysterBeds) sphere(b, "oysterbed", b.x, b.z, 0.5*b.sc, 0.75);   // §water oyster beds are workable at any depth within reach (no longer only when bared)
-  if (typeof geodes !== "undefined") for (const g of geodes) if (!g.cracked) sphere(g, "geode", g.x, g.z, 0.4*g.sc, 0.5 + g.sc*0.4);   // §40 geodes to crack with a pickaxe (once cracked they are spent scenery)
-  for (const d of driftObjs) { if (d.gone) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
+  for (const d of driftObjs) { if (d.gone || d.big) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
   for (let i = 0; i < storageBoxes.length; i++) sphere(storageBoxes[i], "storagebox", storageBoxes[i].x, storageBoxes[i].z, 0.3, 0.8);   // §strip only free-standing storage boxes remain (cottage removed)
   for (const L of placedLanterns) sphere(L, "lantern", L.x, L.z, 0.4, 0.6);
@@ -13019,12 +12751,11 @@ function targetAlongRay(r, sticky) {
   return best;
 }
 let curTarget = null;    // recomputed each frame from the crosshair (desktop)
-// Act on a crosshair target. Pickups/creatures/goats/salt act with any tool;
-// trees/rocks/stumps only respond to the matching tool. Returns true if it did
+// Act on a crosshair target. Every target works with any held item (or none). Returns true if it did
 // something (so a click can fall through to a ground tool-use otherwise).
 // §A3 target kinds that ANY held item can act on (harvest a plant, hit a creature, pick a find, open a thing).
-// The tool-gated kinds (tree/fallentree/rock/searock/stump/geode/heaveboulder) are deliberately excluded.
-const SOFT_INTERACT = new Set(["creature","find","rubble","weakstone","oysterbed","bush","crop","tallgrass","plant","kelp","salt",
+// heaveboulder is the only tool-gated kind left (and it is inert).
+const SOFT_INTERACT = new Set(["creature","find","weakstone","oysterbed","bush","tree","tallgrass","plant","kelp","salt",
   "flotsam","barnacle","nest","driftwood","storagebox",
   "lantern","crate","barrel","searock"]);
 function softTargetUnderCrosshair() { const t = effectiveTarget(); return (t && SOFT_INTERACT.has(t.kind)) ? t : null; }
@@ -13033,13 +12764,10 @@ function useToolOnTarget(t) {
   const tool = selectedTool();
   switch (t.kind) {
     case "find": interactWith(t.obj); return true;
-    case "rubble": pickRubble(t.obj); return true;
     case "weakstone": pickStone(t.obj); return true;   // §stonepick pick the dome stone up into the pack
     case "heaveboulder": return heaveBoulderAction(t.obj);   // §21D lever a heavy boulder over (shovel)
     case "oysterbed": return oysterBedAction(t.obj);   // §23 pick an oyster off the cluster at low tide
-    case "geode": return geodeAction(t.obj);   // §40 crack a geode open with a pickaxe
     case "bush": harvestBush(t.obj); return true;
-    case "crop": harvestCrop(t.obj); return true;
     case "tallgrass": harvestTallGrass(t.obj); return true;   // §veg5 strip for Plant Fiber
     case "plant": harvestPlant(t.obj); return true;           // §P3 pick a flower or fern
     case "kelp": harvestKelp(t.obj); return true;             // §P3 pick standing bull kelp (above or below water)
@@ -13052,21 +12780,18 @@ function useToolOnTarget(t) {
     case "urchin": pickUrchin(t.obj); return true;
     case "worm": pickWorm(t.obj); return true;
     case "bigshell": pickBigShell(t.obj); return true;   // §shells pick up a conch / whelk (a lived-in one only pulls in)       // §earthworms a live worm → one Earthworm item   // a sea urchin off the seabed, into the satchel   // §tools pick a set-down lantern back up
-    case "tree": chopStanding(t.obj); return true;                 // §P2 any item chops; the axe is just faster (toolMul)
-    case "fallentree": chopFallen(t.obj); return true;
+    case "tree": return shakeTree(t.obj);                         // §shake rustle a tree for a chance at its fruit
     case "searock":   // §menu a shore rock with an oyster/barnacle cluster, scraping/picking takes priority over mining (any item)
       scrapeCluster(t.obj); return true;
-    case "rock": mineObj(t.obj); return true;                      // §P2 any item mines; the pickaxe is just faster
-    case "stump": if (tool === "shovel") { stumpStrike(t.obj); return true; } chopStump(t.obj); return true;   // §P2 shovel levers, anything else chops
   }
   return false;
 }
 function interactTarget(t) { if (!t) return; if (reachForTool(t) === "fail") return; if (useToolOnTarget(t)) setWorkLock(t); }   // the bare interact key (E)
-// §P3 after an object (tree / stump / boulder / driftwood) breaks, swallow terrain hits for a
+// §P3 after an object breaks, swallow terrain hits for a
 // moment so a still-held or rapid click doesn't immediately dig a hole where it stood. Cleared
 // early on mouse/touch release.
 let breakIgnoreUntil = 0, brokeSinceDown = false;   // §bugfix brokeSinceDown holds the lockout until the button is released
-// §bugfix when ANY breakable (stump / boulder / tree / driftwood / …) breaks, swallow terrain hits until the button
+// §bugfix when ANY breakable breaks, swallow terrain hits until the button
 // is released, so a held click can't immediately chew the ground where it stood. The time-based window is kept as a
 // fallback for taps (touch) that don't hold.
 function objectBroke() { brokeSinceDown = true; breakIgnoreUntil = performance.now() / 1000 + (TUNE.BREAK_IGNORE_T || 0); }
@@ -13086,12 +12811,7 @@ function clickAt(ndcx, ndcy) {
   // otherwise use the equipped tool on the ground / object under the crosshair, within reach
   const pt = rayGround(ndcx, ndcy); if (!pt) return;
   if (Math.hypot(pt[0]-player.x, pt[1]-player.z) > REACH + 1.4) return;   // too far: do nothing
-  const gy = surfaceAt(pt[0], pt[1]).h + 0.3;
   if (tool === "shovel") digAt(pt[0], pt[1]);
-  else if (tool === "axe") { if (!chopAt(pt[0], pt[1]) && !groundAutoDig(pt)) failStrike(false, pt[0], gy, pt[1]); }   // axe bit nothing → dig or thud
-  else if (tool === "pickaxe") { if (!mineAt(pt[0], pt[1]) && !removeBuiltAt(pt[0], pt[1]) && !groundAutoDig(pt)) failStrike(true, pt[0], gy, pt[1]); }   // pick hit bare ground → dig or clink
-  else if (SEED_TREE[tool]) plantAt(pt[0], pt[1]);
-  else if (CROP_SEED[tool]) plantCrop(pt[0], pt[1]);            // §17 plant a crop seed on soil
   else if (tool === "chestbox") placeStorageBox(pt[0], pt[1]);   // §12C place an emptied chest as storage
   else punch(pt);                                               // §15 anything else → a punch (startles creatures); §bugfix left-click never eats (eat is hold-right-click)
 }
@@ -13113,7 +12833,7 @@ function interactWith(e) {
     discovered.add("f_" + e.t);
     notify(e.t, 1, first);
     if (FINDS[e.t] && FINDS[e.t].litter) { beachCleanup++; }   // §5 clearing litter counts toward the beach-cleanup tally
-    if (SEED_TREE[e.t] || e.t === "salt") Inv.autoHotbar(e.t);   // handy items go to the hotbar
+    if (e.t === "salt") Inv.autoHotbar(e.t);   // handy items go to the hotbar
     if (e.drop) { const di = worldDrops.indexOf(e.drop); if (di >= 0) worldDrops.splice(di, 1); saveDrops(); }  // picked a dropped item back up
     const i = life.indexOf(e); if (i >= 0) life.splice(i, 1);
   }
@@ -13178,16 +12898,15 @@ let stamina = STAMINA_MAX, resting = false, exhausted = false, digCommit = 0;
 // TUNE.NAME; the debug panel mutates TUNE in place. New gameplay tunables go
 // here and get a slider by adding one row to TUNABLES.
 // §11.5 stamina costs, relative to the old 0.1 reference dig:
-//   sand 2×, dirt/grass 4×, chop = dirt, mine ≈ 1.5× chop, gravel/mud between sand and dirt.
+//   sand 2×, dirt/grass 4×, gravel/mud between sand and dirt.
 const TUNE = {
-  // §P3 chop/mine/dig stamina costs, ~40% lighter than before (were 0.2/0.4/0.3/0.4/0.6/0.06).
-  DIG_COST: 0.12, DIRT_COST: 0.24, GRAVEL_COST: 0.18, CHOP_COST: 0.24, MINE_COST: 0.36, SIFT_COST: 0.036,
+  // §P3 dig stamina costs, ~40% lighter than before (were 0.2/0.4/0.3/0.06).
+  DIG_COST: 0.12, DIRT_COST: 0.24, GRAVEL_COST: 0.18, SIFT_COST: 0.036,
+  SCRAPE_COST: 0.12,                // stamina per scrape/pick off a barnacle or oyster cluster
   DIG_WATER_MAX: 0.5,               // §water dig (reshape) in water up to this depth (m), like wet sand; deeper water sifts instead
   SPRINT_DRAIN: 0.08, SCRAMBLE_DRAIN: 0.13, REGEN_ACTIVE: 0.05, REGEN_IDLE: 0.11, REGEN_REST: 0.26,
   EXHAUST_RECOVER: 0.33, COMMIT_TIME: 0.5,
   BLIND_FIND_CHANCE: 0.05,          // blind digging (no tell) rarely turns up a find; mostly raw material
-  WRONG_TOOL_MUL: 0.34,             // §P2 effort per strike with the wrong tool (≈ 1/3 → ~3x the hits). 1 = right tool.
-  HARVEST_SPEED: 1.33,              // §P3 damage per strike on trees/stumps/boulders (1.33 ≈ 25% fewer hits). 1 = old pace.
   BREAK_IGNORE_T: 0.4,              // §P3 after an object breaks, ignore terrain hits until mouse-up or this long
   JUMP_SPEED: 8.6,                  // §jumpfix take-off velocity (m/s). Symmetric GRAVITY=28 → apex 1.25 m, airtime 0.60 s, perfectly symmetric rise/fall (Minecraft feel).
   JUMP_CUT: 0.42,                   // §P2 variable height: releasing Space while rising scales the remaining up-velocity.
@@ -13221,8 +12940,6 @@ function swingRateMul() { return 1; }    // §Cooking no slower swings when hung
 // §tools effort & hunger: labour burns hunger (∝ stamina spent), recovery scales with fullness, and being fed makes heavy jobs land harder
 let EFFORT_HUNGER = 0.03;                 // §A5 hunger burned per unit of stamina spent on work, reduced ~40% (was 0.05); walking spends ~none
 function hungerRegenMul() { return hungerEnabled ? 0.55 + 0.75 * Math.max(0, Math.min(1, hunger)) : 1; }   // fuller = faster stamina recovery (0.55×…1.3×)
-function jobEffortMul() { if (!hungerEnabled) return 1; const t = hungerTier();   // fed = a few fewer hits to fell/break; hungry = slightly more (never punishing)
-  return t === "full" ? 1.5 : t === "peckish" ? 1.0 : 0.85; }
 function spendStamina(a, heavy) { stamina = Math.max(0, stamina - a); if (stamina <= 0.001) exhausted = true;
   if (hungerEnabled) hunger = Math.max(0, hunger - a * EFFORT_HUNGER); }   // §tools labour makes you hungrier
 function canHeavyAction() { return !exhausted && stamina > 0.02 && digCommit <= 0; }
@@ -13364,7 +13081,7 @@ function surfaceKind(x, z) {
   // Material follows the ORIGINAL ground (base heightmap), so a deep hole's
   // own steep walls never re-classify it as un-diggable "rock".
   const i = cellIndex(x, z);
-  if (i >= 0 && material[i] === MAT.STONE && built[i] > 0.05) return "rock";   // placed stone: pickaxe only
+  if (i >= 0 && material[i] === MAT.STONE && built[i] > 0.05) return "rock";   // placed stone (legacy builds): not diggable
   if (i < 0) return "rock";
   const hb = heightmap[i];
   const gx = i % GRID, gz = (i / GRID) | 0;
@@ -13410,8 +13127,6 @@ function applyDig(x, z, amount, holeAng) {
   updateHeightTex(minx, minz, maxx, maxz);
   resnapPropsRegion(x - DIG_R*2.4, z - DIG_R*2.4, x + DIG_R*2.4, z + DIG_R*2.4);
   if (typeof recordDigHole === "function") recordDigHole(x, z);   // §20 rain can pool in this hole
-  if (typeof checkUndermine === "function") checkUndermine(x, z);          // dig out a trunk → it topples
-  for (let k = stumps.length - 1; k >= 0; k--) if (Math.hypot(stumps[k].x - x, stumps[k].z - z) < DIG_R) { stumps.splice(k, 1); saveWorld(); }  // dug-out stump won't sprout
 }
 // Push a hole's spoil back into it: both sides relax toward flat.
 function fillHole(x, z) {
@@ -13517,21 +13232,14 @@ let shovelSwing = 0, camNudge = 0, toolRecoilT = 0, camShake = 0, lastFailT = -9
 // §tools5 live fine-tune offsets for the held tool (debug sliders): extra yaw/pitch/roll in radians, and a swing-direction flip.
 const dbgTool = { yaw: 0, pitch: 0, roll: 0, swingDir: 1, spin: 0 };   // §tools7 `spin` = a NEW rotation axis: about the tool's own long (handle) axis, in local space before the pose tilt
 const TOOL_X_SHIFT = 0.12;        // §tool-right how far further right every held tool/item sits (tunable)
-const PICK_X_SHIFT = 0.12;        // §tool-pick extra rightward offset for the pickaxe on top of TOOL_X_SHIFT (tunable)
-// §axe8 the AXE gets its OWN chop-swing settings so the pickaxe is unaffected. `axis` picks which rotation the chop
-// animates: "x" = pitch (overhead, the old behaviour), "y" = yaw (sideways twist), "z" = roll (sweeps across the
-// screen plane, a true chopping arc, the new default). `dir` flips the swing direction. Toggle both live in debug.
-const dbgAxe = { axis: "z", dir: 1 };
 const lastToolPose = { id: "", roll: 0, pitch: 0, yaw: 0, swingDir: 1 };   // final applied pose, read back by the debug readout
-let BLADE_BASE_YAW = 3 * Math.PI / 4;          // §tools6 pickaxe rest yaw (135°, about the view-up axis)
-let BLADE_BASE_YAW_AXE = BLADE_BASE_YAW - Math.PI;   // §tools7 the AXE alone is rotated a further 180° counter-clockwise from the pickaxe
 let soundSubs = false;                 // §tools5 Minecraft-style sound captions (debug)
 const soundSubList = [];               // §capt5 live caption entries {id,name,dir,bornT,vol,n}
 const SOUND_CAP_TTL = 2.6, SOUND_CAP_FADE = 0.8;   // seconds a caption lingers / fades
 const SOUND_LABEL = {   // §capt5 friendly names for the captions; anything missing prettifies its id
   crab_skitter:"Crab skitters", splash:"Splash", fish_splash:"Fish splashes",
   step_sand:"Footsteps, sand", step_wet:"Footsteps, wet sand", step_rock:"Footsteps, rock", step_grass:"Footsteps, grass", step_wood:"Footsteps, wood",
-  dig:"Digging", thud:"Thud", mine:"Pick strikes rock", chop:"Axe chops", scrape:"Scrape", clink:"Clink", pat:"Pat",
+  dig:"Digging", thud:"Thud", rustle:"Leaves rustle", scrape:"Scrape", clink:"Clink", pat:"Pat",
   whoosh:"Whoosh", hitflesh:"Hit", crack:"Crack", waves:"Waves", surf:"Surf", wind:"Wind", rain:"Rain", thunder:"Thunder",
   pickup:"Pick up", discover:"New discovery!", craft:"Crafted", splash_big:"Big splash", reel:"Reel", bite:"A bite!",
   flame:"Fire crackles", birdsong:"Birdsong", goat_bleat:"Goat bleats", gasp:"Gasp", breath:"Breath", womp:"Womp womp",
@@ -13758,9 +13466,6 @@ function digAt(x, z) {
   if (cottageProtectBlock(x, z)) return;                  // §2 protected ground around the cottage
   if (player.airborne) return;                            // §playtest2 no digging mid-air (sprinting is fine now)
   if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §13.2 too tired: gentle refusal, no swing
-  // a stump in reach? the shovel can also lever it out (several strikes)
-  const stp = nearestStump(x, z, REACH + 1.0);
-  if (stp && Math.hypot(stp.x - player.x, stp.z - player.z) <= REACH + 1.2) { stumpStrike(stp); return; }
   const sy = surfaceAt(x, z).h, depth = waterSurfaceAt(x, z) - sy;
   shovelSwing = 1; camNudge = 0.05; rootPlayer();            // every strike commits: short wind-up, rooted
 
@@ -13803,17 +13508,6 @@ function digAt(x, z) {
 const MAT_COL_JS = [[0,0,0], [0.44,0.53,0.31], [0.40,0.30,0.20], [0.86,0.78,0.59], [0.56,0.55,0.51], [0.47,0.44,0.41], [0.34,0.28,0.20]];
 const PLACE_R = 4.8, PLACE_RAISE = 0.7;      // grid is coarse (~3m cells), so a "small" mound still spans a few cells
 // §matrm canPlaceAt()/placeMaterial() removed with the material-placement feature (earth-material items no longer exist)
-// Pickaxe on any legacy player-built ground lowers it a step (kept so old saves with built mounds can be flattened).
-function removeBuiltAt(x, z) {
-  if (inCottageProtected(x, z)) return false;                  // §2 can't pickaxe away the cottage pad
-  const i = cellIndex(x, z); if (i < 0 || built[i] <= 0.01) return false;
-  Terrain.edit(x, z, PLACE_R, -Math.min(built[i] + 0.2, PLACE_RAISE + 0.2), "built");
-  // if fully removed, clear its painted material back to natural
-  const j = cellIndex(x, z); if (j >= 0 && built[j] <= 0.02) { material[j] = MAT.NATURAL; updateHeightTex((j%GRID)-2, ((j/GRID)|0)-2, (j%GRID)+2, ((j/GRID)|0)+2); }
-  if (material[i] === MAT.STONE) Inv.add("stone", 1);   // §matrm only stone is still an item; other earth materials were removed
-  if (onDig) onDig("mine"); spawnSand(x, surfaceAt(x,z).h + 0.2, z, 6, [0.5,0.5,0.52]);
-  saveWorld(); return true;
-}
 /* ===================================================================== *
  * § 11.6  MINI 3D VIEWS, bucket overview & close-up inspect, drawn with
  *   the game's own prop pipeline into a low-res FBO, then blitted (with a
@@ -13965,6 +13659,9 @@ function berryState(b) { if (b.ripe) return "ripe";
   const total = BERRY_REGROW * DAY_PERIOD, prog = 1 - Math.max(0, (b.regrowAt - clock.t)) / total;
   return prog > 0.5 ? "green" : "bare"; }
 function updateBerries() { for (const b of berryBushes) if (!b.ripe && clock.t >= b.regrowAt) b.ripe = true; }
+// §A3 harvest yields are a small random range per plant, inclusive (tunable). Anything unlisted gives 1–3.
+const HARVEST_YIELD = { berry:[3,7], pickleweed:[2,4], fiber:[1,3] };
+function harvestYield(id) { const r = HARVEST_YIELD[id] || [1,3]; return r[0] + (rng()*(r[1]-r[0]+1)|0); }
 function harvestBush(b) {
   if (!b.ripe) { showCard("Not ripe", "This bush will berry again in a few days."); return; }
   const n = harvestYield("berry"); const first = !discovered.has("f_berry");
@@ -14090,93 +13787,16 @@ function drawTallGrass(view) {
 
 
 // === VILLAGE-FREE GROUND HELPERS (kept from the removed kappa village) ===
-// Combined walking ground at (x,z): terrain or a fallen trunk underfoot (whichever is higher).
-function groundStandAt(x, z, feetY) {
-  let h = surfaceAt(x, z).h;
-  const t = (typeof trunkHeightAt === "function") ? trunkHeightAt(x, z) : -Infinity; if (t > h) h = t;
-  return h;
-}
+// Walking ground at (x,z): the terrain underfoot.
+function groundStandAt(x, z, feetY) { return surfaceAt(x, z).h; }
 function villagePushOut(x, z, feetY) { return [x, z]; }
 // === END VILLAGE-FREE GROUND HELPERS ===
 
 /* ===================================================================== *
- * § 17  FARMING, forage wild tropical plants, or plant seeds on dug soil
+ * § GLINTS & MISC  (night glints on shiny finds, particles, tells, the held tool, erosion)
  * ===================================================================== */
-// @system GAMEPLAY  @section GAMEPLAY/farming
-let crops = [];     // { type, x, z, ripe, ripeAt, scale, yaw, wild, grown }
-const CROP_GROW_DAYS = 2.5;     // in-game days for a planted seed to first ripen (tunable)
-const CROP_REGROW_DAYS = 2;     // days to re-ripen after a harvest, crops are perennial (tunable)
-// §A3 harvest yields are a small random range per plant, inclusive (tunable). Anything unlisted gives 1–3.
-const HARVEST_YIELD = { banana:[2,5], berry:[3,7], cassava:[2,4], pineapple:[1,3], taro:[2,4], pickleweed:[2,4], fiber:[1,3] };
-function harvestYield(id) { const r = HARVEST_YIELD[id] || [1,3]; return r[0] + (rng()*(r[1]-r[0]+1)|0); }
-const CROP_TYPES = ["cassava", "banana", "pineapple", "taro"];
-// where each wild crop likes to grow (a height band + max slope)
-const CROP_HAB = {
-  cassava:   { lo: 8, hi: 30, slope: 0.4 },
-  banana:    { lo: 4, hi: 20, slope: 0.35 },
-  pineapple: { lo: 3, hi: 16, slope: 0.4 },
-  taro:      { lo: 2, hi: 12, slope: 0.3 },    // low, damp ground
-};
-function seedWildCrops() {
-  crops = [];
-  for (const type of CROP_TYPES) { const hab = CROP_HAB[type];
-    for (let i = 0; i < 46; i++) {
-      const a = rng()*6.283, r = HALF*(0.12 + rng()*0.6), x = Math.sin(a)*r, z = -Math.cos(a)*r;
-      const s = surfaceAt(x, z); if (s.h < hab.lo || s.h > hab.hi || s.slope > hab.slope) continue;
-      if (waterDepthAt(x, z) > 0.05 || bigPropBlocking(x, z, 1.2) || nearPOI(x, z, 1)) continue;
-      if (crops.some(c => Math.hypot(c.x-x, c.z-z) < 3.5)) continue;
-      if (rng() < 0.55) { const scale = 1.15 + rng()*0.4, yaw = rng()*6.28;   // §P3 claim after the draws (stream unchanged)
-        if (claimFootprint(x, z, 0.5 + scale*0.2, "crop")) crops.push({ type, x, z, ripe: true, ripeAt: 0, scale, yaw, wild: true, grown: true }); }
-    }
-  }
-}
-function cropStage(c) { if (c.ripe) return "ripe";
-  const total = (c.grown ? CROP_REGROW_DAYS : CROP_GROW_DAYS) * DAY_PERIOD;
-  const prog = 1 - Math.max(0, (c.ripeAt - clock.t)) / total; return prog > 0.55 ? "grow" : "sprout"; }
-function updateCrops() { for (const c of crops) if (!c.ripe && clock.t >= c.ripeAt) { c.ripe = true; c.grown = true; } }
-function harvestCrop(c) {
-  if (!c.ripe) { showCard("Not ripe yet", "Give it another day or two to grow."); return; }
-  const food = c.type, n = harvestYield(food);
-  for (let i = 0; i < n; i++) Inv.add(food, 1);
-  let got = ITEMS[food].name + " ×" + n;
-  if (rng() < 0.7) { const seed = CROP_FOOD_SEED[food]; Inv.add(seed, 1); got += " + a " + ITEMS[seed].name; }   // a start to replant
-  c.ripe = false; c.ripeAt = clock.t + CROP_REGROW_DAYS * DAY_PERIOD;
-  sparkle(c.x, surfaceAt(c.x, c.z).h + 0.6, c.z, [0.6, 0.5, 0.2], 7); if (onDig) onDig("pluck");
-  showCard("Harvested " + ITEMS[food].name, got); saveWorld();
-}
-function canPlantCrop(type, x, z) {
-  const k = surfaceKind(x, z), s = surfaceAt(x, z);
-  if (s.slope > 0.45 || waterDepthAt(x, z) > 0.05 || spotUnderwater(x, z) || k === "rock") return false;
-  if (type !== "pineapple" && k === "sand") return false;      // most crops want soil; pineapple tolerates sand
-  if (s.h < 1.5 || s.h > 32) return false;
-  if (bigPropBlocking(x, z, 1.0)) return false;
-  for (const c of crops) if (Math.hypot(c.x-x, c.z-z) < 2.2) return false;
-  return true;
-}
-function plantCrop(x, z) {
-  const seed = selectedTool(), type = CROP_SEED[seed]; if (!type) return;
-  if (Math.hypot(x-player.x, z-player.z) > REACH + 1.4) return;
-  if (!Inv.has(seed)) return;
-  if (!canPlantCrop(type, x, z)) { showCard("Can't plant here", "Clear some bare soil first, not sand, rock or water."); return; }
-  Inv.remove(seed, 1);
-  crops.push({ type, x, z, ripe: false, ripeAt: clock.t + CROP_GROW_DAYS * DAY_PERIOD, scale: 1.1 + rng()*0.25, yaw: rng()*6.28, wild: false, grown: false });
-  if (onDig) onDig("plant"); sparkle(x, surfaceAt(x, z).h + 0.3, z, [0.4, 0.6, 0.3], 5);
-  showCard("Planted " + ITEMS[type].name, "Ready in a couple of days, then it keeps producing.");
-  saveWorld();
-}
-const cropDyn = {};
-function drawCrops(view) {
-  if (!crops.length) return; propUniforms(view); const a = rockScratch;
-  const groups = {};
-  for (const c of crops) { const key = c.type + "_" + cropStage(c); (groups[key] = groups[key] || []).push(c); }
-  for (const key in groups) {
-    if (!cropDyn[key]) { const u = key.lastIndexOf("_"); cropDyn[key] = makeDynamic(cropMesh(key.slice(0, u), key.slice(u+1)), 80); }
-    let n = 0; for (const c of groups[key]) { if (n >= 80) break; const dx = c.x-cam.pos[0], dz = c.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-      const o = n*10, y = surfaceAt(c.x, c.z).h; a[o]=c.x;a[o+1]=y;a[o+2]=c.z;a[o+3]=c.scale;a[o+4]=c.yaw||0;a[o+5]=0;a[o+6]=0;a[o+7]=1;a[o+8]=1;a[o+9]=1; n++; }
-    if (n) cropDyn[key].draw(a, n);
-  }
-}
-
+// @system GAMEPLAY  @section GAMEPLAY/glints
+// §strip crops / farming removed (archived: docs/archive/planting.md, tag archive/planting).
 
 /* §18 shiny finds wink at you from far off when you carry a lit lantern at night */
 const GLINT_FINDS = { seaglass:1, coin:1, bottle:1, jewelry:1, porcelain:1, compass:1, moonsnail:1, nautilus:1, ceramic:1, bell:1, tin:1, sanddollar:1 };
@@ -14354,7 +13974,7 @@ function drawDigCellDebug(view) {
 // Ghost preview of where a material would land: a disc on the ground, green = ok, red = blocked.
 // §matrm the material-placement ghost (drawPlaceGhost + ghostDyn + ghostScratch) was removed with the feature
 
-/* ---- first-person tool (shovel / axe / pickaxe, built in world space each frame) ---- */
+/* ---- first-person held item (shovel / lantern / rod / food, built in world space each frame) ---- */
 const TOOL_FP = {};
 function makeToolFP(id, mesh) {
   const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
@@ -14373,7 +13993,7 @@ function makeToolFP(id, mesh) {
   gl.bindVertexArray(null);
   TOOL_FP[id] = { mesh, vao, posBuf, vc: mesh.pos.length / 3, world: new Float32Array(mesh.pos.length) };
 }
-function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("axe", axeMesh()); makeToolFP("pickaxe", pickaxeMesh()); makeToolFP("lantern", lanternMesh()); makeToolFP("rod", rodMesh()); }   // §Fishing rod held too
+function initShovelFP() { makeToolFP("shovel", shovelMesh()); makeToolFP("lantern", lanternMesh()); makeToolFP("rod", rodMesh()); }   // §Fishing rod held too
 // §15 render the two gripping hands while climbing, with a hand-over-hand sway
 // §strip drawClimbHands removed (climbing).
 let toolSwapT = 0, lastFpTool = null;
@@ -14421,41 +14041,22 @@ function drawShovel(view) {
     scale = 0.6;
     ox = 0.26 + sway; oy = -0.52 - swap*0.5 + bob; oz = 0.92;
     roll = 0.08 + swayR; pitch = -0.08;
-  } else {                                                                                // shovel / axe / pickaxe: angled, head up & in
-    const bladed = id === "axe" || id === "pickaxe";
+  } else {                                                                                // shovel (and anything else held): angled, head up & in
     scale = 0.46;
     ox = 0.16 + sway;
-    if (bladed) {
-      // §A1/§tools5 overhead chop: pivot about the bottom of the handle (mesh origin), the blade arcs in the
-      // vertical plane, a pitch-only motion, no sideways yaw twist. §tools5 reverses the arc direction
-      // (blade now swings the opposite way) and the whole tool rests rotated 45° on the yaw axis.
-      const chopAmt = (-wind*0.75 + sw*1.65);                                              // the swing arc amount (unchanged magnitude); axis/direction applied below
-      oy = -0.3 - sw*0.06 + wind*0.12 + rec*0.2 - swap*0.5 + bob;                          // lifts a touch on the wind-up, drops into the chop
-      oz = 0.74 + sw*0.5 - rec*0.3;                                                        // drives forward through the strike
-      roll = -0.28 + swayR;                                                               // a little lean, held steady (no twist)
-      pitch = -0.15 + rec*0.5;
-      toolYaw = (id === "axe") ? BLADE_BASE_YAW_AXE : BLADE_BASE_YAW;                      // §tools7 the axe sits 180° round from the pickaxe
-      if (id === "pickaxe") ox += PICK_X_SHIFT;                                           // §tool-pick nudge the pickaxe further to the right of the screen (tunable)
-      // §tool-pick the pickaxe swings on the axe's axis, but the OPPOSITE direction (it dug the wrong way round)
-      const d = chopAmt * dbgAxe.dir * (id === "pickaxe" ? -1 : 1);
-      if (dbgAxe.axis === "x") pitch += d;                                                // local X → pitch (overhead chop, the old axis)
-      else if (dbgAxe.axis === "y") toolYaw += d;                                         // local Y → yaw (sideways twist)
-      else roll += d;                                                                    // local Z → roll (sweeps across the screen)
-    } else {
-      oy = -0.42 - sw*0.08 + rec*0.2 - swap*0.5 + bob + chg*0.1;
-      oz = 0.82 + sw*0.6 - rec*0.35 - chg*0.3;
-      roll = -0.4 + swayR - sw*0.12;
-      pitch = -0.2 - sw*1.05 + rec*0.65;
-    }
+    oy = -0.42 - sw*0.08 + rec*0.2 - swap*0.5 + bob;
+    oz = 0.82 + sw*0.6 - rec*0.35;
+    roll = -0.4 + swayR - sw*0.12;
+    pitch = -0.2 - sw*1.05 + rec*0.65;
     if (id === "shovel") { flipEnd = true; oy = -0.26 - sw*0.08 + rec*0.2 - swap*0.5 + bob; oz = 0.78 + sw*0.5 - rec*0.35; pitch = -0.5 - sw*0.9 + rec*0.6; }   // §playtest1 flip 180°: D-grip up in the hand, spade at the far end pointing down & away
   }
   // §tools5 apply the live debug fine-tune offsets to whatever is in hand, then record the final pose for the read-back.
   roll += dbgTool.roll; pitch += dbgTool.pitch; toolYaw += dbgTool.yaw;
   lastToolPose.id = id; lastToolPose.roll = roll; lastToolPose.pitch = pitch; lastToolPose.yaw = toolYaw; lastToolPose.swingDir = dbgTool.swingDir;
   // §tools7 NEW axis to try: a "handle spin" about the tool's OWN long axis (local +y), applied in local space before the pose tilt
-  const bladeSpin = (id === "axe" || id === "pickaxe") ? dbgTool.spin : 0;
+  const bladeSpin = dbgTool.spin;
   const cSpin = Math.cos(bladeSpin), sSpin = Math.sin(bladeSpin);
-  if (debugMode) { const rdEl = document.getElementById("dbgToolRead"); if (rdEl) rdEl.textContent = `${id}:  yaw ${toolYaw.toFixed(2)}  pitch ${pitch.toFixed(2)}  roll ${roll.toFixed(2)}  spin ${bladeSpin.toFixed(2)}  ${id==="axe" ? `axeSwing ${dbgAxe.axis.toUpperCase()}/${dbgAxe.dir>0?"+":"-"}` : `swingDir ${dbgTool.swingDir}`}`; }
+  if (debugMode) { const rdEl = document.getElementById("dbgToolRead"); if (rdEl) rdEl.textContent = `${id}:  yaw ${toolYaw.toFixed(2)}  pitch ${pitch.toFixed(2)}  roll ${roll.toFixed(2)}  spin ${bladeSpin.toFixed(2)}  swingDir ${dbgTool.swingDir}`; }
   ox += TOOL_X_SHIFT;   // §tool-right shift every held tool/item further to the right of the screen (tunable)
   const cr = Math.cos(roll), sr = Math.sin(roll), cp = Math.cos(pitch), sp2 = Math.sin(pitch);
   const cY = Math.cos(toolYaw), sY = Math.sin(toolYaw);
@@ -14514,18 +14115,24 @@ function updateDigging(dt) {
 }
 
 /* ===================================================================== *
- * § TOOLS  (Phase 6 Part B: chop trees, plant seeds, mine boulders)
+ * § TREES & SCENERY  (trees and rocks are scenery with colliders; trees
+ *   drop their seed-fruit now and then, more in wind and storms, and you
+ *   can shake one for a chance at a fruit. No axe, no pickaxe, no
+ *   planting: see docs/archive/planting.md for the archived system.)
  * ===================================================================== */
-// @system GAMEPLAY  @section GAMEPLAY/tools
+// @system GAMEPLAY  @section GAMEPLAY/trees
 
-const SEED_TREE = { coconut: "palm", pinecone: "pine", nut: "broadleaf" };
-const GROW_DAYS = 3, SPROUT_DAYS = 2;             // seed→mature, stump→sapling (in in-game days)
-const MATURE = { palm: 9, pine: 10, broadleaf: 8 };
+const SEED_FOR = { palm: "coconut", pine: "pinecone", broadleaf: "nut" };   // the fruit each tree drops
+// §shake tunables: one shake per tree per ~in-game day; the chance a shake knocks a fruit loose.
+const SHAKE_COOLDOWN_DAYS = 1.0;
+const SHAKE_DROP_CHANCE = 0.6;
+const SCATTER_EVERY = 45;           // seconds between background fruit-drop checks (calm weather)
+const SCATTER_LOOSE_CAP = 10;       // fewer than this many fruits lying around → trees may drop another
 
-let treeObjs = [], rockObjs = [], stumps = [], planted = [], looseRocks = [], fallenTrees = [], driftObjs = [];
-const driftDyn = makeDynamic(driftwoodMesh(), 400);   // §13.1 lying driftwood, individually choppable
+let treeObjs = [], rockObjs = [], driftObjs = [];
+const driftDyn = makeDynamic(driftwoodMesh(), 400);   // §13.1 lying driftwood (small pieces pickable, big logs scenery)
 let palmType, pineType, broadleafType, rockType, rockStyleTypes = [];
-let palmDyn, pineDyn, broadleafDyn, stumpDyn, rockDyn, rubbleDyn;   // §stone1 rubbleDyn draws loose Stones with the Stone item mesh
+let rockDyn;   // dynamic boulder mesh for the landmark rock clusters (cairn / tide-pool shelf / sea caves / weir)
 
 function initWorldObjs() {
   palmType = propTypes.find(t => t.kind === "palm");
@@ -14537,13 +14144,11 @@ function initWorldObjs() {
   for (const c of colliders) {
     if (c.kind === "tree") {
       const t = typeOf(c.species), o = c.ii*10, d = t.inst.data;
-      const hp = 3;                                          // §11.5 ~1.2 full rings to fell at the new chop cost
-      treeObjs.push({ species: c.species, t, i: c.ii, x: c.x, z: c.z, hp, maxhp: hp,
-        baseLean: d[o+5], scale: d[o+3], origY: surfaceAt(c.x, c.z).h,
-        shake: 0, leanAdd: 0, leanDir: d[o+6], falling: false, fall: 0, gone: false, coll: c });
+      treeObjs.push({ species: c.species, t, i: c.ii, x: c.x, z: c.z,
+        baseLean: d[o+5], scale: d[o+3], leanDir: d[o+6], shake: 0, leanAdd: 0, shakeAt: -99, coll: c });
     } else if (c.kind === "rock") {
       const rt = rockStyleTypes[c.styleIdx || 0] || rockType;   // §13.7 which boulder-style buffer this rock lives in
-      const o = c.ii*10, d = rt.inst.data, hp = Math.max(3, Math.min(4, Math.round(c.sc)));   // §11.5 ~1.8–2.4 rings to break
+      const o = c.ii*10, d = rt.inst.data;
       // §barnrock any rock down in the splash/intertidal zone crusts over with barnacles (derived per-rock so it never shifts the world-gen rng)
       const rh = surfaceAt(c.x, c.z).h; let barn = null, oyst = null;
       if (rh > MAX_HIGH_TIDE - 7 && rh < MAX_HIGH_TIDE + 2.5) {
@@ -14552,345 +14157,85 @@ function initWorldObjs() {
         if (roll < 0.28) { const mx = 2 + (rb()*4|0); oyst = { amt: mx, max: mx, regrowAt: 0 }; }   // §menu ~28% of shore rocks grow an oyster cluster
         else if (roll < 0.9) { const mx = 2 + (rb()*4|0); barn = { amt: mx, max: mx, regrowAt: 0 }; }                           // the rest crust over with barnacles
       }
-      rockObjs.push({ t: rt, i: c.ii, x: c.x, z: c.z, sc: c.sc, hp, maxhp: hp, scale: d[o+3],
-        baseTint: [d[o+7], d[o+8], d[o+9]], split: false, gone: false, coll: c, barn, oyst });
+      rockObjs.push({ t: rt, i: c.ii, x: c.x, z: c.z, sc: c.sc, scale: d[o+3],
+        baseTint: [d[o+7], d[o+8], d[o+9]], gone: false, coll: c, barn, oyst });
     }
   }
-  palmDyn = palmDyn || makeDynamic(palmMesh(), 48);
-  pineDyn = pineDyn || makeDynamic(pineMesh(), 48);
-  broadleafDyn = broadleafDyn || makeDynamic(broadleafMesh(), 48);
-  stumpDyn = stumpDyn || makeDynamic(stumpMesh(), 80);
   rockDyn = rockDyn || makeDynamic(rockMesh((SEED_INT^0x51)>>>0, "rounded", [0.54,0.52,0.48]), 200);   // §13.7 richer dynamic rocks
 }
 function nearestObj(arr, x, z, maxd) { let best = null, bd = maxd; for (const o of arr) { if (o.gone) continue; const d = Math.hypot(o.x - x, o.z - z); if (d < bd) { bd = d; best = o; } } return best; }
 
-// push a tree instance's live lean / scale / ground height into the static buffer
+// push a tree instance's live lean (the shake wobble) into the static buffer
 function setTreeInstance(o) {
   const d = o.t.inst.data, off = o.i*10;
-  d[off+1] = surfaceAt(o.x, o.z).h - (o.sink || 0);
-  d[off+3] = o.gone ? 0 : o.scale;
   d[off+5] = o.baseLean + o.leanAdd;
   d[off+6] = o.leanDir;
   gl.bindBuffer(gl.ARRAY_BUFFER, o.t.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, off*4, d, off, 10);
 }
-function setRockInstance(o) {
-  const rt = o.t || rockType, d = rt.inst.data, off = o.i*10;   // §13.7 write to this rock's own style buffer
-  d[off+3] = o.gone ? 0 : o.scale;
-  const dk = 1 - 0.5 * (1 - o.hp / o.maxhp);                   // darken as it cracks
-  d[off+7] = o.baseTint[0]*dk; d[off+8] = o.baseTint[1]*dk; d[off+9] = o.baseTint[2]*dk;
-  gl.bindBuffer(gl.ARRAY_BUFFER, rt.inst.ibo); gl.bufferSubData(gl.ARRAY_BUFFER, off*4, d, off, 10);
-}
-
-/* ---- chopping ---- */
-function chopStanding(o) {                                     // one axe strike on a standing tree
-  if (!o || o.gone || o.falling || o.fallen) return;
-  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
-  shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.CHOP_COST, true); rootPlayer();
-  const right = toolMul("tree") === 1;                        // §P2 axe = right tool; anything else lands a dull thunk
-  if (onDig) onDig(right ? "chop" : "thud");
-  o.shake = 1; spawnLeaves(o.x, o.z, surfaceAt(o.x, o.z).h + o.scale*0.85, leafCol(o.species));
-  spawnSand(o.x, surfaceAt(o.x, o.z).h + 1.0, o.z, right ? 6 : 3, barkCol(o.species), player.x - o.x, player.z - o.z);   // §P2/§hitcol bark/wood chips spraying back toward the player
-  o.hp -= jobEffortMul() * toolMul("tree") * TUNE.HARVEST_SPEED;   // §P2/§P3 the axe fells fast; anything else ~3x; §P3 ~25% fewer hits overall
-  if (o.hp <= 0.001) startFall(o);
-}
-function chopAt(x, z) {
-  if (mode !== "walk" || selectedTool() !== "axe") return false;
-  const o = nearestObj(treeObjs, x, z, REACH + 1.2);
-  if (o && !o.falling && !o.fallen && Math.hypot(o.x - player.x, o.z - player.z) <= REACH + 1.4) { chopStanding(o); return true; }
-  // a fallen trunk? (crown end first → Sticks + Leaves, then trunk → Logs)
-  const ft = nearestFallen(x, z, REACH + 1.4); if (ft) { chopFallen(ft); return true; }
-  // a stump? chop it out for a little wood (leaves a healing hole)
-  const st = nearestStump(x, z, REACH + 1.2); if (st) { chopStump(st); return true; }
-  return false;                                              // nothing choppable here
-}
 function leafCol(sp) { return sp === "broadleaf" ? [0.34,0.5,0.27] : sp === "palm" ? [0.3,0.42,0.25] : [0.2,0.33,0.2]; }
-// §P2 bark / wood chip colour by species, for the chips that fly off the trunk on a chop
-function barkCol(sp) { return sp === "palm" ? [0.56,0.44,0.3] : sp === "broadleaf" ? [0.45,0.34,0.23] : [0.4,0.29,0.19]; }
-// Leaves appear only when a tree is chopped: a short-lived burst (shared particle system).
-function spawnLeaves(x, z, top, col) {
-  for (let i = 0; i < 8 && particles.length < 200; i++) { const a = rng()*6.283, s = 0.4 + rng()*1.4;
+// a short-lived burst of leaves falling from a crown (shared particle system)
+function spawnLeaves(x, z, top, col, n) {
+  for (let i = 0; i < (n || 8) && particles.length < 200; i++) { const a = rng()*6.283, s = 0.4 + rng()*1.4;
     particles.push({ x: x+Math.cos(a)*1.2, y: top - rng()*1.4, z: z+Math.sin(a)*1.2, vx: Math.cos(a)*s, vy: -0.3-rng()*0.8, vz: Math.sin(a)*s, t: 0, life: 1.1+rng(), col }); }
 }
-// §R4 the height a boulder / stump / already-fallen trunk offers under the crown, so a tree can come to rest ON it
-function propRestHeight(x, z) {
-  let h = -1e9;
-  for (const r of rockObjs) if (!r.gone) { const rr = 0.6 + (r.sc || 1) * 0.5; if (Math.hypot(r.x - x, r.z - z) < rr) h = Math.max(h, surfaceAt(r.x, r.z).h + (r.sc || 1) * 0.5); }
-  for (const s of stumps) if (Math.hypot(s.x - x, s.z - z) < 0.8) h = Math.max(h, surfaceAt(s.x, s.z).h + 0.6);
-  return h;
-}
-// §R4 compute the lean (from vertical) at which the toppling trunk comes to rest along the terrain/props in its
-// fall direction, so it lies on the ground on slopes instead of driving straight into the hill.
-function fallRestLean(o) {
-  const ang = o.leanDir + Math.PI / 2;                         // the direction the crown topples toward
-  const fx = Math.cos(ang), fz = Math.sin(ang);
-  const L = (o.treeScale || o.scale || 1) * 0.72;              // crown reach when flat
-  const by = surfaceAt(o.x, o.z).h;
-  // the resting line runs from the base to the ground (or a prop top) under the crown; the highest obstacle
-  // along the way is what the trunk comes to rest on, so take the max to avoid penetrating it
-  let tipGround = -1e9;
-  for (let t = 0.6; t <= 1.0; t += 0.2) { const px = o.x + fx*L*t, pz = o.z + fz*L*t;
-    tipGround = Math.max(tipGround, surfaceAt(px, pz).h, propRestHeight(px, pz)); }
-  const lean = Math.atan2(L, tipGround - by);                  // flat → π/2; downhill → more; uphill → less
-  return Math.max(0.5, Math.min(Math.PI/2 + 0.9, lean - 0.06));   // a hair short so it rests on its underside, not its centre
-}
-function startFall(o) {
-  o.falling = true; o.fall = 0; objectBroke();                 // §P3 don't dig the spot where the tree just stood
-  o.leanDir = Math.atan2(o.z - player.z, o.x - player.x);      // topple away from the player
-  o.treeScale = o.scale;
-  o.restLean = fallRestLean(o);                                // §R4 precompute the resting pose before animating
-  if (onDig) onDig("timber");
-}
-// The REAL toppled tree mesh stays lying on the ground, no swap to spawned logs.
-function finishFall(o) {
-  o.falling = false; o.fallen = true; o.settle = 0.5;
-  o.ang = o.leanDir + Math.PI/2;                               // horizontal lie direction
-  o.treeScale = o.scale;                                       // full size, for geometry
-  o.crownChops = o.species === "palm" ? 0 : 2;                 // palms have no woody crown
-  o.trunkChops = 3 + (rng()*2|0); o.trunkChopsMax = o.trunkChops; o.notches = [];   // §A4 full-length trunk, cut notches accumulate
-  o.bornFall = clock.t; o.sink = 0;
-  o.leanAdd = (o.restLean !== undefined ? o.restLean : 1.5); setTreeInstance(o);   // §R4 rest along the terrain, not into it
-  if (o.coll) { o.coll.r = 0; rebuildCollHash(); }             // standing collider off
-  fallenTrees.push(o);
-  // §R4 impact: a leaf burst and dust puff at the crown contact point
-  const [ccx, ccz] = fallenCrownPos(o); spawnLeaves(ccx, ccz, surfaceAt(ccx, ccz).h + 1.2, leafCol(o.species));
-  spawnSand(ccx, surfaceAt(ccx, ccz).h + 0.1, ccz, 10, [0.82, 0.74, 0.56]);
-  if (onDig) onDig("thud");
-  const seed = o.species === "palm" ? "coconut" : o.species === "pine" ? "pinecone" : "nut";
-  for (let i = 0, n = 1 + (rng()*3|0); i < n; i++) tossFind(seed, o.x, o.z);  // §pixui 1-3 seeds that scatter out from the trunk with a tumbling arc
-  saveWorld();
-}
-function fallenCrownPos(o) { const d = o.treeScale * 0.72; return [o.x + Math.cos(o.ang)*d, o.z + Math.sin(o.ang)*d]; }
-function nearestFallen(x, z, maxd) {
-  let best = null, bd = maxd;
-  for (const o of fallenTrees) { if (o.gone) continue;
-    const dx = Math.cos(o.ang), dz = Math.sin(o.ang), len = o.treeScale * 0.78;
-    let rel = (x-o.x)*dx + (z-o.z)*dz; rel = Math.max(0, Math.min(len, rel));
-    const d = Math.hypot(x - (o.x+dx*rel), z - (o.z+dz*rel));
-    if (d < bd) { bd = d; best = o; }
-  }
-  return best;
-}
-// Height of a fallen trunk's top at (x,z), lets you jump/walk/rest on it.
-function trunkHeightAt(x, z) {
-  let h = -1e9;
-  for (const o of fallenTrees) { if (o.gone || o.sink > 0.8) continue;
-    const dx = Math.cos(o.ang), dz = Math.sin(o.ang), len = o.treeScale * 0.5;
-    const rel = (x-o.x)*dx + (z-o.z)*dz; if (rel < -0.2 || rel > len) continue;
-    if (Math.abs(-(x-o.x)*dz + (z-o.z)*dx) > 0.6) continue;
-    h = Math.max(h, surfaceAt(o.x+dx*rel, o.z+dz*rel).h + Math.max(0, 0.55 - o.sink));
-  }
-  return h;
-}
-function removeFallen(o) { o.gone = true; o.scale = 0; setTreeInstance(o); const i = fallenTrees.indexOf(o); if (i >= 0) fallenTrees.splice(i, 1); }
-function chopFallen(o) {
-  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
-  shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
-  const [cx, cz] = fallenCrownPos(o), top = surfaceAt(cx, cz).h + 0.6;
-  if (o.crownChops > 0) {                                      // crown end first → Sticks (leaf bits fly as particles only)
-    o.crownChops--; spawnLeaves(cx, cz, top, leafCol(o.species));
-    if (o.crownChops === 0) {
-      for (let i = 0; i < 2; i++) tossFind("stick", cx, cz, 1.8);   // §treedrop scatter + arc, not a line
-    }
-    return;
-  }
-  // §A4 the trunk keeps its FULL length, each hit cuts a fresh notch and throws wood chips, not Logs
-  o.trunkChops--;
-  if (!o.notches) o.notches = [];
-  const rel = fallenNotchRel(o, o.notches.length); o.notches.push(rel);
-  const nx = o.x + Math.cos(o.ang)*rel, nz = o.z + Math.sin(o.ang)*rel, ny = surfaceAt(nx, nz).h + Math.max(0, 0.5 - (o.sink||0));
-  spawnSand(nx, ny, nz, 8, [0.56,0.43,0.28]);                  // flying wood chips
-  if (o.trunkChops <= 0) {
-    // §A4/§treedrop the final hit splits the whole trunk into Logs at once, with a satisfying break.
-    // The logs pop out around the trunk's midpoint (not strung along its axis) each on its own arc.
-    const total = o.trunkChopsMax || 3, logs = 2 + total;
-    const mx = o.x + Math.cos(o.ang)*o.treeScale*0.35, mz = o.z + Math.sin(o.ang)*o.treeScale*0.35;
-    for (let i = 0; i < logs; i++) tossFind("log", mx, mz, 3.2);
-    spawnSand(o.x + Math.cos(o.ang)*o.treeScale*0.35, surfaceAt(o.x,o.z).h+0.5, o.z + Math.sin(o.ang)*o.treeScale*0.35, 18, [0.56,0.43,0.28]);
-    if (onDig) onDig("crack"); camNudge = 0.07;
-    removeFallen(o); stumps.push({ x: o.x, z: o.z, species: o.species, hp: 4, sproutAt: clock.t + SPROUT_DAYS*DAY_PERIOD }); saveWorld();
-  }
-}
-// §A4 where the i-th cut notch sits along a fallen trunk (marches from the base toward the crown)
-function fallenNotchRel(o, idx) { const tot = Math.max(1, o.trunkChopsMax || 3); return (o.treeScale||1) * (0.12 + 0.4 * (idx / tot)); }
-let notchDyn = null;
-function notchMesh() { const m = Mesh(); const dk=[0.22,0.16,0.1], dk2=[0.3,0.22,0.14], halfZ=0.22, lip=0.18;
-  mQuad(m, [-0.13,lip,-halfZ],[0,0,-halfZ],[0,0,halfZ],[-0.13,lip,halfZ], dk);     // a V-groove cut across the trunk, opening upward
-  mQuad(m, [0.13,lip,-halfZ],[0,0,-halfZ],[0,0,halfZ],[0.13,lip,halfZ], dk2);
-  return m; }
-function drawFallenNotches(view) {
-  let n = 0; const a = rockScratch;
-  for (const o of fallenTrees) { if (o.gone || !o.notches || !o.notches.length) continue;
-    const dx = o.x-cam.pos[0], dz = o.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    for (const rel of o.notches) { if (n >= 200) break;
-      const nx = o.x+Math.cos(o.ang)*rel, nz = o.z+Math.sin(o.ang)*rel, ny = surfaceAt(nx, nz).h + Math.max(0, 0.4 - (o.sink||0));
-      const oo = n*10; a[oo]=nx;a[oo+1]=ny;a[oo+2]=nz;a[oo+3]=1;a[oo+4]=o.ang+1.5708;a[oo+5]=0;a[oo+6]=0;a[oo+7]=1;a[oo+8]=1;a[oo+9]=1; n++; }
-  }
-  if (!n) return;
-  if (!notchDyn) notchDyn = makeDynamic(notchMesh(), 200);
-  propUniforms(view); gl.uniform1f(propU.uFogDensity, FOG_DENSITY); notchDyn.draw(a, n);
-}
-/* ---- stumps: dig or chop them out for a little wood; leaves a healing hole ---- */
-function nearestStump(x, z, maxd) { let best = null, bd = maxd; for (const s of stumps) { const d = Math.hypot(s.x - x, s.z - z); if (d < bd) { bd = d; best = s; } } return best; }
-function stumpStrike(st) {
-  if (st.hp === undefined) st.hp = 4;
-  shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.CHOP_COST, true); rootPlayer();
-  const right = toolMul("stump") === 1;                        // §P2 shovel/axe = right tool; anything else lands a dull thunk
-  if (onDig) onDig(right ? "chop" : "thud");
-  spawnSand(st.x, surfaceAt(st.x, st.z).h + 0.3, st.z, right ? 5 : 3, [0.5, 0.4, 0.28]);   // §P2 woody chips (fewer with the wrong tool)
-  st.hp -= jobEffortMul() * toolMul("stump") * TUNE.HARVEST_SPEED;   // §P2/§P3 shovel/axe fast; anything else ~3x; §P3 ~25% fewer hits
-  if (st.hp <= 0.001) {
-    for (let i = 0, n = 1 + (rng()*2|0); i < n; i++) tossFind("log", st.x, st.z, 1.6);   // §treedrop scatter + arc, not a line
-    const i = stumps.indexOf(st); if (i >= 0) stumps.splice(i, 1);
-    // §bugfix breaking a stump no longer digs the ground (the old "healing hole" was the dig the player kept
-    // seeing). It just pops out; objectBroke() then swallows terrain hits until the button is released.
-    objectBroke();
-    saveWorld();
-  }
-}
-function chopStump(st) { if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; } stumpStrike(st); }
-// digging the ground out from under a tree makes it topple
-function checkUndermine(x, z) {
-  for (const o of treeObjs) {
-    if (o.gone || o.falling) continue;
-    if (Math.hypot(o.x - x, o.z - z) < DIG_R*1.6 && surfaceAt(o.x, o.z).h < o.origY - 0.7) { o.hp = 0; startFall(o); }
-  }
-}
 
-/* ---- planting ---- */
-function canPlant(species, x, z) {
-  const k = surfaceKind(x, z), h = surfaceAt(x, z).h, s = surfaceAt(x, z).slope;
-  if (s > 0.45 || waterDepthAt(x, z) > 0.05) return false;
-  if (spotUnderwater(x, z)) return false;                              // §12A no planting below the high-tide line or in a basin
-  if (k === "rock") return false;
-  if (species === "palm") { if (h < 1.2 || h > 18) return false; }     // sand & low dune
-  else { if (h < 5 || h > 32) return false; }                          // soil / grass
-  // spacing from trees, POIs, stumps, other planted
-  for (const c of colliders) if (c.r > 0 && Math.hypot(c.x - x, c.z - z) < 5) return false;
-  for (const p of POIS) if (Math.hypot(p.x - x, p.z - z) < p.radius + 3) return false;
-  for (const st of stumps) if (Math.hypot(st.x - x, st.z - z) < 4) return false;
-  for (const pl of planted) if (Math.hypot(pl.x - x, pl.z - z) < 5) return false;
+/* ---- §shake shake a tree: rustle + leaf burst + a chance at a fruit; per-tree cooldown ---- */
+function treeShakeReady(o) { return tideDay - (o.shakeAt === undefined ? -99 : o.shakeAt) >= SHAKE_COOLDOWN_DAYS; }
+function shakeTree(o) {
+  if (!o || o.gone) return false;
+  if (Math.hypot(o.x - player.x, o.z - player.z) > REACH + 1.6) return false;
+  const top = surfaceAt(o.x, o.z).h + o.scale*0.85;
+  o.shake = 1;                                                   // the wobble plays every time (it's nice)
+  if (onDig) onDig("rustle");
+  camNudge = Math.max(camNudge, 0.02);
+  if (!treeShakeReady(o)) {                                      // shaken recently: just a few leaves, no fruit
+    spawnLeaves(o.x, o.z, top, leafCol(o.species), 3);
+    showCard("Shaken bare", "Nothing left up there for now. Try again tomorrow.");
+    return true;
+  }
+  o.shakeAt = tideDay;
+  spawnLeaves(o.x, o.z, top, leafCol(o.species), 10);
+  if (rng() < SHAKE_DROP_CHANCE) {
+    tossFind(SEED_FOR[o.species] || "nut", o.x, o.z, 2.2);       // reuse the tumbling tossed-find arc
+    if (onDig) setTimeout(() => { try { onDig("thud"); } catch (e) {} }, 380);
+  }
+  saveWorld();
   return true;
 }
-function plantAt(x, z) {
-  const seed = selectedTool(), species = SEED_TREE[seed]; if (!species) return;
-  if (Math.hypot(x - player.x, z - player.z) > REACH + 1.4) return;
-  if (!Inv.has(seed)) return;
-  if (!canPlant(species, x, z)) return;
-  Inv.remove(seed, 1);
-  planted.push({ species, x, z, plantedAt: clock.t });
-  colliders.push({ x, z, r: 0.4, kind: "planted" }); rebuildCollHash();
-  if (onDig) onDig("plant");
-  saveWorld();
-}
-function plantStage(pl) { return Math.max(0, Math.min(1, (clock.t - pl.plantedAt) / (GROW_DAYS*DAY_PERIOD))); }
+function treePrompt(o) { return treeShakeReady(o) ? (IS_TOUCH ? "tap to shake the tree" : "shake the tree") : "shaken recently"; }
 
-/* ---- mining ---- */
-function mineAt(x, z) {
-  if (mode !== "walk" || selectedTool() !== "pickaxe") return false;
-  const o = nearestObj(rockObjs, x, z, 4.5); if (!o) return false;
-  mineObj(o); return true;
-}
-function mineObj(o) {                                           // one pickaxe strike on a rock
-  if (!o || o.gone) return;
-  if (Math.hypot(o.x - player.x, o.z - player.z) - (0.6 + o.sc * 0.5) > REACH + 0.3) return;   // §tool-reach measure to the boulder's surface (its hit radius), not its centre, so big rocks are reachable
-  if (cottageProtectBlock(o.x, o.z)) return;                   // §2 no mining the rocks right by the cottage
-  if (player.airborne) return;                            // §playtest2 no mining mid-air (sprinting is fine now)
-  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §13.2 too tired: gentle refusal, no swing
-  shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.MINE_COST, true); rootPlayer();
-  const right = toolMul("rock") === 1;                        // §P2 pickaxe = right tool; anything else lands a dull thunk
-  if (onDig) onDig(right ? "mine" : "thud");
-  o.hp -= jobEffortMul() * toolMul("rock") * TUNE.HARVEST_SPEED;   // §P2/§P3 pickaxe fast; anything else ~3x; §P3 ~25% fewer hits
-  const sy = surfaceAt(o.x, o.z).h + o.sc*0.3;
-  spawnSand(o.x, sy, o.z, right ? 7 : 3, [0.5, 0.48, 0.46], player.x - o.x, player.z - o.z);   // §P2/§hitcol grey stone chips spraying back toward the player
-  if (!o.split && o.hp <= Math.ceil(o.maxhp/2)) {              // cracks apart, shedding pickable rubble
-    o.split = true; o.scale *= 0.62;
-    for (let i = 0; i < 2 + (rng()*2|0); i++) dropRubble(o.x+(rng()-0.5)*2.5, o.z+(rng()-0.5)*2.5, 0.5+rng()*0.5);
-  }
-  if (o.hp <= 0.001) {                                         // destroyed completely, nothing left but Stone rubble
-    o.gone = true; o.scale = 0; setRockInstance(o); objectBroke();   // §P3 don't dig where the boulder was
-    if (o.coll) { o.coll.r = 0; rebuildCollHash(); }
-    // §menu mining a rock that still has a cluster gives those barnacles / oysters too
-    if (o.barn && o.barn.amt > 0) { for (let i = 0; i < o.barn.amt; i++) spawnFind("barnacle", o.x+(rng()-0.5)*1.4, o.z+(rng()-0.5)*1.4); o.barn.amt = 0; }
-    if (o.oyst && o.oyst.amt > 0) { for (let i = 0; i < o.oyst.amt; i++) spawnFind("oyster", o.x+(rng()-0.5)*1.4, o.z+(rng()-0.5)*1.4); o.oyst.amt = 0; }
-    const n = 3 + (rng()*2|0); for (let i = 0; i < n; i++) dropRubble(o.x+(rng()-0.5)*2, o.z+(rng()-0.5)*2, 0.4+rng()*0.4);
-  } else setRockInstance(o);
-  if (!o.gone && (o.barn || o.oyst) && typeof attachRockCluster === "function") attachRockCluster(o);   // §clust8 the rock may have shrunk on a split; re-fix its cluster onto the new surface
-}
-// Small rubble pieces: no mining needed, walk up and pick one for Stone.
-// A pickable Stone lying on the ground. `sc` sizes the (generous) interaction
-// volume; `rsc` is the VISUAL size, fixed from the Stone item's own registry
-// scale so a dropped stone looks hand-sized, never a shrunk chunk of the boulder
-// it came from. (§stone1)
-function dropRubble(x, z, sc) { if (looseRocks.length < 240) looseRocks.push({ x, z, sc, rsc: FINDS.stone.base * (0.9 + rng() * 0.5), bornT: clock.t }); }
-function pickRubble(lr) {
-  const added = Inv.add("stone", 1);
-  if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
-  const first = !discovered.has("f_stone"); discovered.add("f_stone"); notify("stone", 1, first);
-  const i = looseRocks.indexOf(lr); if (i >= 0) looseRocks.splice(i, 1);
-  spawnSand(lr.x, surfaceAt(lr.x, lr.z).h + 0.06, lr.z, 3, [0.62, 0.58, 0.52]);   // §P2 just a small dust puff (no shatter burst)
-  // flipping a cobble on a cobble beach can reveal a crab or hopper beneath
-}
-
-/* ---- update + draw all Part-B objects ---- */
-let rockfallT = 0;
+/* ---- update + draw ---- */
+let seedScatterT = 0;
 function updateTools(dt, gdt) {
   for (const o of treeObjs) {
-    if (o.gone) continue;
-    if (o.falling) { o.fall = Math.min(1, o.fall + dt/1.1); o.leanAdd = (o.fall*o.fall)*(o.restLean !== undefined ? o.restLean : 1.5); setTreeInstance(o); if (o.fall >= 1) finishFall(o); }   // §R4 ease into the resting pose
-    else if (o.shake > 0) { o.shake = Math.max(0, o.shake - dt*3); o.leanAdd = Math.sin(clock.t*40)*0.05*o.shake; setTreeInstance(o); }
+    if (o.gone || o.shake <= 0) continue;
+    o.shake = Math.max(0, o.shake - dt*2.2); o.leanAdd = Math.sin(clock.t*34)*0.06*o.shake; setTreeInstance(o);
   }
-  // stumps sprout saplings after a while, unless dug out
-  for (let k = stumps.length-1; k >= 0; k--) { const s = stumps[k];
-    if (clock.t >= s.sproutAt) { planted.push({ species: s.species, x: s.x, z: s.z, plantedAt: clock.t }); colliders.push({ x: s.x, z: s.z, r: 0.4, kind: "planted" }); rebuildCollHash(); stumps.splice(k,1); saveWorld(); }
-  }
-  // planted trees mature → gain a full collider
-  for (const pl of planted) { if (!pl.grown && plantStage(pl) >= 1) { pl.grown = true; const c = colliders.find(c => c.kind === "planted" && Math.hypot(c.x-pl.x,c.z-pl.z) < 0.5); if (c) { c.r = pl.species === "palm" ? 0.5 : 0.6; rebuildCollHash(); } } }
-  // rubble weathers away
-  for (let k = looseRocks.length-1; k >= 0; k--) { if (clock.t - looseRocks[k].bornT > SPROUT_DAYS*DAY_PERIOD) looseRocks.splice(k,1); }
-  // occasional new rock node appears on a rocky outcrop (small rockfall)
-  rockfallT += gdt;
-  if (rockfallT > 90 && rockObjs.length < 220) { rockfallT = 0; spawnRockNode(); }
-  updateFallen(dt, gdt);
   updateErosion(gdt);
   updateBerries();
   if (typeof updateTallGrass === "function") updateTallGrass();
   if (typeof updatePlants === "function") updatePlants();   // §P3 pickable flowers/ferns regrow
-  updateCrops();
-  // scattered seeds near mature trees slowly replenish (low density)
+  // trees drop the odd fruit on their own; wind and storms knock more down (shorter interval, higher cap)
+  const wind = weather ? weather.wind : 0, storm = weather && weather.state === "storm";
+  const every = SCATTER_EVERY / (1 + wind * 2.5 + (storm ? 2 : 0));
   seedScatterT += gdt;
-  if (seedScatterT > 45) { seedScatterT = 0; maybeScatterSeed(); }
+  if (seedScatterT > every) { seedScatterT = 0; maybeScatterSeed(storm ? 2 : wind > 0.5 ? 1.5 : 1); }
 }
-// The real toppled tree mesh weathers over a few in-game days: settles, then slowly sinks and vanishes.
-function updateFallen(dt, gdt) {
-  for (let k = fallenTrees.length - 1; k >= 0; k--) { const o = fallenTrees[k]; if (o.gone) { fallenTrees.splice(k, 1); continue; }
-    if (o.settle > 0) { o.settle = Math.max(0, o.settle - dt); const rl = (o.restLean !== undefined ? o.restLean : 1.5); o.leanAdd = rl + Math.sin(o.settle * 22) * o.settle * 0.14; setTreeInstance(o);
-      // §R4 on a slope the trunk slides/rolls a short way downhill before settling
-      const grad = groundGradient(o.x, o.z); if (grad.slope > 0.12) { o.x += grad.dx*dt*grad.slope*1.6; o.z += grad.dz*dt*grad.slope*1.6; } }
-    const age = clock.t - o.bornFall;
-    if (age > GROW_DAYS * DAY_PERIOD * 1.5) { o.sink += 0.0025 * healMul * gdt; setTreeInstance(o);
-      if (o.sink > 1.4) { removeFallen(o); stumps.push({ x: o.x, z: o.z, species: o.species, hp: 4, sproutAt: clock.t + SPROUT_DAYS * DAY_PERIOD }); saveWorld(); } }
-  }
-}
-let seedScatterT = 0;
-const SEED_FOR = { palm: "coconut", pine: "pinecone", broadleaf: "nut" };
-function maybeScatterSeed() {
-  // keep a low density of loose seeds on the ground near mature trees
-  const loose = life.filter(e => e.kind === "find" && (e.t === "coconut" || e.t === "pinecone" || e.t === "nut")).length;
-  if (loose > 10) return;
-  const near = treeObjs.filter(o => !o.gone && !o.fallen && Math.hypot(o.x - player.x, o.z - player.z) < 120);
+function maybeScatterSeed(mul) {
+  // keep a low density of loose fruit on the ground near trees
+  let loose = 0; for (const e of life) if (e.kind === "find" && (e.t === "coconut" || e.t === "pinecone" || e.t === "nut")) loose++;
+  if (loose > SCATTER_LOOSE_CAP * (mul || 1)) return;
+  const near = treeObjs.filter(o => !o.gone && Math.hypot(o.x - player.x, o.z - player.z) < 120);
   if (!near.length) return;
   const t = near[(rng() * near.length) | 0], a = rng() * 6.283, r = 1.5 + rng() * 3;
   const x = t.x + Math.cos(a) * r, z = t.z + Math.sin(a) * r;
   if (surfaceAt(x, z).h > 0.5) spawnFind(SEED_FOR[t.species] || "nut", x, z);
 }
-// §worldbug the POI rock clusters (cairn, tide-pool shelf, sea-cave stacks) and the fish-weir stones used
-// to be baked into the static POI / set-piece meshes, so they could never be mined. They are now spawned as
-// ordinary dynamic breakable rocks (mineObj / rockDyn), so a pickaxe breaks them into Stone like any boulder.
-// Positions mirror emitPOI exactly (same per-POI local PRNG, which never touches the world-gen rng stream),
-// so the landmarks look the same, just interactive. Run once per generation, after initWorldObjs().
+// §worldbug the POI rock clusters (cairn, tide-pool shelf, sea-cave stacks) and the fish-weir stones are
+// drawn as dynamic rocks (rockDyn) rather than baked into the POI meshes. Scenery now (no mining).
+// Positions mirror emitPOI exactly (same per-POI local PRNG, which never touches the world-gen rng stream).
 function pushLandmarkRock(x, z, yOff, sc, tint, yaw) {
-  const hp = Math.max(3, Math.min(4, Math.round(sc)));
-  rockObjs.push({ dyn: true, x, z, yOff: yOff || 0, yaw: yaw || 0, tint, sc, hp, maxhp: hp, scale: sc, baseTint: [1,1,1], split: false, gone: false, coll: null });
+  rockObjs.push({ dyn: true, x, z, yOff: yOff || 0, yaw: yaw || 0, tint, sc, scale: sc, baseTint: [1,1,1], gone: false, coll: null });
 }
 function seedLandmarkRocks() {
   for (const p of POIS) {
@@ -14910,17 +14255,7 @@ function seedLandmarkRocks() {
   }
   for (const s of setPieces.weir) pushLandmarkRock(s.x, s.z, 0, s.s, [0.5,0.5,0.53], s.yaw);   // the fish-weir arc stones
 }
-function spawnRockNode() {
-  for (let tries = 0; tries < 20; tries++) {
-    const a = rng()*6.283, r = HALF*(0.2+rng()*0.6), x = Math.sin(a)*r, z = -Math.cos(a)*r;
-    const su = surfaceAt(x, z); if (su.h < 30 && su.slope < 0.5) continue;      // only rocky high ground
-    if (su.slope > 0.9 || nearPOI(x, z, 3)) continue;
-    const sc = 0.9 + rng()*1.4, hp = Math.max(3, Math.min(4, Math.round(sc)));   // §11.5
-    rockObjs.push({ dyn: true, x, z, sc, hp, maxhp: hp, scale: sc, baseTint: [1,1,1], split: false, gone: false, coll: null });
-    return;
-  }
-}
-// §13.1 lying driftwood (choppable). Drawn aligned to the ground with a slight roll.
+// §13.1 lying driftwood. Drawn aligned to the ground with a slight roll.
 function drawDriftwood(view) {
   propUniforms(view); let n = 0; const arr = digScratch;
   for (const d of driftObjs) { if (d.gone || n >= 400) continue;
@@ -14930,55 +14265,23 @@ function drawDriftwood(view) {
     arr[o+7]=d.tint[0]; arr[o+8]=d.tint[1]; arr[o+9]=d.tint[2]; n++; }
   if (n) driftDyn.draw(arr, n);
 }
+// a small piece of driftwood is picked straight up; a big old log is scenery (too heavy to carry)
 function breakDriftwood(d) {
-  if (!d || d.gone) return true;
-  if (d.big) {                                   // a whole log → chop it into sticks (needs an axe)
-    if (selectedTool() !== "axe") { tooTiredOrCant(d.x, d.z, false); return true; }   // §P2 a whole log still needs the axe
-    if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
-    shovelSwing = 1; spendStamina(TUNE.CHOP_COST, true); rootPlayer(); if (onDig) onDig("chop");
-    d.gone = true; objectBroke(); const nSticks = 2 + (rng()*3|0); Inv.add("stick", nSticks); discovered.add("f_stick");
-    spawnSand(d.x, surfaceAt(d.x,d.z).h + 0.2, d.z, 8, [0.6,0.5,0.4]);
-    showCard("Driftwood", "Chopped into " + nSticks + " sticks."); saveWorld();
-  } else {                                        // a small piece → pick it up directly
-    if (Inv.add("driftwood", 1) > 0) { const first = !discovered.has("f_driftwood"); d.gone = true; discovered.add("f_driftwood"); notify("driftwood", 1, first); if (onDig) onDig("thud"); saveWorld(); }
-    else { showCard("Pack full", "Drop something to make room."); bagShake(); }
-  }
+  if (!d || d.gone || d.big) return true;
+  if (Inv.add("driftwood", 1) > 0) { const first = !discovered.has("f_driftwood"); d.gone = true; discovered.add("f_driftwood"); notify("driftwood", 1, first); if (onDig) onDig("thud"); saveWorld(); }
+  else { showCard("Pack full", "Drop something to make room."); bagShake(); }
   return true;
 }
-// placeholder hook; §13.2 "Too tired" will refine this
-function tooTiredOrCant(x, z, hard) { failStrike(hard, x, surfaceAt(x,z).h + 0.3, z); }
-
 function drawTools(view) {
   propUniforms(view);
-  // stumps
-  let n = 0; for (const s of stumps) { if (n >= 80) break; const o = n*10, y = surfaceAt(s.x,s.z).h; const sc = s.species === "palm" ? 0.9 : 1.1;
-    digScratch[o]=s.x;digScratch[o+1]=y;digScratch[o+2]=s.z;digScratch[o+3]=sc;digScratch[o+4]=0;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=1;digScratch[o+8]=1;digScratch[o+9]=1; n++; }
-  if (n) stumpDyn.draw(digScratch, n);
-  // planted palms, pines & broadleafs (grown by stage)
-  let np = 0, ni = 0, nb = 0;
-  for (const pl of planted) { const st = plantStage(pl), sc = 1.2 + st*(MATURE[pl.species]-1.2), y = surfaceAt(pl.x,pl.z).h;
-    const arr = pl.species === "palm" ? palmScratch : pl.species === "broadleaf" ? broadleafScratch : pineScratch;
-    const idx = pl.species === "palm" ? np++ : pl.species === "broadleaf" ? nb++ : ni++, o = idx*10;
-    if (o+9 >= arr.length) continue;
-    arr[o]=pl.x;arr[o+1]=y;arr[o+2]=pl.z;arr[o+3]=sc;arr[o+4]=0;arr[o+5]=0;arr[o+6]=0;arr[o+7]=1;arr[o+8]=1;arr[o+9]=1; }
-  if (np) palmDyn.draw(palmScratch, np);
-  if (ni) pineDyn.draw(pineScratch, ni);
-  if (nb) broadleafDyn.draw(broadleafScratch, nb);
-  // loose rubble: the small pickable Stones. Drawn with the Stone ITEM mesh at
-  // its registry scale (§stone1), not the big boulder prop that made them huge.
-  if (!rubbleDyn) rubbleDyn = makeDynamic(weakStoneMesh(), 200);   // §stonematch loose pickable stones use the same dome mesh as the Stone icon
-  let nrub = 0;
-  for (const lr of looseRocks) { if (nrub >= 200) break; const sc = lr.rsc || FINDS.stone.base, o = nrub*10, y = surfaceAt(lr.x,lr.z).h + sc*0.1;
-    rubbleScratch[o]=lr.x;rubbleScratch[o+1]=y;rubbleScratch[o+2]=lr.z;rubbleScratch[o+3]=sc;rubbleScratch[o+4]=0;rubbleScratch[o+5]=0;rubbleScratch[o+6]=0;rubbleScratch[o+7]=0.95;rubbleScratch[o+8]=0.93;rubbleScratch[o+9]=0.9; nrub++; }
-  if (nrub) rubbleDyn.draw(rubbleScratch, nrub);
-  // dynamic rock nodes (mined boulders that shrank as they're chipped away) stay on the boulder mesh
+  // the landmark rock clusters (cairn / tide-pool shelf / sea caves / weir) on the dynamic boulder mesh
   let nr = 0;
-  for (const o2 of rockObjs) { if (!o2.dyn || o2.gone || nr >= 200) continue; const o = nr*10, _sf = surfaceAt(o2.x,o2.z), y = _sf.h - o2.sc*0.16 - o2.sc*0.45*_sf.slope + (o2.yOff||0), dk = 1-0.5*(1-o2.hp/o2.maxhp);   // §rockbase sink the base into the ground (more on slopes), not floating above it
-    const tn = o2.tint || [0.95,0.92,0.88];   // §worldbug landmark rocks (cairn/tidepools/seacave/weir) carry their own grey tint + a stacking yOff
-    rockScratch[o]=o2.x;rockScratch[o+1]=y;rockScratch[o+2]=o2.z;rockScratch[o+3]=o2.scale;rockScratch[o+4]=o2.yaw||0;rockScratch[o+5]=0;rockScratch[o+6]=0;rockScratch[o+7]=tn[0]*dk;rockScratch[o+8]=tn[1]*dk;rockScratch[o+9]=tn[2]*dk; nr++; }
+  for (const o2 of rockObjs) { if (!o2.dyn || o2.gone || nr >= 200) continue; const o = nr*10, _sf = surfaceAt(o2.x,o2.z), y = _sf.h - o2.sc*0.16 - o2.sc*0.45*_sf.slope + (o2.yOff||0);   // §rockbase sink the base into the ground (more on slopes), not floating above it
+    const tn = o2.tint || [0.95,0.92,0.88];
+    rockScratch[o]=o2.x;rockScratch[o+1]=y;rockScratch[o+2]=o2.z;rockScratch[o+3]=o2.scale;rockScratch[o+4]=o2.yaw||0;rockScratch[o+5]=0;rockScratch[o+6]=0;rockScratch[o+7]=tn[0];rockScratch[o+8]=tn[1];rockScratch[o+9]=tn[2]; nr++; }
   if (nr) rockDyn.draw(rockScratch, nr);
 }
-const palmScratch = new Float32Array(48*10), pineScratch = new Float32Array(48*10), broadleafScratch = new Float32Array(48*10), rockScratch = new Float32Array(200*10), rubbleScratch = new Float32Array(200*10);
+const rockScratch = new Float32Array(200*10);
 
 /* ===================================================================== *
  * § 21  FLIPPING STONES, the childhood joy of flipping a stone to see what
@@ -15315,13 +14618,12 @@ function oysterBedAction(b) {   // §strip oysters now pick straight off the clu
 }
 
 /* ===================================================================== *
- * § 40  RARE NATURAL FINDS & GEODES, the heart-quickening things: a left-
- *   handed whelk, red or end-of-day sea glass, an old marble, fossil teeth,
- *   a hag stone. And geodes: dull rocks on the cobble that crack open under a
- *   pickaxe to a chime and a nest of crystal. Rare finds are also what now
- *   hides under stones and boulders (the §21/§36 stoneItemFind hook).
+ * § 40  RARE NATURAL FINDS, the heart-quickening things: a left-handed
+ *   whelk, red or end-of-day sea glass, an old marble, fossil teeth, a hag
+ *   stone. Rare finds are also what hides under stones and boulders (the
+ *   §21/§36 stoneItemFind hook). (Geodes were cut with the pickaxe.)
  * ===================================================================== */
-// @system GAMEPLAY  @section GAMEPLAY/geodes
+// @system GAMEPLAY  @section GAMEPLAY/rare-finds
 // --- meshes (function declarations: hoisted, so the FINDS dyn/icon build above can call them) ---
 function whelkMesh() { const m = Mesh(); const c=[0.86,0.78,0.6], c2=[0.7,0.6,0.46], ap=[0.78,0.55,0.4];
   // a right-leaning spire of shrinking whorls (sinistral, it leans the "wrong" way)
@@ -15341,42 +14643,6 @@ function hagStoneMesh() { const m = Mesh(); mRock(m, mulberry32(0x4a19 ^ SEED_IN
   for (let i=0;i<m.pos.length;i+=3) m.pos[i+1] *= 0.42;                                        // flatten it into a holey beach cobble
   mergeMesh(m, discMesh(0.16, 0.1, 7, 0.0, [0.14,0.14,0.16]));                                 // the sea-bored hole (a dark disc through the middle)
   return m; }
-// §models a crystal cluster: chunky hexagonal points (prism + pyramid cap) of varied heights on a dark rocky base.
-// `col` sets the crystal hue; `opts.points` overrides the point layout and `opts.deepBase` darkens each shaft toward
-// its root (a richer gem). The base stays dark grey. Quartz and amethyst share this one builder (see below).
-function crystalMesh(col, opts) { opts = opts || {}; const m = Mesh();
-  const base=[0.25,0.23,0.29], base2=[0.33,0.31,0.37], tip=[Math.min(1,col[0]*1.12),Math.min(1,col[1]*1.12),Math.min(1,col[2]*1.12)];
-  const deep = opts.deepBase ? [col[0]*0.6,col[1]*0.58,col[2]*0.72] : col;                     // amethyst pools deeper colour at the base
-  mergeAt(m, ballM(0.19, base, 7), 0, 0.05, 0);                                                // dark rocky mound
-  mergeMesh(m, discMesh(0.0, 0.2, 7, 0.07, base2));
-  const pts = opts.points || [[0,0,0.52,0.1],[0.13,0.05,0.4,0.078],[-0.11,0.07,0.36,0.072],[0.06,-0.12,0.34,0.066],[-0.09,-0.09,0.3,0.06],[0.14,-0.04,0.27,0.055]];
-  for (const [x,z,h,r] of pts) {
-    const p = Mesh(); const body = h*0.7, low = body*0.42;
-    mCyl(p, 0.0, low, r, r*0.98, 6, deep);                                                     // deep-coloured lower shaft
-    mCyl(p, low, body, r*0.98, r*0.95, 6, col);                                                // main shaft
-    mCyl(p, body, h, r*0.95, 0, 6, tip);                                                        // pyramid cap, a touch brighter
-    mergeAt(m, p, x, 0.08, z);
-  }
-  return m; }
-function quartzMesh() { return crystalMesh([0.9,0.93,0.98]); }                                  // the common gem: a clear pale cluster
-function amethystMesh() { return crystalMesh([0.58,0.38,0.82], { deepBase:true, points:[       // the uncommon gem: violet, more points, deeper at the base
-  [0,0,0.54,0.095],[0.12,0.04,0.44,0.075],[-0.1,0.06,0.4,0.07],[0.07,-0.11,0.36,0.064],
-  [-0.1,-0.08,0.33,0.06],[0.14,-0.03,0.3,0.056],[-0.02,0.13,0.28,0.05],[0.1,0.11,0.24,0.046]] }); }
-// §models the un-cracked geode: a smooth, slightly oval boulder (rounder than a plain rock) with a faint lighter
-// seam-band around the middle, the only tell that it is a geode once you know to look. Not obvious at a distance.
-function geodeMesh() { const m = Mesh(); const rnd = mulberry32(0x77c5 ^ SEED_INT);
-  const warm=[0.6,0.56,0.52], warm2=[0.55,0.5,0.46], band=[0.67,0.61,0.53];
-  const LON=11, LAT=8, R=0.34, mid=LAT/2;
-  const rad=[]; for (let la=0; la<=LAT; la++){ rad[la]=[]; for (let lo=0; lo<LON; lo++) rad[la][lo]=(la===0||la===LAT)?R:R*(0.9+rnd()*0.15); rad[la][LON]=rad[la][0]; }   // per-vertex jitter, seam column matched so there are no cracks
-  const vert=(la,lo)=>{ const ph=la/LAT*Math.PI, a=lo/LON*6.283, rr=rad[la][lo];
-    return [Math.cos(a)*Math.sin(ph)*rr, Math.cos(ph)*rr*0.9, Math.sin(a)*Math.sin(ph)*rr]; };   // *0.9 in Y = a slightly squat boulder
-  for (let la=0; la<LAT; la++) for (let lo=0; lo<LON; lo++){
-    const A=vert(la,lo), B=vert(la,lo+1), C=vert(la+1,lo+1), D=vert(la+1,lo);
-    const col = (la===mid-1||la===mid) ? band : ((lo+la)%2?warm:warm2);                         // lighter seam-band straddling the equator
-    mQuad(m, A, B, C, D, col);
-  }
-  return m; }
-// §geodefix the cracked-geode "spent scenery" mesh was removed: a broken geode now leaves nothing behind.
 
 // --- rare-find spawning ---
 const RARE_WASH = [["whelk",10],["redglass",8],["marble",8],["fossil",9],["sharktooth",7],["hagstone",9],["nautilus",8],["hcmolt",9],["jewelry",3],["megalodon",1]];
@@ -15397,61 +14663,6 @@ function stoneItemFind(s) {
   if (FINDS[t]) spawnFind(t, x+(rng()-0.5)*0.3, z+(rng()-0.5)*0.3);
 }
 
-// --- geodes: dull cobble that cracks open under a pickaxe ---
-const GEODE_N = 8;                                 // geodes per island (tunable)
-const GEODE_HITS = 2;                              // pickaxe strikes to crack one open
-const GEODE_LOOT = [["quartz", 70], ["amethyst", 30]];   // §A3 weighted gem drop table, add more gems here (quartz common, amethyst uncommon)
-const GEM_SPARKLE = { quartz: [0.9,0.95,1], amethyst: [0.7,0.5,0.9] };   // the burst colour when each gem is revealed
-let geodes = [], geodeDyn = null, _savedGeodes = null;   // §geodefix cracked geodes vanish, so no separate "cracked" dynamic mesh
-const geodeScratch = new Float32Array(GEODE_N * 10);
-function seedGeodes() {
-  geodes = [];
-  for (let k=0; k<4000 && geodes.length<GEODE_N; k++) {
-    const a = rng()*6.283, r = HALF*(0.08+rng()*0.9), x = Math.sin(a)*r, z = -Math.cos(a)*r, surf = surfaceAt(x, z), h = surf.h;
-    if (surf.slope > 0.4 || h < waterLevel+0.3) continue;
-    const biome = coastBiomeAt(x, z);
-    if (biome !== "cobble" && biome !== "reef" && h < 7) continue;     // cobble/reef shores, or higher rocky ground
-    if (typeof insideCottage === "function" && insideCottage(x, z)) continue;
-    if (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, 0.6)) continue;
-    let near = false; for (const g of geodes) if (Math.hypot(g.x-x, g.z-z) < 9) { near = true; break; } if (near) continue;
-    geodes.push({ x, z, yaw: rng()*6.283, sc: 0.7+rng()*0.4, hits: 0, cracked: false });
-  }
-  if (_savedGeodes) for (const i of _savedGeodes) { if (geodes[i]) { geodes[i].cracked = true; geodes[i].hits = GEODE_HITS; } }
-}
-function crackGeode(g) {
-  if (g.cracked) return true;   // §geodefix an opened geode is gone (nothing left where it was); it never regrows there
-  if (selectedTool() !== "pickaxe") { showCard("Needs a pickaxe", "This dull nodule looks promising. Swing a pickaxe at it to crack it open."); return true; }
-  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return true; }
-  shovelSwing = 1; camNudge = 0.04; spendStamina(TUNE.MINE_COST, true); rootPlayer(); if (onDig) onDig("mine");
-  const sy = surfaceAt(g.x, g.z).h + g.sc*0.3; spawnSand(g.x, sy, g.z, 7, [0.52,0.5,0.47]);
-  g.hits++;
-  if (g.hits >= GEODE_HITS) {
-    g.cracked = true;
-    if (onDig) onDig("crack");
-    const t = weightedKey(GEODE_LOOT);                                           // §A3 one random gem from the loot table
-    const first = !discovered.has("f_" + t);
-    if (Inv.add(t, 1) > 0) { discovered.add("f_" + t); notify(t, 1, first); }   // the gem goes straight into the pack …
-    else spawnFind(t, g.x+(rng()-0.5)*0.4, g.z+(rng()-0.5)*0.4);                 //    … or onto the ground if the pack is full
-    if (typeof SND !== "undefined") { SND.play("discover"); setTimeout(()=>{ try{ SND.play("discover"); }catch(e){} }, 180); }
-    if (typeof sparkle === "function") sparkle(g.x, sy+0.3, g.z, GEM_SPARKLE[t] || [0.9,0.95,1], 18);
-    showCard(ITEMS[t].name + "!", "");   // §look short and sweet; the pickup announcement (notify) already shows the icon
-    saveState();
-  }
-  return true;
-}
-function drawGeodes(view) {
-  if (!geodes.length) return;
-  if (!geodeDyn) geodeDyn = makeDynamic(geodeMesh(), GEODE_N);
-  propUniforms(view); let n = 0;
-  for (const g of geodes) { if (g.cracked) continue;   // §geodefix an opened geode is gone (no spent crystal husk left behind); it never regrows in that spot
-    const dx = g.x-cam.pos[0], dz = g.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const gy = surfaceAt(g.x, g.z).h + g.sc*0.08;
-    const o = n*10; geodeScratch[o]=g.x;geodeScratch[o+1]=gy;geodeScratch[o+2]=g.z;geodeScratch[o+3]=g.sc;geodeScratch[o+4]=g.yaw;geodeScratch[o+5]=0;geodeScratch[o+6]=0;geodeScratch[o+7]=1;geodeScratch[o+8]=1;geodeScratch[o+9]=1; n++;
-  }
-  if (n) geodeDyn.draw(geodeScratch, n);
-}
-function geodeAction(g) { return crackGeode(g); }
-function geodePrompt(g) { const has = selectedTool()==="pickaxe"; return has ? (IS_TOUCH?"hold to crack it open":"crack it open") : "a dull nodule, try a pickaxe"; }
 
 /* ===================================================================== *
  * § 41  (removed) HORSESHOE CRABS — the living crabs + their spawning events
@@ -15541,24 +14752,19 @@ function checkSets() {
     if (t > 0 && n >= t && !collectedSets.has(set.id)) { collectedSets.add(set.id); grantReward(set); celebrateSet(set); changed = true; } }
   if (changed) { try { localStorage.setItem("bcsets_" + SEED_STR, JSON.stringify([...collectedSets])); } catch (e) {} }
 }
-/* ---- save / load planted trees & stumps (per seed) ---- */
+/* ---- save / load the per-seed world state (bcw_<seed>) ---- */
 function saveWorld() {
   try { localStorage.setItem("bcw_" + SEED_STR, JSON.stringify({
     v: SAVE_VERSION,
-    planted: planted.map(p => [p.species, +p.x.toFixed(1), +p.z.toFixed(1), p.plantedAt]),
-    stumps: stumps.map(s => [s.species, +s.x.toFixed(1), +s.z.toFixed(1), s.sproutAt]),
-    chopped: treeObjs.filter(o => o.gone).map(o => o.i + ":" + o.species),
+    // §shake trees still on their shake cooldown: [instance index, species, in-game days since the shake]
+    shaken: treeObjs.filter(o => !treeShakeReady(o)).map(o => [o.i, o.species, +(tideDay - o.shakeAt).toFixed(3)]),
     driftGone: driftObjs.map((d, i) => d.gone ? i : -1).filter(i => i >= 0),
-    // fallen trees are real toppled instances: save the instance ref + its whittle state
-    fallen: fallenTrees.filter(o => !o.gone).map(o => [o.i, o.species, +o.treeScale.toFixed(2), +o.scale.toFixed(2), o.crownChops, o.trunkChops, +o.leanDir.toFixed(2), +(clock.t - o.bornFall).toFixed(0), o.trunkChopsMax || o.trunkChops]),
     // player-built terrain (sparse): [cell index, built height, material]
     build: [...builtCells].map(i => [i, +built[i].toFixed(2), material[i]]),
     berries: berryBushes.map(b => b.ripe ? 0 : Math.max(0, +(b.regrowAt - clock.t).toFixed(0))),  // 0 = ripe, else seconds left
     tallgrass: tallGrass.map(g => g.cut ? Math.max(1, +(g.regrowAt - clock.t).toFixed(0)) : 0),  // §veg5 0 = standing, else seconds until it grows back
     digcells: (() => { const out = []; for (const c of digCells.values()) if (c.depleted) out.push([c.cx, c.cz, Math.max(0, +(c.refillAt - clock.t).toFixed(0))]); return out; })(),  // §urgent3 spent dig-cells + seconds left to refill
     shelter: shelterSpawn ? [+shelterSpawn.x.toFixed(1), +shelterSpawn.z.toFixed(1)] : null,  // §16C respawn point
-    crops: crops.map(c => [c.type, +c.x.toFixed(1), +c.z.toFixed(1), +(c.yaw||0).toFixed(2), c.ripe?1:0,  // §17
-      c.ripe ? 0 : Math.max(0, +(c.ripeAt - clock.t).toFixed(0)), +c.scale.toFixed(2), c.wild?1:0, c.grown?1:0]),
     lanterns: placedLanterns.map(L => [+L.x.toFixed(1), +L.z.toFixed(1)]),  // §tools lit lanterns set down in the world
   })); } catch (e) {}
 }
@@ -15566,21 +14772,8 @@ function loadWorld() {
   try {
     const w = JSON.parse(localStorage.getItem("bcw_" + SEED_STR) || "null"); if (!w) return;
     if (w.v !== SAVE_VERSION) { try { localStorage.removeItem("bcw_" + SEED_STR); } catch (e) {} return; }   // §strip old-version world save → ignore
-    const chop = new Set(w.chopped || []);
-    for (const o of treeObjs) if (chop.has(o.i + ":" + o.species)) { o.gone = true; o.scale = 0; setTreeInstance(o); if (o.coll) o.coll.r = 0; }
+    for (const [i, sp, ago] of (w.shaken || [])) { const o = treeObjs.find(t => t.i === i && t.species === sp); if (o) o.shakeAt = tideDay - (+ago || 0); }   // §shake cooldowns survive a reload
     for (const i of (w.driftGone || [])) if (driftObjs[i]) driftObjs[i].gone = true;   // §13.1
-    for (const p of (w.planted||[])) { planted.push({ species: p[0], x: p[1], z: p[2], plantedAt: p[3] }); colliders.push({ x: p[1], z: p[2], r: 0.4, kind: "planted" }); }
-    for (const s of (w.stumps||[])) stumps.push({ species: s[0], x: s[1], z: s[2], hp: 4, sproutAt: s[3] });
-    for (const f of (w.fallen||[])) {
-      const o = treeObjs.find(t => t.i === f[0] && t.species === f[1]); if (!o || o.gone) continue;
-      o.fallen = true; o.treeScale = f[2]; o.scale = f[3]; o.crownChops = f[4]; o.trunkChops = f[5];
-      o.leanDir = f[6]; o.ang = o.leanDir + Math.PI/2; o.settle = 0; o.restLean = fallRestLean(o); o.leanAdd = o.restLean;   // §R4 rest along the terrain
-      o.bornFall = clock.t - (f[7]||0); o.sink = 0;
-      o.trunkChopsMax = f[8] || o.trunkChops; o.notches = [];   // §A4 rebuild the cut notches from how much has been chopped
-      for (let k = 0; k < (o.trunkChopsMax - o.trunkChops); k++) o.notches.push(fallenNotchRel(o, k));
-      setTreeInstance(o); if (o.coll) o.coll.r = 0;
-      fallenTrees.push(o);
-    }
     const bd = w.build || [];
     if (bd.length) {
       for (const [i, h, m] of bd) { if (i < 0 || i >= GRID*GRID) continue; built[i] = h; material[i] = m; matField[i] = m; if (h > 0.01) builtCells.add(i); }
@@ -15591,8 +14784,6 @@ function loadWorld() {
     if (Array.isArray(w.tallgrass)) w.tallgrass.forEach((v, i) => { if (tallGrass[i]) { if (v > 0) { tallGrass[i].cut = true; tallGrass[i].regrowAt = clock.t + v; } else tallGrass[i].cut = false; } });   // §veg5
     if (Array.isArray(w.digcells)) for (const [cx, cz, left] of w.digcells) digCells.set(digCellKey(cx, cz), { cx, cz, loot: rollCellFind(cx, cz), depleted: true, refillAt: clock.t + (left || 0) });   // §urgent3 restore spent cells
     if (Array.isArray(w.shelter)) shelterSpawn = { x: w.shelter[0], z: w.shelter[1] };   // §16C restore respawn point
-    if (Array.isArray(w.crops)) { crops = w.crops.map(c => ({ type: c[0], x: c[1], z: c[2], yaw: c[3],  // §17 restore crops
-      ripe: !!c[4], ripeAt: c[4] ? 0 : clock.t + (c[5] || 0), scale: c[6], wild: !!c[7], grown: !!c[8] })); }
     if (Array.isArray(w.lanterns)) placedLanterns = w.lanterns.map(([x, z]) => ({ x, y: surfaceAt(x, z).h, z }));   // §tools restore set-down lanterns
     rebuildCollHash();
   } catch (e) {}
@@ -15831,7 +15022,7 @@ if (typeof window !== "undefined") window.__shoot = function (v) {
 if (typeof window !== "undefined") window.__dbg = {
   barnacles: () => (typeof barnacles !== "undefined" ? barnacles.map(b => ({ x: b.x, z: b.z, g: b.g, amt: b.amt })) : []),
   rocks: () => (typeof rockObjs !== "undefined" ? rockObjs.filter(o => !o.gone).map(o => ({ x: o.x, z: o.z, sc: o.sc, barn: !!(o.barn && o.barn.amt > 0) })) : []),
-  trees: () => (typeof treeObjs !== "undefined" ? treeObjs.filter(o => !o.gone && !o.fallen).map(o => ({ x: o.x, z: o.z, species: o.species, scale: o.scale || 1 })) : []),
+  trees: () => (typeof treeObjs !== "undefined" ? treeObjs.filter(o => !o.gone).map(o => ({ x: o.x, z: o.z, species: o.species, scale: o.scale || 1, ready: treeShakeReady(o) })) : []),
   ground: (x, z) => surfaceAt(x, z).h,
   water: () => waterLevel,
   player: () => ({ x: player.x, z: player.z, feetY: player.feetY, eyeY: player.eyeY, vy: player.vy, airborne: player.airborne, swimming: player.swimming, underwater: player.underwater, speedMul: (typeof _curSpeedMul !== "undefined" ? _curSpeedMul : 1), slopeDeg: (typeof _curSlopeDeg !== "undefined" ? _curSlopeDeg : 0) }),
@@ -15852,7 +15043,6 @@ seedSetPieces();
 seedBerryBushes();
 seedTallGrass();   // §veg5 harvestable tall-grass clumps (Plant Fiber)
 seedPlants();      // §P3 pickable flowers & ferns
-seedWildCrops();
 populateLife();
 seedFlotsam();       // §5 a little floating debris already out on the water
 // §urgent4 goblin trader removed (no NPCs / trading)
@@ -15868,11 +15058,11 @@ const fsTri = buildFsTri();
 buildIcons();
 buildPanels();
 loadState();
-// §P2 starting kit: one of each tool as its own belt item (Minecraft-style, no Tool Kit).
-// A brand-new game lays them out on the belt; an existing save keeps whatever the player carries,
-// and we only add a tool they are missing entirely (so picked-up/dropped tools aren't duplicated).
+// §P2 starting kit: the few belt items (digging tool, rod, lantern). Gear abilities (later) are passive,
+// never belt items. A brand-new game lays them out on the belt; an existing save keeps whatever the
+// player carries, and we only add one they are missing entirely (so dropped items aren't duplicated).
 (function startingKit() {
-  const KIT = ["shovel", "axe", "pickaxe", "rod", "lantern"];
+  const KIT = ["shovel", "rod", "lantern"];
   const carries = (id) => Inv.hotbarHasId(id) || Inv.has(id);
   for (const id of KIT) {
     if (carries(id)) continue;
@@ -15888,12 +15078,11 @@ seedDigSpots();
 initShovelFP();
 initWorldObjs();
 seedBarnacles();   // §5 barnacle crusts on intertidal rocks (needs rockObjs)
-seedLandmarkRocks();   // §worldbug make the POI rock clusters + fish-weir stones breakable (needs rockObjs)
+seedLandmarkRocks();   // §worldbug the POI rock clusters + fish-weir stones as dynamic scenery rocks (needs rockObjs)
 initCottage();     // §19 the home-base cottage near spawn (needs terrain + colliders)
 seedWeakStones();  // §weak7 weak breakable stones scattered on beach & forest floor
 seedHeaveBoulders();  // §21D heavy boulders to lever over (needs colliders + cottage)
 seedOysterBeds();  // §23 oyster beds on the intertidal flats
-seedGeodes();  // §40 geodes on cobble & rocky shores
 loadWorld();
 flattenCottagePad();  // §2 level pad + door approach under the cottage (after loadWorld so it always wins; re-applied each load, not persisted)
 loadCottage();     // §19 restore cosiness / displays / aquarium for this seed
@@ -15934,7 +15123,7 @@ function deriveSeedState(seedStr) {
   nBar   = makeNoise(subStream());
   CAUSEWAY = causewayOf(subStream());              // 1 substream
   BIOME_SEG = biomeSegOf(subStream(), CHARACTER);  // 1 substream
-  TIDE_RANGE = AP.tideRange;
+  TIDE_RANGE = AP.tideRange * TIDE_RANGE_MUL;   // match the page-load init (it applies the global trim)
   MAX_HIGH_TIDE = TIDE_MID + TIDE_RANGE * 0.5 * SPRING_AMP;
   SHORE_WATER_MAX = MAX_HIGH_TIDE + 3;
   HIGH = { x: 0, z: 0, h: -1e9 };                  // reset the high-point accumulator (findHighPoint only maxes)
@@ -15955,7 +15144,6 @@ function disposeWorldGL() {
   if (Array.isArray(propTypes)) for (const t of propTypes) if (t && t.inst) disposeGLObj(t.inst);
   if (cottage) { disposeGLObj(cottage.bodyDyn); disposeGLObj(cottage.roofDyn); disposeGLObj(cottage.glassDyn); disposeGLObj(cottage.doorDyn); }
   if (rockDyn) { disposeGLObj(rockDyn); rockDyn = null; }                   // rock prop dynamic mesh is seeded (rockMesh(SEED_INT^0x51))
-  if (rubbleDyn) { disposeGLObj(rubbleDyn); rubbleDyn = null; }             // loose-Stone mesh is seeded (stoneMesh → mRock(SEED_INT^0x51a3))
   if (barnacleRockDyn) { disposeGLObj(barnacleRockDyn); barnacleRockDyn = null; }  // intertidal rock mesh is seeded (SEED_INT^0x5b)
   _barnRockMesh = null;                                                     // seeded base mesh for standalone intertidal rocks; lazily rebuilt
   if (Array.isArray(oysterBeds)) for (const b of oysterBeds) if (b.dyn) { disposeGLObj(b.dyn); b.dyn = null; }   // §P3 each oyster rock has its own seeded mesh
@@ -15964,7 +15152,6 @@ function disposeWorldGL() {
 // (the save-loaders push into these, or early-return and leave them stale).
 function resetWorldState() {
   worldDrops = [];
-  planted = []; stumps = []; fallenTrees = []; looseRocks = [];
   placedLanterns = []; builds = [];
   storageBoxes = []; stash = [];
   builtCells.clear(); built.fill(0);
@@ -16009,7 +15196,6 @@ function generateWorld() {
   seedBerryBushes();
   seedTallGrass();
   seedPlants();
-  seedWildCrops();
   populateLife();
   seedFlotsam();
   rebuildTerrainInPlace();
@@ -16021,7 +15207,6 @@ function generateWorld() {
   seedWeakStones();
   seedHeaveBoulders();
   seedOysterBeds();
-  seedGeodes();
   loadWorld();
   flattenCottagePad();
   loadCottage();
@@ -16048,7 +15233,8 @@ function newIsland(seedStr) {
   // generation reads waterLevel == SEA_LEVEL. Match that exactly here (the live
   // tide has drifted it during the title orbit) or seeded placement near the
   // waterline diverges from a fresh ?seed= load.
-  tideT = 0.60; tideDay = 0; waterLevel = SEA_LEVEL;
+  tideT = 0.60; tideDay = 0; waterLevel = SEA_LEVEL; wetLevel = SEA_LEVEL;   // wetLevel + the event feed the initial wash-up
+  currentEvent = "calm"; nextEvent = "calm"; eventRolled = false;
   generateWorld();                  // 4. rebuild terrain, textures, props, life, cottage, saves
   spawnPoint = null; shelterSpawn = null;   // 5. fresh spawn on the new shore
   ISLAND_NAME = makeIslandName();   // 6. refresh the title name + wordmark
@@ -16303,8 +15489,8 @@ function frame(now) {
     } else if (!player.airborne) { player.jumpImpulse = 0; }
     player.scramble += (scrambleTarget - player.scramble) * Math.min(1, dt * 4);
     if (player.landStun > 0) player.landStun = Math.max(0, player.landStun - dt);
-    const standH = groundStandAt(player.x, player.z, player.feetY);   // terrain, a fallen trunk, or a village deck/ramp underfoot
-    const g = surfaceAt(player.x, player.z);   // re-fetch fresh: groundStandAt/trunkHeightAt clobber the shared _surf, and g feeds stepVertical/landJump
+    const standH = groundStandAt(player.x, player.z, player.feetY);   // the terrain underfoot
+    const g = surfaceAt(player.x, player.z);   // re-fetch fresh: groundStandAt clobbers the shared _surf, and g feeds stepVertical/landJump
     // coyote window + buffered jump
     player.coyote = player.airborne ? Math.max(0, player.coyote - dt) : COYOTE_TIME;
     // §P2 buffered jump: a recent Space press fires once you're grounded (or within the coyote window),
@@ -16471,7 +15657,6 @@ function frame(now) {
 
   // props & points of interest (instanced), before the transparent water
   drawProps(view);
-  drawFallenNotches(view);   // §A4 cut notches on chopped fallen trunks
   drawTools(view);
   drawDriftwood(view);
   drawSetPieces(view);
@@ -16479,7 +15664,6 @@ function frame(now) {
   drawTallGrass(view);   // §veg5
   drawPlants(view);      // §P3 pickable flowers & ferns
   drawBarnacles(view);   // §5 barnacle crusts on intertidal rocks (before the transparent water)
-  drawCrops(view);
   drawSacks(view);
   drawPlacedLanterns(view);   // §tools lit lanterns set down in the world
   drawStorage(view);
@@ -16492,7 +15676,6 @@ function frame(now) {
   drawWeakStones(view);   // §weak7 weak breakable stones
   drawHeaveBoulders(view);   // §21D heavy boulders (and their bared ground)
   drawOysterBeds(view);   // §23 oyster beds on the intertidal flats
-  drawGeodes(view);   // §40 geodes on the cobble & rocky shores
   drawDigCellDebug(view);   // §urgent3 dig-cell state overlay (debug)
   drawParticles(view);
   drawRain(view);       // §20 rain streaks, rings on water, dug-hole puddles
@@ -16613,12 +15796,8 @@ function frame(now) {
   if (mode === "walk") {
     curTarget = targetAlongRay(rayFromNDC(0, 0), curTarget);
     const info = aimInfo();
-    // §tool2 The Tool Kit no longer swaps the tool in hand while you aim, the held
-    // tool stays put as you look around. The right tool is reached for at the
-    // MOMENT you mine/chop/dig (reachForTool / groundAutoDig / the chop path),
-    // and then kept until you pick a different tool or act on a different kind of
-    // target. The interaction ring already reflects ownership (aimAffordable →
-    // ownsTool), not what's currently equipped, so it still lights up correctly.
+    // §tool2 the held item never swaps while you aim. The interaction ring reflects ownership
+    // (aimAffordable → ownsTool), not what's currently equipped.
     if (info) {
       const dim = !aimAffordable(info);
       crossEl.className = "ring" + (dim ? " dim" : "");
@@ -16670,8 +15849,8 @@ function frame(now) {
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
-    if (!buildMode && curTarget && curTarget.kind === "geode") {   // §40 geode tooltip
-      promptEl.textContent = geodePrompt(curTarget.obj);
+    if (!buildMode && curTarget && curTarget.kind === "tree") {   // §shake tree tooltip
+      promptEl.textContent = treePrompt(curTarget.obj);
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
