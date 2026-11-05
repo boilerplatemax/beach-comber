@@ -17,7 +17,7 @@ async function open(browser, seed, mobile, extra) {
 }
 // drive frame() manually with an advancing timestamp
 async function frames(page, n, stepMs) {
-  await page.evaluate(([n, stepMs]) => { let t = (window.__ft || performance.now()); for (let i = 0; i < n; i++) { t += stepMs; frame(t); } window.__ft = t; }, [n, stepMs || 16.7]);
+  await page.evaluate(([n, stepMs]) => { let t = Math.max(window.__ft || 0, performance.now());  /* never behind the page clock (dt would be <= 0) */ for (let i = 0; i < n; i++) { t += stepMs; frame(t); } window.__ft = t; }, [n, stepMs || 16.7]);
 }
 async function enter(page) {
   await page.evaluate(() => { const g = document.getElementById("entergate"); if (g) g.click(); });

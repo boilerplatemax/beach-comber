@@ -52,6 +52,15 @@ Per-seed `localStorage` keys: `bc_<seed>` (player state), `bcw_<seed>` (world),
 `bcd_<seed>` (drops), `bcs_<seed>` (storage), `bcsets_<seed>` (collections).
 `SAVE_VERSION` gates loads; older versions are discarded per seed on load.
 
+## Archipelago
+
+The world is a seeded archipelago inside the one world grid (`@section TERRAIN/archipelago`):
+`ISLANDS[]` (home + main islands + islets), `RESERVED` (an empty spot for a future special
+island), `CROSSINGS[]` (low-tide causeways / swim channels / the far crossing), and `islandIdx[]` /
+`islandAt(x,z)` for "which island is this". Never place things by distance from the map centre:
+sample with `islandXZ()` or use local conditions (height vs the tide, substrate, biome). Biomes are
+looked up per island (`coastBiomeAt`). `tools/wtest/partD.js` checks a seed's layout.
+
 ## New Island
 
 `newIsland(seed)` regenerates the world in place without a page reload:

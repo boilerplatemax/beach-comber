@@ -83,3 +83,19 @@ term. Terrain fills roughly half of the low-res FBO (resScale ≤ 1), so this is
 ALU/tap ops over ~100 k fragments — comfortably inside the 60 FPS budget on a GTX 1650.
 Model report regenerated (`docs/model-report.md`). Measure the real frame time with F3 on
 hardware; if ever needed, the height-tap slope could be precomputed into a normal texture.
+
+## After the archipelago (Part D)
+
+The single island became a seeded archipelago in the same world grid (home + 4–6 main islands +
+2–5 islets). The much longer coastline would have roughly doubled–tripled the underwater meadow
+instances, so they are thinned per type (`SEABED_MUL` in `@section WORLD/placement`) back to the
+single-island counts. Headless, `tools/wtest/perf2.js` at four view directions (software GL, so only
+draws / triangles / heap are trustworthy):
+
+| Seed | Draw calls (before → after) | Triangles (before → after) | Heap |
+|---|--:|--:|--:|
+| alpha | 38–46 → 39–41 | 361k–585k → 363k–422k | ~33 MB |
+| beta  | 37–43 → 30–40 | 269k–497k → 230k–566k | ~35 MB |
+| 7k2x  | 36–48 → 40–43 | 233k–533k → 276k–547k | ~37 MB |
+
+Load (SwiftShader, page load to `load`): ~0.9–1.2 s before, ~1.0–1.5 s after.
