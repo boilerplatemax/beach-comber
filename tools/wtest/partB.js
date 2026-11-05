@@ -7,7 +7,7 @@ const SEED = process.argv[2] || "alpha";
   await page.waitForTimeout(500); await enter(page); await frames(page, 5, 33);
   const r = await page.evaluate(() => {
     const out = { kit: Inv.hotbar.filter(Boolean).map(c => c.id), item: ITEMS.spade && ITEMS.spade.name, shovel: !!ITEMS.shovel,
-      icon: !!(ITEMS.spade && ITEMS.spade.icon), tris: spadeMesh().pos.length / 9 };
+      icon: !!(ITEMS.spade && ITEMS.spade.icon), tris: beachToyShovelMesh().pos.length / 9 };
     Inv.selected = Inv.hotbar.findIndex(c => c && c.id === "spade");
     const kinds = {}; let finds = 0, worms = 0; const lifeN0 = life.length;
     // dig many spots on wet + dry ground; count finds revealed and the kinds dug
