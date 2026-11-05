@@ -856,16 +856,16 @@
  *   WORLD CONTENT
  *     § PROP & POI MESH BUILDER · § INSTANCED PROP RENDERER ·
  *     § POINTS OF INTEREST · § PLACEMENT · § LIFE · § 5 FLOATING DEBRIS ·
- *     § 5 BARNACLES · § LIVING BEACH
+ *     § 5 TIDE ENCRUSTATIONS · § LIVING BEACH
  *   CREATURES
  *     § CREATURE RUNTIME (Tri Soup runtime, WebGL2 port) · § CRABS & GULLS
  *   INTERACTION
  *     § INVENTORY / JOURNAL / INTERACTION · § CLICK-TO-WALK · § TARGETING ·
  *     § DIGGING · § TERRAIN API · § BUCKET · § 11.6 MINI 3D VIEWS ·
  *     § GLINTS & MISC · § 17.5 GOBLIN TRADERS (inert) · § TREES & SCENERY ·
- *     § 21 FLIPPING STONES · § 21D HEAVY BOULDERS · § 23 OYSTERS ·
+ *     § 21 FLIPPING STONES · § 21D HEAVY BOULDERS ·
  *     § 40 RARE FINDS · § 41 HORSESHOE CRABS · §B5 FINDABLE EVENTS ·
- *     § 19 COTTAGE (removed, inert stubs) · § GOATS & SALT (inert) ·
+ *     § 19 COTTAGE (removed, inert stubs) ·
  *     § 12C BURIED TREASURE
  *   DRIVER
  *     § BUILD + LOOP · § island9 NEW ISLAND IN PLACE · frame() main loop
@@ -1070,13 +1070,13 @@ const COAST_BIOMES = {
   sandy:   { mat: 3, feet: "sand",  speed: 1.0, tell: 1.0, crit: ["crab"],
              finds: ["shell","seaglass","sanddollar","moonsnail","cockle","scallop","nautilus"], label: "Sandy beach" },
   cobble:  { mat: 4, feet: "gravel", speed: 0.92, tell: 0.5, crit: ["crab","hopper"],
-             finds: ["seaglass","stone","shell","driftwood","barnacle"], label: "Cobble beach", flip: true },
+             finds: ["seaglass","stone","shell","driftwood"], label: "Cobble beach", flip: true },
   reef:    { mat: 5, feet: "rock",  speed: 0.85, tell: 0.4, crit: ["star","anemone","urchin"],
-             finds: ["mussel","limpet","seaglass","shell","cuttle","oyster","barnacle","nautilus"], label: "Rocky reef shelf" },
+             finds: ["mussel","limpet","seaglass","shell","cuttle","nautilus"], label: "Rocky reef shelf" },
   mudflat: { mat: 6, feet: "mud",   speed: 0.6, tell: 1.3, crit: ["crab"],
-             finds: ["clam","cockle","wormcast","worm","oyster"], label: "Mudflat" },
+             finds: ["clam","cockle","wormcast","worm"], label: "Mudflat" },
   marsh:   { mat: 1, feet: "grass", speed: 0.8, tell: 0.7, crit: ["crab","hopper"],
-             finds: ["pickleweed","salt","cockle","shell","worm"], label: "Salt marsh" },
+             finds: ["pickleweed","cockle","shell","worm"], label: "Salt marsh" },
 };
 function biomeSegOf(r, ch) {
   const w = { sandy: 3, cobble: 2, reef: 2, mudflat: 2, marsh: 1 };
@@ -5177,7 +5177,7 @@ function finishEat() {
 
 /* ---- the interaction target, independent of the equipped tool (§11.2 / §11.3) ---- */
 // Which tool performs the primary action on each target kind.
-const TOOL_FOR_KIND = { find: "hand", bush: "hand", salt: "hand", driftwood: "hand", storagebox: "hand", tree: "hand" };
+const TOOL_FOR_KIND = { find: "hand", bush: "hand", encrust: "hand", driftwood: "hand", storagebox: "hand", tree: "hand" };
 function aimInfo() {
   if (mode !== "walk") return null;
   if (curTarget) return { kind: curTarget.kind, obj: curTarget.obj, x: curTarget.x, z: curTarget.z, need: TOOL_FOR_KIND[curTarget.kind] || "hand" };
@@ -5229,7 +5229,6 @@ function drawBounds(view) {
     arr[o+7]=isT?1:0.25; arr[o+8]=isT?0.85:1; arr[o+9]=0.25; n++; };
   const near = (x, z) => Math.hypot(x-player.x, z-player.z) < 32;
   for (const e of life) { if (!lifeVisible(e) || !near(e.x, e.z)) continue; add(e.x, e.z, entityRadius(e), curTarget && curTarget.obj === e); }
-  for (const s of saltSpots) if (near(s.x, s.z)) add(s.x, s.z, 0.75, curTarget && curTarget.obj === s);
   for (const o of treeObjs) { if (o.gone || !near(o.x, o.z)) continue; add(o.x, o.z, 0.8 + o.scale*0.05, curTarget && curTarget.obj === o); }
   for (const o of rockObjs) { if (o.gone || !near(o.x, o.z)) continue; add(o.x, o.z, 0.5 + o.sc*0.45, curTarget && curTarget.obj === o); }
   if (n) { propUniforms(view); boundsDyn.draw(arr, n); }
@@ -5837,7 +5836,7 @@ void main() {
     float wetb = 1.0 - smoothstep(uWaterLevel, uWetLevel + 1.2, vWorld.y);     // darker below the high-water mark
     col = mix(col, col * 0.58, clamp(wetb, 0.0, 1.0) * 0.8);
     // §gulls removed the procedural splash-zone speckle, it painted white SQUARES on wet rock that read as fake
-    // barnacles. Real barnacles are their own crust objects (drawBarnacles), which look nothing like this.
+    // barnacles. Real barnacles are their own instanced pieces (drawEncrust), which look nothing like this.
   }
   if (uEmissive > 0.001) col = mix(col, vCol, uEmissive);   // §nightlight village windows/lanterns glow from within (fog still applies below)
   if (uEmissive < 0.5) {
@@ -7277,7 +7276,7 @@ const FINDS = {
   coconut:  { mesh: () => coconutMesh(),            base: 0.5, max: 30, label: "Coconut", desc: "A heavy green-brown nut fallen from a palm. Crack it open for the sweet flesh inside.", rare: 1 },
   pinecone: { mesh: () => coneMesh2(),              base: 0.4, max: 30, label: "Pine Cone", desc: "A woody cone dropped from a pine, its scales spread to let the seeds go.", rare: 1 },
   nut:      { mesh: () => nutMesh(),                 base: 0.4, max: 30, label: "Nut", desc: "A glossy nut in its cup, dropped from a broadleaf tree.", rare: 1 },
-  salt:     { mesh: () => saltMesh(),               base: 0.45,max: 40, label: "Sea Salt", desc: "A coarse crystal the sea left drying on the sand. Good for seasoning.", rare: 1 },
+  salt:     { mesh: () => saltMesh(),               base: 0.45,max: 40, label: "Sea Salt", desc: "A pinch of salt from a crust the tide left drying in a hollow. Good for seasoning.", rare: 1 },
   fiber:    { mesh: () => fiberMesh(),              base: 0.4, max: 80, label: "Plant Fiber", desc: "Tough strands stripped from tall grass.", rare: 0 },
   flower:   { mesh: () => flowerItemMesh(),         base: 0.4, max: 80, label: "Flower", desc: "A bright wild bloom picked from the dune meadows.", rare: 0 },
   fern:     { mesh: () => fernItemMesh(),           base: 0.4, max: 80, label: "Fern", desc: "A soft green frond from the island's shaded interior.", rare: 0 },
@@ -7333,7 +7332,7 @@ const FINDS = {
   oyster:   { mesh: () => oysterMesh(),             base: 0.5, max: 80, label: "Oyster", desc: "A craggy grey oyster, clamped shut. Good food, better cooked.", rare: 0 },
   conch:    { mesh: () => conchMesh(),              base: 0.5, max: 30, label: "Conch", desc: "A big conch with a flared pink lip. Hermit crabs would love it; so would the gulls.", rare: 1 },
   urchin:   { mesh: () => urchinItemMesh(),         base: 0.5, max: 40, label: "Sea Urchin", desc: "A spiny purple urchin from the seabed. Its spines still stir, slowly.", rare: 1 },
-  barnacle: { mesh: () => barnacleMesh(),           base: 0.5, max: 80, label: "Barnacles", desc: "Acorn barnacles scraped off a tidal rock, prized fishing bait.", rare: 0, bait: 1 },
+  barnacle: { mesh: () => barnacleMesh(),           base: 0.5, max: 80, label: "Barnacle", desc: "A single acorn barnacle picked off a tide-washed rock or log. Prized fishing bait.", rare: 0, bait: 1 },
   crabmeat: { mesh: () => crabMeatMesh(),           base: 0.45,max: 80, label: "Crab Meat", desc: "Pale, sweet meat picked from a crab. Good food, better cooked.", rare: 0 },
   // §40 rare natural finds, the heart-quickening ones, salted in at long odds
   whelk:    { mesh: () => whelkMesh(),              base: 0.5, max: 30, label: "Left-handed Whelk", desc: "A sinistral whelk, its spiral coils the wrong way. One shell in thousands.", rare: 2 },
@@ -7413,7 +7412,7 @@ function recordVariant(e) {
 function populateLife() {
   life = [];
   // §14B underwater finds scattered on the seabed, reward for diving (shells, sand dollars)
-  const SEABED_FINDS = ["sanddollar","shell","moonsnail","seaglass","mussel","limpet","oyster","nautilus","barnacle"];
+  const SEABED_FINDS = ["sanddollar","shell","moonsnail","seaglass","mussel","limpet","nautilus"];
   for (let i = 0; i < 130; i++) {
     const a = rng()*6.283, r = HALF*(0.35 + rng()*0.55), x = Math.sin(a)*r, z = -Math.cos(a)*r;
     const h = surfaceAt(x, z).h, ci = cellIndex(x, z);
@@ -7528,69 +7527,313 @@ function drawFlotsam(view) {
 }
 
 /* ===================================================================== *
- * § 5  BARNACLES, acorn-barnacle crusts on intertidal rocks (below the high-tide
- *      line). Scrape them with the Tool Kit for bait; they regrow over a few days.
+ * § 5  TIDE ENCRUSTATIONS, barnacles, oysters and salt that build up by
+ *   themselves near the water and are picked away ONE PIECE at a time.
+ *   - Barnacles: single acorn barnacles in patches on hard surfaces in the
+ *     intertidal band (rocks, landmark rocks, big driftwood logs, reef/cobble
+ *     ground). Denser lower down; capped per surface.
+ *   - Oysters: clusters on mud and rock in the low intertidal (mostly bared
+ *     only at low tide).
+ *   - Salt: a white crust in drying hollows / pool margins above the water
+ *     after the tide goes out, faster in sun + wind; rain or returning water
+ *     dissolves it.
+ *   Growth is LIVE state (critRng), placement is purely local conditions
+ *   (height vs the tide, substrate, biome), never distance from the map
+ *   centre. The starting crust comes from a per-seed side stream (not the
+ *   world-gen rng()). Every piece is saved in the per-seed world save, so a
+ *   picked patch stays picked after a reload. One instanced draw per type.
  * ===================================================================== */
-// @system WORLD  @section WORLD/barnacles
-let barnacles = [];          // { x, z, g, rsc, yaw, amt, max, regrowAt }, each is a little intertidal rock crusted with barnacles
-const BARNACLE_REGROW_DAYS = 3;
-let barnacleDyn = null, barnacleRockDyn = null;
-function barnTop(b) { return b.g + b.rsc*0.3; }                 // where the crust sits on the rock
-function seedBarnacles() {
-  barnacles = [];
-  const want = 9 + (rng()*8|0);
-  for (let k = 0; k < 700 && barnacles.length < want; k++) {
-    const a = rng()*6.283, r = HALF*(0.46 + rng()*0.48), x = Math.sin(a)*r, z = -Math.cos(a)*r;
-    const s = surfaceAt(x, z), g = s.h;
-    if (g > MAX_HIGH_TIDE - 0.3 || g < MAX_HIGH_TIDE - 4 || s.slope > 0.55) continue;   // the intertidal band, just below the high-tide line
-    if (bigPropBlocking(x, z, 1.2)) continue;
-    if (barnacles.some(b => Math.hypot(b.x-x, b.z-z) < 6)) continue;                     // keep them spread out
-    const max = 3 + (rng()*4|0);
-    barnacles.push({ x, z, g, rsc: 0.55 + rng()*0.7, yaw: rng()*6.283, amt: max, max, regrowAt: 0 });
+// @system WORLD  @section WORLD/encrust
+const ENC = {
+  tick: 4,                    // game-seconds between growth ticks
+  drawR: 110,                 // pieces are drawn within this radius (small things; also capped by DRAW_R)
+  // cap = global piece cap (perf); startTotal = share of it the shore starts with; startFill = how full a starting host is;
+  // tries = growth attempts per tick; cluster = chance new growth clumps beside an existing piece (patches)
+  barn: { cap: 1500, startTotal: 0.65, tries: 2, perRock: [5, 11], perLog: [5, 4], perGround: 14, startFill: 0.8, cluster: 0.8, size: [0.09, 0.16] },
+  oyst: { cap: 420, startTotal: 0.65, tries: 1, perRock: [3, 5], perGround: 8, startFill: 0.8, cluster: 0.85, size: [0.18, 0.28] },
+  salt: { cap: 220, tries: 2, perSite: 8, size: [0.22, 0.42], rainDissolve: 0.35 },
+  viewGuard: 26,              // new growth never pops in closer than this when it's in front of the camera
+  exposeMargin: 0.35,         // a barnacle is pickable while the water is no more than this above it (oysters at any depth)
+};
+// the intertidal bands, from the live tide constants (so they follow each seed's tide range)
+function encBand(type) {
+  const R = TIDE_RANGE;
+  if (type === "barn") return [TIDE_MID - R * 0.55, TIDE_MID + R * 0.5];          // low water → just under the high-tide line
+  if (type === "oyst") return [TIDE_MID - R * 0.62, TIDE_MID - R * 0.08];         // the low intertidal: mostly bared only at low tide
+  return [TIDE_MID - R * 0.25, MAX_HIGH_TIDE + 0.6];                              // salt: the upper shore the tide wets then leaves to dry
+}
+// weight for "denser lower down" across a band (1 at the bottom → ~0.15 at the top)
+function encLowWeight(h, band) { const t = (h - band[0]) / Math.max(0.01, band[1] - band[0]); return t < 0 || t > 1 ? 0 : 0.15 + 0.85 * (1 - t); }
+
+let encHosts = [];                 // every surface pieces can grow on: { kind, type, x, z, r, cap, n, ref }
+let encByType = { barn: [], oyst: [], salt: [] };   // host indices per type (growth samples within its own type)
+let encPieces = { barn: [], oyst: [], salt: [] };   // { h (host index), x, y, z, s, yaw, lean, ld }
+let encDyn = { barn: null, oyst: null, salt: null };
+let _encT = 0, _encDirty = false, _encSaveT = 0, _encGrown = 0;
+const _encScratch = { barn: null, oyst: null, salt: null };
+const _encHit = { y: 0, nx: 0, ny: 1, nz: 0 };
+
+// --- meshes: one small piece each (instanced) ---
+function barnacleOneMesh() { const m = Mesh(); const sh = [0.95,0.93,0.88], sh2 = [0.84,0.82,0.77], ap = [0.22,0.22,0.25];
+  // an acorn barnacle: a squat six-plated volcano with a dark slit on top (unit radius at the base)
+  mCyl(m, 0, 0.55, 1.0, 0.56, 6, sh2);
+  for (let i = 0; i < 6; i++) { const a = i / 6 * 6.2832 + 0.26; mBox(m, Math.cos(a)*0.8, 0.28, Math.sin(a)*0.8, 0.12, 0.26, 0.12, sh); }   // plate ridges
+  mCyl(m, 0.55, 0.62, 0.56, 0.3, 6, sh);
+  mergeMesh(m, discMesh(0.6, 0.3, 6, -0.08, ap));                                  // the dark opening
+  return m; }
+function oysterOneMesh() { const m = Mesh(); const g = [0.56,0.56,0.52], g2 = [0.67,0.66,0.6], gD = [0.42,0.42,0.39];
+  // one rough, elongated oyster lying on its side (unit ≈ 1 long), a craggy ridge near the hinge
+  const d = Mesh();
+  mergeMesh(d, discMesh(0, 0.42, 7, 0.2, g));
+  mergeMesh(d, discMesh(0.12, 0.3, 6, 0.14, g2));
+  mergeMesh(d, discMesh(0.2, 0.16, 5, 0.1, gD));
+  for (let i = 0; i < d.pos.length; i += 3) { d.pos[i+2] *= 1.25; d.pos[i] *= 0.62; }
+  mergeAt(m, d, 0, 0, 0);
+  mergeMesh(m, discMesh(-0.005, 0.44, 7, -0.06, gD));                               // the lower valve's lip
+  return m; }
+function saltCrustMesh() { const m = Mesh(); const w = [0.97,0.97,0.96], w2 = [0.88,0.89,0.9], ed = [0.8,0.8,0.78];
+  // a thin, irregular crust of salt with a few raised crystal nubs (unit radius)
+  const N = 9, R = mulberry32(0x5a17c0de), rad = []; for (let i = 0; i < N; i++) rad.push(0.7 + R() * 0.3);
+  for (let i = 0; i < N; i++) { const a0 = i / N * 6.2832, a1 = (i + 1) / N * 6.2832, r0 = rad[i], r1 = rad[(i + 1) % N];
+    const A = [Math.cos(a0)*r0, 0.03, Math.sin(a0)*r0], B = [Math.cos(a1)*r1, 0.03, Math.sin(a1)*r1];
+    mTri(m, [0, 0.07, 0], B, A, i % 2 ? w : w2);
+    mQuad(m, A, B, [B[0]*1.06, 0, B[2]*1.06], [A[0]*1.06, 0, A[2]*1.06], ed); }
+  for (let k = 0; k < 4; k++) { const a = R() * 6.2832, r = R() * 0.5; mBox(m, Math.cos(a)*r, 0.09, Math.sin(a)*r, 0.07, 0.05, 0.07, w); }
+  return m; }
+
+// --- surfaces ---
+let _landRockBase = null;          // base triangles of the dynamic landmark-rock mesh (rockDyn), for raycasting
+function landRockBase() { return _landRockBase || (_landRockBase = rockMesh((SEED_INT^0x51)>>>0, "rounded", [0.54,0.52,0.48]).pos); }
+// sample the TOP surface of a host at (qx,qz); fills _encHit and returns true if it hit the host
+function encSurface(host, qx, qz) {
+  if (host.kind === "rock") {
+    const o = host.ref, inst = o.t && o.t.inst; if (!inst || !inst.basePos) return false;
+    const b = o.i * 10, d = inst.data;
+    const hit = raycastRockDown(inst.basePos, d[b+3], d[b+4], d[b+5], d[b+6], d[b], d[b+1], d[b+2], qx, qz); if (!hit) return false;
+    _encHit.y = hit.y; _encHit.nx = hit.nx; _encHit.ny = hit.ny; _encHit.nz = hit.nz; return true;
+  }
+  if (host.kind === "landrock") {
+    const o = host.ref, sf = surfaceAt(o.x, o.z), oy = sf.h - o.sc*0.16 - o.sc*0.45*sf.slope + (o.yOff||0);   // same pose drawTools uses
+    const hit = raycastRockDown(landRockBase(), o.scale, o.yaw || 0, 0, 0, o.x, oy, o.z, qx, qz); if (!hit) return false;
+    _encHit.y = hit.y; _encHit.nx = hit.nx; _encHit.ny = hit.ny; _encHit.nz = hit.nz; return true;
+  }
+  if (host.kind === "log") {                                       // a big driftwood log: a cylinder lying along its yaw
+    const d = host.ref, ax = Math.cos(d.yaw), az = -Math.sin(d.yaw), L = 0.5 * d.scale, rad = 0.12 * d.scale;
+    const along = (qx - d.x) * ax + (qz - d.z) * az; if (Math.abs(along) > L * 0.92) return false;
+    const side = -(qx - d.x) * az + (qz - d.z) * ax; if (Math.abs(side) > rad * 0.95) return false;
+    const up = Math.sqrt(Math.max(0, rad*rad - side*side)), cx = d.x + ax * along, cz = d.z + az * along;
+    _encHit.y = surfaceAt(cx, cz).h + rad + up * 0.9 - rad * 0.15;
+    const nx = -az * side / rad, nz = ax * side / rad; _encHit.nx = nx; _encHit.ny = up / rad; _encHit.nz = nz; return true;
+  }
+  // ground (reef / cobble / mud / salt hollow): the terrain itself
+  const s = surfaceAt(qx, qz); _encHit.y = s.h; _encHit.nx = s.nx; _encHit.ny = s.ny; _encHit.nz = s.nz; return true;
+}
+// world material of the coastal band at (x,z) as a substrate class
+function encSubstrate(x, z) {
+  const i = cellIndex(x, z); if (i < 0) return "none";
+  const m = material[i] || defaultMat(i);
+  return m === MAT.STONE || m === MAT.GRAVEL ? "hard" : m === MAT.MUD ? "mud" : m === MAT.SAND ? "sand" : "soft";
+}
+function encHostCap(type, kind, sc) {
+  const c = ENC[type];
+  if (kind === "rock" || kind === "landrock") return Math.round(c.perRock[0] + c.perRock[1] * Math.min(2.5, sc || 1));
+  if (kind === "log") return Math.round(c.perLog[0] + c.perLog[1] * Math.min(2, (sc || 2.4) - 1.6));
+  if (kind === "site") return c.perSite;
+  return c.perGround;
+}
+// collect every host from local conditions only (height vs the tide band + substrate); deterministic order
+function buildEncHosts() {
+  encHosts = [];
+  const bB = encBand("barn"), bO = encBand("oyst"), bS = encBand("salt");
+  encByType = { barn: [], oyst: [], salt: [] };
+  const add = (type, kind, x, z, r, cap, ref, base) => { encByType[type].push(encHosts.length); encHosts.push({ type, kind, x, z, r, cap, n: 0, ref, base }); };
+  for (const o of rockObjs) { if (o.gone) continue;
+    const base = surfaceAt(o.x, o.z).h, top = base + (o.sc || 1) * 0.6, r = 0.45 + (o.sc || 1) * 0.5;
+    const kind = o.dyn ? "landrock" : "rock";
+    if (top > bB[0] && base < bB[1]) add("barn", kind, o.x, o.z, r, encHostCap("barn", kind, o.sc), o, base);
+    if (base > bO[0] - 1 && base < bO[1]) add("oyst", kind, o.x, o.z, r, encHostCap("oyst", kind, o.sc), o, base);
+  }
+  for (const d of driftObjs) { if (d.gone || !d.big) continue;
+    const g = surfaceAt(d.x, d.z).h; if (g < bB[0] || g > bB[1]) continue;
+    add("barn", "log", d.x, d.z, 0.5 * d.scale, encHostCap("barn", "log", d.scale), d, g);
+  }
+  // ground sites on a coarse grid (~2 cells): reef / cobble for barnacles, mud for oysters, hollows for salt
+  const STEP = 2;
+  for (let gz = 2; gz < GRID - 2; gz += STEP) for (let gx = 2; gx < GRID - 2; gx += STEP) {
+    const i = gz * GRID + gx, h = heightmap[i];
+    if (h < bB[0] - 1 || h > bS[1]) continue;                    // quick reject: nowhere near the shore band
+    const x = gx * CELL - HALF, z = gz * CELL - HALF;           // exactly on the grid vertex (so cell lookups agree)
+    const sub = encSubstrate(x, z), sl = surfaceAt(x, z).slope;
+    if (sl > 0.5) continue;
+    if (sub === "hard" && h > bB[0] && h < bB[1] - 0.4) add("barn", "ground", x, z, CELL * 0.75, encHostCap("barn", "ground"), null, h);
+    if ((sub === "mud" || sub === "hard") && h > bO[0] && h < bO[1]) add("oyst", "ground", x, z, CELL * 0.7, encHostCap("oyst", "ground"), null, h);
+    if (h > bS[0] && h < bS[1] && sl < 0.3 && (sub === "sand" || sub === "mud" || sub === "hard")) {
+      // a drying hollow (lower than its ring of neighbours) or the dry margin right beside a held tide pool;
+      // never a cell a pool keeps flooded (that water never leaves, so nothing dries out there)
+      if (filled[i] > h + 0.02) continue;
+      const ring = (heightmap[i-1] + heightmap[i+1] + heightmap[i-GRID] + heightmap[i+GRID]) * 0.25;
+      let poolEdge = false; for (const j of [i-1, i+1, i-GRID, i+GRID, i-2, i+2, i-2*GRID, i+2*GRID]) if (filled[j] > heightmap[j] + 0.05) { poolEdge = true; break; }
+      if (ring - h > 0.05 || poolEdge) add("salt", "site", x, z, CELL * 0.6, encHostCap("salt", "site"), null, h);
+    }
   }
 }
-let clusterSpawnAt = 0;
-const CLUSTER_SPAWN_DAYS = 0.4;   // §menu how often (in-game days) a fresh cluster seeds onto a bare rock (tunable)
-function updateBarnacles() {
-  for (const b of barnacles) if (b.amt < b.max && b.regrowAt && clock.t >= b.regrowAt) {   // the legacy standalone barnacle rocks still slowly regrow
-    b.amt++; b.regrowAt = b.amt < b.max ? clock.t + BARNACLE_REGROW_DAYS*DAY_PERIOD : 0;
+// is the point (x, y, z) under water right now? (the sea, or a tide pool that holds its water). NB waterSurfaceAt()
+// returns the ground height on dry land (filled == terrain there), so compare against the sea + held pools directly.
+function encUnderWater(x, z, y) {
+  if (waterLevel > y) return true;
+  const i = cellIndex(x, z); return i >= 0 && filled[i] > heightmap[i] + 0.05 && filled[i] > y;
+}
+// can this type grow on this host RIGHT NOW? (live conditions, so salt follows the tide / sun / rain)
+function encHostLive(host) {
+  if (host.type !== "salt") return true;
+  const h = host.base;
+  if (encUnderWater(host.x, host.z, h + 0.04)) return false;     // still under water (sea or pool)
+  if (wetLevel < h - 0.2) return false;                          // the tide hasn't been up here recently: nothing to dry out
+  if (weather && weather.rain > 0.15) return false;              // rain washes it away instead
+  return true;
+}
+// try to grow one piece on `host` with random source R; returns true on success
+function encGrowOn(host, R, guard) {
+  if (host.n >= host.cap) return false;
+  const type = host.type, list = encPieces[type], cfg = ENC[type];
+  if (list.length >= cfg.cap) return false;
+  const band = encBand(type);
+  let qx, qz;
+  // clump: most new growth starts beside an existing piece on the same host (patches), else anywhere on it
+  if (cfg.cluster && host.n > 0 && R() < cfg.cluster) {
+    let tries = 0, src = null; while (tries++ < 6 && !src) { const p = list[(R() * list.length) | 0]; if (p && encHosts[p.h] === host) src = p; }
+    if (!src) for (const p of list) if (encHosts[p.h] === host) { src = p; break; }
+    if (!src) return false;
+    const a = R() * 6.2832, d = (type === "oyst" ? 0.14 : 0.07) + R() * (type === "oyst" ? 0.2 : 0.14);
+    qx = src.x + Math.cos(a) * d; qz = src.z + Math.sin(a) * d;
+  } else { const a = R() * 6.2832, d = Math.sqrt(R()) * host.r; qx = host.x + Math.cos(a) * d; qz = host.z + Math.sin(a) * d; }
+  if (guard) { const dx = qx - cam.pos[0], dz = qz - cam.pos[2], dist = Math.hypot(dx, dz) || 1, f = camForward();
+    if (dist < ENC.viewGuard && (dx * f[0] + dz * f[2]) / dist > 0.2) return false; }       // don't pop in right in front of you
+  if (!encSurface(host, qx, qz)) return false;
+  const y = _encHit.y;
+  if (type !== "salt") { const w = encLowWeight(y, band); if (w <= 0 || R() > w) return false; }   // in the band, denser lower down
+  else if (y < band[0] || y > band[1]) return false;
+  if (_encHit.ny < (type === "salt" ? 0.85 : 0.2)) return false;  // nothing grows on an overhang; salt only on near-flat ground
+  if (type !== "salt" && host.kind === "ground" && encSubstrate(qx, qz) === "sand") return false;   // barnacles/oysters never on bare sand
+  for (const p of list) { const dx = p.x - qx, dz = p.z - qz; if (dx*dx + dz*dz < (type === "salt" ? 0.09 : 0.012)) return false; }   // not on top of another piece
+  const s = cfg.size[0] + R() * (cfg.size[1] - cfg.size[0]);
+  // tilt the piece onto the surface: the prop shader leans +y about the axis (cos ld, 0, sin ld)
+  const nx = _encHit.nx, ny = _encHit.ny, nz = _encHit.nz;
+  const lean = Math.acos(Math.max(-1, Math.min(1, ny))), ld = Math.atan2(-nx, nz);
+  list.push({ h: encHosts.indexOf(host), x: qx, y: y - s * (type === "salt" ? 0.05 : 0.15), z: qz, s, yaw: R() * 6.2832, lean, ld });
+  host.n++;
+  return true;
+}
+// the starting crust: each host part-filled from a per-seed side stream (never the world-gen rng())
+function seedEncrust() {
+  buildEncHosts();
+  encPieces = { barn: [], oyst: [], salt: [] };
+  const R = mulberry32((SEED_INT ^ 0xe5c0b7a1) >>> 0);
+  for (const type of ["barn", "oyst"]) {                         // the island starts with no salt; it forms as the tide goes out
+    const order = encByType[type].slice();
+    for (let i = order.length - 1; i > 0; i--) { const j = (R() * (i + 1)) | 0; const t = order[i]; order[i] = order[j]; order[j] = t; }   // shuffled, so the crust is spread over the shore
+    const target = Math.round(ENC[type].cap * ENC[type].startTotal);
+    for (const hi of order) { if (encPieces[type].length >= target) break;
+      const host = encHosts[hi], want = Math.round(host.cap * ENC[type].startFill * (0.5 + R() * 0.7));
+      for (let k = 0; k < want * 4 && host.n < want; k++) encGrowOn(host, R, false); }
   }
-  // §menu rock clusters do NOT regrow in place, once picked/scraped clean, the cluster is gone and a new one
-  // slowly grows on a DIFFERENT intertidal rock that is currently out of view.
-  if (typeof rockObjs === "undefined") return;
-  if (clock.t >= clusterSpawnAt) {
-    clusterSpawnAt = clock.t + CLUSTER_SPAWN_DAYS * DAY_PERIOD * (0.7 + rng()*0.6);
-    spawnClusterOnBareRock();
+  _encT = 0; _encDirty = false;
+}
+// live growth + salt dissolving; runs every ENC.tick game-seconds
+function updateEncrust(gdt) {
+  // salt dissolves the moment the water returns over it, and slowly in the rain
+  const salt = encPieces.salt, rain = weather ? weather.rain : 0;
+  for (let i = salt.length - 1; i >= 0; i--) { const p = salt[i];
+    const wet = encUnderWater(p.x, p.z, p.y + 0.02), rained = rain > 0.15 && critRng() < rain * ENC.salt.rainDissolve * gdt;
+    if (wet || rained) { encRemove("salt", i); if (Math.hypot(p.x - player.x, p.z - player.z) < 25) sparkle(p.x, p.y + 0.05, p.z, [1,1,1], 2); }
+  }
+  _encT += gdt; if (_encT < ENC.tick) return; const steps = Math.min(8, Math.floor(_encT / ENC.tick)); _encT -= steps * ENC.tick;
+  const sun = dayFactor(), wind = weather ? weather.wind : 0;
+  for (let s = 0; s < steps; s++) for (const type of ["barn", "oyst", "salt"]) {
+    let tries = ENC[type].tries;
+    if (type === "salt") tries = Math.round(tries * sun * (0.5 + wind));   // more salt in sun and wind (none at night)
+    const pool = encByType[type]; if (!pool.length) continue;
+    for (let k = 0; k < tries; k++) {
+      const host = encHosts[pool[(critRng() * pool.length) | 0]];
+      if (!host || !encHostLive(host)) continue;
+      if (encGrowOn(host, critRng, true)) { _encDirty = true; _encGrown++; }
+    }
+  }
+  _encSaveT += steps * ENC.tick;
+  if (_encDirty && _encSaveT > 30) { _encSaveT = 0; _encDirty = false; saveWorld(); }   // growth persists too (throttled)
+}
+function encRemove(type, i) {
+  const list = encPieces[type], p = list[i]; const host = encHosts[p.h]; if (host) host.n = Math.max(0, host.n - 1);
+  list[i] = list[list.length - 1]; list.pop(); _encDirty = true;
+}
+// can the player pick this piece right now? (keeps the old rule: barnacles only when the tide isn't over them;
+// oysters at any depth within reach; salt only ever exists above the water)
+function encPickable(type, p) { return type !== "barn" || !encUnderWater(p.x, p.z, p.y + ENC.exposeMargin); }
+const ENC_ITEM = { barn: "barnacle", oyst: "oyster", salt: "salt" };
+const ENC_NAME = { barn: "a barnacle", oyst: "an oyster", salt: "a pinch of salt" };
+function pickEncrust(t) {
+  const p = t.obj, type = t.type || (encPieces.barn.includes(p) ? "barn" : encPieces.oyst.includes(p) ? "oyst" : "salt"), list = encPieces[type]; const i = list.indexOf(p); if (i < 0) return false;
+  if (!encPickable(type, p)) return false;
+  if (Math.hypot(p.x - player.x, p.z - player.z) > REACH + 1.6) return false;
+  const id = ENC_ITEM[type];
+  if (Inv.add(id, 1) <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return true; }
+  encRemove(type, i);
+  const first = !discovered.has("f_" + id); discovered.add("f_" + id); notify(id, 1, first);
+  if (type === "salt") Inv.autoHotbar("salt");
+  if (onDig) onDig(type === "salt" ? "pluck" : "scrape");
+  camNudge = Math.max(camNudge, 0.02);
+  spawnSand(p.x, p.y + 0.05, p.z, 3, type === "salt" ? [1,1,1] : type === "oyst" ? [0.7,0.7,0.66] : [0.92,0.9,0.84]);
+  if (typeof checkSets === "function") checkSets();
+  saveWorld(); _encDirty = false;
+  return true;
+}
+function encPrompt(t) { const p = t.obj; return encPickable(t.type, p) ? (IS_TOUCH ? "tap to pick " : "pick ") + ENC_NAME[t.type] : "under water, wait for the tide"; }
+// ray test for targeting: the pickable pieces in reach (cheap squared-distance gate first)
+function encTargets(r, consider) {
+  const R2 = (REACH + 1.5) * (REACH + 1.5), px = player.x, pz = player.z;
+  for (const type of ["barn", "oyst", "salt"]) for (const p of encPieces[type]) {
+    const dx = p.x - px, dz = p.z - pz; if (dx*dx + dz*dz > R2) continue;
+    if (!encPickable(type, p)) continue;
+    const rad = Math.max(type === "salt" ? 0.32 : 0.24, p.s * 2.4);
+    consider(p, "encrust", p.x, p.z, (w) => raySphere(r.o, r.d, p.x, p.y + p.s * 0.4, p.z, rad * Math.max(w, TARGET_FORGIVE)), type);
   }
 }
-function spawnClusterOnBareRock() {
-  const f = camForward(), px = cam.pos[0], pz = cam.pos[2];
-  const cands = [];
-  for (const o of rockObjs) {
-    if (o.gone) continue;
-    if ((o.barn && o.barn.amt > 0) || (o.oyst && o.oyst.amt > 0)) continue;   // already has a cluster
-    const rh = surfaceAt(o.x, o.z).h; if (!(rh > MAX_HIGH_TIDE - 7 && rh < MAX_HIGH_TIDE + 2.5)) continue;   // intertidal band
-    const dx = o.x-px, dz = o.z-pz, dist = Math.hypot(dx, dz) || 1;
-    const inView = dist < DRAW_R && (dx*f[0] + dz*f[2]) / dist > 0.25;        // roughly on-screen → skip (only out of view)
-    if (inView) continue;
-    cands.push({ o, rh });
+function drawEncrust(view) {
+  const R = Math.min(ENC.drawR, DRAW_R), R2 = R * R, px = cam.pos[0], pz = cam.pos[2];
+  let any = false;
+  for (const type of ["barn", "oyst", "salt"]) {
+    const list = encPieces[type]; if (!list.length) continue;
+    if (!encDyn[type]) encDyn[type] = makeDynamic(type === "barn" ? barnacleOneMesh() : type === "oyst" ? oysterOneMesh() : saltCrustMesh(), ENC[type].cap);
+    const a = _encScratch[type] || (_encScratch[type] = new Float32Array(ENC[type].cap * 10));
+    let n = 0;
+    for (const p of list) { const dx = p.x - px, dz = p.z - pz; if (dx*dx + dz*dz > R2) continue;
+      if (sphereOutside(p.x, p.y, p.z, p.s * 2 + 0.2)) continue;
+      const o = n * 10, v = 0.9 + ((p.yaw * 7.3) % 1) * 0.12;     // a little per-piece tint variation
+      a[o]=p.x; a[o+1]=p.y; a[o+2]=p.z; a[o+3]=p.s; a[o+4]=p.yaw; a[o+5]=p.lean; a[o+6]=p.ld;
+      a[o+7]=v; a[o+8]=v; a[o+9]=type === "salt" ? 1 : v*0.97; n++; }
+    if (n) { if (!any) { propUniforms(view); any = true; } encDyn[type].draw(a, n); }
   }
-  if (!cands.length) return;
-  const pick = cands[(rng()*cands.length)|0], mx = 2 + (rng()*4|0);
-  if (pick.rh < MAX_HIGH_TIDE - 0.5 && rng() < 0.3) pick.o.oyst = { amt: mx, max: mx, regrowAt: 0 };   // lower rocks may grow oysters
-  else pick.o.barn = { amt: mx, max: mx, regrowAt: 0 };
-  if (typeof attachRockCluster === "function") attachRockCluster(pick.o);   // §clust8 fix the new cluster to the rock's real surface right away
 }
-// §clust8 CLUSTER ATTACHMENT. Barnacle/oyster clusters used to sit at a GUESSED height (surfaceAt + scale*0.44),
-// which floated or sank because the real rock mesh is irregular and drawn scaled / leaned / sunk by varying amounts.
-// Now we cast a vertical ray straight DOWN onto the rock's ACTUAL triangles (transformed exactly as the prop shader
-// draws them), take the true top surface point + its normal, and sit the cluster there, sunk a touch along the normal.
-// The attach point is cached per cluster and recomputed when the rock is damaged or the world reloads.
-const CLUSTER_SINK = 0.05;        // §clust8 TUNABLE: how far the cluster sinks into the rock along its surface normal
-const CLUSTER_DRIFT_TOL = 0.06;   // §clust8 TUNABLE: a cluster more than this far (m) off its rock is "floating" (validation flags it)
-let dbgClusterHighlight = false;  // §clust8 debug: tint any floating cluster bright red
-let _barnRockMesh = null;         // the base mesh the standalone intertidal rocks are drawn with (for raycasting)
-function barnRockMesh() { return _barnRockMesh || (_barnRockMesh = rockMesh((SEED_INT^0x5b)>>>0, "rounded", [0.4,0.4,0.42])); }
+// save / load (rides on the per-seed world save bcw_<seed>)
+function encSave() {
+  const q = (v) => Math.round(v * 100) / 100, out = {};
+  for (const type of ["barn", "oyst", "salt"]) out[type] = encPieces[type].map(p => [p.h, q(p.x), q(p.y), q(p.z), q(p.s), q(p.yaw), q(p.lean), q(p.ld)]);
+  return out;
+}
+function encLoad(e) {
+  if (!e) return;
+  for (const h of encHosts) h.n = 0;
+  for (const type of ["barn", "oyst", "salt"]) {
+    encPieces[type] = (e[type] || []).filter(r => encHosts[r[0]] && encHosts[r[0]].type === type)
+      .map(r => ({ h: r[0], x: r[1], y: r[2], z: r[3], s: r[4], yaw: r[5], lean: r[6], ld: r[7] }));
+    for (const p of encPieces[type]) encHosts[p.h].n++;
+  }
+}
+function encStats() { const hc = { barn: 0, oyst: 0, salt: 0 }; for (const h of encHosts) hc[h.type]++;
+  return { barn: encPieces.barn.length, oyst: encPieces.oyst.length, salt: encPieces.salt.length, hosts: hc, grown: _encGrown }; }
+
+// §clust8 ROCK RAYCAST (kept from the old cluster attachment): cast a vertical ray straight DOWN onto a rock's
+// ACTUAL triangles, transformed exactly as the prop shader draws them (scale → lean(Rodrigues) → yaw → offset).
 // transform base vertex `pos[i..i+2]` by the prop instance transform (scale → lean(Rodrigues) → yaw → offset)
 function _rockXf(pos, i, s, cy, sy, cl, sl, ax, az, ox, oy, oz, out) {
   const px = pos[i]*s, py = pos[i+1]*s, pz = pos[i+2]*s;
@@ -7624,154 +7867,6 @@ function raycastRockDown(basePos, s, yaw, lean, ld, ox, oy, oz, qx, qz) {
   }
   return bestY === -Infinity ? null : { y: bestY, nx, ny, nz };
 }
-// §barnpatch barnacles grow in PATCHES across a rock, not one knot on the crown. Scatter a few attach
-// points over the rock's footprint, biased OUTWARD (the sloping sides / lower faces near the waterline),
-// each raycast straight down onto the real rock surface so every patch sits flush — none float. Uses a
-// per-rock local PRNG (seeded from the rock's identity) so the layout is stable and never touches the
-// world rng() stream (determinism preserved).
-const BARN_PATCHES = 4;            // §barnpatch TUNABLE max clusters scattered per rock
-const BARN_PATCH_SPREAD = 0.95;    // §barnpatch how far across the footprint patches reach (× instance scale)
-function computeClusterPatches(basePos, s, yaw, lean, ld, ox, oy, oz, seed) {
-  const R = mulberry32(seed >>> 0), out = [];
-  const crown = raycastRockDown(basePos, s, yaw, lean, ld, ox, oy, oz, ox, oz);   // rock-top, to avoid piling on the flat crown
-  const topY = crown ? crown.y : oy;
-  for (let k = 0; k < BARN_PATCHES; k++) {
-    const a = R() * 6.283, rr = (0.35 + 0.65 * R()) * BARN_PATCH_SPREAD * s;       // biased outward → the sides, lower down
-    const qx = ox + Math.cos(a) * rr, qz = oz + Math.sin(a) * rr;
-    const hit = raycastRockDown(basePos, s, yaw, lean, ld, ox, oy, oz, qx, qz);
-    if (!hit) continue;                                                            // outside the footprint
-    if (hit.ny > 0.85 && hit.y > topY - 0.14 * s) continue;                        // skip the flat top: barnacles like the sides/low faces
-    out.push({ x: qx, z: qz, y: hit.y - CLUSTER_SINK * hit.ny,
-      lean: Math.acos(Math.max(-1, Math.min(1, hit.ny))), ld: Math.atan2(hit.nz, hit.nx), sc: 0.45 + R() * 0.4 });
-  }
-  if (!out.length && crown)   // fallback: at least one patch so a barnacle rock is never bare-looking
-    out.push({ x: ox, z: oz, y: topY - CLUSTER_SINK * crown.ny,
-      lean: Math.acos(Math.max(-1, Math.min(1, crown.ny))), ld: Math.atan2(crown.nz, crown.nx), sc: 0.7 });
-  return out;
-}
-// compute & cache a rockObj cluster's attach point (its true rock-top surface + tilt), sunk slightly into the rock
-function attachRockCluster(o) {
-  const inst = o && o.t && o.t.inst;
-  if (!inst || !inst.basePos || !inst.data) { o.clAttach = null; o.clPatches = null; return; }
-  const b = o.i*10, d = inst.data;
-  const hit = raycastRockDown(inst.basePos, d[b+3], d[b+4], d[b+5], d[b+6], d[b], d[b+1], d[b+2], o.x, o.z);
-  o.clAttach = hit ? { y: hit.y - CLUSTER_SINK * hit.ny, lean: Math.acos(Math.max(-1, Math.min(1, hit.ny))), ld: Math.atan2(hit.nz, hit.nx) } : null;
-  o.clPatches = o.barn ? computeClusterPatches(inst.basePos, d[b+3], d[b+4], d[b+5], d[b+6], d[b], d[b+1], d[b+2], (Math.imul(o.i + 1, 2654435761)) >>> 0) : null;
-}
-function attachBarnacle(b) {
-  const hit = raycastRockDown(barnRockMesh().pos, b.rsc, b.yaw, 0, 0, b.x, b.g, b.z, b.x, b.z);
-  b.clAttach = hit ? { y: hit.y - CLUSTER_SINK * hit.ny, lean: Math.acos(Math.max(-1, Math.min(1, hit.ny))), ld: Math.atan2(hit.nz, hit.nx) } : null;
-  b.clPatches = computeClusterPatches(barnRockMesh().pos, b.rsc, b.yaw, 0, 0, b.x, b.g, b.z, ((Math.round(b.x * 131.1) ^ Math.round(b.z * 977.7)) >>> 0));
-}
-// recompute every cluster's attachment (after world load, or a rock being damaged / the terrain healing)
-function recomputeClusterAttach() {
-  if (typeof rockObjs !== "undefined") for (const o of rockObjs) if (!o.gone && (o.barn || o.oyst)) attachRockCluster(o);
-  if (typeof barnacles !== "undefined") for (const b of barnacles) attachBarnacle(b);
-}
-// the cluster's draw height; falls back to the old heuristic only if a raycast somehow found nothing
-function rockClusterTop(o) { if (!o.clAttach) attachRockCluster(o); return o.clAttach ? o.clAttach.y : surfaceAt(o.x, o.z).h + (o.scale || o.sc || 1) * 0.44; }
-function barnClusterTop(b) { if (!b.clAttach) attachBarnacle(b); return b.clAttach ? b.clAttach.y : barnTop(b); }
-// §clust8 validation: how many clusters sit more than the tolerance off their rock's real surface (should be 0)
-function validateClusters() {
-  let off = 0; const report = [];
-  const check = (name, qx, qz, drawY, basePos, s, yaw, lean, ld, ox, oy, oz) => {
-    const hit = raycastRockDown(basePos, s, yaw, lean, ld, ox, oy, oz, qx, qz); if (!hit) return;
-    const gap = drawY - hit.y; if (Math.abs(gap) > CLUSTER_DRIFT_TOL) { off++; if (report.length < 8) report.push(`${name} gap ${gap.toFixed(3)}`); }
-  };
-  if (typeof rockObjs !== "undefined") for (const o of rockObjs) { if (o.gone || !(o.barn || o.oyst)) continue; const inst = o.t && o.t.inst; if (!inst || !inst.basePos) continue;
-    const b = o.i*10, d = inst.data; check(o.oyst ? "oyst" : "barn", o.x, o.z, rockClusterTop(o) + CLUSTER_SINK, inst.basePos, d[b+3], d[b+4], d[b+5], d[b+6], d[b], d[b+1], d[b+2]); }
-  if (typeof barnacles !== "undefined") for (const b of barnacles) { if (b.amt <= 0) continue; check("barnacle", b.x, b.z, barnClusterTop(b) + CLUSTER_SINK, barnRockMesh().pos, b.rsc, b.yaw, 0, 0, b.x, b.g, b.z); }
-  if (off) console.warn(`[cluster validation] ${off} cluster(s) off their rock: ${report.join(", ")}`);
-  else console.log("[cluster validation] all clusters sit on their rock (0 floating)");
-  return off;
-}
-// §menu a rock cluster: pick an oyster off it (goes to the satchel), or scrape a barnacle, with ANY held item.
-// Scraping/picking is the priority action, so it never tries to mine the rock out from under the cluster.
-function scrapeCluster(o) {
-  if (o && o.oyst && o.oyst.amt > 0) return pickOyster(o);
-  return scrapeRockBarnacle(o);
-}
-function pickOyster(o) {
-  const oy = o && o.oyst; if (!oy || oy.amt <= 0) { showCard("Bare rock", "No oysters left on this one."); return; }
-  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
-  shovelSwing = 1; spendStamina(TUNE.SCRAPE_COST, true); rootPlayer(); if (onDig) onDig("scrape");
-  const added = Inv.add("oyster", 1);
-  if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
-  oy.amt--; oy.regrowAt = clock.t + BARNACLE_REGROW_DAYS*DAY_PERIOD;
-  const first = !discovered.has("f_oyster"); discovered.add("f_oyster"); notify("oyster", 1, first);
-  spawnSand(o.x, rockClusterTop(o), o.z, 4, [0.86,0.84,0.78]);
-  if (oy.amt <= 0) showCard("Picked clean", "That's the last oyster off this rock, a new cluster will grow on another rock in time.");
-}
-function scrapeRockBarnacle(o) {
-  const bn = o && o.barn; if (!bn || bn.amt <= 0) { showCard("Bare rock", "No barnacles left on this one, give them a few days to crust back over."); return; }
-  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }
-  shovelSwing = 1; spendStamina(TUNE.SCRAPE_COST, true); rootPlayer(); if (onDig) onDig("scrape");
-  const added = Inv.add("barnacle", 1);
-  if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
-  bn.amt--; bn.regrowAt = clock.t + BARNACLE_REGROW_DAYS*DAY_PERIOD;
-  const first = !discovered.has("f_barnacle"); discovered.add("f_barnacle"); notify("barnacle", 1, first);
-  spawnSand(o.x, rockClusterTop(o), o.z, 4, [0.9,0.86,0.8]);
-  if (bn.amt <= 0) showCard("Scraped clean", "Good bait. The rock's a normal rock now, mine it, or leave it for the barnacles to crust back over.");
-}
-function barnacleExposed(b) { return waterLevel < barnTop(b) + 0.35; }    // reachable when the tide isn't covering the rock
-function scrapeBarnacle(b) {
-  if (!b || b.amt <= 0) { showCard("Bare rock", "Give the barnacles a few days to grow back."); return; }
-  if (!canHeavyAction()) { if (digCommit <= 0) tooTired(); return; }   // §P2 any item scrapes them off
-  shovelSwing = 1; spendStamina(TUNE.SCRAPE_COST, true); rootPlayer(); if (onDig) onDig("scrape");
-  const added = Inv.add("barnacle", 1);
-  if (added <= 0) { showCard("Pack full", "Drop something to make room."); bagShake(); return; }
-  b.amt--; b.regrowAt = clock.t + BARNACLE_REGROW_DAYS*DAY_PERIOD;
-  const first = !discovered.has("f_barnacle"); discovered.add("f_barnacle"); notify("barnacle", 1, first);
-  spawnSand(b.x, barnTop(b), b.z, 4, [0.9,0.86,0.8]);
-  if (b.amt <= 0) showCard("Scraped clean", "Good bait. They'll crust back over in time.");
-}
-function drawBarnacles(view) {
-  if (!barnacles.length) return;
-  if (!barnacleDyn) barnacleDyn = makeDynamic(barnacleMesh(), 400);   // §barnpatch several small patches per rock
-  if (!barnacleRockDyn) barnacleRockDyn = makeDynamic(rockMesh((SEED_INT^0x5b)>>>0, "rounded", [0.4,0.4,0.42]), 64);   // dark wet intertidal rock
-  propUniforms(view);
-  const px = cam.pos[0], pz = cam.pos[2];
-  // the little rocks first
-  let nr = 0; for (const b of barnacles) { if (nr >= 64) break; const dx = b.x-px, dz = b.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    const o = nr*10; digScratch[o]=b.x; digScratch[o+1]=b.g; digScratch[o+2]=b.z; digScratch[o+3]=b.rsc; digScratch[o+4]=b.yaw; digScratch[o+5]=0; digScratch[o+6]=0;
-    digScratch[o+7]=0.78; digScratch[o+8]=0.8; digScratch[o+9]=0.84; nr++; }
-  if (nr) barnacleRockDyn.draw(digScratch, nr);
-  // then the barnacle crust on top, shrinking as it's scraped away
-  const hl = dbgClusterHighlight;   // §clust8 debug: tint each cluster green if it sits on its rock, red if it floats
-  // does a cluster drawn at `drawY` actually sit on the rock here? (used only when the highlight is on)
-  const floats = (basePos,s,yaw,lean,ld,ox,oy,oz,qx,qz,drawY) => { const h = raycastRockDown(basePos,s,yaw,lean,ld,ox,oy,oz,qx,qz); return !h || Math.abs((drawY + CLUSTER_SINK) - h.y) > CLUSTER_DRIFT_TOL; };
-  // §barnpatch each rock draws its scattered patches (clPatches), biased to the sides/lower faces, all flush.
-  const CAP = 400;
-  let n = 0; for (const b of barnacles) { if (b.amt <= 0 || n >= CAP) continue; const dx = b.x-px, dz = b.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    if (!b.clPatches) attachBarnacle(b);
-    const base = (0.55 + 0.6*(b.amt/Math.max(1,b.max))) * (0.7+b.rsc*0.3);
-    for (const p of (b.clPatches || [])) { if (n >= CAP) break; const o = n*10;
-      digScratch[o]=p.x; digScratch[o+1]=p.y; digScratch[o+2]=p.z; digScratch[o+3]=base*p.sc; digScratch[o+4]=b.yaw*1.7 + p.ld; digScratch[o+5]=p.lean; digScratch[o+6]=p.ld;   // §clust8 tilt flat onto the rock face
-      let tr=1,tg=1,tb=1; if (hl) { const bad = floats(barnRockMesh().pos,b.rsc,b.yaw,0,0,b.x,b.g,b.z,p.x,p.z,p.y); tr=bad?1:0.2; tg=bad?0.2:1; tb=0.2; }
-      digScratch[o+7]=tr; digScratch[o+8]=tg; digScratch[o+9]=tb; n++; } }
-  // §barnrock crusts on the shore rocks, same shared instance buffer
-  if (typeof rockObjs !== "undefined") for (const o of rockObjs) { const bn = o.barn; if (!bn || bn.amt <= 0 || o.gone || n >= CAP) continue;
-    const dx = o.x-px, dz = o.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    if (!o.clPatches) attachRockCluster(o);
-    const base = (0.42 + 0.45*(bn.amt/Math.max(1,bn.max))) * (0.6 + (o.scale||o.sc)*0.24);
-    for (const p of (o.clPatches || [])) { if (n >= CAP) break; const q = n*10;
-      digScratch[q]=p.x; digScratch[q+1]=p.y; digScratch[q+2]=p.z; digScratch[q+3]=base*p.sc; digScratch[q+4]=o.x*1.7 + p.ld; digScratch[q+5]=p.lean; digScratch[q+6]=p.ld;
-      let tr=1,tg=1,tb=1; if (hl) { const inst=o.t.inst, d=inst.data, bb=o.i*10, bad=floats(inst.basePos,d[bb+3],d[bb+4],d[bb+5],d[bb+6],d[bb],d[bb+1],d[bb+2],p.x,p.z,p.y); tr=bad?1:0.2; tg=bad?0.2:1; tb=0.2; }
-      digScratch[q+7]=tr; digScratch[q+8]=tg; digScratch[q+9]=tb; n++; } }
-  if (n) barnacleDyn.draw(digScratch, n);
-  // §menu oyster clusters on shore rocks, a clump of oysters that thins as they're picked
-  if (typeof rockObjs !== "undefined") {
-    if (!oysterClusterDyn) oysterClusterDyn = makeDynamic(oysterClusterMesh(), 64);
-    let no = 0; for (const o of rockObjs) { const oy = o.oyst; if (!oy || oy.amt <= 0 || o.gone || no >= 64) continue;
-      const dx = o.x-px, dz = o.z-pz; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-      const sc = (0.34 + 0.4*(oy.amt/Math.max(1,oy.max))) * (0.6 + (o.scale||o.sc)*0.2), q = no*10, at = o.clAttach, top = rockClusterTop(o);   // smaller, tighter clump so no oyster overhangs the rock's shoulders
-      digScratch[q]=o.x; digScratch[q+1]=top; digScratch[q+2]=o.z; digScratch[q+3]=sc; digScratch[q+4]=o.x*1.3; digScratch[q+5]=at?at.lean:0; digScratch[q+6]=at?at.ld:0;
-      let tr=1,tg=1,tb=1; if (hl) { const inst=o.t.inst, d=inst.data, bb=o.i*10, bad=floats(inst.basePos,d[bb+3],d[bb+4],d[bb+5],d[bb+6],d[bb],d[bb+1],d[bb+2],o.x,o.z,top); tr=bad?1:0.2; tg=bad?0.2:1; tb=0.2; }
-      digScratch[q+7]=tr; digScratch[q+8]=tg; digScratch[q+9]=tb; no++; }
-    if (no) oysterClusterDyn.draw(digScratch, no);
-  }
-}
-let oysterClusterDyn = null;   // §clust8 the real oysterClusterMesh() lives further down (grey elongated-shell clump); the old duplicate here was dead code and is removed
 
 // §1c crab lifecycle logging (toggle with K in debug mode) + a stable id per creature
 let _critId = 0, crabLog = false;
@@ -7807,7 +7902,8 @@ let UPDATE_R = BASE_UPDATE_R, DRAW_R = BASE_DRAW_R;
  * for shore critters. Out of sight, any below-target zone is topped up a little
  * at a time, NEVER past target, so the beach stays alive without ever
  * overcrowding. Finds lean on the ebb (more washes up as the tide goes out).
- * Kelp, tall grass, barnacles and foliage keep their own in-place regrow timers;
+ * Kelp, tall grass and foliage keep their own in-place regrow timers (barnacles,
+ * oysters and salt grow as tide encrustations, @section WORLD/encrust);
  * fish and far-from-shore sea life keep the census top-up above. This const is
  * the single config for all of the beach restocking. */
 // @system WORLD  @section WORLD/eco
@@ -7824,13 +7920,12 @@ const ECO = {
     mudflat: { finds: 5, crit: 2 },
     marsh:   { finds: 4, crit: 2 },
   },
-  salt: { cap: 3, interval: 12, chanceOnEbb: 0.3, dissolveMin: 70, dissolveMax: 150 },   // §living sea-salt crystals: at most `cap` on the ground; every `interval`s on a falling tide, `chanceOnEbb` to leave one just above the waterline; each dissolves after dissolveMin..Max seconds
 };
 const ECO_CRIT = { crab: 1, hopper: 1 };   // the shore critters the zone restock owns (kept off the census top-up)
 const ECO_FIND_BIOME = {   // loose finds the zone restock may wash up, per biome (driftwood & stones lean to the tideline)
   sandy:   ["shell","seaglass","sanddollar","driftwood","cockle","scallop"],
-  cobble:  ["seaglass","stone","driftwood","shell","barnacle"],
-  reef:    ["mussel","limpet","seaglass","shell","barnacle"],
+  cobble:  ["seaglass","stone","driftwood","shell"],
+  reef:    ["mussel","limpet","seaglass","shell"],
   mudflat: ["clam","cockle","wormcast","driftwood"],
   marsh:   ["pickleweed","cockle","shell","driftwood"],
 };
@@ -11704,7 +11799,7 @@ function tooTired() {
 let cantDigT = 0, lastCantDigShown = -99;
 function cantDig() { if (clock.t - lastCantDigShown > 1.4) { lastCantDigShown = clock.t; cantDigT = 1.1; } }
 const WORK_LOCK_TIME = 1.5;
-const WORK_KINDS = { chest: 1, heaveboulder: 1, searock: 1 };   // multi-strike targets
+const WORK_KINDS = { chest: 1, heaveboulder: 1 };   // multi-strike targets
 function workLockActive() { return !!(workLock && clock.t < workLock.until && workLock.obj && !workLock.obj.gone); }
 function setWorkLock(t) { if (!t || !WORK_KINDS[t.kind]) return; workLock = { obj: t.obj, kind: t.kind, tool: selectedTool(), until: clock.t + WORK_LOCK_TIME }; lastEntityHitT = clock.t; }
 function workLockReach() { const o = workLock.obj; return Math.hypot(o.x - player.x, o.z - player.z) <= REACH + 2; }
@@ -11719,7 +11814,7 @@ digItem("stone", "Stone", "material", "common", "A small, hand-sized beach stone
 digItem("coconut", "Coconut", "consumable", "common", "A heavy nut fallen from a palm. Crack it open for the sweet flesh inside.", () => coconutMesh(), [0.5,0.38,0.26]);
 digItem("pinecone", "Pine Cone", "find", "common", "A woody cone dropped from a pine, its scales spread to let the seeds go.", () => coneMesh2(), [0.44,0.32,0.2]);
 digItem("nut", "Nut", "find", "common", "A glossy nut in its cup, dropped from a broadleaf tree.", () => nutMesh(), [0.5,0.36,0.22]);
-digItem("salt", "Sea Salt", "consumable", "uncommon", "Coarse crystals. Hold it to coax wild goats.", () => saltMesh(), [0.93,0.95,0.97]);
+digItem("salt", "Sea Salt", "consumable", "uncommon", "A pinch of salt from a crust the tide left drying in a hollow. Good for seasoning.", () => saltMesh(), [0.93,0.95,0.97]);
 // dug finds (collected from holes)
 function digItem(id, name, cat, rar, desc, meshFn, tint) { ITEMS[id] = { id, name, category: cat, rarity: rar, stackable: cat !== "relic", maxStack: cat === "relic" ? 1 : 99, desc, model: meshFn, tint: tint || [1,1,1] }; }
 digItem("clam", "Clam", "find", "common", "A plump clam, still closed.", () => clamMesh(), [0.85,0.8,0.72]);
@@ -11900,13 +11995,12 @@ function invDrop(idx, one) {
 /* ---- localStorage (keyed by seed; game still works without it) ---- */
 // §strip save format version. Bumped when the strip-down broke old saves; a stored save whose v
 // does not match is discarded on load so the game starts fresh (no backward-compat / migration).
-const SAVE_VERSION = 5;   // v5: the shovel became the Plastic Beach Spade (item id "spade"). v4: survival tools / chopping / mining / planting cut. Older saves are discarded per seed on load (no migration).
+const SAVE_VERSION = 6;   // v6: tide encrustations (bcw_<seed>.enc) replace barnacle rocks / oyster beds / salt spots. v5: the shovel became the Plastic Beach Spade (item id "spade"). v4: survival tools / chopping / mining / planting cut. Older saves are discarded per seed on load (no migration).
 function purgeSeedSaves() { for (const suf of ["bc_","bcw_","bcd_","bcs_","bcc_","bcg_","bcsets_"]) { try { localStorage.removeItem(suf + SEED_STR); } catch (e) {} } }
 function saveState() {
   try { localStorage.setItem("bc_" + SEED_STR, JSON.stringify({ v: SAVE_VERSION, main: Inv.main, hotbar: Inv.hotbar, sel: Inv.selected, disc: [...discovered], rescued: starsRescued, hunger, cleanup: beachCleanup, variants: variantsSeen,
     junseen: [...jUnseen],   // §UI journal entries not yet viewed (red !)
-    heaves: heaveBoulders.map((b,i)=>b.flipped?[i,+b.refillAt.toFixed(2),+b.flippedAt.toFixed(2)]:0).filter(e=>e),  // §21D heaved boulders (index, refillAt, flippedAt)
-    oysters: oysterBeds.map(b=>[b.n, +b.refillAt.toFixed(2)])  // §23 oyster-bed stock
+    heaves: heaveBoulders.map((b,i)=>b.flipped?[i,+b.refillAt.toFixed(2),+b.flippedAt.toFixed(2)]:0).filter(e=>e)  // §21D heaved boulders (index, refillAt, flippedAt)
     })); } catch (e) {}   // §P2 each bucket's water + creatures ride on its own Inv slot's .bk, saved with main/hotbar above
 }
 function loadState() {
@@ -11921,7 +12015,6 @@ function loadState() {
       if (typeof s.cleanup === "number") beachCleanup = s.cleanup;   // §5 beach-cleanup tally
       if (s.variants && typeof s.variants === "object") variantsSeen = s.variants;   // §22 variant sightings per species
       if (Array.isArray(s.heaves)) _savedHeave = s.heaves;   // §21D heaved boulders (applied in seedHeaveBoulders)
-      if (Array.isArray(s.oysters)) _savedOysters = s.oysters;   // §23 oyster-bed stock (applied in seedOysterBeds)
       if (typeof s.hunger === "number") hunger = s.hunger;
     }
   } catch (e) {}
@@ -12442,7 +12535,7 @@ function syncDebugPanel() {
     <label>Time of day <input id="dbgTime" type="range" min="0" max="1" step="0.01" value="${timeOfDay.toFixed(2)}"></label>
     <label>Heal rate ×${healMul.toFixed(1)} <input id="dbgHeal" type="range" min="0.2" max="6" step="0.1" value="${healMul}"></label>
     <div class="dbgrow"><button id="dbgFly">${mode === "free" ? "Walk" : "Fly"}</button><button id="dbgSpawn">Return to spawn</button></div>
-    <div class="dbgrow"><button id="dbgClusters">Cluster check: ${dbgClusterHighlight ? "ON (red=floating)" : "off"}</button></div>
+    <div class="dbgrow"><button id="dbgEncGrow">Encrust: grow 1 day</button><span class="jhint" style="margin-left:6px">${(() => { const e = encStats(); return "barn " + e.barn + " · oyst " + e.oyst + " · salt " + e.salt; })()}</span></div>
     <div class="dbgrow"><button id="dbgCreat">${forceSpawn ? "Hide all" : "Spawn all"}</button><button id="dbgPerf">${debugOn ? "Hide FPS" : "Show FPS"}</button></div>
     <div class="dbgrow"><button id="dbgBounds">${showBounds ? "Hide hitboxes" : "Show hitboxes"}</button><button id="dbgAudit">Run audit</button></div>
     <div class="dbgrow"><button id="dbgHints">${hintsOn ? "Hints: on" : "Hints: off"}</button><button id="dbgResetHints">Reset hints</button></div>
@@ -12505,7 +12598,7 @@ function syncDebugPanel() {
       <input class="dbgtune" data-k="${t.k}" type="range" min="${t.min}" max="${t.max}" step="${t.step}" value="${DBG_GET(t.k)}"></label>`).join("")}
     <div class="jhint">full ring ≈ ${Math.round(1/TUNE.DIG_COST)} sand digs · ${Math.round(1/TUNE.DIRT_COST)} grass/dirt · Ctrl+Shift+D</div>`;
   p.querySelector("#dbgPause").onclick = () => { clock.paused = !clock.paused; syncDebugPanel(); };
-  { const cb = p.querySelector("#dbgClusters"); if (cb) cb.onclick = () => { dbgClusterHighlight = !dbgClusterHighlight; if (typeof validateClusters === "function") validateClusters(); syncDebugPanel(); }; }   // §clust8 highlight + log floating clusters
+  { const eg = p.querySelector("#dbgEncGrow"); if (eg) eg.onclick = () => { for (let k = 0; k < DAY_PERIOD / ENC.tick; k++) updateEncrust(ENC.tick); syncDebugPanel(); }; }   // §5 fast-forward a day of encrustation growth
   p.querySelectorAll(".dbgspd").forEach((b) => b.onclick = () => { clock.speed = +b.dataset.s; clock.paused = false; syncDebugPanel(); });
   p.querySelector("#dbgTime").oninput = (e) => { timeOfDay = +e.target.value; updateSun(); };
   p.querySelector("#dbgHeal").oninput = (e) => { healMul = +e.target.value; };
@@ -12556,7 +12649,7 @@ function syncDebugPanel() {
 // Live-tunable spade/stamina values exposed in the debug panel (§4).
 const TUNABLES = [
   { k: "DIG_COST", min: 0.04, max: 0.6, step: 0.01 }, { k: "DIRT_COST", min: 0.1, max: 0.8, step: 0.01 },
-  { k: "GRAVEL_COST", min: 0.08, max: 0.7, step: 0.01 }, { k: "SCRAPE_COST", min: 0.02, max: 0.4, step: 0.01 },
+  { k: "GRAVEL_COST", min: 0.08, max: 0.7, step: 0.01 },
   { k: "SIFT_COST", min: 0.02, max: 0.15, step: 0.005 },
   { k: "DIG_WATER_MAX", min: 0.0, max: 1.5, step: 0.05 },
   { k: "COMMIT_TIME", min: 0.1, max: 1.0, step: 0.05 }, { k: "EXHAUST_RECOVER", min: 0.1, max: 0.8, step: 0.02 },
@@ -12720,7 +12813,7 @@ function terrainBlocks(r, t) { if (t < 2) return false; for (const f of [0.35, 0
 function entityRadius(e) { return Math.max(0.6, (e.scale||0.5)*0.75); }
 function entityCY(e) { return e.kind === "find" ? 0.25 : (e.scale||0.5)*0.4 + 0.15; }
 // The one interaction target under a ray: rendered-only, within reach, in line of sight.
-// Small things (finds, salt) use spheres; trees and crusted rocks use
+// Small things (finds, encrustations) use spheres; trees use
 // generous fat volumes so you don't have to aim precisely. `sticky` is last frame's target:
 // once locked, it is kept while the crosshair stays within a wider cone (less flicker).
 const STICK_WIDEN = 1.4, STICK_REACH = REACH + 1.0, STICK_MARGIN = 1.2;
@@ -12729,11 +12822,11 @@ function targetAlongRay(r, sticky) {
   if (!r) return null;
   let best = null, bestT = REACH + 0.4, stick = null, stickT = 1e9;
   // `tf(widen)` → ray-t using the hit volume scaled by `widen`; consider() keeps best + sticky.
-  const consider = (obj, kind, cx, cz, tf) => {
+  const consider = (obj, kind, cx, cz, tf, type) => {   // `type` = optional sub-type (encrust pieces: barn / oyst / salt)
     const t = tf(1);
-    if (t >= 0 && t <= REACH && t < bestT && !terrainBlocks(r, t)) { bestT = t; best = { kind, obj, x: cx, z: cz }; }
+    if (t >= 0 && t <= REACH && t < bestT && !terrainBlocks(r, t)) { bestT = t; best = { kind, obj, x: cx, z: cz, type }; }
     if (sticky && sticky.obj === obj) { const ts = tf(STICK_WIDEN);
-      if (ts >= 0 && ts <= STICK_REACH && !terrainBlocks(r, ts)) { stick = { kind, obj, x: cx, z: cz }; stickT = ts; } }
+      if (ts >= 0 && ts <= STICK_REACH && !terrainBlocks(r, ts)) { stick = { kind, obj, x: cx, z: cz, type }; stickT = ts; } }
   };
   // §13.2 a forgiving cone: entities read a little wider than their exact shape so near-misses still grab them (never dig by mistake)
   const sphere = (obj, kind, cx, cz, cyOff, rad) => { const gy = surfaceAt(cx, cz).h;
@@ -12745,18 +12838,13 @@ function targetAlongRay(r, sticky) {
     // §water5 underwater finds/critters (oysters, clams, cockles…) get a much more generous hit volume so they're easy to grab through the water
     const uw = waterDepthAt(e.x, e.z) > 0.2, rad = entityRadius(e) * (uw ? 1.9 : 1);
     sphere(e, e.kind, e.x, e.z, entityCY(e), rad); }
-  for (const s of saltSpots) sphere(s, "salt", s.x, s.z, 0.2, 0.75);
+  encTargets(r, consider);   // §5 tide encrustations: single barnacles / oysters / pinches of salt
   for (const f of flotsam) { const wy = waterSurfaceAt(f.x, f.z);   // §5 floating debris sits at the water surface, not the seabed
     consider(f, "flotsam", f.x, f.z, (w) => raySphere(r.o, r.d, f.x, wy + 0.1, f.z, FLOTSAM_R*Math.max(w, TARGET_FORGIVE))); }
-  for (const bc of barnacles) if (bc.amt > 0 && barnacleExposed(bc))   // §5 barnacle crusts on exposed intertidal rock
-    consider(bc, "barnacle", bc.x, bc.z, (w) => raySphere(r.o, r.d, bc.x, barnClusterTop(bc) + 0.12, bc.z, (0.4 + bc.rsc*0.4)*Math.max(w, TARGET_FORGIVE)));
   // §tools big objects read generously, any part of the trunk OR the crown within reach grabs the whole tree
   for (const o of treeObjs) { if (o.gone) continue; const gy = surfaceAt(o.x, o.z).h;   // §shake any part of the trunk OR the crown within reach grabs the tree
     capsule(o, "tree", o.x, o.z, o.x, gy-0.3, o.z, o.x, gy+o.scale*1.05, o.z, 1.0 + o.scale*0.07);   // tall, fat trunk capsule (full height)
     sphere(o, "tree", o.x, o.z, o.scale*0.92, o.scale*0.5); }                            // + a generous crown sphere up top
-  for (const o of rockObjs) { if (o.gone || !((o.barn && o.barn.amt > 0) || (o.oyst && o.oyst.amt > 0))) continue;   // rocks are scenery; only a crusted shore rock is workable
-    const gy = surfaceAt(o.x, o.z).h + (o.yOff||0);
-    capsule(o, "searock", o.x, o.z, o.x, gy-0.1, o.z, o.x, gy+o.sc*0.55, o.z, 0.6 + o.sc*0.5); }
   for (const bsh of berryBushes) { const gy = surfaceAt(bsh.x, bsh.z).h; sphere(bsh, "bush", bsh.x, bsh.z, 0.6*bsh.scale, 1.1*bsh.scale); }
   if (typeof tallGrass !== "undefined") for (const g of tallGrass) if (!g.cut) sphere(g, "tallgrass", g.x, g.z, 0.4*g.scale, 0.7*g.scale);   // §veg5 strip tall grass for fibre
   if (typeof plants !== "undefined") for (const pl of plants) if (!pl.cut) sphere(pl, "plant", pl.x, pl.z, 0.35*pl.scale, 0.55*pl.scale);   // §P3 pick flowers / ferns
@@ -12768,7 +12856,6 @@ function targetAlongRay(r, sticky) {
       capsule(k, "kelp", k.x, k.z, k.x, k.h, k.z, k.x, top, k.z, 0.5 + k.sc*0.18); } }
   for (const s of weakStones) if (!s.picked) sphere(s, "weakstone", s.x, s.z, 0.4*s.sc, 0.55 + s.sc*0.4);   // §stonepick pick up a dome stone with any item (picked ones aren't targetable)
   // §heave-removed: heave boulders are no longer targetable
-  if (typeof oysterBeds !== "undefined") for (const b of oysterBeds) sphere(b, "oysterbed", b.x, b.z, 0.5*b.sc, 0.75);   // §water oyster beds are workable at any depth within reach (no longer only when bared)
   for (const d of driftObjs) { if (d.gone || d.big) continue; const gy = surfaceAt(d.x, d.z).h, L = 0.5*d.scale, ax = Math.cos(d.yaw)*L, az = -Math.sin(d.yaw)*L;   // §13.1 lying log capsule
     capsule(d, "driftwood", d.x, d.z, d.x-ax, gy+0.15, d.z-az, d.x+ax, gy+0.15, d.z+az, 0.2 + d.scale*0.06); }
   for (let i = 0; i < storageBoxes.length; i++) sphere(storageBoxes[i], "storagebox", storageBoxes[i].x, storageBoxes[i].z, 0.3, 0.8);   // §strip only free-standing storage boxes remain (cottage removed)
@@ -12789,9 +12876,9 @@ let curTarget = null;    // recomputed each frame from the crosshair (desktop)
 // something (so a click can fall through to a ground tool-use otherwise).
 // §A3 target kinds that ANY held item can act on (harvest a plant, hit a creature, pick a find, open a thing).
 // heaveboulder is the only tool-gated kind left (and it is inert).
-const SOFT_INTERACT = new Set(["creature","find","weakstone","oysterbed","bush","tree","tallgrass","plant","kelp","salt",
-  "flotsam","barnacle","nest","driftwood","storagebox",
-  "lantern","crate","barrel","searock"]);
+const SOFT_INTERACT = new Set(["creature","find","weakstone","bush","tree","tallgrass","plant","kelp","encrust",
+  "flotsam","nest","driftwood","storagebox",
+  "lantern","crate","barrel"]);
 function softTargetUnderCrosshair() { const t = effectiveTarget(); return (t && SOFT_INTERACT.has(t.kind)) ? t : null; }
 function useToolOnTarget(t) {
   if (!t) return false;
@@ -12800,14 +12887,12 @@ function useToolOnTarget(t) {
     case "find": interactWith(t.obj); return true;
     case "weakstone": pickStone(t.obj); return true;   // §stonepick pick the dome stone up into the pack
     case "heaveboulder": return heaveBoulderAction(t.obj);   // §21D lever a heavy boulder over (shovel)
-    case "oysterbed": return oysterBedAction(t.obj);   // §23 pick an oyster off the cluster at low tide
     case "bush": harvestBush(t.obj); return true;
     case "tallgrass": harvestTallGrass(t.obj); return true;   // §veg5 strip for Plant Fiber
     case "plant": harvestPlant(t.obj); return true;           // §P3 pick a flower or fern
     case "kelp": harvestKelp(t.obj); return true;             // §P3 pick standing bull kelp (above or below water)
-    case "salt": harvestSaltAt(t.obj.x, t.obj.z); return true;
+    case "encrust": return pickEncrust(t);                    // §5 pick ONE barnacle / oyster / pinch of salt
     case "flotsam": collectFlotsam(t.obj); return true;   // §5 scoop floating debris straight from the water
-    case "barnacle": scrapeBarnacle(t.obj); return true;   // §5 scrape for bait (any held item)
     case "driftwood": return breakDriftwood(t.obj);
     case "storagebox": openStash(storageBoxes.indexOf(t.obj)); return true;
     case "lantern": pickUpLantern(t.obj); return true;
@@ -12815,8 +12900,6 @@ function useToolOnTarget(t) {
     case "worm": pickWorm(t.obj); return true;
     case "bigshell": pickBigShell(t.obj); return true;   // §shells pick up a conch / whelk (a lived-in one only pulls in)       // §earthworms a live worm → one Earthworm item   // a sea urchin off the seabed, into the satchel   // §tools pick a set-down lantern back up
     case "tree": return shakeTree(t.obj);                         // §shake rustle a tree for a chance at its fruit
-    case "searock":   // §menu a shore rock with an oyster/barnacle cluster, scraping/picking takes priority over mining (any item)
-      scrapeCluster(t.obj); return true;
   }
   return false;
 }
@@ -12936,7 +13019,6 @@ let stamina = STAMINA_MAX, resting = false, exhausted = false, digCommit = 0;
 const TUNE = {
   // §P3 dig stamina costs, ~40% lighter than before (were 0.2/0.4/0.3/0.06).
   DIG_COST: 0.12, DIRT_COST: 0.24, GRAVEL_COST: 0.18, SIFT_COST: 0.036,
-  SCRAPE_COST: 0.12,                // stamina per scrape/pick off a barnacle or oyster cluster
   DIG_WATER_MAX: 0.5,               // §water dig (reshape) in water up to this depth (m), like wet sand; deeper water sifts instead
   SPRINT_DRAIN: 0.08, SCRAMBLE_DRAIN: 0.13, REGEN_ACTIVE: 0.05, REGEN_IDLE: 0.11, REGEN_REST: 0.26,
   EXHAUST_RECOVER: 0.33, COMMIT_TIME: 0.5,
@@ -14187,16 +14269,8 @@ function initWorldObjs() {
     } else if (c.kind === "rock") {
       const rt = rockStyleTypes[c.styleIdx || 0] || rockType;   // §13.7 which boulder-style buffer this rock lives in
       const o = c.ii*10, d = rt.inst.data;
-      // §barnrock any rock down in the splash/intertidal zone crusts over with barnacles (derived per-rock so it never shifts the world-gen rng)
-      const rh = surfaceAt(c.x, c.z).h; let barn = null, oyst = null;
-      if (rh > MAX_HIGH_TIDE - 7 && rh < MAX_HIGH_TIDE + 2.5) {
-        const rb = mulberry32((((c.x*131.1)|0) ^ ((c.z*917.7)|0) ^ (SEED_INT*7)) >>> 0);
-        const roll = rb();
-        if (roll < 0.28) { const mx = 2 + (rb()*4|0); oyst = { amt: mx, max: mx, regrowAt: 0 }; }   // §menu ~28% of shore rocks grow an oyster cluster
-        else if (roll < 0.9) { const mx = 2 + (rb()*4|0); barn = { amt: mx, max: mx, regrowAt: 0 }; }                           // the rest crust over with barnacles
-      }
       rockObjs.push({ t: rt, i: c.ii, x: c.x, z: c.z, sc: c.sc, scale: d[o+3],
-        baseTint: [d[o+7], d[o+8], d[o+9]], gone: false, coll: c, barn, oyst });
+        baseTint: [d[o+7], d[o+8], d[o+9]], gone: false, coll: c });
     }
   }
   rockDyn = rockDyn || makeDynamic(rockMesh((SEED_INT^0x51)>>>0, "rounded", [0.54,0.52,0.48]), 200);   // §13.7 richer dynamic rocks
@@ -14538,124 +14612,6 @@ function heaveBoulderAction(b) {
 function heaveBoulderPrompt(b) { const has = selectedTool()==="spade"; return b.flipped ? "levered aside" : (has ? (IS_TOUCH?"hold to heave it over":"heave it over") : "needs a lever to lever"); }
 
 /* ===================================================================== *
- * § 23  OYSTERS, craggy oyster beds on the intertidal flats, bared at low
- *   tide. Pick oysters straight off a cluster into the satchel, like
- *   barnacles. A picked-clean bed seeds again in a day or two.
- * ===================================================================== */
-// @system GAMEPLAY  @section GAMEPLAY/oysters
-const OYSTER_BED_N = 10;                          // oyster beds per island (tunable)
-const OYSTER_PER_BED_MIN = 3, OYSTER_PER_BED_MAX = 6;   // live oysters a bed holds
-const OYSTER_REFILL_DAYS = 2.5;                   // days for a picked-clean bed to seed again
-                        // water depth below which a bed is bared & workable
-let oysterBeds = [], oysterBedDyn = null, _savedOysters = null;
-const oysterScratch = new Float32Array(OYSTER_BED_N * 10);
-// §clust8 OYSTERS: a clump of rough GREY ELONGATED shells, overlapping at angles (clearly not the small white barnacle cones).
-function oysterClusterMesh() {
-  const m = Mesh(); mergeMesh(m, discMesh(-0.02, 0.4, 8, 0.02, [0.34,0.33,0.3]));   // a dark muddy base they cement onto
-  const grey=[0.56,0.56,0.52], grey2=[0.68,0.67,0.61], greyD=[0.45,0.45,0.42];
-  // one long, rough shell: a low dome stretched along z, with a raised back ridge so it reads craggy
-  const shell = (col, top) => { const d = Mesh();
-    mergeMesh(d, discMesh(0, 0.15, 6, 0.07, col));
-    mergeMesh(d, discMesh(0.05, 0.11, 6, 0.05, top));
-    mergeMesh(d, discMesh(0.09, 0.06, 5, 0.04, greyD));           // a rougher crag near the hinge
-    for (let i=0;i<d.pos.length;i+=3) d.pos[i+2] *= 2.2;           // stretch along z → elongated oyster shell
-    return d; };
-  const shells = [[0,0,1.15,0.0],[0.2,0.07,1.0,0.8],[-0.17,0.12,0.95,-0.7],[0.09,-0.2,0.88,2.3],[-0.12,-0.16,0.82,1.4],[0.04,0.17,0.72,-1.9]];
-  for (const [ox,oz,r,rot] of shells) {
-    const d = shell(r>0.9?grey2:grey, grey2);
-    const c=Math.cos(rot), s=Math.sin(rot);
-    for (let i=0;i<d.pos.length;i+=3){ const px=d.pos[i]*r, py=d.pos[i+1]*r, pz=d.pos[i+2]*r; d.pos[i]=px*c+pz*s; d.pos[i+1]=py; d.pos[i+2]=-px*s+pz*c; }   // scale + yaw each shell
-    mergeAt(m, d, ox, 0.015, oz);
-  }
-  return m;
-}
-// §P3 one rough oyster clump, its shell count / sizes / angles varied by the passed rng R.
-function oysterClumpMesh(R) {
-  const m = Mesh();
-  const grey=[0.5+R()*0.12, 0.49+R()*0.12, 0.45+R()*0.1], grey2=[0.64+R()*0.09,0.62+R()*0.09,0.56+R()*0.08], greyD=[0.42,0.42,0.4];
-  const shell = (col, top) => { const d = Mesh();
-    mergeMesh(d, discMesh(0, 0.15, 6, 0.07, col));
-    mergeMesh(d, discMesh(0.05, 0.11, 6, 0.05, top));
-    mergeMesh(d, discMesh(0.09, 0.06, 5, 0.04, greyD));
-    for (let i=0;i<d.pos.length;i+=3) d.pos[i+2] *= 2.2;   // elongated oyster shell
-    return d; };
-  const nsh = 2 + (R()*3|0);   // §oystscatter fewer shells per clump (more, smaller clumps spread around the rock reads better than one big pile)
-  for (let s=0;s<nsh;s++){ const r=0.7+R()*0.55, rot=R()*6.283, ox=(R()-0.5)*0.5, oz=(R()-0.5)*0.5;
-    const d = shell(r>1.0?grey2:grey, grey2), c=Math.cos(rot), si=Math.sin(rot);
-    for (let i=0;i<d.pos.length;i+=3){ const px=d.pos[i]*r, py=d.pos[i+1]*r, pz=d.pos[i+2]*r; d.pos[i]=px*c+pz*si; d.pos[i+1]=py; d.pos[i+2]=-px*si+pz*c; }
-    mergeAt(m, d, ox, 0.02+R()*0.05, oz);
-  }
-  return m;
-}
-// §P3 a whole oyster rock: a varied base rock (shape/size/colour) with a varied number of oyster
-// clumps perched on it at varied spots/sizes. Seeded off the bed's position so every one differs
-// (and the global rng stream is untouched, keeping generation deterministic).
-function oysterRockMesh(seed, nClusters) {
-  const R = mulberry32(seed >>> 0), m = Mesh();
-  const style = ["rounded","jagged","slab",""][R()*4|0];
-  const rockCol = [0.36+R()*0.22, 0.35+R()*0.2, 0.33+R()*0.18];
-  const rock = rockMesh((seed^0x9e3779b1)>>>0, style, rockCol);
-  const sx=0.8+R()*0.7, syk=0.5+R()*0.55, sz=0.8+R()*0.7;
-  for (let i=0;i<rock.pos.length;i+=3){ rock.pos[i]*=sx; rock.pos[i+1]*=syk; rock.pos[i+2]*=sz; }
-  mergeMesh(m, rock);
-  // §oystscatter the clumps crust the whole upper rock (sides + crown), not one knot on top: each sits at a
-  // random spot over the rock's dome and is tilted to cling to the surface, like real oysters on a tidal rock.
-  for (let c=0;c<nClusters;c++){
-    const cl = oysterClumpMesh(R), cs=0.42+R()*0.5;
-    for (let i=0;i<cl.pos.length;i+=3){ cl.pos[i]*=cs; cl.pos[i+1]*=cs; cl.pos[i+2]*=cs; }
-    const ang=R()*6.283, el=(0.12+R()*0.8)*(Math.PI/2), ce=Math.cos(el), se=Math.sin(el);   // el: 0 = low on the side, pi/2 = crown
-    kvAimY(cl, Math.cos(ang)*ce, se+0.35, Math.sin(ang)*ce);                                  // tilt the clump's up-axis to the dome normal here (up-biased so shells face skyward)
-    const px=Math.cos(ang)*sx*0.84*ce, pz=Math.sin(ang)*sz*0.84*ce, py=syk*0.58*se;
-    mergeAt(m, cl, px, Math.max(0.03, py), pz);
-  }
-  return m;
-}
-function oysterRockSeed(x, z) { return ((SEED_INT ^ ((Math.floor(x*131.1)&0xffff)) ^ ((Math.floor(z*97.3)&0xffff)<<8)) >>> 0); }
-function seedOysterBeds() {
-  oysterBeds = []; const loW = TIDE_MID - TIDE_RANGE*0.45, hiBand = TIDE_MID + TIDE_RANGE*0.18;
-  for (let k=0; k<4000 && oysterBeds.length<OYSTER_BED_N; k++) {
-    const a = rng()*6.283, r = HALF*(0.08+rng()*0.9), x = Math.sin(a)*r, z = -Math.cos(a)*r, surf = surfaceAt(x, z), h = surf.h;
-    if (surf.slope > 0.32) continue;
-    if (h < loW-0.2 || h > hiBand) continue;                            // intertidal: bared at low, covered at high
-    if (typeof insideCottage === "function" && insideCottage(x, z)) continue;
-    if (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, 0.8)) continue;
-    let near = false; for (const b of oysterBeds) if (Math.hypot(b.x-x, b.z-z) < 10) { near = true; break; } if (near) continue;
-    const rseed = oysterRockSeed(x, z), nClusters = 4 + (mulberry32((rseed^0x55)>>>0)()*4|0);   // §oystscatter 4-7 clumps spread around the rock (per-bed sub-stream, no global rng → deterministic)
-    oysterBeds.push({ x, z, yaw: rng()*6.283, sc: 0.9+rng()*0.4, n: OYSTER_PER_BED_MIN + (rng()*(OYSTER_PER_BED_MAX-OYSTER_PER_BED_MIN+1)|0), refillAt: 0, pickedAt: -99, rseed, nClusters });
-  }
-  if (_savedOysters) for (let i=0; i<oysterBeds.length && i<_savedOysters.length; i++) { const e = _savedOysters[i]; if (e) { oysterBeds[i].n = e[0]; oysterBeds[i].refillAt = e[1]; } }
-}
-function updateOysterBeds() {
-  for (const b of oysterBeds) if (b.n <= 0 && b.refillAt > 0 && tideDay >= b.refillAt) { b.n = OYSTER_PER_BED_MIN + (rng()*(OYSTER_PER_BED_MAX-OYSTER_PER_BED_MIN+1)|0); b.refillAt = 0; }
-}
-function drawOysterBeds(view) {
-  if (!oysterBeds.length) return;
-  propUniforms(view);   // §P3 each bed is its own rock+clusters mesh (varied), so draw them one at a time
-  for (const b of oysterBeds) {
-    const dx = b.x-cam.pos[0], dz = b.z-cam.pos[2]; if (dx*dx+dz*dz > DRAW_R*DRAW_R) continue;
-    if (!b.dyn) b.dyn = makeDynamic(oysterRockMesh(b.rseed, b.nClusters), 1);   // built once per bed, lazily
-    const gy = surfaceAt(b.x, b.z).h, dim = b.n <= 0 ? 0.62 : 1;
-    oysterScratch[0]=b.x;oysterScratch[1]=gy;oysterScratch[2]=b.z;oysterScratch[3]=b.sc;oysterScratch[4]=b.yaw;oysterScratch[5]=0;oysterScratch[6]=0;
-    oysterScratch[7]=dim;oysterScratch[8]=dim;oysterScratch[9]=dim;
-    b.dyn.draw(oysterScratch, 1);
-  }
-}
-function oysterBedPrompt(b) { return b.n <= 0 ? "picked clean, give it a day or two" : (IS_TOUCH ? "tap to pick an oyster" : "pick an oyster"); }   // §water workable underwater too
-function oysterBedAction(b) {   // §strip oysters now pick straight off the cluster into the satchel, like barnacles (no shucking, no pearls)
-  if (b.n <= 0) { showCard("Picked clean", "You've worked this bed recently. Give it a day or two to seed again."); return true; }
-  const added = Inv.add("oyster", 1);
-  if (!added) { showCard("Satchel full", "No room for another oyster."); return true; }
-  b.n = Math.max(0, b.n - 1); b.pickedAt = tideDay; if (b.n <= 0) b.refillAt = tideDay + OYSTER_REFILL_DAYS;
-  if (onDig) onDig("scrape");
-  if (typeof sparkle === "function") sparkle(b.x, surfaceAt(b.x, b.z).h+0.2, b.z, [0.8,0.8,0.75], 4);
-  const firstO = !discovered.has("f_oyster"); discovered.add("f_oyster"); if (typeof notify === "function") notify("oyster", 1, firstO);
-  if (b.n <= 0) showCard("Picked clean", "That's the last oyster off this bed, it'll seed again in a day or two.");
-  if (typeof checkSets === "function") checkSets();
-  saveState();
-  return true;
-}
-
-/* ===================================================================== *
  * § 40  RARE NATURAL FINDS, the heart-quickening things: a left-handed
  *   whelk, red or end-of-day sea glass, an old marble, fossil teeth, a hag
  *   stone. Rare finds are also what hides under stones and boulders (the
@@ -14804,6 +14760,7 @@ function saveWorld() {
     digcells: (() => { const out = []; for (const c of digCells.values()) if (c.depleted) out.push([c.cx, c.cz, Math.max(0, +(c.refillAt - clock.t).toFixed(0))]); return out; })(),  // §urgent3 spent dig-cells + seconds left to refill
     shelter: shelterSpawn ? [+shelterSpawn.x.toFixed(1), +shelterSpawn.z.toFixed(1)] : null,  // §16C respawn point
     lanterns: placedLanterns.map(L => [+L.x.toFixed(1), +L.z.toFixed(1)]),  // §tools lit lanterns set down in the world
+    enc: encSave(),   // §5 every barnacle / oyster / salt piece, so picked patches stay picked and growth persists
   })); } catch (e) {}
 }
 function loadWorld() {
@@ -14822,91 +14779,13 @@ function loadWorld() {
     if (Array.isArray(w.tallgrass)) w.tallgrass.forEach((v, i) => { if (tallGrass[i]) { if (v > 0) { tallGrass[i].cut = true; tallGrass[i].regrowAt = clock.t + v; } else tallGrass[i].cut = false; } });   // §veg5
     if (Array.isArray(w.digcells)) for (const [cx, cz, left] of w.digcells) digCells.set(digCellKey(cx, cz), { cx, cz, loot: rollCellFind(cx, cz), depleted: true, refillAt: clock.t + (left || 0) });   // §urgent3 restore spent cells
     if (Array.isArray(w.shelter)) shelterSpawn = { x: w.shelter[0], z: w.shelter[1] };   // §16C restore respawn point
+    if (w.enc) encLoad(w.enc);   // §5 the saved tide encrustations replace the fresh starting crust
     if (Array.isArray(w.lanterns)) placedLanterns = w.lanterns.map(([x, z]) => ({ x, y: surfaceAt(x, z).h, z }));   // §tools restore set-down lanterns
     rebuildCollHash();
   } catch (e) {}
 }
 
-/* ===================================================================== *
- * § SALT  (Phase 6 Part C) — harvestable sea-salt crystals on the sand (a
- *   cooking item). Goats were removed with the other animals.
- * ===================================================================== */
-// @system GAMEPLAY  @section GAMEPLAY/salt
-
-
-/* ---- sea salt: rare crystals left just above the waterline as the tide recedes ---- */
-// §living The old scraped crust / salt pans are gone. Now, on a falling tide, the
-// sea occasionally leaves a single salt crystal drying just above the waterline.
-// At most ECO.salt.cap sit on the ground at once, and each one dissolves back into
-// the air after a while if you don't pick it up (so they never pile up or linger).
-let saltSpots = [];   // live crystals: { x, z, g (ground y), dissolveAt }
-let saltDyn;
-const SALT_SPOT_N = 6;                                        // retained for the seeding call below (stream position only)
-function seedSalt() {
-  // §living No seeded salt any more, but KEEP the exact rng draws the old crust
-  // seeding made, so every seed's downstream placement (chests, drops) is byte
-  // identical. The spots are collected and then discarded; the island starts
-  // with no salt, and crystals appear dynamically at play time (updateSalt).
-  saltSpots = [];
-  const bigReach = TIDE_MID + TIDE_RANGE * 0.18;
-  const spread = (x, z) => !saltSpots.some(s => Math.hypot(s.x-x, s.z-z) < 9);
-  for (const p of pools) {
-    if (saltSpots.length >= SALT_SPOT_N) break;
-    if (p.rim < 0.6 || p.rim < bigReach) continue;
-    const r = Math.min(7, Math.sqrt(p.n) * CELL * 0.3), a = rng()*6.283, x = p.x + Math.cos(a)*r, z = p.z + Math.sin(a)*r;
-    if (heightAt(x, z) > 0.4 && surfaceAt(x, z).slope < 0.45 && spread(x, z)) saltSpots.push({ x, z });
-  }
-  let tries = 0; while (saltSpots.length < SALT_SPOT_N && tries++ < 500) {
-    const a = rng()*6.283, r = HALF*(0.3 + rng()*0.5), x = Math.sin(a)*r, z = -Math.cos(a)*r, h = heightAt(x, z);
-    if (h > 0.8 && h < 3.5 && surfaceAt(x, z).slope < 0.35 && spread(x, z)) saltSpots.push({ x, z });
-  }
-  saltSpots = [];   // discard: play-time crystals only
-}
-function nearestSalt(x, z, maxd) { let best = null, bd = maxd; for (const s of saltSpots) { const d = Math.hypot(s.x - x, s.z - z); if (d < bd) { bd = d; best = s; } } return best; }
-function harvestSaltAt(x, z) {
-  const s = nearestSalt(x, z, 3.2); if (!s) return false;
-  if (Math.hypot(s.x - player.x, s.z - player.z) > REACH + 1.4) return false;
-  const i = saltSpots.indexOf(s); if (i >= 0) saltSpots.splice(i, 1);   // picked up clean, like any find
-  const n = 1 + (rng()*2|0); Inv.add("salt", n);
-  const first = !discovered.has("f_salt"); discovered.add("f_salt"); notify("salt", n, first);
-  Inv.autoHotbar("salt");
-  if (typeof SND !== "undefined") SND.play("pickup");
-  sparkle(s.x, surfaceAt(s.x, s.z).h + 0.2, s.z, [1, 1, 1], 6);
-  return true;
-}
-let _saltT = 6;
-function updateSalt(dt) {
-  dt = dt || 0;
-  // dissolve any crystal whose time is up, or that the tide has climbed over
-  for (let i = saltSpots.length - 1; i >= 0; i--) { const s = saltSpots[i];
-    if (clock.t >= s.dissolveAt || waterLevel > s.g - 0.05) {
-      if (typeof sparkle === "function") sparkle(s.x, s.g + 0.1, s.z, [1, 1, 1], 4);
-      saltSpots.splice(i, 1);
-    }
-  }
-  // on a FALLING tide, rarely leave a fresh crystal just above the waterline (capped)
-  _saltT -= dt; if (_saltT > 0) return; _saltT = ECO.salt.interval;
-  if (saltSpots.length >= ECO.salt.cap) return;
-  if (tideInfo().rising) return;                              // only as the sea goes out
-  if (Math.random() >= ECO.salt.chanceOnEbb) return;
-  for (let tries = 0; tries < 24; tries++) {
-    const a = Math.random()*6.283, r = HALF*(0.25 + Math.random()*0.7), x = Math.sin(a)*r, z = -Math.cos(a)*r;
-    const h = heightAt(x, z), band = h - waterLevel;
-    if (band < 0.1 || band > 0.7) continue;                   // the strip just bared by the receding water
-    if (surfaceAt(x, z).slope > 0.4) continue;
-    if (saltSpots.some(s => Math.hypot(s.x-x, s.z-z) < 14)) continue;   // well apart
-    saltSpots.push({ x, z, g: h, dissolveAt: clock.t + ECO.salt.dissolveMin + Math.random()*(ECO.salt.dissolveMax - ECO.salt.dissolveMin) });
-    break;
-  }
-}
-function drawSalt(view) {
-  let n = 0; for (const s of saltSpots) { if (n >= 60) continue;
-    const d = Math.hypot(s.x - player.x, s.z - player.z); if (d > 120) continue;
-    const o = n*10, y = surfaceAt(s.x, s.z).h + 0.03;
-    digScratch[o]=s.x;digScratch[o+1]=y;digScratch[o+2]=s.z;digScratch[o+3]=0.8+0.2*Math.abs(Math.sin(s.x));digScratch[o+4]=s.x*1.3;digScratch[o+5]=0;digScratch[o+6]=0;digScratch[o+7]=1;digScratch[o+8]=1;digScratch[o+9]=1; n++; }
-  if (n) { propUniforms(view); saltDyn.draw(digScratch, n); }
-}
-
+/* ---- §5 sea salt now forms as a tide encrustation (see @section WORLD/encrust) ---- */
 /* ---- sparkle feedback (tiny rising motes) ---- */
 function sparkle(x, y, z, col, count) { for (let i = 0; i < (count||5) && particles.length < 200; i++) { const a = rng()*6.283, s = 0.3 + rng()*0.6;
   particles.push({ x: x+(rng()-0.5), y: y+rng()*0.5, z: z+(rng()-0.5), vx: Math.cos(a)*s, vy: 1.2+rng(), vz: Math.sin(a)*s, t: 0, life: 0.6+rng()*0.4, col }); } }
@@ -15056,10 +14935,10 @@ if (typeof window !== "undefined") window.__shoot = function (v) {
   if (v.yaw !== undefined) cam.yaw = v.yaw;
   if (v.pitch !== undefined) cam.pitch = v.pitch;
 };
-// @section DEBUG/shoot  read-only world probes for headless QA (positions of rocks/barnacles, ground height).
+// @section DEBUG/shoot  read-only world probes for headless QA (rocks, encrustation counts, ground height).
 if (typeof window !== "undefined") window.__dbg = {
-  barnacles: () => (typeof barnacles !== "undefined" ? barnacles.map(b => ({ x: b.x, z: b.z, g: b.g, amt: b.amt })) : []),
-  rocks: () => (typeof rockObjs !== "undefined" ? rockObjs.filter(o => !o.gone).map(o => ({ x: o.x, z: o.z, sc: o.sc, barn: !!(o.barn && o.barn.amt > 0) })) : []),
+  encrust: () => encStats(),
+  rocks: () => (typeof rockObjs !== "undefined" ? rockObjs.filter(o => !o.gone).map(o => ({ x: o.x, z: o.z, sc: o.sc })) : []),
   trees: () => (typeof treeObjs !== "undefined" ? treeObjs.filter(o => !o.gone).map(o => ({ x: o.x, z: o.z, species: o.species, scale: o.scale || 1, ready: treeShakeReady(o) })) : []),
   ground: (x, z) => surfaceAt(x, z).h,
   water: () => waterLevel,
@@ -15115,25 +14994,20 @@ syncDebugPanel();
 seedDigSpots();
 initShovelFP();
 initWorldObjs();
-seedBarnacles();   // §5 barnacle crusts on intertidal rocks (needs rockObjs)
 seedLandmarkRocks();   // §worldbug the POI rock clusters + fish-weir stones as dynamic scenery rocks (needs rockObjs)
+seedEncrust();     // §5 tide encrustations: hosts from local conditions + the starting crust (needs rocks + driftwood)
 initCottage();     // §19 the home-base cottage near spawn (needs terrain + colliders)
 seedWeakStones();  // §weak7 weak breakable stones scattered on beach & forest floor
 seedHeaveBoulders();  // §21D heavy boulders to lever over (needs colliders + cottage)
-seedOysterBeds();  // §23 oyster beds on the intertidal flats
 loadWorld();
 flattenCottagePad();  // §2 level pad + door approach under the cottage (after loadWorld so it always wins; re-applied each load, not persisted)
 loadCottage();     // §19 restore cosiness / displays / aquarium for this seed
-saltDyn = makeDynamic(saltMesh(), 60);   // §living a small faceted salt crystal drying on the sand (the old mud-rim pan is gone)
-seedSalt();
 loadDrops();
 loadStorage();
 initCottageFixtures();   // §19B sea chest (after loadWorld/loadStorage rebuild their arrays)
 if (typeof updateCosy === "function") updateCosy();   // §19G seed cosiness from restored displays/trophies/aquarium/rewards (no celebrate on load)
 initWeather();   // §20 roll today's weather from the seed (no transition on load)
-if (typeof recomputeClusterAttach === "function") recomputeClusterAttach();   // §clust8 fix every barnacle/oyster cluster onto its rock's real surface (rocks are final by now)
 if (debugMode) auditRegistries();
-if (debugMode && typeof validateClusters === "function") validateClusters();   // §clust8 report any floating cluster (should be 0)
 validateFootprints();   // §P3 overlap self-check on the initial world (want 0)
 
 /* ===================================================================== *
@@ -15182,9 +15056,7 @@ function disposeWorldGL() {
   if (Array.isArray(propTypes)) for (const t of propTypes) if (t && t.inst) disposeGLObj(t.inst);
   if (cottage) { disposeGLObj(cottage.bodyDyn); disposeGLObj(cottage.roofDyn); disposeGLObj(cottage.glassDyn); disposeGLObj(cottage.doorDyn); }
   if (rockDyn) { disposeGLObj(rockDyn); rockDyn = null; }                   // rock prop dynamic mesh is seeded (rockMesh(SEED_INT^0x51))
-  if (barnacleRockDyn) { disposeGLObj(barnacleRockDyn); barnacleRockDyn = null; }  // intertidal rock mesh is seeded (SEED_INT^0x5b)
-  _barnRockMesh = null;                                                     // seeded base mesh for standalone intertidal rocks; lazily rebuilt
-  if (Array.isArray(oysterBeds)) for (const b of oysterBeds) if (b.dyn) { disposeGLObj(b.dyn); b.dyn = null; }   // §P3 each oyster rock has its own seeded mesh
+  _landRockBase = null;                                                     // landmark-rock raycast mesh is seeded (SEED_INT^0x51); lazily rebuilt
 }
 // Reset the arrays / maps the generation functions do NOT clear themselves
 // (the save-loaders push into these, or early-return and leave them stale).
@@ -15239,23 +15111,19 @@ function generateWorld() {
   rebuildTerrainInPlace();
   seedDigSpots();
   initWorldObjs();
-  seedBarnacles();
-  seedLandmarkRocks();   // §worldbug breakable POI rock clusters + weir stones
+  seedLandmarkRocks();   // §worldbug POI rock clusters + weir stones (scenery)
+  seedEncrust();
   initCottage();
   seedWeakStones();
   seedHeaveBoulders();
-  seedOysterBeds();
   loadWorld();
   flattenCottagePad();
   loadCottage();
-  seedSalt();
   loadDrops();
   loadStorage();
   initCottageFixtures();
   if (typeof updateCosy === "function") updateCosy();
   initWeather();
-  if (typeof recomputeClusterAttach === "function") recomputeClusterAttach();
-  if (debugMode && typeof validateClusters === "function") validateClusters();
   validateFootprints();   // §P3 overlap self-check: logs the count (want 0) and records offenders for the debug overlay
 }
 // Regenerate onto a new seed, in place. No reload: audio context, music,
@@ -15382,13 +15250,11 @@ function frame(now) {
   updateEco(simDt);       // §living the zoned beach ecosystem tops up finds & shore critters, never past target
   updateFlotsam(simDt);   // §5 floating debris drifts & beaches itself
   updateCreatures(simDt); // §creatures crabs & gulls (spawn around the player, behave, animate)
-  updateBarnacles();   // §5 barnacles regrow over time
+  updateEncrust(gdtTotal);   // §5 barnacles / oysters / salt build up (and salt dissolves) by themselves
   updateWeather(simDt);     // §20 weather state machine, fog/light/wind, lightning, after-storm
   updateWeakStones(simDt);  // §weak7 broken spots regrow a stone, out of view
   updateHeaveBoulders(simDt);  // §21D heavy-boulder roll + reset
   updateHeave(simDt);       // §21D the boulder heave mini-game
-  updateOysterBeds();    // §23 oyster beds reseed over days
-  updateSalt(simDt);
   updateAutoPickup();
   updateStarRescue();
   updateSurf(); updateFootsteps();   // §Sound ambience mix + footsteps
@@ -15701,19 +15567,17 @@ function frame(now) {
   drawBerryBushes(view);
   drawTallGrass(view);   // §veg5
   drawPlants(view);      // §P3 pickable flowers & ferns
-  drawBarnacles(view);   // §5 barnacle crusts on intertidal rocks (before the transparent water)
+  drawEncrust(view);     // §5 tide encrustations (before the transparent water)
   drawSacks(view);
   drawPlacedLanterns(view);   // §tools lit lanterns set down in the world
   drawStorage(view);
   drawBuilds(view);        // §16B placed building pieces + the placement ghost
-  drawSalt(view);
   drawLife(view);
   drawCreatures(view);   // §creatures crabs & gulls (instanced, one call per model)
   drawFlotsam(view);   // §5 floating debris on the water surface (drawn before the transparent water)
   drawTells(view, dt);
   drawWeakStones(view);   // §weak7 weak breakable stones
   drawHeaveBoulders(view);   // §21D heavy boulders (and their bared ground)
-  drawOysterBeds(view);   // §23 oyster beds on the intertidal flats
   drawDigCellDebug(view);   // §urgent3 dig-cell state overlay (debug)
   drawParticles(view);
   drawRain(view);       // §20 rain streaks, rings on water, dug-hole puddles
@@ -15882,19 +15746,13 @@ function frame(now) {
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
-    if (!buildMode && curTarget && curTarget.kind === "oysterbed") {   // §23 oyster-bed tooltip
-      promptEl.textContent = oysterBedPrompt(curTarget.obj);
-      promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
-      crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
-    }
     if (!buildMode && curTarget && curTarget.kind === "tree") {   // §shake tree tooltip
       promptEl.textContent = treePrompt(curTarget.obj);
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
-    if (!buildMode && curTarget && curTarget.kind === "searock") {   // §menu cluster-rock tooltip, scraping/picking is the action for any item
-      const o = curTarget.obj;
-      promptEl.textContent = (o && o.oyst && o.oyst.amt > 0) ? (IS_TOUCH?"tap":"click/F") + " to pick an oyster" : (IS_TOUCH?"tap":"click/F") + " to scrape barnacles";
+    if (!buildMode && curTarget && curTarget.kind === "encrust") {   // §5 tide-encrustation tooltip (one piece per pick)
+      promptEl.textContent = encPrompt(curTarget);
       promptEl.style.display = "block"; promptEl.style.color = ""; promptEl.style.opacity = "";
       crossEl.className = "ring"; crossEl.style.left = "50%"; crossEl.style.top = "50%"; crossEl.style.display = IS_TOUCH ? "none" : "block";
     }
