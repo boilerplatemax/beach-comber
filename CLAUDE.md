@@ -82,7 +82,16 @@ Creatures run on the shared creature runtime (`@section CREATURES/runtime`), a W
 runtime. Tri Soup itself is in the repo: `tools/tri-soup.html` (open in a browser; a dev tool that uses CDN
 libraries, never shipped in the game). Reference: `docs/tri-soup-reference.md`. How to bring an export into
 the game (inline mesh `.js` + config, what's supported): `docs/tri-soup-workflow.md`. Live creatures use
-`critRng` or the per-seed grid hash (`reefHash`), never the world-gen `rng()`.
+`critRng` or the per-seed grid hash (`reefHash`), never the world-gen `rng()`. Game-side per-instance extras
+on the runtime: `c.wither` (0..1 drying-out look, the anemones use it) and `c.poseFn(pose)` (a bird-method
+creature shapes its own pose after blending; the manta's swim stroke). Both default to off.
+
+## Things resting on the ground
+
+Never store an object's height once and forget it: terrain changes (digging, healing, erosion) all pass
+through `rebuildRegion()`, and `@section TERRAIN/ground-follow` lets resting objects fall or follow
+(`settleOn` + a `follow*` function). Things growing on an object store host-relative poses
+(`encAttach` / `encPlace`).
 
 ## Testing (headless, Playwright + Chromium/SwiftShader)
 

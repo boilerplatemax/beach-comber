@@ -8432,6 +8432,7 @@ function encGrowOn(host, R, guard) {
   const nx = _encHit.nx, ny = _encHit.ny, nz = _encHit.nz;
   const lean = Math.acos(Math.max(-1, Math.min(1, ny))), ld = Math.atan2(-nx, nz);
   list.push({ h: encHosts.indexOf(host), x: qx, y: y - s * (type === "salt" ? 0.05 : 0.15), z: qz, s, yaw: R() * 6.2832, lean, ld });
+  encAttach(list[list.length - 1]);   // §ground fixed to its host from now on
   host.n++;
   return true;
 }
@@ -8526,6 +8527,45 @@ function drawEncrust(view) {
     if (n) { if (!any) { propUniforms(view); any = true; } encDyn[type].draw(a, n); }
   }
 }
+// §ground ATTACHMENT. A piece on an object host (rock, landmark stone, log) keeps its place, turn and tilt in the
+// host's own frame (position in the host's yaw frame, yaw and lean direction relative to the host's yaw), so when
+// the host sinks, rises, moves or turns, every piece goes with it exactly as it grew. Ground / salt sites have no
+// object: their pieces lie on the terrain itself (see followEncrust).
+const _hp = { x: 0, y: 0, z: 0, yaw: 0 };
+function encHostPose(h) {   // the host's pose exactly as it is drawn (null for ground / site hosts)
+  if (!h) return null;
+  if (h.kind === "rock") { const o = h.ref, inst = o.t && o.t.inst; if (!inst || !inst.data) return null; const b = o.i * 10, d = inst.data;
+    _hp.x = d[b]; _hp.y = d[b+1]; _hp.z = d[b+2]; _hp.yaw = d[b+4]; return _hp; }
+  if (h.kind === "landrock") { const o = h.ref, sf = surfaceAt(o.x, o.z);
+    _hp.x = o.x; _hp.y = sf.h - o.sc*0.16 - o.sc*0.45*sf.slope + (o.yOff||0); _hp.z = o.z; _hp.yaw = o.yaw || 0; return _hp; }   // same pose drawTools uses
+  if (h.kind === "log") { const d = h.ref; _hp.x = d.x; _hp.y = surfaceAt(d.x, d.z).h; _hp.z = d.z; _hp.yaw = d.yaw; return _hp; }   // same pose drawDriftwood uses
+  return null;
+}
+function encAttach(p) {   // record p in its host's frame (call once p's world pose is right)
+  const P = encHostPose(encHosts[p.h]); if (!P) { p.att = false; return; }
+  const c = Math.cos(P.yaw), s = Math.sin(P.yaw), dx = p.x - P.x, dz = p.z - P.z;
+  p.lx = dx * c - dz * s; p.lz = dx * s + dz * c; p.ly = p.y - P.y;   // inverse of the prop yaw (x' = x·c + z·s, z' = −x·s + z·c)
+  p.ryaw = p.yaw - P.yaw; p.rld = p.ld + P.yaw; p.att = true;
+}
+function encPlace(p) {    // put p back where it belongs on its host, wherever the host is now
+  const P = p.att ? encHostPose(encHosts[p.h]) : null; if (!P) return;
+  const c = Math.cos(P.yaw), s = Math.sin(P.yaw);
+  p.x = P.x + p.lx * c + p.lz * s; p.z = P.z - p.lx * s + p.lz * c; p.y = P.y + p.ly;
+  p.yaw = P.yaw + p.ryaw; p.ld = p.rld - P.yaw;
+}
+function followEncrust(b) {
+  for (const type of ["barn", "oyst", "salt"]) { const list = encPieces[type];
+    for (let i = list.length - 1; i >= 0; i--) { const p = list[i], h = encHosts[p.h]; if (!h) continue;
+      if (p.att) { if (_inBox(b, h.x, h.z) || _inBox(b, p.x, p.z)) encPlace(p); continue; }   // grows on an object: rides it
+      if (!_inBox(b, p.x, p.z)) continue;
+      const g = surfaceAt(p.x, p.z).h;
+      if (type === "salt") { if (g < p.y - 0.05) encRemove("salt", i); else if (g > p.y + 0.002) p.y = g - p.s * 0.05; continue; }   // a dug-up crust just crumbles away
+      const off = p.s * 0.15;   // an oyster on open ground: tumbles down into the hole, or is lifted as it heals
+      settleOn(p, p.x, p.z, p.y, () => surfaceAt(p.x, p.z).h - off, (y) => { p.y = y; _encDirty = true; },
+        () => { const s = surfaceAt(p.x, p.z); p.lean = Math.acos(Math.max(-1, Math.min(1, s.ny))); p.ld = Math.atan2(-s.nx, s.nz); });
+    }
+  }
+}
 // save / load (rides on the per-seed world save bcw_<seed>)
 function encSave() {
   const q = (v) => Math.round(v * 100) / 100, out = {};
@@ -8538,7 +8578,7 @@ function encLoad(e) {
   for (const type of ["barn", "oyst", "salt"]) {
     encPieces[type] = (e[type] || []).filter(r => encHosts[r[0]] && encHosts[r[0]].type === type)
       .map(r => ({ h: r[0], x: r[1], y: r[2], z: r[3], s: r[4], yaw: r[5], lean: r[6], ld: r[7] }));
-    for (const p of encPieces[type]) encHosts[p.h].n++;
+    for (const p of encPieces[type]) { encHosts[p.h].n++; encAttach(p); }   // §ground saved world poses → attached to their hosts again
   }
 }
 function encStats() { const hc = { barn: 0, oyst: 0, salt: 0 }; for (const h of encHosts) hc[h.type]++;
@@ -9363,6 +9403,15 @@ void main() {
   float ca = cos(uAlignYaw), sa = sin(uAlignYaw);
   p = vec3(p.x * ca + p.z * sa, p.y, -p.x * sa + p.z * ca) + uAlignOff;
   p -= uOrigin;
+  // §wither drying out (iT.a = 1 − wither; 0 for every creature that never dries): first it pulls in and slumps,
+  // then shrinks low and crinkles at the rim (sizes are in model units relative to its base, so any model works)
+  float wt = 1.0 - iT.a;
+  if (wt > 0.001) {
+    float w1 = smoothstep(0.0, 0.35, wt), w2 = smoothstep(0.4, 1.0, wt);
+    float ang = atan(p.z, p.x);
+    p.xz *= (1.0 - 0.3 * w1 - 0.16 * w2) * (1.0 + 0.09 * w2 * sin(ang * 7.0 + p.y * 9.0));
+    p.y *= 1.0 - 0.32 * w1 - 0.36 * w2;
+  }
   if (iB.y != 0.0) { p.y -= uBankY; p = tsRot(p, uBankAxis, iB.y); p.y += uBankY; }
   p *= iB.x;
   float cy = cos(iA.w), sy = sin(iA.w);
@@ -9371,6 +9420,10 @@ void main() {
   vec3 wp = p + iA.xyz;
   vWorld = wp;
   vCol = (tsLegShow > 0.5 ? tsLegTint() : aCol) * iT.rgb;
+  if (wt > 0.001) {   // §wither colour drains to a dull, papery brown, then darkens as it shrivels
+    float lum = dot(vCol, vec3(0.3, 0.55, 0.15));
+    vCol = mix(vCol, vec3(lum) * vec3(1.12, 0.93, 0.7), 0.85 * smoothstep(0.15, 0.8, wt)) * (1.0 - 0.3 * smoothstep(0.55, 1.0, wt));
+  }
   gl_Position = uProj * uView * vec4(wp, 1.0);
 }`;
 let tsProg = null, tsU = {};
@@ -9641,6 +9694,7 @@ function createCreatureRuntimeGL() {
         const st = cfg.animations[track.state];
         tsBirdPose(pose, st.type, track.phase, (st.intensity ?? 1) * this.intensity, B);
         blender.blend(pose, 1 - track.weight);
+        if (this.poseFn) this.poseFn(pose);           // game-side: a creature may shape its own pose (the manta's swim stroke)
         if (this.headLook) pose.g.head[0] += this.headLook;   // game-side: an extra head yaw (e.g. a gull keeping an eye on you)
         const m = Math.min(1, Math.max(0, pose.mix));
         this.model = B.air && (!B.ground || pose.mix >= 0.5) ? 'air' : 'ground';
@@ -9665,7 +9719,7 @@ function createCreatureRuntimeGL() {
       S[o+12+i] = ctl ? ctl.wing[i] : (i === 3 ? 1 : 0); S[o+16+i] = ctl ? ctl.legs[i] : 0;
       S[o+20+i] = ctl ? ctl.body[i] : 0; S[o+24+i] = ctl ? ctl.head[i] : 0;
     }
-    S[o+28] = c.tint[0]; S[o+29] = c.tint[1]; S[o+30] = c.tint[2]; S[o+31] = 1;
+    S[o+28] = c.tint[0]; S[o+29] = c.tint[1]; S[o+30] = c.tint[2]; S[o+31] = 1 - (c.wither || 0);   // §wither (0 unless a creature dries out)
   }
   function bindModelUniforms(asset, origin, frameBody, legs, bird) {
     tsU3(tsU.tsAnimCenter, frameBody.center); tsU3(tsU.tsAnimFwd, frameBody.fwd); tsU3(tsU.tsAnimSide, frameBody.side);
@@ -9715,7 +9769,7 @@ function createCreatureRuntimeGL() {
             if (c.asset !== asset || !inView(c, asset, maxD)) continue;
             if (isAir ? !c.aVis : !c.gVis) continue;
             if ((isAir ? c.aDither : c.gDither) > 0) { dith.push(c); continue; }
-            if (n >= TS_MAX_INST) break;
+            if (n >= TS_MAX_INST) { drawBatch(part.gl, n); n = 0; }   // a full batch: draw it and carry on (never drop the rest)
             writeInst(n * TS_INST, c, 7, 0, 1, isAir ? c.pose.a : c.pose.g); n++;
           }
           gl.uniform1f(tsU.uDissolve, 0); gl.uniform1f(tsU.uDissolveInv, 0);
@@ -9743,7 +9797,8 @@ function createCreatureRuntimeGL() {
           let n = 0;
           for (let i = 0; i < instances.length; i++) {
             const c = instances[i];
-            if (c.asset !== asset || c._grp !== g || !inView(c, asset, maxD) || n >= TS_MAX_INST) continue;
+            if (c.asset !== asset || c._grp !== g || !inView(c, asset, maxD)) continue;
+            if (n >= TS_MAX_INST) { drawBatch(asset.model, n); n = 0; }   // a full batch: draw it and carry on (was: the rest were silently skipped)
             const s = c._slots; writeInst(n * TS_INST, c, s[0], s[1], s[2], null); n++;
           }
           drawBatch(asset.model, n);
@@ -10675,7 +10730,10 @@ function updateGull(k, dt, px, pz, loud) {
       const gy = surfaceAt(o.c.x, o.c.z).h;
       if (td < 2.5) {   // the last swoop: straight in and down onto it (a gliding turn circle is wider than the grab radius)
         k.h = Math.atan2(tz, tx); c.yaw = -k.h; k.v = Math.max(1.5, Math.min(k.v, 4));
-        const high = c.y - gy > 1.4, st = Math.min(td, k.v * dt * (high ? 0.35 : 1)); c.x += tx / td * st; c.z += tz / td * st;   // still high: drop over it rather than overshoot
+        // still high: drop over it rather than overshoot. Once it is right over the shell (td ≈ 0) it just comes
+        // straight down: dividing by td there made the position NaN and the gull vanished mid-descent (§gullnan)
+        const high = c.y - gy > 1.4, st = Math.min(td, k.v * dt * (high ? 0.35 : 1));
+        if (td > 1e-4) { c.x += tx / td * st; c.z += tz / td * st; }
         c.y = approach(c.y, gy + 0.35, 4.5 * dt);
         c.bank *= Math.max(0, 1 - dt * 5);
         if (c.target !== 'glide') c.setState('glide');
@@ -10806,6 +10864,11 @@ function updateGulls(dt, loud) {
   for (let i = gulls.length - 1; i >= 0; i--) {
     const k = gulls[i];
     if (dt > 0) updateGull(k, dt, px, pz, loud);
+    if (!Number.isFinite(k.c.x) || !Number.isFinite(k.c.y) || !Number.isFinite(k.c.z)) {   // §gullnan a broken position draws nothing and
+      if (!updateGulls._warned) { updateGulls._warned = true; console.warn("[gulls] non-finite position in mode " + k.mode + "; removed"); }   // never despawns: never keep one
+      if (k.carrying) { const o = k.carrying; k.carrying = null; o.carrier = null; if (o.occupant) o.occupant.mode = "hide"; shellRest(o); }
+      k.c.dispose(); gulls.splice(i, 1); continue;
+    }
     if (Math.hypot(k.c.x - px, k.c.z - pz) > GULL.despawn && !onScreenPoint(k.c.x, k.c.z)) { if (k.carrying) gullLetGo(k); k.c.dispose(); gulls.splice(i, 1); }
   }
 }
@@ -13540,6 +13603,7 @@ const ANEM = {
   patch: [0.44, 0.62],                       // patchiness field threshold band (higher = sparser)
   clear: 0.15, maxDepth: 9,                  // always-wet seabed: at least this far below a typical low tide, at most this deep
   near: 40, despawn: 46, tick: 0.5, active: 320,   // streaming radius / drop radius (m) / timer (s) / most live at once
+  dryTime: 150, wetTime: 70,                 // §wither game-s out of water to dry out completely / under water to plump back up
   lodR: 22, pauseR: 28,                      // beyond: dense-colony extras hidden / sway frozen
   fishChance: 0.3,                           // a host anemone (not a colony extra) may keep a few clownfish
 };
@@ -13579,16 +13643,16 @@ function reefHash(ix, iz, k) {
 function typicalLowTide() { return TIDE_MID - TIDE_RANGE * 0.5 * 0.9; }
 // submerged boulders an anemone can sit on (their tops stay wet at a typical low tide)
 let _anemRocks = [];
-const _ah = { ok: false, w: 0, y: 0, nx: 0, ny: 1, nz: 0, hard: 0, pool: false, rock: false };
+const _ah = { ok: false, w: 0, y: 0, nx: 0, ny: 1, nz: 0, hard: 0, pool: false, rock: false, rockRef: null };
 // How good is (x, z) for an anemone? Fills _ah (w = 0 unsuitable … 1 ideal; hard = rocky substrate share).
 function anemHabitat(x, z) {
-  _ah.ok = false; _ah.w = 0; _ah.rock = false;
+  _ah.ok = false; _ah.w = 0; _ah.rock = false; _ah.rockRef = null;
   const i = cellIndex(x, z); if (i < 0) return _ah;
   const lo = typicalLowTide() - ANEM.clear;
   // on top of a submerged boulder?
   for (const o of _anemRocks) { const dx = x - o.x, dz = z - o.z; if (dx*dx + dz*dz > (o.sc * 0.9) * (o.sc * 0.9)) continue;
     if (encSurface({ kind: "landrock", ref: o }, x, z) && _encHit.y < lo && _encHit.ny > 0.45) {
-      _ah.ok = true; _ah.w = 1; _ah.hard = 1; _ah.rock = true; _ah.pool = false; _ah.y = _encHit.y; _ah.nx = _encHit.nx; _ah.ny = _encHit.ny; _ah.nz = _encHit.nz; return _ah; } }
+      _ah.ok = true; _ah.w = 1; _ah.hard = 1; _ah.rock = true; _ah.rockRef = o; _ah.pool = false; _ah.y = _encHit.y; _ah.nx = _encHit.nx; _ah.ny = _encHit.ny; _ah.nz = _encHit.nz; return _ah; } }
   const s = surfaceAt(x, z), h = s.h;
   const pool = filled[i] > heightmap[i] + 0.4 && (material[i] || defaultMat(i)) !== MAT.GRASS;   // a tide pool that keeps enough water over it
   if (!(pool || (h < lo && h > lo - ANEM.maxDepth))) return _ah;
@@ -13618,7 +13682,7 @@ function seedAnemones() {
   const add = (x, z, spk, sc, colony, extra, fishOk) => {
     const sp = ANEM_SPECIES[spk];
     const nh = Math.hypot(_ah.nx, _ah.nz);
-    ANEMS.push({ x, z, y: _ah.y - 0.015 * sc / 0.2, s: sc, sp: spk, yaw: R() * 6.2832, tilt: nh > 1e-4 ? Math.atan2(nh, _ah.ny) * 0.85 : 0, tiltDir: Math.atan2(-_ah.nx, _ah.nz),
+    ANEMS.push({ x, z, y: _ah.y - 0.015 * sc / 0.2, off: -0.015 * sc / 0.2, rock: _ah.rockRef ? { kind: "landrock", ref: _ah.rockRef } : null, dry: 0, s: sc, sp: spk, yaw: R() * 6.2832, tilt: nh > 1e-4 ? Math.atan2(nh, _ah.ny) * 0.85 : 0, tiltDir: Math.atan2(-_ah.nx, _ah.nz),
       r: sp.half * sc, colony, extra, tint: 0.86 + R() * 0.26, hue: R(), phase: R(), speed: 0.65 + R() * 0.5,
       fish: sp.host && fishOk && R() < ANEM.fishChance });
   };
@@ -13676,7 +13740,7 @@ function spawnAnemone(m, key) {   // a live runtime instance for laid-out anemon
   c.x = m.x; c.z = m.z; c.y = m.y; c.yaw = m.yaw; c.scale = m.s; c.tilt = m.tilt; c.tiltDir = m.tiltDir;
   const t = m.tint, hu = m.hue; c.tint = [t * (0.94 + 0.12 * hu), t * (0.97 + 0.06 * (1 - hu)), t * (0.95 + 0.1 * hu)];
   const a = { c, x: m.x, z: m.z, key, m, top: m.y + sp.h * m.s, fish: [], baseI: (0.75 + 0.4 * m.hue) };
-  c.intensity = a.baseI;
+  c.intensity = a.baseI; c.wither = m.dry || 0;
   return a;
 }
 function spawnFish(home) {
@@ -13811,7 +13875,13 @@ function updateReef(dt, loud) {
       c.visible = !(m.extra && d > ANEM.lodR);
       c.paused = d > ANEM.pauseR;
       const ci = cellIndex(a.x, a.z), wet = waterLevel > a.top - 0.02 || (ci >= 0 && filled[ci] > heightmap[ci] + 0.05 && filled[ci] > a.top - 0.02);
-      const want = wet ? a.baseI * (1 + 0.5 * (weather ? weather.wind : 0)) : 0.12;
+      // §wither out of the water it closes up, then slowly dries: dulls, shrinks, shrivels. Back under water it
+      // rehydrates (more slowly once it has dried right out). Time is game time since this one was last looked at.
+      const el = Math.min(600, Math.max(0, clock.t - (m.dryT === undefined ? clock.t : m.dryT))); m.dryT = clock.t;
+      if (!wet) m.dry = Math.min(1, (m.dry || 0) + el / ANEM.dryTime);
+      else if (m.dry > 0) m.dry = Math.max(0, m.dry - el / ANEM.wetTime * (m.dry > 0.95 ? 0.5 : 1));
+      c.wither = m.dry || 0;
+      const want = wet ? a.baseI * (1 + 0.5 * (weather ? weather.wind : 0)) * (1 - 0.85 * c.wither) : 0.12 * (1 - c.wither);
       c.intensity += (want - c.intensity) * 0.35;
     }
   }
@@ -14942,14 +15012,14 @@ const STAR = {
   species: [ { id: "bloodstar", mesh: () => seastarBloodMesh() }, { id: "purplestar", mesh: () => seastarPurpleMesh() } ],
 };
 let STARS = [], starTaken = new Set(), _starDyn = [null, null], _starScratch = [null, null], _savedStarTaken = null;
-const _sh = { ok: false, w: 0, y: 0, nx: 0, ny: 1, nz: 0, wet: false };
+const _sh = { ok: false, w: 0, y: 0, nx: 0, ny: 1, nz: 0, wet: false, rock: null };
 // how good is (x, z) for a sea star? rocky, low on the shore or under water, tide pools / crevices / boulder tops
 function starHabitat(x, z, boulders) {
-  _sh.ok = false; const i = cellIndex(x, z); if (i < 0) return _sh;
+  _sh.ok = false; _sh.rock = null; const i = cellIndex(x, z); if (i < 0) return _sh;
   const lowWet = typicalLowTide() - 0.1, top = MAX_HIGH_TIDE - TIDE_RANGE * 0.45;   // from the lower shore down
   for (const o of boulders) { const dx = x - o.x, dz = z - o.z; if (dx*dx + dz*dz > (o.sc * 0.85) * (o.sc * 0.85)) continue;
     if (encSurface({ kind: "landrock", ref: o }, x, z) && _encHit.ny > 0.4 && _encHit.y < top) {
-      _sh.ok = true; _sh.w = 1; _sh.y = _encHit.y; _sh.nx = _encHit.nx; _sh.ny = _encHit.ny; _sh.nz = _encHit.nz; _sh.wet = _encHit.y < lowWet; return _sh; } }
+      _sh.ok = true; _sh.w = 1; _sh.rock = o; _sh.y = _encHit.y; _sh.nx = _encHit.nx; _sh.ny = _encHit.ny; _sh.nz = _encHit.nz; _sh.wet = _encHit.y < lowWet; return _sh; } }
   const s = surfaceAt(x, z), h = s.h, pool = filled[i] > heightmap[i] + 0.08;
   if (h > top && !pool) return _sh;
   if (h < typicalLowTide() - 10 || s.slope > 0.9) return _sh;
@@ -14968,7 +15038,7 @@ function seedSeastars() {
   const put = (x, z) => {
     const sp = _sh.wet ? (R() < 0.7 ? 0 : 1) : (R() < 0.25 ? 0 : 1);   // blood stars low and wet, purple stars on the intertidal rock
     const s = STAR.scale[0] + R() * (STAR.scale[1] - STAR.scale[0]), nh = Math.hypot(_sh.nx, _sh.nz);
-    STARS.push({ id: STARS.length, sp, x, z, y: _sh.y - 0.006, s, yaw: R() * 6.2832, lean: nh > 1e-4 ? Math.atan2(nh, _sh.ny) : 0, ld: Math.atan2(-_sh.nx, _sh.nz),
+    STARS.push({ id: STARS.length, sp, x, z, y: _sh.y - 0.006, off: -0.006, rock: _sh.rock ? { kind: "landrock", ref: _sh.rock } : null, s, yaw: R() * 6.2832, lean: nh > 1e-4 ? Math.atan2(nh, _sh.ny) : 0, ld: Math.atan2(-_sh.nx, _sh.nz),
       tint: 0.88 + R() * 0.22 });
   };
   for (let k = 0; k < STAR.tries && STARS.length < STAR.cap; k++) {
@@ -15307,7 +15377,7 @@ function spawnUrchin(x, z, key, rnd) {
   const shade = 0.8 + 0.45 * rnd(), red = rnd() < 0.3 ? 1.5 : 1;   // most deep purple, some redder
   c.tint = [shade * red, shade, shade * (0.9 + 0.25 * rnd())];
   c.intensity = 0.8 + 0.4 * rnd();
-  return { c, x, z, key, r: 1.8 * sc };
+  return { c, x, z, key, r: 1.8 * sc, off: 0.75 * sc };
 }
 function urchinNearAnemone(x, z) { return anemoneNear(x, z, 0.6); }   // keep them from sitting inside an anemone
 function updateUrchins(dt) {
@@ -15550,7 +15620,7 @@ const mantaRayConfig = {
         toe: 0,
         heel: 0,
       },
-      mask: { wings: { side: [0.7, 2.4] } },
+      mask: { wings: { side: [0.55, 3.7] } },   // §manta the bend runs all the way to the tip, so the whole wing flexes in a curve
     },
     align: { yaw: 0, offset: [0, 0, 0] },
     fwd: [0, 0, 1],
@@ -15671,8 +15741,24 @@ const MANTA = {
   cruise: [0.8, 1.25], flapRate: [0.16, 0.22], beats: [2, 4], glide: [4, 10],   // m/s; flap speed (× bird-flap); beats then seconds of glide
   shy: 11, turn: 0.35,                   // turns away from the camera inside this range (m); rad/s
   floor: 1.3, surf: 1.0,                 // keep its body this far off the seabed / under the surface
-  pose: 0.45,                            // × the bird wing poses (flap stroke / glide droop)
+  pose: 0.45,                            // × the bird wing poses (only the body sway now: the wings are the manta's own stroke)
+  // §manta the swim stroke (mantaWings): the wings sweep UP and DOWN about level, bending along their span,
+  // with the body rising on each downstroke as it pushes water, then a long glide with the wings held a touch
+  // up and just rippling. Radians at the wingtip; the bend fades in from the shoulder.
+  stroke: 0.56, strokeMid: 0.12, strokeHz: [0.36, 0.46], glideRaise: 0.08, glideRipple: 0.05, ease: 0.9,   // the model's wings already droop a little, so the stroke centres slightly above level
 };
+// one wing stroke, written over the bird pose (c.poseFn). k.amp eases between gliding (0) and swimming (1).
+function mantaWings(k, pose) {
+  const a = pose.a, A = k.amp, ph = k.ph, s = Math.sin(ph), Ua = mantaRayConfig.bird.air.frame.unit;
+  // a stroke slightly quicker and stronger down than up (a touch of second harmonic), about a slightly raised level
+  const stroke = MANTA.strokeMid + MANTA.stroke * (s + 0.12 * Math.sin(2 * ph));
+  const glide = MANTA.glideRaise + MANTA.glideRipple * Math.sin(k.gph);
+  a.wing[0] = A * stroke + (1 - A) * glide;                       // raise (+ up / − down)
+  a.wing[1] = -0.09 * A * Math.cos(ph);                          // the tips trail back a little on the upstroke
+  a.wing[2] = 0; a.wing[3] = 1;
+  a.body[0] = 0.05 * A * Math.cos(ph) + (1 - A) * 0.02 * Math.sin(k.gph * 0.5);   // nose dips as the wings come down
+  a.body[2] = -0.03 * Ua * A * s;                                 // the body lifts on the downstroke (wings low), sinks on the upstroke
+}
 let mantas = [], _mantaT = 0;
 function mantaDepthAhead(x, z, h, d) { const ax = x + Math.sin(h) * d, az = z + Math.cos(h) * d; return cellIndex(ax, az) < 0 ? -1 : waterDepthAt(ax, az); }
 function spawnManta(x, z) {
@@ -15681,9 +15767,11 @@ function spawnManta(x, z) {
   const sc = crR(MANTA.scale[0], MANTA.scale[1]), lo = heightAt(x, z) + MANTA.floor, hi = waterSurfaceAt(x, z) - MANTA.surf;
   c.x = x; c.z = z; c.y = lo + (hi - lo) * crR(0.3, 0.7); c.scale = sc;
   const sh = crR(0.9, 1.08); c.tint = [sh, sh, sh * crR(0.98, 1.06)];
-  c.intensity = MANTA.pose;   // the gull-sized wing poses, softened for a manta's slow, shallow strokes
+  c.intensity = MANTA.pose;   // the gull-sized body poses, softened for a manta's slow, shallow strokes
   const k = { c, h: critRng() * 6.283, hT: 0, v: crR(MANTA.cruise[0], MANTA.cruise[1]) * 0.8, vT: crR(MANTA.cruise[0], MANTA.cruise[1]),
-              hx: x, hz: z, mode: "glide", t: crR(2, 6), wander: crR(4, 9), yT: c.y, turnV: 0, gone: false };
+              hx: x, hz: z, mode: "glide", t: crR(2, 6), wander: crR(4, 9), yT: c.y, turnV: 0, gone: false,
+              amp: 0, ph: 0, gph: critRng() * 6.283, strokeF: crR(MANTA.strokeHz[0], MANTA.strokeHz[1]) };
+  c.poseFn = (pose) => mantaWings(k, pose);
   k.hT = k.h; c.yaw = k.h;
   mantas.push(k);
   return k;
@@ -15712,12 +15800,16 @@ function updateManta(k, dt) {
   if (k.mode === "glide" && (k.t <= 0 || (shy && k.t > 1.5))) {
     const rate = crR(MANTA.flapRate[0], MANTA.flapRate[1]) * (shy ? 1.3 : 1);
     c.setState('flap'); c.speed = rate;
-    k.mode = "flap"; k.t = crR(MANTA.beats[0], MANTA.beats[1]) / (TS_BEHAVIOURS['bird-flap'].freq * rate);
+    k.mode = "flap"; k.t = crR(MANTA.beats[0], MANTA.beats[1]) / (k.strokeF * (shy ? 1.3 : 1));   // that many whole strokes
     k.vT = crR(MANTA.cruise[0], MANTA.cruise[1]) * (shy ? 1.4 : 1);
   } else if (k.mode === "flap" && k.t <= 0) {
     c.setState('glide'); c.speed = 0.4; k.mode = "glide"; k.t = crR(MANTA.glide[0], MANTA.glide[1]);
   }
-  k.v = approach(k.v, k.mode === "flap" ? k.vT : k.vT * 0.7, (k.mode === "flap" ? 0.25 : 0.06) * dt);
+  // §manta the stroke: phase runs on through the beats, the amplitude eases in and out so a glide never snaps
+  k.amp = approach(k.amp, k.mode === "flap" ? 1 : 0, MANTA.ease * dt);
+  k.ph += 6.2832 * k.strokeF * (shy ? 1.3 : 1) * dt; k.gph += 1.1 * dt;
+  const push = k.amp * Math.max(0, -Math.cos(k.ph)) * 0.18;     // each downstroke drives it on a little
+  k.v = approach(k.v, (k.mode === "flap" ? k.vT : k.vT * 0.7) + push, (k.mode === "flap" ? 0.25 : 0.06) * dt + push * dt);
   // move, holding mid-water between the seabed and the surface
   const nx = c.x + Math.sin(k.h) * k.v * dt, nz = c.z + Math.cos(k.h) * k.v * dt;
   const lo = heightAt(nx, nz) + MANTA.floor, hi = waterSurfaceAt(nx, nz) - MANTA.surf;
@@ -16746,7 +16838,7 @@ function lanternLit() { return mode === "walk" && !isPanelOpen() && selectedItem
 function lanternPos() { return [player.x, player.eyeY - 0.55, player.z]; }
 function lanternFlicker() { const t = clock.t; return 0.84 + 0.12*Math.sin(t*18.0) + 0.06*Math.sin(t*7.3 + 1.0) + 0.04*Math.sin(t*33.0); }
 const LANTERN_I = 1.5;    // §night lantern brightness (warm, soft) — a bit stronger now that the pool is omnidirectional like a placed one
-let LANTERN_R = 66;       // §night lantern light radius — the finite reach; beyond it props/terrain get NO lantern light. Tripled from 22 m; the shader's falloff scales with it, so the pool keeps its shape at 3× the size
+let LANTERN_R = 132;      // §night lantern light radius — the finite reach; beyond it props/terrain get NO lantern light. 22 m → 66 m → 132 m (doubled); the shader's falloff scales with it, so the pool keeps its shape, just wider
    // §3 indoor multiplier so the lantern doesn't wash the close walls to white (tunable)
 let placedLanterns = [];   // §tools lit lanterns set down in the world, saved per seed: { x, y, z }
 // the one lantern that lights the scene this frame: the held one if raised, else the nearest placed lantern to the camera
@@ -18031,7 +18123,106 @@ function updateHeightTex(x0, z0, x1, z1) {
   gl.bindTexture(gl.TEXTURE_2D, materialTex);
   gl.texSubImage2D(gl.TEXTURE_2D, 0, x0, z0, w, h, gl.RED, gl.FLOAT, mf);
 }
+/* ---- §ground GROUND FOLLOW: whatever rests on the ground (or on a rock) answers when the ground changes ----
+   Every terrain edit (dig, fill, healing, erosion, the terrain API) goes through rebuildRegion(), which records
+   the changed box. flushGroundChanges() then re-snaps the instanced props (trees, rocks, kelp …) and runs each
+   system's follower over that box: an object whose support has dropped away FALLS (gravity, slowed by water)
+   and lands on whatever is under it now; one whose ground came back up (a hole healing) is lifted onto it;
+   things growing ON an object (barnacles on a rock) move rigidly with it. Objects drawn from the live ground
+   every frame (finds, bushes, plants, stones, driftwood, landmark rocks) need nothing here. */
+// @section TERRAIN/ground-follow
+let _gc = null, _gcT = 0;
+const FALLERS = [];   // { o, x, z, y, vy, rest(), set(y), land(v) }
+function groundChanged(gx0, gz0, gx1, gz1) {
+  const x0 = gx0 * CELL - HALF, z0 = gz0 * CELL - HALF, x1 = gx1 * CELL - HALF, z1 = gz1 * CELL - HALF;
+  if (!_gc) _gc = { x0, z0, x1, z1 };
+  else { if (x0 < _gc.x0) _gc.x0 = x0; if (z0 < _gc.z0) _gc.z0 = z0; if (x1 > _gc.x1) _gc.x1 = x1; if (z1 > _gc.z1) _gc.z1 = z1; }
+}
+// now = true right after a deliberate edit (a dig strike); slow changes (healing, erosion) are batched ~5×/s
+function flushGroundChanges(dt, now) {
+  _gcT -= dt || 0;
+  if (!_gc || (!now && _gcT > 0)) return;
+  _gcT = 0.2;
+  const b = _gc; _gc = null;
+  b.x0 -= 1.5; b.z0 -= 1.5; b.x1 += 1.5; b.z1 += 1.5;
+  resnapPropsRegion(b.x0, b.z0, b.x1, b.z1);              // instanced props first: rock hosts move before their barnacles
+  followEncrust(b); followAnemones(b); followSeastars(b); followUrchins(b); followShells(b); followLanterns(b); followKelp(b);
+}
+const _inBox = (b, x, z) => x >= b.x0 && x <= b.x1 && z >= b.z0 && z <= b.z1;
+// An object at height y that should rest at rest(). rigid: it is attached to something (a rock) and just goes
+// where that goes; otherwise a drop starts a fall and a rise lifts it.
+function settleOn(o, x, z, y, rest, set, land, rigid) {
+  if (o._fall) return;
+  const r = rest();
+  if (rigid || y <= r + 0.025) { if (Math.abs(y - r) > 0.0005) set(r); return; }
+  o._fall = true; FALLERS.push({ o, x, z, y, vy: 0, rest, set, land });
+}
+function updateFallers(dt) {
+  for (let i = FALLERS.length - 1; i >= 0; i--) {
+    const f = FALLERS[i], r = f.rest(), wet = encUnderWater(f.x, f.z, f.y);
+    f.vy = Math.min(wet ? 0.9 : 15, f.vy + (wet ? 2.2 : 9.8) * dt);   // sinks gently through water, drops in air
+    f.y -= f.vy * dt;
+    if (f.y <= r) { f.y = r; f.set(r); f.o._fall = false; FALLERS.splice(i, 1); if (f.land) f.land(f.vy, wet); }
+    else f.set(f.y);
+  }
+}
+function landPuff(x, y, z, v, wet) {   // a little sand (or nothing, under water) when something lands hard
+  if (v < 1.2) return;
+  if (!wet && typeof spawnSand === "function") spawnSand(x, y + 0.05, z, 4, [0.72, 0.64, 0.5]);
+  if (typeof SND !== "undefined" && Math.hypot(x - player.x, z - player.z) < 25) SND.play(wet ? "plop" : "crack", { position: [x, y, z], pitch: wet ? 1.2 : 1.6, volume: 0.3 });
+}
+// lie on the ground's slope (most of the way), with a little random tumble after a fall
+function restTilt(x, z, k, tumble) {
+  const s = surfaceAt(x, z), nh = Math.hypot(s.nx, s.nz);
+  return [nh > 1e-4 ? Math.atan2(nh, s.ny) * k + tumble * (critRng() - 0.3) : tumble * critRng(), Math.atan2(-s.nx, s.nz) + tumble * (critRng() - 0.5) * 2];
+}
+// anemones (laid-out data + the live instance if streamed in): on a boulder they ride it; on the ground they fall
+function anemRest(m) {
+  if (m.rock) { if (!m.rock.ref.gone && encSurface(m.rock, m.x, m.z)) return _encHit.y + (m.off || 0); m.rock = null; }   // knocked off its boulder: down to the ground
+  return surfaceAt(m.x, m.z).h + (m.off || 0);
+}
+function followAnemones(b) {
+  if (!ANEMS.length) return;
+  const C = ANEM_BUCKET;
+  for (let iz = Math.floor(b.z0 / C); iz <= Math.floor(b.z1 / C); iz++) for (let ix = Math.floor(b.x0 / C); ix <= Math.floor(b.x1 / C); ix++) {
+    const bk = _anemBuckets.get(ix + "," + iz); if (!bk) continue;
+    for (const k of bk) { const m = ANEMS[k]; if (!_inBox(b, m.x, m.z)) continue;
+      const set = (y) => { m.y = y; const a = anemones.get(k); if (a) { a.c.y = y; a.top = y + ANEM_SPECIES[m.sp].h * m.s; } };
+      const land = (v, wet) => {   // detached: it settles where it fell, slumped onto the new slope
+        const t = restTilt(m.x, m.z, 0.85, 0.35); m.tilt = t[0]; m.tiltDir = t[1]; m.rock = null;
+        const a = anemones.get(k); if (a) { a.c.tilt = m.tilt; a.c.tiltDir = m.tiltDir; }
+        landPuff(m.x, m.y, m.z, v, wet);
+      };
+      settleOn(m, m.x, m.z, m.y, () => anemRest(m), set, land, !!m.rock);
+    } }
+}
+function followSeastars(b) {
+  for (const s of STARS) { if (!_inBox(b, s.x, s.z) || starTaken.has(s.id)) continue;
+    const rest = () => { if (s.rock) { if (!s.rock.ref.gone && encSurface(s.rock, s.x, s.z)) return _encHit.y + s.off; s.rock = null; } return surfaceAt(s.x, s.z).h + (s.off || 0); };
+    settleOn(s, s.x, s.z, s.y, rest, (y) => { s.y = y; },
+      (v, wet) => { const t = restTilt(s.x, s.z, 1, 0.25); s.lean = t[0]; s.ld = t[1]; landPuff(s.x, s.y, s.z, v, wet); }, !!s.rock);
+  }
+}
+function followUrchins(b) {
+  for (const u of urchins.values()) { if (!u || !_inBox(b, u.x, u.z)) continue;
+    settleOn(u, u.x, u.z, u.c.y, () => surfaceAt(u.x, u.z).h + (u.off || 0), (y) => { u.c.y = y; },
+      (v, wet) => { const t = restTilt(u.x, u.z, 0.6, 0.2); u.c.tilt = t[0]; u.c.tiltDir = t[1]; landPuff(u.x, u.c.y, u.z, v, wet); });
+  }
+}
+function followShells(b) {   // shells have their own tumble physics: just let go of them
+  for (const o of shells) { if (o.gone || o.carrier || o.fall || !_inBox(b, o.c.x, o.c.z)) continue;
+    const g = surfaceAt(o.c.x, o.c.z).h - 0.01 * o.c.scale;
+    if (o.c.y > g + 0.03) o.fall = { vx: 0, vz: 0, vy: 0, spin: crR(-1, 1) }; else if (o.c.y < g - 0.003) shellRest(o);
+  }
+}
+function followLanterns(b) {
+  for (const L of placedLanterns) { if (!_inBox(b, L.x, L.z)) continue;
+    settleOn(L, L.x, L.z, L.y, () => surfaceAt(L.x, L.z).h, (y) => { L.y = y; }, (v, wet) => { landPuff(L.x, L.y, L.z, v, wet); if (typeof saveWorld === "function") saveWorld(); });
+  }
+}
+function followKelp(b) { for (const k of kelpStalks) if (_inBox(b, k.x, k.z)) k.h = surfaceAt(k.x, k.z).h; }   // the harvest capsule follows the re-snapped stalk
 function rebuildRegion(x0, z0, x1, z1) {
+  groundChanged(x0, z0, x1, z1);   // §ground whatever rests on this ground gets to react (flushGroundChanges)
   // rebuild every chunk overlapping the region, once
   const done = new Set();
   for (let cz = 0; cz < CHUNKS; cz++) for (let cx = 0; cx < CHUNKS; cx++) {
@@ -18076,7 +18267,7 @@ const Terrain = {
       if (mat !== undefined) { material[i] = mat; fresh[i] = Math.max(fresh[i], 0.5); }
     }
     rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz);
-    resnapPropsRegion(x - radius - 2, z - radius - 2, x + radius + 2, z + radius + 2);
+    flushGroundChanges(0, true);   // §ground props re-snap, resting objects fall / attached ones follow
   },
 };
 
@@ -18128,7 +18319,7 @@ function applyDig(x, z, amount, holeAng) {
   }
   rebuildRegion(minx, minz, maxx, maxz);
   updateHeightTex(minx, minz, maxx, maxz);
-  resnapPropsRegion(x - DIG_R*2.4, z - DIG_R*2.4, x + DIG_R*2.4, z + DIG_R*2.4);
+  flushGroundChanges(0, true);   // §ground props re-snap, resting objects fall / attached ones follow
   if (typeof recordDigHole === "function") recordDigHole(x, z);   // §20 rain can pool in this hole
 }
 // Push a hole's spoil back into it: both sides relax toward flat.
@@ -18142,7 +18333,7 @@ function fillHole(x, z) {
     fresh[i] = Math.max(fresh[i], 0.6);
   }
   rebuildRegion(minx, minz, maxx, maxz); updateHeightTex(minx, minz, maxx, maxz);
-  resnapPropsRegion(x - DIG_R*2.4, z - DIG_R*2.4, x + DIG_R*2.4, z + DIG_R*2.4);
+  flushGroundChanges(0, true);
 }
 
 // The island heals itself: holes and spoil relax toward flat (fast under the
@@ -18236,7 +18427,28 @@ let shovelSwing = 0, camNudge = 0, toolRecoilT = 0, camShake = 0, lastFailT = -9
 const dbgTool = { yaw: 0, pitch: 0, roll: 0, swingDir: 1, spin: 0 };   // §tools7 `spin` = a NEW rotation axis: about the tool's own long (handle) axis, in local space before the pose tilt
 const TOOL_X_SHIFT = 0.12;
 // §spade first-person pose of the beach toy shovel (blade tip position in view space, + pitch/roll), tunable
-const SPADE_FP = { scale: 0.85, x: 0.26, y: -0.42, z: 0.75, pitch: -0.32, roll: -0.16 };        // §tool-right how far further right every held tool/item sits (tunable)
+const SPADE_FP = { scale: 0.85, x: 0.26, y: -0.42, z: 0.75, pitch: -0.32, roll: -0.16 };
+// §spadedig one dig stroke, posed at the BLADE TIP (the mesh origin) in view space: [u, x, y, z, pitch, roll].
+// pitch < 0 leans the handle's top back toward you. The stroke: lift the spade a touch (hands up, blade under
+// them), drive the blade forward and down into the ground, then lever: the tip stays put while the handle is
+// pulled back and down toward you (the blade prising up the dirt), lift the loaded blade, settle back to rest.
+const SPADE_DIG = [
+  [0.00, 0.26, -0.42, 0.75, -0.32, -0.16],   // rest
+  [0.14, 0.28, -0.31, 0.68, -0.12, -0.12],   // lift: hands up, spade more upright, blade under them
+  [0.40, 0.22, -0.48, 1.00, -0.50, -0.08],   // drive: blade thrust forward & down into the dirt, handle leaning back
+  [0.66, 0.22, -0.47, 0.98, -0.84, -0.05],   // lever: tip held in the ground, handle pulled back & down
+  [0.84, 0.25, -0.38, 0.90, -0.62, -0.11],   // lift the loaded blade out
+  [1.00, 0.26, -0.42, 0.75, -0.32, -0.16],   // back to rest
+];
+const _spadePose = [0, 0, 0, 0, 0];
+function spadeDigPose(u, out) {   // Catmull-Rom through the keys (smooth, never stopping dead between them)
+  const K = SPADE_DIG, n = K.length; u = Math.max(0, Math.min(1, u));
+  let i = 0; while (i < n - 2 && u > K[i + 1][0]) i++;
+  const t = (u - K[i][0]) / Math.max(1e-6, K[i + 1][0] - K[i][0]);
+  const P0 = K[Math.max(0, i - 1)], P1 = K[i], P2 = K[i + 1], P3 = K[Math.min(n - 1, i + 2)], t2 = t * t, t3 = t2 * t;
+  for (let c = 1; c <= 5; c++) out[c - 1] = 0.5 * (2 * P1[c] + (-P0[c] + P2[c]) * t + (2 * P0[c] - 5 * P1[c] + 4 * P2[c] - P3[c]) * t2 + (-P0[c] + 3 * P1[c] - 3 * P2[c] + P3[c]) * t3);
+  return out;
+}        // §tool-right how far further right every held tool/item sits (tunable)
 const lastToolPose = { id: "", roll: 0, pitch: 0, yaw: 0, swingDir: 1 };   // final applied pose, read back by the debug readout
 let soundSubs = false;                 // §tools5 Minecraft-style sound captions (debug)
 const soundSubList = [];               // §capt5 live caption entries {id,name,dir,bornT,vol,n}
@@ -19055,8 +19267,9 @@ function drawShovel(view) {
     pitch = -0.2 - sw*1.05 + rec*0.65;
     if (id === "spade") {                                                                 // §spade held by the grip (top), handle up, blade down & a little ahead
       scale = SPADE_FP.scale;                                                               // mesh origin = the blade tip; the grip sits at local y ≈ 0.52
-      ox = SPADE_FP.x + sway; oy = SPADE_FP.y - sw*0.12 + rec*0.12 - swap*0.5 + bob; oz = SPADE_FP.z + sw*0.28 - rec*0.2;
-      roll = SPADE_FP.roll + swayR; pitch = SPADE_FP.pitch + sw*0.75 - rec*0.35;            // a dig: the blade drives forward and down, then lifts
+      const P = spadeDigPose(1 - ss, _spadePose);                                           // §spadedig the stroke (1 → 0 swing = start → end)
+      ox = P[0] + sway; oy = P[1] + rec*0.12 - swap*0.5 + bob; oz = P[2] - rec*0.2;
+      roll = P[4] + swayR; pitch = P[3] - rec*0.35;
     }
   }
   // §tools5 apply the live debug fine-tune offsets to whatever is in hand, then record the final pose for the read-back.
@@ -19999,6 +20212,7 @@ function resetWorldState() {
   // untouched cell, which also shifts seeded placement downstream.
   material.fill(0); matField.fill(0); fresh.fill(0);
   groundReady = false;   // §cover the old island's ground cover until computeGroundCover() runs
+  FALLERS.length = 0; _gc = null;   // §ground pending falls / changes belong to the old island
   // The buried oddity is drawn from the shared rng the first time seedDigSpots
   // runs; clear it so the new island re-rolls it in the same stream position a
   // fresh load would, keeping the whole generation deterministic.
@@ -20186,6 +20400,7 @@ function frame(now) {
     gdt -= s;
   }
   updateDigging(simDt);
+  flushGroundChanges(simDt, false); updateFallers(simDt);   // §ground healed holes lift props back up; dropped objects fall
   // §13.2 hold the use button to keep swinging at a work target (no repeated clicks needed)
   if (useHeld && mode === "walk" && !invOpen && !isPanelOpen()) {
     const t = effectiveTarget();
