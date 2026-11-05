@@ -56,10 +56,18 @@ Per-seed `localStorage` keys: `bc_<seed>` (player state), `bcw_<seed>` (world),
 
 The world is a seeded archipelago inside the one world grid (`@section TERRAIN/archipelago`):
 `ISLANDS[]` (home + main islands + islets), `RESERVED` (an empty spot for a future special
-island), `CROSSINGS[]` (low-tide causeways / swim channels / the far crossing), and `islandIdx[]` /
-`islandAt(x,z)` for "which island is this". Never place things by distance from the map centre:
-sample with `islandXZ()` or use local conditions (height vs the tide, substrate, biome). Biomes are
-looked up per island (`coastBiomeAt`). `tools/wtest/partD.js` checks a seed's layout.
+island), `CROSSINGS[]` (swim / far crossings: metadata only; islands are always separate land, with
+no causeways, and `buildHeightmap` sinks any shallow saddle between two islands to swim depth below a
+spring low tide), and `islandIdx[]` / `islandAt(x,z)` for "which island is this". Island silhouettes
+come from `lobesOf()` + `islandCoastD()` (a core plus lobes / peninsula arms, two-scale domain warp,
+smooth union) with coves, small points and inlets added in `islandHeight()`. Never place things by
+distance from the map centre: sample with `islandXZ()` or use local conditions (height vs the tide,
+substrate, biome). Biomes are a per-cell map (`biomeMap[]`, `coastBiomeAt`) laid out by local shore
+exposure. The ground near water (sand / gravel / rock / mud / earth / marsh) is `computeGroundCover()`
+(`@section TERRAIN/ground-cover`): two RGBA8 cover textures for the shader and `groundMat[]` for play
+(`defaultMat()` / `groundAt()`); `material[]` holds player edits only. The world is `WORLD` = 1800 m on
+a `GRID` = 577 heightmap (~3.1 m cells); terrain chunks draw at three distance LODs
+(`@section RENDER/terrain-lod`). `tools/wtest/partD.js` checks a seed's layout.
 
 ## New Island
 

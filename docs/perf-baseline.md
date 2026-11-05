@@ -99,3 +99,25 @@ draws / triangles / heap are trustworthy):
 | 7k2x  | 36–48 → 40–43 | 233k–533k → 276k–547k | ~37 MB |
 
 Load (SwiftShader, page load to `load`): ~0.9–1.2 s before, ~1.0–1.5 s after.
+
+## After the archipelago rework (bigger world, terrain LOD, ground cover)
+
+The world grew from 1200 m / `GRID` 384 to 1800 m / `GRID` 577 (same ~3.1 m cells, 2.25× the area).
+To keep the frame cost flat: terrain chunks (now 6×6) draw at three distance LODs (stride 1/2/4,
+full-res chunk rims so neighbours never crack; `@section RENDER/terrain-lod`), and the seabed foliage
+(kelp / eelgrass / seamoss / red algae) is now distance-culled at the prop radius as well as frustum-culled.
+The water sheet is stretched (same ~6.4 m cells near the camera, 1350 m half-extent) at the same 131 k tris.
+
+Seed `alpha`, perf2.js (software GL: only tris / draws trustworthy):
+
+| Camera yaw | Before (tris / draws) | After (tris / draws) |
+|---|--:|--:|
+| 0 | 395 k / 41 | 283 k / 42 |
+| π/2 | 382 k / 41 | 262 k / 40 |
+| π | 389 k / 39 | 274 k / 42 |
+| −π/2 | 442 k / 40 | 308 k / 44 |
+
+Terrain alone dropped from 110–165 k to 67–107 k tris per view. The new cost is one-time generation:
+page load ~1.35 s → ~1.85 s under SwiftShader (heightmap work per cell is unchanged; the rest is the
+larger area plus the per-cell biome map and ground-cover pass). The terrain fragment shader gains two
+RGBA8 cover-texture taps and two value-noise calls.

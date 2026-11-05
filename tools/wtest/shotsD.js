@@ -45,19 +45,21 @@ const DIR = path.resolve(__dirname, "..", "..", "docs", "shots"); fs.mkdirSync(D
   const pick = await page.evaluate(() => {
     const mixed = ISLANDS.filter(i => i.sec && i.sec.length);
     const isl = mixed.find(i => HARD_BIOMES[i.biome] && i.sec.some(s => !HARD_BIOMES[s])) || mixed.find(i => i.sec.some(s => HARD_BIOMES[s] !== HARD_BIOMES[i.biome])) || mixed[0];
-    const ex = islandExposure(isl); let hi = 0, lo = 0;
-    for (let k = 0; k < BIOME_BINS; k++) { if (ex[k] > ex[hi]) hi = k; if (ex[k] < ex[lo]) lo = k; }
-    return { id: isl.id, name: isl.name, main: isl.biome, sec: isl.sec, hiBin: hi, loBin: lo, hiB: isl.segs[hi], loB: isl.segs[lo] };
+    // the most / least exposed shore cells just above the waterline, with their seaward direction
+    let hi = -1, lo = -1;
+    for (let i = 0; i < GRID * GRID; i++) { if (islandIdx[i] !== isl.id || shoreEx[i] < -8 || heightmap[i] < 0 || heightmap[i] > MAX_HIGH_TIDE) continue;
+      if (hi < 0 || shoreEx[i] > shoreEx[hi]) hi = i; if (lo < 0 || shoreEx[i] < shoreEx[lo]) lo = i; }
+    const at = (i) => ({ x: (i % GRID) * CELL - HALF, z: ((i / GRID) | 0) * CELL - HALF, b: BIOME_LIST[biomeMap[i]] });
+    return { id: isl.id, name: isl.name, main: isl.biome, sec: isl.sec, hi: at(hi), lo: at(lo) };
   });
-  for (const [tag, bin] of [["exposed", pick.hiBin], ["sheltered", pick.loBin]]) {
-    await page.evaluate(([id, bin]) => {
-      const isl = ISLANDS[id], a = (bin + 0.5) / BIOME_BINS * 6.2832, dx = Math.cos(a), dz = Math.sin(a);
-      let rr = isl.R; for (let t = isl.R * 2; t > 4; t -= 2) { if (heightAt(isl.x + dx * t, isl.z + dz * t) > 0.5) { rr = t; break; } }
+  for (const [tag, spot] of [["exposed", pick.hi], ["sheltered", pick.lo]]) {
+    await page.evaluate((s) => {
+      const gx = heightAt(s.x + 3, s.z) - heightAt(s.x - 3, s.z), gz = heightAt(s.x, s.z + 3) - heightAt(s.x, s.z - 3), L = Math.hypot(gx, gz) || 1, dx = -gx / L, dz = -gz / L;
       // hover offshore, looking back at that stretch of coast
-      const cx = isl.x + dx * (rr + 70), cz = isl.z + dz * (rr + 70);
+      const cx = s.x + dx * 70, cz = s.z + dz * 70;
       window.__shoot({ x: cx, y: 34, z: cz, yaw: Math.atan2(-dx, dz), pitch: -0.36 });
       tideT = 0.72; dayNightEnabled = false; timeOfDay = 0.33; updateSun();
-    }, [pick.id, bin]);
+    }, spot);
     await frames(page, 4, 33); await page.waitForTimeout(1000);
     await page.screenshot({ path: path.join(DIR, "arch-" + tag + "-" + SEED + ".png"), timeout: 120000 });
   }

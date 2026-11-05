@@ -849,7 +849,7 @@
  *
  *   GENERATION / WORLD DATA
  *     § PRNG · § NOISE · § WORLD CONFIG · § TERRAIN CHARACTER ·
- *     § COASTAL BIOMES · § BASINS · § ATMOSPHERE · § TIDES
+ *     § COASTAL BIOMES · § BASINS · § GROUND COVER · § ATMOSPHERE · § TIDES
  *   SYSTEMS
  *     § SOUND · § 20 WEATHER (+ RAIN / AFTER A STORM / LIGHT EFFECTS)
  *   RENDERER
@@ -990,9 +990,10 @@ function makeNoise(rand) {
  * --------------------------------------------------------------------- */
 // @system GEN  @section GEN/config
 
-const GRID = 384;             // heightmap resolution (GRID x GRID)
-const WORLD = 1200.0;         // island spans WORLD world-units (big, so you feel small)
+const GRID = 577;             // heightmap resolution (GRID x GRID); GRID-1 = 576 cells splits evenly into the LOD chunks
+const WORLD = 1800.0;         // the archipelago spans WORLD world-units (big, so you feel small); CELL stays ~3.1 m
 const HALF = WORLD * 0.5;
+const AREA_K = (WORLD / 1200) * (WORLD / 1200) * 0.8;   // fixed-count scatters (bushes, flowers, seabed finds …) scale with the land, not 1:1 with the world
 const CELL = WORLD / (GRID - 1);
 const SEA_LEVEL = 0.0;        // water sits at y = 0
 
@@ -1041,11 +1042,11 @@ let nBar   = makeNoise(subStream());    // sandbars & tidal channels in the inte
 // Each island maps into the OLD single-island frame ("virtual uv": the old coast sat at d ≈ ISL_D_COAST),
 // so the proven shaping pipeline runs per island unchanged, just scaled to the island's radius R.
 const ISL_D_COAST = 0.53;            // the old island's coastline in its d units (d = 2·|uv − 0.5|)
-const ARCH_MARGIN = 70;              // keep land this far from the world edge
-const ARCH_GAP_SWIM = [28, 95];      // main-island gaps (m of open water): an easy-to-moderate swim, or a causeway
-const ARCH_GAP_FAR = [190, 240];     // the one clearly-harder island (a long open-water crossing; later gear)
-const CAUSEWAY_MAX_GAP = 120;        // only gaps this short get a low-tide sandbar causeway
-const ARCH_COAST_SLOP = 1.2;         // a coast can wander ~20% past its island's nominal radius (bays/capes), so space on R × this
+const ARCH_MARGIN = 90;              // keep land this far from the world edge
+const ARCH_GAP_SWIM = [80, 200];     // main-island gaps (m of open water, nominal): a short hop up to a long swim; never wadeable
+const ARCH_GAP_FAR = [260, 330];     // the one clearly-harder island (a long open-water crossing; later gear)
+const ARCH_COAST_SLOP = 1.45;        // lobes + coast warp can carry a coast ~45% past the nominal radius R, so space on R × this
+const LOBE_K = 0.16;                 // soft-min blend between an island's lobes (R units): bigger = fatter necks, rounder bays
 const BIOME_PREF = { reef: 0, cobble: 1, sandy: 2, mudflat: 3, marsh: 4 };   // 0 = wants the most exposed shore … 4 = most sheltered
 const BIOME_SETS = [["sandy","mudflat","marsh"], ["cobble","reef"], ["sandy","reef"]];   // only compatible biomes share an island
 const HARD_BIOMES = { reef: 1, cobble: 1 };
@@ -1089,17 +1090,19 @@ function archipelagoOf(r) {
   const clearOf = (x, z, R, pad) => { for (const o of ISLANDS) if (Math.hypot(o.x - x, o.z - z) < (o.R + R) * ARCH_COAST_SLOP + (o.far ? Math.max(pad, ARCH_GAP_FAR[0]) : pad)) return false;
     return !RESERVED || Math.hypot(RESERVED.x - x, RESERVED.z - z) > RESERVED.R + R + pad; };
   const mk = (role, kind, x, z, R, ch, biome, sec) => {
-    const isl = { id: ISLANDS.length, role, kind, x, z, R, rot: r() * 6.2832, elong: 1 + r() * (kind === "sandbar" ? 1.6 : 0.55),
-      ch, biome, sec, P: islandParamsOf(r, ch, R), segs: null, hx: x, hz: z, hh: -1e9, name: "" };
+    const isl = { id: ISLANDS.length, role, kind, x, z, R, rot: r() * 6.2832, elong: 1 + r() * (kind === "sandbar" ? 1.6 : 0.45),
+      ch, biome, sec, P: islandParamsOf(r, ch, R), hx: x, hz: z, hh: -1e9, name: "" };
     if (kind === "sandbar") isl.elong += 0.8;
+    isl.lobes = lobesOf(r, kind); isl.ext = 1; for (const L of isl.lobes) isl.ext = Math.max(isl.ext, Math.hypot(L.x, L.z) + L.r);
+    isl.inlet = kind === "island" ? 0.05 + 0.13 * r() : 0;               // how hard narrow inlets / creeks bite into the coast
     ISLANDS.push(isl); return isl;
   };
   // 1. home island: gentle, sandy, near the middle of the map
-  const homeR = 115 + r() * 25;
-  const homeI = mk("home", "island", (r() - 0.5) * 220, (r() - 0.5) * 220, homeR, "lowlands", "sandy", secondariesOf(r, "sandy"));
+  const homeR = 150 + r() * 40;
+  const homeI = mk("home", "island", (r() - 0.5) * 300, (r() - 0.5) * 300, homeR, "lowlands", "sandy", secondariesOf(r, "sandy"));
   homeI.P.lakeAmt *= 0.25; homeI.P.coastWarp *= 0.8;                       // gentle: no big inland lagoon, a calmer outline
   // 2. the reserved spot for a future special island: out toward the map edge, kept empty
-  for (let k = 0; k < 200 && !RESERVED; k++) { const a = r() * 6.2832, d = 330 + r() * 120, x = Math.sin(a) * d, z = -Math.cos(a) * d, R = 70;
+  for (let k = 0; k < 200 && !RESERVED; k++) { const a = r() * 6.2832, d = 480 + r() * 220, x = Math.sin(a) * d, z = -Math.cos(a) * d, R = 95;
     if (fits(x, z, R) && clearOf(x, z, R, 60)) RESERVED = { x, z, R }; }
   // 3. main islands: every coastal biome is the MAIN biome of at least one main island (the home island counts
   //    as sandy); extra islands repeat a biome but differ in size, shape, inland character and secondary mix
@@ -1112,11 +1115,11 @@ function archipelagoOf(r) {
   for (let m = 0; m < nMain; m++) {
     const biome = mains[m], far = m === farIdx;
     let ch = charPick(r); if (HARD_BIOMES[biome] && ch === "lowlands") ch = "highlands"; if (biome === "marsh" || biome === "mudflat") ch = r() < 0.6 ? "lowlands" : "atoll";
-    const R = 70 + r() * 45;
+    const R = 85 + r() * 70;
     let placed = null;
     for (let k = 0; k < 400 && !placed; k++) {
       const anchor = ISLANDS[(r() * ISLANDS.length) | 0]; if (anchor.kind !== "island") continue;
-      const g = far ? ARCH_GAP_FAR : ARCH_GAP_SWIM, gap = g[0] + r() * (g[1] - g[0]);
+      const g = far ? ARCH_GAP_FAR : ARCH_GAP_SWIM, gap = g[0] + Math.pow(r(), 1.3) * (g[1] - g[0]);   // mostly moderate, some wide
       const a = r() * 6.2832, d = (anchor.R + R) * ARCH_COAST_SLOP + gap, x = anchor.x + Math.sin(a) * d, z = anchor.z - Math.cos(a) * d;
       if (!fits(x, z, R)) continue;
       if (!clearOf(x, z, R, far ? ARCH_GAP_FAR[0] : ARCH_GAP_SWIM[0])) continue;   // the far island keeps a wide moat to EVERY island
@@ -1134,11 +1137,11 @@ function archipelagoOf(r) {
   const nIslet = 2 + ((r() * 4) | 0);
   for (let k = 0; k < nIslet; k++) {
     const kind = k === 0 ? "sandbar" : ["stack", "outcrop", "sandbar", "stack"][(r() * 4) | 0];
-    const R = kind === "sandbar" ? 24 + r() * 14 : kind === "stack" ? 7 + r() * 5 : 16 + r() * 12;
+    const R = kind === "sandbar" ? 28 + r() * 20 : kind === "stack" ? 8 + r() * 6 : 18 + r() * 16;
     let placed = null;
     for (let t = 0; t < 400 && !placed; t++) {
       const anchor = ISLANDS[(r() * ISLANDS.length) | 0]; if (anchor.kind !== "island" || anchor.far) continue;   // islets sit off the reachable islands
-      const gap = (kind === "stack" ? 8 : 18) + r() * 55, a = r() * 6.2832, d = anchor.R + R * (kind === "sandbar" ? 1.8 : 1) + gap;
+      const gap = (kind === "stack" ? 12 : 25) + r() * 110, a = r() * 6.2832, d = anchor.R * ARCH_COAST_SLOP + R * (kind === "sandbar" ? 1.8 : 1) + gap;
       const x = anchor.x + Math.sin(a) * d, z = anchor.z - Math.cos(a) * d;
       if (fits(x, z, R * 2) && clearOf(x, z, R * (kind === "sandbar" ? 1.8 : 1), 14)) placed = [x, z];
     }
@@ -1147,8 +1150,8 @@ function archipelagoOf(r) {
     const isl = mk("islet", kind, placed[0], placed[1], R, kind === "sandbar" ? "lowlands" : "peaks", biome, []);
     if (kind === "outcrop") isl.P.heightScale *= 0.22;                    // a low rocky outcrop, not a mountain
   }
-  // 5. crossings between the big islands: a minimum spanning tree by open-water gap. Short MST gaps get a
-  //    sandbar causeway (walkable around low tide); the rest are swimmable channels; the far island is "far".
+  // 5. crossings between the big islands: a minimum spanning tree by open-water gap (metadata only: every
+  //    island stays a separate land mass; the crossings are swims, and the far island's is "far").
   const big = ISLANDS.filter(i => i.kind === "island"), inTree = new Set([big[0].id]), edges = [];
   const gapOf = (a, b) => Math.hypot(a.x - b.x, a.z - b.z) - (a.R + b.R) * ARCH_COAST_SLOP;
   while (inTree.size < big.length) {
@@ -1156,20 +1159,44 @@ function archipelagoOf(r) {
     for (const a of big) if (inTree.has(a.id)) for (const b of big) if (!inTree.has(b.id)) { const g = gapOf(a, b); if (g < bg) { bg = g; best = [a, b]; } }
     if (!best) break; inTree.add(best[1].id); edges.push({ a: best[0], b: best[1], gap: bg });
   }
-  let anyCause = false;
-  for (const e of edges) {
-    const far = e.a.far || e.b.far;
-    let type = far ? "far" : (e.gap < CAUSEWAY_MAX_GAP && r() < 0.6 ? "causeway" : "swim");
-    if (type === "causeway") anyCause = true;
-    CROSSINGS.push({ a: e.a.id, b: e.b.id, gap: e.gap, type, width: 7 + r() * 4 });
-  }
-  if (!anyCause) {   // guarantee at least one low-tide causeway: the shortest non-far crossing
-    let c = null; for (const x of CROSSINGS) if (x.type !== "far" && (!c || x.gap < c.gap)) c = x;
-    if (c) c.type = "causeway";
-  }
+  for (const e of edges) CROSSINGS.push({ a: e.a.id, b: e.b.id, gap: e.gap, type: e.a.far || e.b.far ? "far" : "swim" });
   // 6. names (a side stream, never the world rng)
   for (const isl of ISLANDS) isl.name = islandNameFor(isl);
   const home = ISLANDS[0]; CHARACTER = home.ch; archetype = CHARACTER;
+}
+// §shape an island's silhouette: a core plus a few overlapping lobes (island-local frame, R units). A fat lobe makes a
+// headland or a broad bulge, a thin far one on a neck makes a peninsula, and where two lobes meet the soft union
+// leaves a bay. Sandbars get a couple of lobes along their length; stacks stay a single knob.
+function lobesOf(r, kind) {
+  const L = [{ x: 0, z: 0, r: kind === "island" ? 0.62 + 0.2 * r() : 0.85 + 0.1 * r() }];
+  if (kind === "stack") return L;
+  if (kind === "sandbar") { const n = 1 + ((r() * 2) | 0); for (let k = 0; k < n; k++) { const s = r() < 0.5 ? -1 : 1; L.push({ x: s * (0.5 + 0.4 * r()), z: (r() - 0.5) * 0.5, r: 0.35 + 0.3 * r() }); } return L; }
+  const n = kind === "outcrop" ? 1 + ((r() * 2) | 0) : 2 + ((r() * 3.4) | 0);
+  let a = r() * 6.2832;
+  for (let k = 0; k < n; k++) {
+    a += 0.8 + r() * 2.4;                                                 // uneven spacing around the core
+    const arm = kind === "island" && r() < 0.4;                           // a long arm (peninsula / spit) vs a fat lobe
+    const d = arm ? 0.95 + r() * 0.5 : 0.4 + r() * 0.45, rad = arm ? 0.13 + r() * 0.13 : 0.3 + r() * 0.3;
+    const cx = Math.cos(a) * d, cz = Math.sin(a) * d;
+    L.push({ x: cx, z: cz, r: rad });
+    if (arm) { const b = a + (r() - 0.5) * 0.6; L.push({ x: Math.cos(b) * d * 0.55, z: Math.sin(b) * d * 0.55, r: rad * (0.9 + 0.4 * r()) }); }   // the neck, slightly bent
+  }
+  return L;
+}
+// Coast distance of an island-local point (lx, lz in metres, already rotated/stretched): 1 at the coast, < 1 inland,
+// growing ~1 per R out to sea. Two-scale domain warp bends the lobes into wandering shores; the lobes are joined
+// with a smooth union. `fast` skips the warp (sea floor far out).
+function islandCoastD(isl, lx, lz, fast) {
+  let x = lx / isl.R, z = lz / isl.R;
+  if (!fast) {
+    const o = isl.P.off, s1 = 0.85, s2 = 2.7;
+    x += (nWarpX.fbm(x * s1 + o[0] * 7, z * s1 + o[1] * 7, 3, 2, 0.5) - 0.5) * 0.75 + (nWarpX.fbm(x * s2 + 17.3, z * s2 + o[1] * 5, 2, 2, 0.5) - 0.5) * 0.2;
+    z += (nWarpY.fbm(x * s1 + o[1] * 7 + 3.1, z * s1 + o[0] * 7, 3, 2, 0.5) - 0.5) * 0.75 + (nWarpY.fbm(x * s2 + o[0] * 5, z * s2 + 9.1, 2, 2, 0.5) - 0.5) * 0.2;
+  }
+  let d = 1e9; const L = isl.lobes;                                       // polynomial smooth-min of the lobes' signed distances
+  for (let k = 0; k < L.length; k++) { const ex = x - L[k].x, ez = z - L[k].z, q = Math.sqrt(ex * ex + ez * ez) - L[k].r;
+    const hh = LOBE_K - Math.abs(d - q); d = Math.min(d, q) - (hh > 0 ? hh * hh * 0.25 / LOBE_K : 0); }
+  return 1 + d;
 }
 // a deterministic, evocative name per island (side stream seeded from the seed + island id)
 function islandNameFor(isl) {
@@ -1183,9 +1210,10 @@ archipelagoOf(subStream());   // the layout (one substream, after the noise fiel
 
 // §arch island-local frame: rotate + stretch around the island centre. Returns the "virtual uv" offset scale.
 function islLocal(isl, wx, wz, out) {
-  const dx = wx - isl.x, dz = wz - isl.z, c = Math.cos(isl.rot), s = Math.sin(isl.rot);
+  if (isl._c === undefined) { isl._c = Math.cos(isl.rot); isl._s = Math.sin(isl.rot); }   // (sqrt, not hypot: this runs millions of times)
+  const dx = wx - isl.x, dz = wz - isl.z, c = isl._c, s = isl._s;
   const lx = (dx * c - dz * s) / isl.elong, lz = (dx * s + dz * c);
-  out[0] = lx; out[1] = lz; return Math.hypot(lx, lz) / isl.R;            // d0: 1 at the nominal coast
+  out[0] = lx; out[1] = lz; return Math.sqrt(lx * lx + lz * lz) / isl.R;   // d0: 1 at the nominal coast
 }
 const _il = [0, 0];
 // the island a world point belongs to (by the dominant-shelf map), or null
@@ -1228,51 +1256,87 @@ const COAST_BIOMES = {
   marsh:   { mat: 1, feet: "grass", speed: 0.8, tell: 0.7, crit: ["crab","hopper"],
              finds: ["pickleweed","cockle","shell","worm"], label: "Salt marsh" },
 };
-const BIOME_BINS = 72;                 // angular bins per island for the biome layout
-// exposure of each bearing around an island: facing the prevailing wind, open-sea fetch, and capes vs coves
-function islandExposure(isl) {
-  const N = BIOME_BINS, ex = new Float32Array(N), rad = new Float32Array(N);
-  for (let b = 0; b < N; b++) {
-    const a = (b + 0.5) / N * 6.2832, dx = Math.cos(a), dz = Math.sin(a);
-    // coast radius on this bearing: march out from the centre until we leave this island's land
-    let rr = 0; for (let t = 2; t < isl.R * 2.2; t += 2) { const x = isl.x + dx * t, z = isl.z + dz * t, i = cellIndex(x, z);
-      if (i < 0) break; if (heightmap[i] > 0.2 && islandIdx[i] === isl.id) rr = t; else if (t > rr + 10) break; }
-    rad[b] = rr;
-    // fetch: open water beyond the coast until other land (or 380 m)
-    let fetch = 380; for (let t = rr + 6; t < rr + 380; t += 6) { const x = isl.x + dx * t, z = isl.z + dz * t, i = cellIndex(x, z);
-      if (i < 0) { fetch = t - rr; break; } if (heightmap[i] > 0.0 && islandIdx[i] !== isl.id) { fetch = t - rr; break; } }
-    const wind = Math.cos(a - PREVAIL);                                   // +1 facing straight into the prevailing wind
-    ex[b] = 0.45 * wind + 0.55 * (fetch / 380);
+// §biomes a PER-CELL biome map instead of angular wedges from the island centre. Every shore cell gets an EXPOSURE
+// from its own surroundings: how open the sea around it is (headland vs cove), whether it faces the prevailing wind,
+// and its fetch out to sea. That field is smoothed along the shore, given a little patchy noise, and each island's
+// shore is split by exposure RANK (main ≈ 65 %, hardest biome on the most exposed ground). So rocky shores sit on
+// the windward headlands and soft ones in the bays, and the borders follow the land and wander, with fingers and
+// patches of one biome reaching into the next. Every other cell takes the biome of its nearest shore cell.
+const BIOME_LIST = ["sandy", "cobble", "reef", "mudflat", "marsh"], BIOME_ID = { sandy: 0, cobble: 1, reef: 2, mudflat: 3, marsh: 4 };
+const biomeMap = new Uint8Array(GRID * GRID);          // biome id per cell (index into BIOME_LIST)
+const shoreEx = new Float32Array(GRID * GRID);         // smoothed shore exposure (−9 = not a shore cell); also for tests
+const _OPEN_DIRS = 12, _OD = [];   // per direction: cos, sin, and the cell offsets at ~30 m and ~75 m
+for (let k = 0; k < _OPEN_DIRS; k++) { const a = k / _OPEN_DIRS * 6.2832, c = Math.cos(a), s = Math.sin(a); _OD.push([c, s, Math.round(c * 10), Math.round(s * 10), Math.round(c * 24), Math.round(s * 24)]); }
+function computeShoreExposure(isShore) {
+  const N = GRID * GRID, raw = new Float32Array(N), w = new Float32Array(N), px = Math.cos(PREVAIL), pz = Math.sin(PREVAIL);
+  const wet = (gx, gz) => { if (gx < 0 || gz < 0 || gx >= GRID || gz >= GRID) return 1; return heightmap[gz * GRID + gx] < TIDE_MID ? 1 : 0; };
+  for (let gz = 0; gz < GRID; gz++) for (let gx = 0; gx < GRID; gx++) {
+    const i = gz * GRID + gx; if (!isShore[i]) continue;
+    let open = 0, ox = 0, oz = 0;
+    for (let k = 0; k < _OPEN_DIRS; k++) {                     // openness at two radii (~30 m, ~75 m) + the seaward direction
+      const D = _OD[k], w1 = wet(gx + D[2], gz + D[3]), w2 = wet(gx + D[4], gz + D[5]);
+      open += w1 * 0.55 + w2 * 0.45; ox += D[0] * (w1 + w2); oz += D[1] * (w1 + w2);
+    }
+    open /= _OPEN_DIRS;
+    const ol = Math.sqrt(ox * ox + oz * oz) || 1, dx = ox / ol, dz = oz / ol;
+    const fetch = wet(gx + Math.round(dx * 30), gz + Math.round(dz * 30)) + wet(gx + Math.round(dx * 52), gz + Math.round(dz * 52))   // ~95–360 m out
+                + wet(gx + Math.round(dx * 80), gz + Math.round(dz * 80)) + wet(gx + Math.round(dx * 115), gz + Math.round(dz * 115));
+    raw[i] = 0.42 * (dx * px + dz * pz) + 0.3 * (fetch / 4) + 1.1 * (open - 0.5);
+    w[i] = 1;
   }
-  // capes stick out (exposed), coves cut in (sheltered): coast radius vs its neighbourhood
-  const out = new Float32Array(N);
-  for (let b = 0; b < N; b++) { let s = 0; for (let k = -6; k <= 6; k++) s += rad[(b + k + N) % N]; const avg = s / 13;
-    out[b] = ex[b] + 0.6 * Math.max(-1, Math.min(1, (rad[b] - avg) / Math.max(8, avg * 0.25))); }
-  // smooth so segments stay contiguous
-  const sm = new Float32Array(N);
-  for (let b = 0; b < N; b++) { let s = 0, w = 0; for (let k = -4; k <= 4; k++) { const ww = 5 - Math.abs(k); s += out[(b + k + N) % N] * ww; w += ww; } sm[b] = s / w; }
-  return sm;
+  // smooth along the shore (masked separable box blur, radius 6 cells ≈ 19 m) so neighbouring cells agree
+  const tmpV = new Float32Array(N), tmpW = new Float32Array(N), R = 6;
+  for (let gz = 0; gz < GRID; gz++) { let sv = 0, sw = 0;
+    for (let gx = -R; gx < GRID; gx++) { const add = gx + R, rem = gx - R - 1;
+      if (add < GRID) { sv += raw[gz * GRID + add]; sw += w[gz * GRID + add]; }
+      if (rem >= 0) { sv -= raw[gz * GRID + rem]; sw -= w[gz * GRID + rem]; }
+      if (gx >= 0) { tmpV[gz * GRID + gx] = sv; tmpW[gz * GRID + gx] = sw; } } }
+  for (let gx = 0; gx < GRID; gx++) { let sv = 0, sw = 0;
+    for (let gz = -R; gz < GRID; gz++) { const add = gz + R, rem = gz - R - 1;
+      if (add < GRID) { sv += tmpV[add * GRID + gx]; sw += tmpW[add * GRID + gx]; }
+      if (rem >= 0) { sv -= tmpV[rem * GRID + gx]; sw -= tmpW[rem * GRID + gx]; }
+      if (gz >= 0) { const i = gz * GRID + gx; shoreEx[i] = isShore[i] && sw > 0 ? sv / sw : -9; } } }
 }
-// lay an island's biomes onto its bins by exposure rank: main ≈ 65%, secondaries split the rest; the set is
-// ordered by BIOME_PREF so the hardest biome takes the most exposed bearings and the softest the most sheltered
-function layoutIslandBiomes(isl) {
-  const N = BIOME_BINS, segs = new Array(N).fill(isl.biome);
-  if (!isl.sec || !isl.sec.length) { isl.segs = segs; return; }
-  const ex = islandExposure(isl), order = [...Array(N).keys()].sort((a, b) => ex[b] - ex[a]);   // most exposed first
-  const set = [isl.biome, ...isl.sec].sort((a, b) => BIOME_PREF[a] - BIOME_PREF[b]);
-  const share = {}; share[isl.biome] = 0.65; for (const s of isl.sec) share[s] = 0.35 / isl.sec.length;
-  let k = 0; for (const b of set) { const n = Math.round(share[b] * N); for (let j = 0; j < n && k < N; j++) segs[order[k++]] = b; }
-  while (k < N) segs[order[k++]] = set[set.length - 1];
-  isl.segs = segs;
+function layoutBiomes() {
+  const N = GRID * GRID, isShore = new Uint8Array(N), lo = -TIDE_RANGE * 0.7, hi = MAX_HIGH_TIDE + 3;
+  for (let i = 0; i < N; i++) { const hb = heightmap[i]; if (islandIdx[i] !== 255 && hb > lo && hb < hi) isShore[i] = 1; }
+  computeShoreExposure(isShore);
+  // rank the shore cells of each island by (exposure + patchy noise) and hand out the biomes by share
+  const cells = ISLANDS.map(() => []);
+  for (let gz = 0; gz < GRID; gz++) for (let gx = 0; gx < GRID; gx++) {
+    const i = gz * GRID + gx; if (!isShore[i]) continue;
+    const x = gx * CELL - HALF, z = gz * CELL - HALF;
+    const n = (nBar.fbm(x * 0.011 + 11, z * 0.011 + 7, 3, 2, 0.5) - 0.5) * 0.55       // broad meanders of the borders
+            + (nBar.fbm(x * 0.045 - 3, z * 0.045 + 21, 3, 2, 0.5) - 0.5) * 0.32;      // fingers + patches across a border
+    cells[islandIdx[i]].push(i); shoreEx[i] += n;
+  }
+  biomeMap.fill(255);
+  for (const isl of ISLANDS) {
+    const list = cells[isl.id]; if (!list.length) continue;
+    if (!isl.sec || !isl.sec.length) { for (const i of list) biomeMap[i] = BIOME_ID[isl.biome]; continue; }
+    list.sort((a, b) => shoreEx[b] - shoreEx[a]);                       // most exposed first
+    const set = [isl.biome, ...isl.sec].sort((a, b) => BIOME_PREF[a] - BIOME_PREF[b]);
+    const share = {}; share[isl.biome] = 0.65; for (const s of isl.sec) share[s] = 0.35 / isl.sec.length;
+    let k = 0; for (const b of set) { const n = Math.round(share[b] * list.length); for (let j = 0; j < n && k < list.length; j++) biomeMap[list[k++]] = BIOME_ID[b]; }
+    while (k < list.length) biomeMap[list[k++]] = BIOME_ID[set[set.length - 1]];
+  }
+  // every other cell (inland, open sea) takes its nearest shore cell's biome: a multi-source breadth-first fill
+  const q = new Int32Array(N); let qh = 0, qt = 0;
+  for (let i = 0; i < N; i++) if (biomeMap[i] !== 255) q[qt++] = i;
+  while (qh < qt) { const i = q[qh++], gx = i % GRID, b = biomeMap[i];
+    if (gx > 0 && biomeMap[i - 1] === 255) { biomeMap[i - 1] = b; q[qt++] = i - 1; }
+    if (gx < GRID - 1 && biomeMap[i + 1] === 255) { biomeMap[i + 1] = b; q[qt++] = i + 1; }
+    if (i >= GRID && biomeMap[i - GRID] === 255) { biomeMap[i - GRID] = b; q[qt++] = i - GRID; }
+    if (i < N - GRID && biomeMap[i + GRID] === 255) { biomeMap[i + GRID] = b; q[qt++] = i + GRID; } }
+  for (let i = 0; i < N; i++) if (biomeMap[i] === 255) biomeMap[i] = 0;
 }
-function layoutBiomes() { for (const isl of ISLANDS) layoutIslandBiomes(isl); }
-// biome lookup PER ISLAND (by bearing from that island's centre), with soft, wavy boundaries
-function coastBiomeAt(x, z) {
-  const isl = islandAt(x, z); if (!isl || !isl.segs) return "sandy";
-  let ang = Math.atan2(z - isl.z, x - isl.x);
-  ang += (nBar.fbm(x * 0.012 + 11, z * 0.012 + 7, 2, 2, 0.5) - 0.5) * 0.6;   // soft, wavy boundaries
-  ang = (ang % 6.2831853 + 6.2831853) % 6.2831853;
-  return isl.segs[Math.min(BIOME_BINS - 1, (ang / 6.2831853 * BIOME_BINS) | 0)];
+// biome at a world point: the per-cell map (nearest cell), so it is cheap enough for per-frame callers
+function coastBiomeAt(x, z) { const i = cellIndex(x, z); return i < 0 ? "sandy" : BIOME_LIST[biomeMap[i]]; }
+// mean shore exposure of each biome on an island (debug / tests: hard biomes should average higher)
+function islandBiomeExposure(isl) {
+  const sum = {}, cnt = {};
+  for (let i = 0; i < GRID * GRID; i++) if (islandIdx[i] === isl.id && shoreEx[i] > -8) { const b = BIOME_LIST[biomeMap[i]]; sum[b] = (sum[b] || 0) + shoreEx[i]; cnt[b] = (cnt[b] || 0) + 1; }
+  const out = {}; for (const b in sum) out[b] = { ex: sum[b] / cnt[b], n: cnt[b] }; return out;
 }
 
 // Ridged multifractal → sharp mountain ridgelines & rock formations.
@@ -1305,7 +1369,9 @@ const builtCells = new Set();                 // grid indices with built height 
 // Surface materials. 0 = "natural" (coloured by height/slope as before).
 const MAT = { NATURAL: 0, GRASS: 1, DIRT: 2, SAND: 3, GRAVEL: 4, STONE: 5, MUD: 6 };   // §matrm earth-material PLACEMENT (sand/dirt/gravel/mud items + the place ghost) was removed; these ids still drive the natural terrain surface
 // natural material of a base cell, from its height & local slope
-function defaultMat(i) {
+function defaultMat(i) { return groundReady ? groundMat[i] : inlandMat(i); }   // §cover the generated ground (see GROUND COVER)
+// the inland rule (and the fallback before the ground cover exists): by height & slope
+function inlandMat(i) {
   const hb = heightmap[i];
   const gx = i % GRID, gz = (i / GRID) | 0;
   let slope = 0;
@@ -1315,15 +1381,16 @@ function defaultMat(i) {
   }
   if (slope > 0.62 || hb > 34) return MAT.STONE;
   if (hb > 20) return MAT.GRAVEL;
-  if (hb < 6) return MAT.SAND;
+  if (hb < MAX_HIGH_TIDE - 0.3) return MAT.SAND;       // under the sea (the cover usually says more)
   return MAT.GRASS;
 }
 
 // §arch one island's height at a world point, using the old single-island pipeline in the island's own
 // "virtual uv" frame (so each island has the old look at its own size). `d0` = island-local distance / R.
-const _ihOut = { h: 0, d: 0 };
-function islandHeight(isl, wx, wz, lx, lz, d0) {
+const _ihOut = { h: 0, d: 0, d0: 0 };
+function islandHeight(isl, wx, wz, lx, lz) {
   const P = isl.P, kind = isl.kind;
+  const d0 = islandCoastD(isl, lx, lz, false); _ihOut.d0 = d0;             // §shape lobed, warped coast distance (1 = coast)
   if (kind === "stack") {                                                  // a sea stack: a sheer little tower of rock
     const n = (nCoast.fbm(lx * 0.09 + P.off[0], lz * 0.09 + P.off[1], 3, 2, 0.5) - 0.5) * 0.35;
     const t = 1 - smoothstep(0.45, 1.0, d0 + n), H = 16 + isl.R * 1.6;
@@ -1340,7 +1407,12 @@ function islandHeight(isl, wx, wz, lx, lz, d0) {
   const wu = u + (nWarpX.fbm(u * 1.6, v * 1.6, 4, 2, 0.5) - 0.5) * AP.warp;
   const wv = v + (nWarpY.fbm(u * 1.6 + 3.1, v * 1.6 + 1.7, 4, 2, 0.5) - 0.5) * AP.warp;
   let d = d0 * dMid;
-  d += (nCoast.fbm(u * 2.2, v * 2.2, 4, 2, 0.5) - 0.5) * P.coastWarp;
+  d += (nCoast.fbm(u * 2.2, v * 2.2, 4, 2, 0.5) - 0.5) * P.coastWarp * 0.45;   // broad bays / capes (the warp does the rest)
+  d += (nCoast.fbm(u * 9.0 + 5.3, v * 9.0 - 2.1, 3, 2, 0.5) - 0.5) * 0.05;     // small coves and points along the shore
+  if (isl.inlet > 0) {                                                    // §shape narrow inlets / creeks cutting in from the sea
+    const rn = 1 - Math.abs(2 * nRidge.noise2(u * 5.5 + 31.7, v * 5.5 - 17.3) - 1);
+    d += isl.inlet * smoothstep(0.84, 0.975, rn) * smoothstep(dMid - 0.16, dMid - 0.02, d);
+  }
   const land = smoothstep(P.coastOuter, P.coastInner, d);
   let height;
   if (land > 0) {
@@ -1357,91 +1429,80 @@ function islandHeight(isl, wx, wz, lx, lz, d0) {
   height -= smoothstep(P.coastInner, 1.5, d) * 14.0;                      // deepen toward open sea
   _ihOut.h = height; _ihOut.d = d; return _ihOut;
 }
+// the plain (noise-free) sea floor of a big island at coast distance d (its "virtual" d units)
+function islandSeaFloor(isl, d) { return -Math.pow(SEA_THRESH, SHELF_POW) * isl.P.heightScale - smoothstep(isl.P.coastInner, 1.5, d) * 14.0; }
 function buildHeightmap() {
   const NI = ISLANDS.length;
   islandIdx.fill(255);
-  const reach = new Float32Array(NI);                                       // beyond this d0 an island can't have land
-  for (let k = 0; k < NI; k++) { const isl = ISLANDS[k], P = isl.P; reach[k] = isl.kind === "island" || isl.kind === "outcrop"
-    ? (P.coastOuter + P.coastWarp * 0.5) / ((P.coastInner + P.coastOuter) * 0.5) + 0.05 : 1.4; }
+  // §shape beyond `reach` (coast-distance units) an island's sea floor has levelled off, so it's a constant there;
+  // `far` is the same in plain radial units (+ the lobes' extent), a cheap pre-test before the lobe maths.
+  const reach = new Float32Array(NI), far = new Float32Array(NI), floor = new Float32Array(NI), dm = new Float32Array(NI), seaD = new Float32Array(NI), farW = new Float32Array(NI);
+  for (let k = 0; k < NI; k++) { const isl = ISLANDS[k], P = isl.P, big = isl.kind === "island" || isl.kind === "outcrop";
+    dm[k] = (P.coastInner + P.coastOuter) * 0.5;
+    reach[k] = big ? 1.5 / dm[k] + 0.6 : isl.kind === "stack" ? 5.6 : 4.6;
+    far[k] = isl.ext + reach[k] + 0.2; farW[k] = far[k] * isl.R * isl.elong;
+    floor[k] = big ? -Math.pow(SEA_THRESH, SHELF_POW) * P.heightScale - 14.0 : isl.kind === "stack" ? -15 : -14.2;
+    // past `seaD` (warp + coast noise can't bring land back) the sea floor comes from the plain lobe distance, with
+    // no noise at all: most of an island's reach is open water, so this is where generation time goes
+    seaD[k] = big ? (P.coastOuter + P.coastWarp * 0.23 + 0.03 + isl.inlet) / dm[k] + 0.36 : 1e9; }
+  const bigK = ISLANDS.map(i => i.kind === "island" || i.kind === "outcrop");
+  const saddle = TIDE_MID - TIDE_RANGE * 0.5 * SPRING_AMP - SWIM_START;   // a spring low tide, minus chest depth
   for (let z = 0; z < GRID; z++) {
     for (let x = 0; x < GRID; x++) {
       const wx = x * CELL - HALF, wz = z * CELL - HALF;
-      let best = -1e9, bestK = 255, bestD = 9, bestD0 = 9;
+      let best = -1e9, bestK = 255, bestD0 = 9, best2 = -1e9, bestK2 = 255;
       for (let k = 0; k < NI; k++) {
-        const isl = ISLANDS[k], d0 = islLocal(isl, wx, wz, _il);
-        let h, d;
-        if (d0 < reach[k]) { const r = islandHeight(isl, wx, wz, _il[0], _il[1], d0); h = r.h; d = r.d; }
-        else {                                                               // far from this island: just its sea-floor shelf
-          d = d0 * (isl.P.coastInner + isl.P.coastOuter) * 0.5;
-          h = isl.kind === "island" || isl.kind === "outcrop"
-            ? -Math.pow(SEA_THRESH, SHELF_POW) * isl.P.heightScale - smoothstep(isl.P.coastInner, 1.5, d) * 14.0
-            : (isl.kind === "stack" ? -3 - smoothstep(1, 5, d0) * 12 : -2.2 - smoothstep(1, 4, d0) * 12);
+        const isl = ISLANDS[k];
+        if (Math.abs(wx - isl.x) > farW[k] || Math.abs(wz - isl.z) > farW[k]) {
+          const h = floor[k]; if (h > best) { best2 = best; bestK2 = bestK; best = h; bestK = k; bestD0 = reach[k]; } else if (h > best2) { best2 = h; bestK2 = k; } continue; }
+        const r0 = islLocal(isl, wx, wz, _il);
+        let h, d0;
+        if (r0 > far[k] || (d0 = islandCoastD(isl, _il[0], _il[1], true)) > reach[k]) { h = floor[k]; d0 = reach[k]; }   // levelled-off sea floor
+        else if (d0 > seaD[k] + 0.3) h = islandSeaFloor(isl, d0 * dm[k]);                                                 // open water: no noise
+        else {
+          const r = islandHeight(isl, wx, wz, _il[0], _il[1]); h = r.h;
+          if (d0 > seaD[k]) { const t = smoothstep(seaD[k], seaD[k] + 0.3, d0); h += (islandSeaFloor(isl, d0 * dm[k]) - h) * t; }   // blend: no seam
+          d0 = r.d0;
         }
-        if (h > best) { best = h; bestK = k; bestD = d; bestD0 = d0; }
+        if (h > best) { best2 = best; bestK2 = bestK; best = h; bestK = k; bestD0 = d0; } else if (h > best2) { best2 = h; bestK2 = k; }
       }
       let height = best;
+      // §shape keep islands apart: where two big islands' shelves meet in shallow water, sink the saddle to swimming
+      // depth below the lowest spring tide, so no island is ever joined to another by a wadeable bar
+      if (best < 0 && bestK2 !== 255 && bigK[bestK] && bigK[bestK2]) {
+        const t = smoothstep(saddle - 3, saddle + 1.5, best2);
+        if (t > 0) height = Math.min(height, height + (saddle - 0.6 - height) * t);
+      }
       const isl = ISLANDS[bestK];
       islandIdx[z * GRID + x] = bestK;
       const u = x / (GRID - 1), v = z / (GRID - 1);
       // Tide pools: fine dimples in the intertidal band (height near the shore).
       const band = 1.0 - smoothstep(0.0, 4.0, Math.abs(height - 0.5));
-      const pool = nPool.fbm(u * AP.poolFreq, v * AP.poolFreq, 3, 2, 0.5);
-      height -= band * smoothstep(0.58, 0.72, pool) * 2.4;
+      if (band > 0) {                                                       // (noise only where it can matter)
+        const pool = nPool.fbm(u * AP.poolFreq * (WORLD / 1200), v * AP.poolFreq * (WORLD / 1200), 3, 2, 0.5);   // same pool size in metres at any world size
+        height -= band * smoothstep(0.58, 0.72, pool) * 2.4;
+      }
       // Sandbars & tidal channels across the wide intertidal band of the big islands (rings at the old spacing).
       // §tide the bar height is capped to a fraction of the tide range so the bars always submerge at high tide.
-      if (isl && (isl.kind === "island")) {
+      if (isl && (isl.kind === "island") && Math.abs(height) < 9) {
         const barBand = 1 - smoothstep(0, 9, Math.abs(height));
-        const barPhase = bestD0 * isl.R / HALF * AP.barFreq + (nBar.fbm(u * 2.6 * 3, v * 2.6 * 3, 3, 2, 0.5) - 0.5) * 1.6;
+        const barPhase = bestD0 * isl.R / 600 * AP.barFreq + (nBar.fbm(u * 2.6 * 4.5, v * 2.6 * 4.5, 3, 2, 0.5) - 0.5) * 1.6;   // follows the (lobed) shore, at the old spacing
         const barAmpSafe = Math.min(AP.barAmp, TIDE_RANGE * BAR_SAFE_FRAC);
         height += barBand * Math.sin(barPhase * 6.2831853) * barAmpSafe;
       }
       heightmap[z * GRID + x] = height;
     }
   }
-  applyCauseways();
 }
-// §arch low-tide sandbar causeways: a ridge between two island coasts at a level the ebb uncovers and the flood
-// covers again (walkable around low tide, cut off at high tide). Only raises sea floor; never touches land above it.
-const CAUSEWAY_LEVEL_F = -0.2;        // causeway top, as a fraction of the tide range (≈ just above a neap low)
 const SANDBAR_TOP_F = -0.06;          // sandbar islets crest just below mid-tide: they only surface around low tide
-function causewayLevel() { return TIDE_MID + TIDE_RANGE * CAUSEWAY_LEVEL_F; }
-function applyCauseways() {
-  const lvl = causewayLevel();
-  for (const c of CROSSINGS) {
-    if (c.type !== "causeway") continue;
-    const A = ISLANDS[c.a], B = ISLANDS[c.b], dx = B.x - A.x, dz = B.z - A.z, L = Math.hypot(dx, dz), ux = dx / L, uz = dz / L;
-    c.ax = A.x; c.az = A.z; c.bx = B.x; c.bz = B.z;
-    const pad = c.width + 8;
-    const x0 = Math.min(A.x, B.x) - pad, x1 = Math.max(A.x, B.x) + pad, z0 = Math.min(A.z, B.z) - pad, z1 = Math.max(A.z, B.z) + pad;
-    const gx0 = Math.max(0, Math.floor((x0 + HALF) / CELL)), gx1 = Math.min(GRID - 1, Math.ceil((x1 + HALF) / CELL));
-    const gz0 = Math.max(0, Math.floor((z0 + HALF) / CELL)), gz1 = Math.min(GRID - 1, Math.ceil((z1 + HALF) / CELL));
-    for (let gz = gz0; gz <= gz1; gz++) for (let gx = gx0; gx <= gx1; gx++) {
-      const wx = gx * CELL - HALF - A.x, wz = gz * CELL - HALF - A.z;
-      const along = wx * ux + wz * uz; if (along < 0 || along > L) continue;
-      const wob = (nBar.fbm((gx + 3) * 0.05, (gz + 5) * 0.05, 2, 2, 0.5) - 0.5) * 8;   // a gently meandering bar
-      const perp = Math.abs(-wx * uz + wz * ux + wob);
-      const mask = 1 - smoothstep(c.width, c.width + 7, perp); if (mask <= 0.01) continue;
-      const i = gz * GRID + gx, h = heightmap[i];
-      const top = lvl - (perp / (c.width + 7)) * 0.6;                        // crowned: highest down the middle
-      if (h < top) heightmap[i] = h * (1 - mask) + top * mask;
-    }
-  }
-}
 
 function smoothstep(a, b, x) {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
 }
-// Paint the coastal band with each segment's biome material (§C palette).
-function paintBiomes() {
-  layoutBiomes();                                               // §arch each island's main + secondary biomes, by exposure
-  for (let z = 0; z < GRID; z++) for (let x = 0; x < GRID; x++) {
-    const i = z * GRID + x, hb = heightmap[i];
-    if (hb < -TIDE_RANGE * 0.7 || hb > MAX_HIGH_TIDE + 2.2) continue;   // only the coastal / intertidal band (follows the tide)
-    const bi = COAST_BIOMES[coastBiomeAt(x * CELL - HALF, z * CELL - HALF)];
-    material[i] = bi.mat; matField[i] = bi.mat;
-  }
-}
+// §biomes lay out each island's biomes (the per-cell biome map). The ground itself (what material the shore is) comes
+// from computeGroundCover() once the lakes are known; nothing is painted into material[] (that stays player edits only).
+function paintBiomes() { layoutBiomes(); }
 
 // Bilinear height query (fast, used for generation / placement).
 function heightAt(wx, wz) {
@@ -1599,6 +1660,119 @@ function buildFilledTexture() {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   return tex;
 }
+
+/* --------------------------------------------------------------------- *
+ * § GROUND COVER  (what the ground near water is made of)
+ *   A shore band runs along every coast and lake: sand, gravel, rock, mud,
+ *   bare earth or marsh, by biome, height and slope, never grass straight
+ *   into the water. It is wide on flat ground and narrow on steep ground,
+ *   its width and mix wander with noise, and its inner edge fades into the
+ *   inland grass through a band of earth / dune / marsh. Weights are blurred
+ *   a little so neighbouring biomes blend; the terrain shader samples them
+ *   (two RGBA8 textures) at a domain-warped position so every border is
+ *   organic. groundMat[] is the same data as a per-cell material for play
+ *   (footsteps, digging): defaultMat() reads it.
+ * --------------------------------------------------------------------- */
+// @system TERRAIN  @section TERRAIN/ground-cover
+const COVER_N = 6;                                       // channels: sand · gravel · stone · mud · dirt · marsh
+const COVER_MAT = [3, 4, 5, 6, 2, 1];                    // their MAT ids (MAT is declared below; keep in sync)
+const coverA = new Uint8Array(GRID * GRID * 4);          // sand, gravel, stone, mud   (0..255 weights)
+const coverB = new Uint8Array(GRID * GRID * 4);          // dirt, marsh, -, -
+const groundMat = new Uint8Array(GRID * GRID);           // natural material per cell (0 until generated)
+let groundReady = false;
+// shore-band width (m) and mix by biome. mix(lower, upper): `lower` is the waterside, `upper` the top of the band.
+const SHORE_W = [26, 15, 13, 18, 12];                    // sandy cobble reef mudflat marsh
+function shoreMix(b, upper, pn, out) {                   // pn: 0..1 patch noise
+  out.fill(0);
+  switch (b) {
+    case 0:                                              // sandy: sand, the odd pebble patch, dune sand up top
+      out[0] = 1; if (pn > 0.72) { out[1] = 0.45; out[0] = 0.55; } if (upper && pn < 0.3) { out[0] = 0.6; out[4] = 0.4; } break;
+    case 1:                                              // cobble: shingle with sand pockets, earthier at the top
+      if (pn < 0.3) { out[0] = 0.75; out[1] = 0.25; } else { out[1] = 0.8; out[2] = 0.2; }
+      if (upper) { out[1] *= 0.6; out[4] += 0.4 * (1 - out[0]); out[0] *= 0.6; } break;
+    case 2:                                              // reef: bare rock shelf, gravel and earth above, sand coves
+      if (!upper) { if (pn < 0.22) { out[0] = 0.8; out[2] = 0.2; } else { out[2] = 0.8; out[1] = 0.2; } }
+      else { out[2] = 0.35; out[1] = 0.35; out[4] = 0.3; } break;
+    case 3:                                              // mudflat: mud, firming into earth and sandy patches above
+      if (!upper) out[3] = 1; else { out[3] = 0.35; out[4] = 0.45; out[0] = 0.2; } break;
+    default:                                             // marsh: mud channels between marsh-grass tussocks
+      if (!upper) { if (pn > 0.48) { out[5] = 0.8; out[3] = 0.2; } else { out[3] = 0.75; out[5] = 0.25; } }
+      else { out[5] = 0.7; out[4] = 0.3; } break;
+  }
+  return out;
+}
+function computeGroundCover() {
+  const N = GRID * GRID, D = new Float32Array(N), INF = 1e9, d1 = CELL, d2 = CELL * Math.SQRT2;
+  const seaTop = MAX_HIGH_TIDE - 0.3;
+  // distance (m) to the nearest water: the sea up to the spring-high line, or a lake / pond (two-pass chamfer)
+  for (let i = 0; i < N; i++) D[i] = (heightmap[i] < seaTop || filled[i] > heightmap[i] + 0.2) ? 0 : INF;
+  for (let z = 0; z < GRID; z++) for (let x = 0; x < GRID; x++) { const i = z * GRID + x; let d = D[i]; if (!d) continue;
+    if (x > 0) d = Math.min(d, D[i - 1] + d1); if (z > 0) { d = Math.min(d, D[i - GRID] + d1);
+      if (x > 0) d = Math.min(d, D[i - GRID - 1] + d2); if (x < GRID - 1) d = Math.min(d, D[i - GRID + 1] + d2); } D[i] = d; }
+  for (let z = GRID - 1; z >= 0; z--) for (let x = GRID - 1; x >= 0; x--) { const i = z * GRID + x; let d = D[i]; if (!d) continue;
+    if (x < GRID - 1) d = Math.min(d, D[i + 1] + d1); if (z < GRID - 1) { d = Math.min(d, D[i + GRID] + d1);
+      if (x < GRID - 1) d = Math.min(d, D[i + GRID + 1] + d2); if (x > 0) d = Math.min(d, D[i + GRID - 1] + d2); } D[i] = d; }
+  const W = new Float32Array(N * COVER_N), mixL = new Float32Array(COVER_N), mixU = new Float32Array(COVER_N);
+  for (let z = 0; z < GRID; z++) for (let x = 0; x < GRID; x++) {
+    const i = z * GRID + x, hb = heightmap[i], dist = D[i], o = i * COVER_N;
+    if (dist > 70) continue;                                            // well inland: no shore cover
+    const wx = x * CELL - HALF, wz = z * CELL - HALF;
+    let b = biomeMap[i];
+    const inland = hb > MAX_HIGH_TIDE + 3.5 || (dist === 0 && hb >= seaTop);   // a lake shore, not the sea's
+    let slope = 0; if (x > 0 && z > 0 && x < GRID - 1 && z < GRID - 1)
+      slope = Math.hypot(heightmap[i + 1] - heightmap[i - 1], heightmap[i + GRID] - heightmap[i - GRID]) / (2 * CELL);
+    const nW = nBar.fbm(wx * 0.013 + 50, wz * 0.013 - 20, 3, 2, 0.5);        // band width wanders
+    const pn = nMacro.fbm(wx * 0.06 + 17, wz * 0.06 + 3, 3, 2, 0.5);         // patches inside the band
+    const pn2 = nMacro.fbm(wx * 0.021 - 41, wz * 0.021 + 9, 2, 2, 0.5);
+    let bw = (inland ? 6 + 6 * pn2 : SHORE_W[b]) * (0.45 + 1.1 * nW) * (0.55 + 0.6 * (1 - smoothstep(0.12, 0.7, slope)));
+    const band = 1 - smoothstep(bw * 0.45, bw * 1.1, dist);           // 1 at the water, fading inland
+    if (band <= 0.002) continue;
+    if (inland) {                                                       // lake shores: sand / gravel / earth (mud + reeds in the marshes)
+      mixL.fill(0);
+      if (b === 4 || b === 3) { mixL[3] = 0.6; mixL[5] = 0.4; } else if (pn < 0.38) mixL[0] = 1; else if (pn < 0.62) { mixL[1] = 0.6; mixL[4] = 0.4; } else mixL[4] = 1;
+    } else {
+      const deep = hb < -TIDE_RANGE * 0.7 - 2;                          // offshore floor: plain sand under the shelf
+      if (deep) { mixL.fill(0); mixL[0] = 1; }
+      else {
+        shoreMix(b, false, pn, mixL); shoreMix(b, true, pn, mixU);
+        const up = smoothstep(0.75, 0.25, band) * smoothstep(seaTop - 1, seaTop + 2, hb);   // the top of the band
+        for (let k = 0; k < COVER_N; k++) mixL[k] += (mixU[k] - mixL[k]) * up;
+      }
+    }
+    if (slope > 0.9) { const r = smoothstep(0.9, 1.4, slope); for (let k = 0; k < COVER_N; k++) mixL[k] *= 1 - r; mixL[2] += r; }   // cliffs: rock
+    for (let k = 0; k < COVER_N; k++) W[o + k] = mixL[k] * band;
+  }
+  // a light separable blur (3×3, [.235 .53 .235]) so biome borders and the band's inner edge blend over a few metres
+  const T = new Float32Array(N * COVER_N), U = new Float32Array(N * COVER_N), C = COVER_N, RW = GRID * COVER_N;
+  for (let z = 0; z < GRID; z++) for (let x = 1; x < GRID - 1; x++) { const o = (z * GRID + x) * C;
+    for (let k = 0; k < C; k++) U[o + k] = W[o + k] * 0.53 + (W[o - C + k] + W[o + C + k]) * 0.235; }
+  for (let z = 1; z < GRID - 1; z++) for (let x = 0; x < GRID; x++) { const o = (z * GRID + x) * C;
+    for (let k = 0; k < C; k++) T[o + k] = U[o + k] * 0.53 + (U[o - RW + k] + U[o + RW + k]) * 0.235; }
+  for (let i = 0; i < N; i++) {
+    const o = i * COVER_N; let sum = 0, best = -1, bw = 0;
+    for (let k = 0; k < COVER_N; k++) { const v = T[o + k]; sum += v; if (v > bw) { bw = v; best = k; } }
+    const s = sum > 1 ? 1 / sum : 1;
+    coverA[i * 4] = Math.round(T[o] * s * 255); coverA[i * 4 + 1] = Math.round(T[o + 1] * s * 255);
+    coverA[i * 4 + 2] = Math.round(T[o + 2] * s * 255); coverA[i * 4 + 3] = Math.round(T[o + 3] * s * 255);
+    coverB[i * 4] = Math.round(T[o + 4] * s * 255); coverB[i * 4 + 1] = Math.round(T[o + 5] * s * 255); coverB[i * 4 + 2] = 0; coverB[i * 4 + 3] = 255;
+    // gameplay material: the strongest cover channel when the cover dominates, otherwise the inland rule
+    groundMat[i] = (best >= 0 && bw * s > Math.max(0.12, (1 - Math.min(1, sum)) )) ? COVER_MAT[best] : inlandMat(i);
+  }
+  groundReady = true;
+}
+function coverTexture(data) {
+  const tex = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, GRID, GRID, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return tex;
+}
+// the natural material at a world point (nearest cell): for placement rules (palms on sand/grass, not on rock …)
+function groundAt(x, z) { const i = cellIndex(x, z); return i < 0 ? 3 : (groundReady ? groundMat[i] : defaultMat(i)); }
 
 /* --------------------------------------------------------------------- *
  * § ATMOSPHERE  (sun + sky/fog palette driven by one timeOfDay value;
@@ -2900,6 +3074,7 @@ uniform int uHemi, uGroundNoise, uFogSun;            // §ATMO per-effect toggle
 uniform sampler2D uFresh;
 uniform sampler2D uMaterial;
 uniform sampler2D uHeight;   // §blend heightmap, central-differenced for a smooth (triangulation-free) slope
+uniform sampler2D uCoverA, uCoverB;   // §cover shore ground-cover weights: (sand, gravel, stone, mud), (dirt, marsh, -, -)
 ${SKY_GLSL}
 float vnoise(vec2 p) {   // §ATMO #7 cheap value noise (smoothed), for low-freq ground tint
   vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -2953,13 +3128,28 @@ void main() {
   vec3 cForest   = vec3(0.26, 0.45, 0.22);   // deep natural green
   vec3 cRock     = vec3(0.49, 0.45, 0.41);
 
-  // Bands over the big world, each boundary fed the organically-warped height/slope and cross-fading over a
-  // soft zone so the transitions are wide and natural, never a hard contour line.
-  vec3 col = cSeafloor;
-  col = mix(col, cSandWet, smoothstep(-3.5, 0.8, hb));
-  col = mix(col, cSandDry, smoothstep(0.3, 5.0, hb));
-  col = mix(col, cGrass,  smoothstep(8.5, 22.0, hb));
-  col = mix(col, cForest, smoothstep(28.0, 60.0, hb));
+  // §cover inland ground: grass deepening to forest green with height (a little sun-dried near the coast); the
+  // shore band on top of it comes from the ground-cover textures (sand / shingle / rock / mud / earth / marsh by
+  // biome), sampled at the warped position so its edges wander, and broken up by the boundary noise so a fading
+  // band frays into patches instead of a smooth smear. Slopes turn to rock over everything.
+  vec3 land = mix(mix(cGrass * vec3(1.08, 1.02, 0.86), cGrass, smoothstep(4.0, 14.0, hb)), cForest, smoothstep(28.0, 60.0, hb));
+  vec2 cuv = clamp((wp + ${HALF.toFixed(1)}) / ${WORLD.toFixed(1)}, 0.0, 1.0);
+  vec4 ca = texture(uCoverA, cuv); vec2 cb = texture(uCoverB, cuv).rg;
+  float csum = ca.r + ca.g + ca.b + ca.a + cb.r + cb.g;
+  // where materials mix, don't average them into a muddy in-between: nudge each weight with its own slice of
+  // the boundary noise and favour the strongest, so a mixed zone reads as interlocking patches of each
+  vec2 pq = wp * 0.11;
+  float pn1 = fbm(pq + 5.0) - 0.5, pn2 = fbm(pq.yx + 23.0) - 0.5;
+  vec4 sa = pow(max(ca * (1.0 + vec4(pn1, -pn1, pn2, -pn2) * 2.6), 0.0), vec4(3.0));
+  vec2 sb2 = pow(max(cb * (1.0 + vec2(pn2 - pn1, pn1 + pn2) * 2.6), 0.0), vec2(3.0));
+  float ssum = sa.r + sa.g + sa.b + sa.a + sb2.r + sb2.g;
+  vec3 cover = cSandDry;
+  if (ssum > 1e-6) cover = (sa.r * cSandDry + sa.g * vec3(0.57, 0.55, 0.50) + sa.b * vec3(0.46, 0.44, 0.42)
+                          + sa.a * vec3(0.37, 0.30, 0.21) + sb2.r * vec3(0.50, 0.38, 0.25) + sb2.g * vec3(0.55, 0.53, 0.29)) / ssum;
+  float ccov = smoothstep(0.18, 0.82, csum + bn * 0.55);                   // frayed, patchy inner edge
+  cover = mix(cover * vec3(0.80, 0.82, 0.86), cover, smoothstep(-1.0, 1.5, hb));   // a touch darker / cooler where it's usually wet
+  vec3 col = mix(land, cover, ccov);
+  col = mix(cSeafloor, col, smoothstep(-6.0, -1.5, hb));                   // deep water fades to the sea-floor tone
   col = mix(col, cRock,   smoothstep(0.32, 0.76, sb));
 
   // §matsoft Painted material (dug / player-placed) overrides the bands. Sampled around a moderately-warped
@@ -3063,7 +3253,11 @@ const terrainProg = program(terrainVS, terrainFS);
 const terrainU = uniforms(terrainProg);
 
 // Chunked terrain so digging only rebuilds the touched chunk's vertices.
-const CHUNKS = 4;                                  // CHUNKS × CHUNKS tiles
+const CHUNKS = 6;                                  // CHUNKS × CHUNKS tiles (96 cells ≈ 300 m each)
+// @section RENDER/terrain-lod  distance LOD: each chunk has index buffers at stride 1 / 2 / 4. A coarse buffer keeps
+// its outer ring at FULL resolution (fan-stitched), so any two neighbouring chunks share identical border edges at
+// any mix of levels: no cracks, no skirts. Vertices are shared, so digging still only rewrites positions.
+const TERRAIN_LOD = [1, 2, 4], TERRAIN_LOD_DIST = [170, 480];   // stride per level; switch distances (m, camera → chunk box)
 const chunkCells = Math.ceil((GRID - 1) / CHUNKS);
 const terrainChunks = [];
 function chunkRange(c) { return [c * chunkCells, Math.min(GRID - 1, (c + 1) * chunkCells)]; }
@@ -3083,6 +3277,28 @@ function fillChunkPositions(ch, out) {
       out[p++] = x * CELL - HALF; out[p++] = heightmap[i] + dig[i] + built[i]; out[p++] = z * CELL - HALF;
     }
 }
+// Triangle indices for a chunk at stride s. s = 1 is the plain grid; for s > 1 interior quads are s×s cells (2 tris)
+// and the quads on the chunk's rim fan out from their centre vertex through EVERY full-res vertex on the rim edge.
+function chunkLodIndices(nx, nz, s) {
+  const out = [], idx = (x, z) => z * nx + x, cx = nx - 1, cz = nz - 1;
+  if (s === 1 || cx % s || cz % s) {
+    for (let z = 0; z < cz; z++) for (let x = 0; x < cx; x++) { const a = idx(x, z), b = a + 1, c = a + nx, d = c + 1; out.push(a, c, b, b, c, d); }
+    return new Uint32Array(out);
+  }
+  const N = cx / s, M = cz / s, h = s >> 1, ring = [];
+  for (let qz = 0; qz < M; qz++) for (let qx = 0; qx < N; qx++) {
+    const x0 = qx * s, z0 = qz * s, x1 = x0 + s, z1 = z0 + s;
+    if (qx > 0 && qz > 0 && qx < N - 1 && qz < M - 1) { const a = idx(x0, z0), b = idx(x1, z0), c = idx(x0, z1), d = idx(x1, z1); out.push(a, c, b, b, c, d); continue; }
+    ring.length = 0;                                                      // perimeter, walked once around
+    for (let x = x0; x < x1; x += (qz === 0 ? 1 : s)) ring.push(idx(x, z0));
+    for (let z = z0; z < z1; z += (qx === N - 1 ? 1 : s)) ring.push(idx(x1, z));
+    for (let x = x1; x > x0; x -= (qz === M - 1 ? 1 : s)) ring.push(idx(x, z1));
+    for (let z = z1; z > z0; z -= (qx === 0 ? 1 : s)) ring.push(idx(x0, z));
+    const c = idx(x0 + h, z0 + h);
+    for (let k = 0; k < ring.length; k++) out.push(c, ring[k], ring[(k + 1) % ring.length]);
+  }
+  return new Uint32Array(out);
+}
 function buildTerrainMesh() {
   const loc = gl.getAttribLocation(terrainProg, "aPos");
   for (let cz = 0; cz < CHUNKS; cz++)
@@ -3092,20 +3308,16 @@ function buildTerrainMesh() {
       const ch = { cx, cz, x0, x1, z0, z1, nx, nz };
       const positions = new Float32Array(nx * nz * 3);
       fillChunkPositions(ch, positions);
-      const indices = new Uint32Array((nx - 1) * (nz - 1) * 6);
-      let i = 0;
-      for (let z = 0; z < nz - 1; z++) for (let x = 0; x < nx - 1; x++) {
-        const a = z * nx + x, b = a + 1, c = a + nx, d = c + 1;
-        indices[i++] = a; indices[i++] = c; indices[i++] = b;
-        indices[i++] = b; indices[i++] = c; indices[i++] = d;
-      }
       ch.vao = gl.createVertexArray(); gl.bindVertexArray(ch.vao);
       ch.vbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, ch.vbo);
       gl.bufferData(gl.ARRAY_BUFFER, positions, gl.DYNAMIC_DRAW);
       gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
-      const ibo = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
-      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
-      ch.count = indices.length; ch.scratch = positions; chunkAABB(ch);
+      ch.lods = TERRAIN_LOD.map(s => {
+        const indices = chunkLodIndices(nx, nz, s), ibo = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
+        return { ibo, count: indices.length };
+      });
+      ch.count = ch.lods[0].count; ch.scratch = positions; chunkAABB(ch);
       terrainChunks[cz * CHUNKS + cx] = ch;
     }
   gl.bindVertexArray(null);
@@ -3141,9 +3353,14 @@ function aabbOutside(x0, y0, z0, x1, y1, z1) {
 let _chunksDrawn = 0;
 function drawTerrainChunks() {
   _chunksDrawn = 0;
+  const px = cam.pos[0], pz = cam.pos[2], py = cam.pos[1];
   for (const ch of terrainChunks) {
     if (ch.bx0 !== undefined && aabbOutside(ch.bx0, ch.by0, ch.bz0, ch.bx1, ch.by1, ch.bz1)) continue;   // frustum cull
-    gl.bindVertexArray(ch.vao); gl.drawElements(gl.TRIANGLES, ch.count, gl.UNSIGNED_INT, 0); countDraw(ch.count / 3); _chunksDrawn++;
+    // §lod distance from the camera to the chunk's box picks the level (height above it counts too: the title orbit)
+    const dx = Math.max(ch.bx0 - px, 0, px - ch.bx1), dz = Math.max(ch.bz0 - pz, 0, pz - ch.bz1), dy = Math.max(0, py - ch.by1) * 0.5;
+    const d = Math.hypot(dx, dz, dy), L = ch.lods[d < TERRAIN_LOD_DIST[0] ? 0 : d < TERRAIN_LOD_DIST[1] ? 1 : 2];
+    gl.bindVertexArray(ch.vao); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, L.ibo);
+    gl.drawElements(gl.TRIANGLES, L.count, gl.UNSIGNED_INT, 0); countDraw(L.count / 3); _chunksDrawn++;
   }
 }
 
@@ -3321,16 +3538,18 @@ void main() {
 const waterProg = program(waterVS, waterFS);
 const waterU = uniforms(waterProg);
 
-const WATER_HALF = 820.0;             // half-extent of the camera-following sheet
+const WATER_HALF = 1350.0;            // half-extent of the camera-following sheet (covers the whole world from the title orbit)
+const WATER_LIN = 0.61;               // grid stretch: x = WHALF·(a·t + (1−a)·t³), so cells stay ~6.4 m near the camera, wider far out
+const WATER_SNAP = WATER_LIN * WATER_HALF * 2 / 256;   // the centre cell size: the sheet snaps to it as the camera moves
 function buildWaterMesh() {
   const WHALF = WATER_HALF, SEG = 256; // covers out to the fog; follows the camera
-  const n = SEG + 1;
+  const n = SEG + 1, warp = (t) => WHALF * (WATER_LIN * t + (1 - WATER_LIN) * t * t * t);
   const pos = new Float32Array(n * n * 2);
   let k = 0;
   for (let j = 0; j < n; j++)
     for (let i = 0; i < n; i++) {
-      pos[k++] = -WHALF + (i / SEG) * WHALF * 2;
-      pos[k++] = -WHALF + (j / SEG) * WHALF * 2;
+      pos[k++] = warp(i / SEG * 2 - 1);
+      pos[k++] = warp(j / SEG * 2 - 1);
     }
   const idx = new Uint32Array(SEG * SEG * 6);
   let m = 0;
@@ -3749,7 +3968,7 @@ function findSpawn() {
       const x = home.x + dx * rr, z = home.z + dz * rr, h = heightAt(x, z);
       if (h > MAX_HIGH_TIDE + 0.6 && islandAt(x, z) === home) {                 // first dry ground above the spring-high line
         const sx = home.x + dx * (rr - 4), sz = home.z + dz * (rr - 4);
-        if (coastBiomeAt(x, z) !== "sandy" && tryN < 16) break;                  // prefer a sandy landing
+        if (tryN < 16 && (coastBiomeAt(sx, sz) !== "sandy" || groundAt(sx, sz) === MAT.STONE || surfaceAt(sx, sz).slope > 0.65)) break;   // prefer a sandy landing, not a rock face
         return { x: sx, z: sz, yaw: Math.atan2(home.hx - sx, -(home.hz - sz)) };
       }
     }
@@ -6357,6 +6576,8 @@ function buildProps() {
   // palms at the beach/dune edge (collide)
   const palms = scatter(15, 0.9, 1500, (x, z, inst) => {
     const s = surfaceAt(x, z); if (s.h < 3 || s.h > 17 || s.slope > 0.4) return;
+    const gm = groundAt(x, z), cb = coastBiomeAt(x, z);                  // §cover palms want sand / earth / grass, and not the marsh or mudflat shores
+    if (gm === MAT.STONE || gm === MAT.GRAVEL || gm === MAT.MUD || ((cb === "marsh" || cb === "mudflat") && s.h < 9)) return;
     if (rng() > 0.5 || nearPOI(x, z, 3) || spotUnderwater(x, z, 0.3) || !reserveBig(x, z)) return;
     const sc = 7 + rng()*6, yaw = rng()*6.28, lean = 0.05 + rng()*0.18, ld = rng()*6.28, tint = vary([0.9,0.95,0.8], 0.15);
     if (!claimFootprint(x, z, 0.9, "tree")) return;
@@ -6388,9 +6609,9 @@ function buildProps() {
   const rocksR = [], rocksS = [], rocksJ = [];
   scatter(20, 0.9, 1500, (x, z) => {
     const s = surfaceAt(x, z);
-    const high = s.h > 28, flat = s.h > 2 && s.h < 16;
+    const high = s.h > 28, flat = s.h > 2 && s.h < 16, gm = groundAt(x, z), stony = gm === MAT.GRAVEL || gm === MAT.STONE;
     if (!(high || flat) || s.h < 1) return;
-    if (rng() > (high ? 0.5 : 0.12) || nearPOI(x, z, 3) || spotUnderwater(x, z) || !reserveBig(x, z)) return;
+    if (rng() > (high ? 0.5 : stony && s.h < 9 ? 0.3 : 0.12) || nearPOI(x, z, 3) || spotUnderwater(x, z) || !reserveBig(x, z)) return;
     const sc = 1.2 + rng()*3.5;
     let arr, styleIdx;
     if (high) { arr = rocksJ; styleIdx = 2; }           // jagged dark rock up high
@@ -6575,6 +6796,7 @@ function drawProps(view) {
   gl.uniform1f(propU.uTime, clock.t);                                 // §14B sway clock
   gl.uniform1f(propU.uGhost, 0);                                      // §16B normal props are never ghosted
   gl.uniform1f(propU.uClampY, waterLevel - 0.04);                     // §14B ceiling for ocean plants (just under the sea surface)
+  const cpx = cam.pos[0], cpz = cam.pos[2], fr2 = (DRAW_R + 20) * (DRAW_R + 20);
   for (const t of propTypes) {
     if (!t.inst.vao || t.inst.count === 0) continue;
     // §13.6 foliage density: draw only a leading fraction of foliage instances (scatter order is random)
@@ -6592,6 +6814,7 @@ function drawProps(view) {
     for (let i = 0; i < cnt; i++) {
       const o = i * 10, s = data[o + 3];
       if (s <= 0.001) continue;                                                  // harvested/cut instance (scale 0) draws nothing
+      if (t.foliage) { const fx = data[o] - cpx, fz = data[o + 2] - cpz; if (fx * fx + fz * fz > fr2) continue; }   // §lod seabed plants past the prop radius: lost in the water / fog anyway
       if (sphereOutside(data[o], data[o + 1], data[o + 2], ext * s + 1.5)) continue;   // outside the frustum → skip
       if (vis >= cap) { vis = -1; break; }                                       // scratch full (no current content hits this) → fall back
       const d = vis * 10;
@@ -7897,7 +8120,7 @@ function populateLife() {
   life = [];
   // §14B underwater finds scattered on the seabed, reward for diving (shells, sand dollars)
   const SEABED_FINDS = ["sanddollar","shell","moonsnail","seaglass","mussel","limpet","nautilus"];
-  for (let i = 0; i < 130; i++) {
+  for (let i = 0; i < Math.round(130 * AREA_K); i++) {
     const _ip = islandXZ(rng, 0.35, 0.9), x = _ip.x, z = _ip.z;
     const h = surfaceAt(x, z).h, ci = cellIndex(x, z);
     if (h > -1 || h < -16 || ci < 0 || filled[ci] > waterLevel + 0.35) continue;   // open seabed only
@@ -8397,7 +8620,7 @@ let UPDATE_R = BASE_UPDATE_R, DRAW_R = BASE_DRAW_R;
  * the single config for all of the beach restocking. */
 // @system WORLD  @section WORLD/eco
 const ECO = {
-  zone: 150,                    // world units per zone → an 8×8 grid over the 1200-unit island
+  zone: 150,                    // world units per zone → a 12×12 grid over the 1800-unit world
   tick: 3.0,                    // seconds between gentle restock attempts
   shoreLo: 0.3, shoreHi: 4.0,   // a restock point must sit this far above the live waterline (the wrack band)
   ebbBias: 0.35,                // chance a find still washes up on a flooding tide (always eligible on the ebb)
@@ -17976,7 +18199,7 @@ function drawSetPieces(view) {
 function seedDigSpots() {
   digSpots = [];
   if (!ODDITY_ITEM) { ODDITY_ITEM = pick(["bell", "tin", "fossil"]); ODDITY_NAME = latinName(); }
-  const n = 140 + (rng() * 70 | 0);   // many attempts; most land off the beach and are skipped
+  const n = Math.round((140 + (rng() * 70 | 0)) * AREA_K);   // many attempts; most land off the beach and are skipped
   for (let k = 0; k < n; k++) {
     const _ip = islandXZ(rng, 0.3, 0.94), x = _ip.x, z = _ip.z;
     const h = heightAt(x, z), s = surfaceAt(x, z).slope, ci = cellIndex(x, z);
@@ -18429,8 +18652,8 @@ let berryBushes = [], berryRipeDyn = null, berryBareDyn = null;
 const BERRY_REGROW = 3;        // in-game days to ripen again
 function seedBerryBushes() {
   berryBushes = [];
-  for (let i = 0; i < 48; i++) { const _ip = islandXZ(rng, 0.15, 0.65), x = _ip.x, z = _ip.z;
-    const h = heightAt(x, z); if (h < 9 || h > 34 || surfaceAt(x, z).slope > 0.4 || bigPropBlocking(x, z, 1.5)) continue;
+  for (let i = 0; i < Math.round(48 * AREA_K); i++) { const _ip = islandXZ(rng, 0.15, 0.65), x = _ip.x, z = _ip.z;
+    const h = heightAt(x, z); if (h < 9 || h > 34 || surfaceAt(x, z).slope > 0.4 || groundAt(x, z) !== MAT.GRASS || bigPropBlocking(x, z, 1.5)) continue;
     const scale = 1.15 + rng()*0.6;
     if (!claimFootprint(x, z, 0.55 + scale*0.35, "bush")) continue;   // §P3 no bush inside another object
     berryBushes.push({ x, z, ripe: true, regrowAt: 0, scale });   // §gulls bigger, bushier
@@ -18482,13 +18705,13 @@ const PLANT = { flower: { item:"flower", regrowD:2 }, fern: { item:"fern", regro
 const plantDyn = {};   // { type: { full, cut } }
 function seedPlants() {
   plants = [];
-  for (let i=0;i<120;i++){ const _ip = islandXZ(rng, 0.08, 0.68), x = _ip.x, z = _ip.z, s=surfaceAt(x,z);   // flowers on the dune meadows
-    if (s.h<6||s.h>24||s.slope>0.45) continue;
+  for (let i=0;i<Math.round(120*AREA_K);i++){ const _ip = islandXZ(rng, 0.08, 0.68), x = _ip.x, z = _ip.z, s=surfaceAt(x,z);   // flowers on the dune meadows
+    if (s.h<6||s.h>24||s.slope>0.45||groundAt(x,z)!==MAT.GRASS) continue;
     if (waterDepthAt(x,z)>0.03 || (typeof bigPropBlocking==="function"&&bigPropBlocking(x,z,0.8)) || nearPOI(x,z,1.5) || (typeof insideCottage==="function"&&insideCottage(x,z))) continue;
     const scale=0.9+rng()*0.5, yaw=rng()*6.283; if (!claimFootprint(x, z, 0.22+scale*0.12, "plant")) continue;   // §P3 no plant inside another object
     plants.push({ x, z, type:"flower", cut:false, regrowAt:0, scale, yaw }); }
-  for (let i=0;i<100;i++){ const _ip = islandXZ(rng, 0.12, 0.67), x = _ip.x, z = _ip.z, s=surfaceAt(x,z);   // ferns in the shadier interior
-    if (s.h<11||s.h>40||s.slope>0.5) continue;
+  for (let i=0;i<Math.round(100*AREA_K);i++){ const _ip = islandXZ(rng, 0.12, 0.67), x = _ip.x, z = _ip.z, s=surfaceAt(x,z);   // ferns in the shadier interior
+    if (s.h<11||s.h>40||s.slope>0.5||groundAt(x,z)===MAT.SAND||groundAt(x,z)===MAT.MUD) continue;
     if (waterDepthAt(x,z)>0.03 || (typeof bigPropBlocking==="function"&&bigPropBlocking(x,z,0.8)) || nearPOI(x,z,1.5) || (typeof insideCottage==="function"&&insideCottage(x,z))) continue;
     const scale=0.9+rng()*0.6, yaw=rng()*6.283; if (!claimFootprint(x, z, 0.24+scale*0.12, "plant")) continue;   // §P3 no plant inside another object
     plants.push({ x, z, type:"fern", cut:false, regrowAt:0, scale, yaw }); }
@@ -18534,9 +18757,9 @@ let tallGrass = [], tallGrassFullDyn = null, tallGrassCutDyn = null;
 const TALLGRASS_REGROW = 2;    // §veg5 in-game days to grow back after cutting (tunable)
 function seedTallGrass() {
   tallGrass = [];
-  for (let i = 0; i < 150; i++) {
+  for (let i = 0; i < Math.round(150 * AREA_K); i++) {
     const _ip = islandXZ(rng, 0.1, 0.72), x = _ip.x, z = _ip.z;
-    const s = surfaceAt(x, z); if (s.h < 5 || s.h > 26 || s.slope > 0.45) continue;
+    const s = surfaceAt(x, z); if (s.h < 5 || s.h > 26 || s.slope > 0.45 || groundAt(x, z) !== MAT.GRASS) continue;
     if (waterDepthAt(x, z) > 0.03 || (typeof bigPropBlocking === "function" && bigPropBlocking(x, z, 1.0)) || nearPOI(x, z, 1.5)) continue;
     if (typeof insideCottage === "function" && insideCottage(x, z)) continue;
     const small = rng() < 0.4, scale = (small ? 0.6 : 0.95) + rng()*0.4;   // a mix of full clumps and lesser tufts
@@ -19654,6 +19877,7 @@ buildHeightmap();
 paintBiomes();
 findHighPoint();
 computeBasins();
+computeGroundCover();   // §cover shore materials (needs the lakes)
 buildProps();
 seedSetPieces();
 seedBerryBushes();
@@ -19668,6 +19892,7 @@ let heightTex = buildHeightTexture();
 let filledTex = buildFilledTexture();
 let freshTex = buildFreshTexture();
 let materialTex = buildMaterialTexture();
+let coverATex = coverTexture(coverA), coverBTex = coverTexture(coverB);   // §cover
 const fsTri = buildFsTri();
 
 // Phase 5 setup: icons, inventory, panels, saved state, starting kit.
@@ -19773,6 +19998,7 @@ function resetWorldState() {
   // without this the new island inherits the old one's biome paint in every
   // untouched cell, which also shifts seeded placement downstream.
   material.fill(0); matField.fill(0); fresh.fill(0);
+  groundReady = false;   // §cover the old island's ground cover until computeGroundCover() runs
   // The buried oddity is drawn from the shared rng the first time seedDigSpots
   // runs; clear it so the new island re-rolls it in the same stream position a
   // fresh load would, keeping the whole generation deterministic.
@@ -19794,6 +20020,7 @@ function rebuildTerrainInPlace() {
   gl.deleteTexture(filledTex);   filledTex   = buildFilledTexture();
   gl.deleteTexture(freshTex);    freshTex    = buildFreshTexture();
   gl.deleteTexture(materialTex); materialTex = buildMaterialTexture();
+  gl.deleteTexture(coverATex); coverATex = coverTexture(coverA); gl.deleteTexture(coverBTex); coverBTex = coverTexture(coverB);
 }
 // The seed-dependent generation sequence, in the exact order of the page-load
 // init above (minus the one-time UI setup and the seed-independent water/sky).
@@ -19802,6 +20029,7 @@ function generateWorld() {
   paintBiomes();
   findHighPoint();
   computeBasins();
+  computeGroundCover();
   buildProps();          // reassigns propTypes with fresh instanced buffers (old ones freed in disposeWorldGL)
   seedSetPieces();
   seedBerryBushes();
@@ -20283,6 +20511,8 @@ function frame(now) {
   gl.activeTexture(gl.TEXTURE2);                 // §blend smooth-slope source for material borders
   gl.bindTexture(gl.TEXTURE_2D, heightTex);
   gl.uniform1i(terrainU.uHeight, 2);
+  gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, coverATex); gl.uniform1i(terrainU.uCoverA, 3);   // §cover
+  gl.activeTexture(gl.TEXTURE4); gl.bindTexture(gl.TEXTURE_2D, coverBTex); gl.uniform1i(terrainU.uCoverB, 4);
   drawTerrainChunks();
   drawContactShadows(view);   // §13.6 sun shadows on the ground, under the props (High/Ultra)
 
@@ -20335,7 +20565,7 @@ function frame(now) {
   gl.uniform1f(waterU.uWaterLevel, waterLevel);
   gl.uniform1f(waterU.uWaterQ, (GFX.water <= 0 ? 0.2 : 1) * (weather ? weather.waveMul : 1));   // §13.6 flatter at low quality · §20 bigger waves in wind/storm
   // snap the water sheet to the camera so wave detail stays nearby
-  const wsnap = (WATER_HALF * 2) / 256;
+  const wsnap = WATER_SNAP;
   gl.uniform2f(waterU.uCenter, Math.round(cam.pos[0] / wsnap) * wsnap,
                                Math.round(cam.pos[2] / wsnap) * wsnap);
   gl.activeTexture(gl.TEXTURE0);
